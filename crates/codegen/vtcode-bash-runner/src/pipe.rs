@@ -56,7 +56,7 @@ async fn read_output_stream<R>(mut reader: R, output_tx: broadcast::Sender<Bytes
 where
     R: AsyncRead + Unpin,
 {
-    let mut buf = vec![0u8; 8_192];
+    let mut buf = vec![0u8; 65_536];
     loop {
         match reader.read(&mut buf).await {
             Ok(0) => break,

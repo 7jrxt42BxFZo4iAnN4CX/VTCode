@@ -8,6 +8,16 @@
 //! full attribution.
 //!
 //! [codex-rs]: https://github.com/openai/codex
+//!
+//! ## Async-drop pattern
+//!
+//! `Drop` cannot be `async`, but some cleanup requires async operations
+//! (e.g. asking a runtime to stop a process, removing a container, closing
+//! a network connection). The pattern borrowed from `testcontainers-rs` is to
+//! spin a dedicated thread inside `Drop`, create a temporary Tokio runtime on
+//! that thread, and block the `Drop` call until the future resolves. This is
+//! heavier than a true `async drop`, but it lets us bridge sync `Drop` into
+//! async cleanup without requiring nightly Rust.
 
 use std::fmt;
 use std::io;
@@ -18,6 +28,30 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use bytes::Bytes;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::{AbortHandle, JoinHandle};
+
+/// Run an async cleanup future from synchronous `Drop`.
+///
+/// This bridges the gap between sync `Drop` and async resource cleanup.
+/// A dedicated thread is spawned with its own Tokio runtime so the future
+/// can make full use of async APIs. The `Drop` call blocks until the runtime
+/// shuts down, giving us deterministic cleanup semantics similar to RAII.
+///
+/// Borrowed from the `testcontainers-rs` pattern for async-drop in Rust
+/// (where true `async drop` is still nightly-only).
+pub(crate) fn async_drop<F, Fut>(f: F)
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    let handle = std::thread::spawn(move || {
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(_) => return,
+        };
+        rt.block_on(f());
+    });
+    let _ = handle.join();
+}
 
 /// Trait for process termination strategies.
 ///
@@ -222,7 +256,42 @@ impl ProcessHandle {
 
 impl Drop for ProcessHandle {
     fn drop(&mut self) {
-        self.terminate_internal();
+        // Use the async-drop pattern so cleanup can block on async waits
+        // (e.g. waiting for the OS to reap the child) without blocking the
+        // caller's thread. This mirrors testcontainers-rs's approach for
+        // async resource cleanup from synchronous Drop.
+        //
+        // We must take ownership of the inner values here because the async
+        // block needs to own everything it captures.
+        let killer = self.killer.lock().ok().and_then(|mut g| g.take());
+        let mut reader_handle = self.reader_handle.lock().ok().and_then(|mut g| g.take());
+        let reader_abort_handles = self
+            .reader_abort_handles
+            .lock()
+            .ok()
+            .map(|mut g| g.drain(..).collect::<Vec<_>>());
+        let mut writer_handle = self.writer_handle.lock().ok().and_then(|mut g| g.take());
+        let mut wait_handle = self.wait_handle.lock().ok().and_then(|mut g| g.take());
+
+        async_drop(move || async move {
+            if let Some(mut killer) = killer {
+                let _ = killer.kill();
+            }
+            if let Some(handle) = reader_handle.take() {
+                handle.abort();
+            }
+            if let Some(handle) = writer_handle.take() {
+                handle.abort();
+            }
+            if let Some(handle) = wait_handle.take() {
+                handle.abort();
+            }
+            if let Some(handles) = reader_abort_handles {
+                for handle in handles {
+                    handle.abort();
+                }
+            }
+        });
     }
 }
 

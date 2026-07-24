@@ -102,6 +102,7 @@ webbrowser = "1.2"
 tiktoken = "3.5"
 opentelemetry = { version = "0.32", default-features = false, features = ["trace", "metrics"] }
 tracing-opentelemetry = "0.33"
+testcontainers = "0.24"
 
 # Internal workspace crates
 vtcode-commons = { path = "crates/common/vtcode-commons", version = "0.140.0" }
@@ -316,6 +317,7 @@ serde-saphyr = { workspace = true }
 mimalloc = { version = "0.1", default-features = false }
 tikv-jemallocator = { version = "0.6", optional = true, features = ["background_threads"] }
 hotpath = { workspace = true, optional = true }
+testcontainers = { workspace = true }
 
 [features]
 default = ["tool-chat", "desktop-notifications"]
