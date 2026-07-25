@@ -30,6 +30,8 @@ mod planning;
 mod rewind;
 #[path = "share_log.rs"]
 mod share_log;
+#[path = "log_viewer.rs"]
+mod log_viewer;
 #[path = "skills.rs"]
 mod skills;
 #[path = "ui.rs"]
@@ -69,6 +71,7 @@ pub(super) use oauth::{
 pub(super) use planning::handle_toggle_planning_workflow;
 pub(super) use rewind::{handle_rewind_latest, handle_rewind_to_turn};
 pub(super) use share_log::handle_share_log;
+pub(super) use log_viewer::handle_show_log_viewer;
 pub(super) use skills::handle_manage_skills;
 pub(super) use ui::{
     handle_continue_latest, handle_select_primary_agent_from_slash, handle_start_file_browser,

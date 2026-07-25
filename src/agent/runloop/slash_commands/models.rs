@@ -33,6 +33,18 @@ pub(crate) enum SessionLogExportFormat {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LogFormat {
+    Text,
+    Json,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LogScope {
+    Thread,
+    All,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AgentDefinitionScope {
     Project,
     User,
@@ -216,6 +228,11 @@ pub(crate) enum SlashCommandOutcome {
     },
     ShareLog {
         format: SessionLogExportFormat,
+    },
+    ShowLogViewer {
+        format: LogFormat,
+        scope: LogScope,
+        save: bool,
     },
 }
 

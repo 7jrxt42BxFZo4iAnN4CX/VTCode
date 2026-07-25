@@ -181,6 +181,10 @@ pub(super) async fn render_help(
             }
         }
         renderer.line(MessageStyle::Info, "  Ctrl+J – Line feed character for multiline")?;
+        renderer.line(
+            MessageStyle::Info,
+            "  /log [--json|--text] [--thread|--all] [--save] — View or export session event log",
+        )?;
         renderer.line(MessageStyle::Info, "")?;
         renderer.line(MessageStyle::Info, "Shell mode:")?;
         renderer.line(MessageStyle::Info, "  !command – Run shell commands directly (e.g., !ls -la)")?;

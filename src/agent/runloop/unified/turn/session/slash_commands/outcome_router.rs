@@ -12,7 +12,7 @@ pub(super) async fn route_outcome(
         SlashCommandOutcome::SubmitPrompt { prompt } => Ok(SlashCommandControl::SubmitPrompt(prompt)),
         SlashCommandOutcome::ReplaceInput { content } => Ok(SlashCommandControl::ReplaceInput(content)),
         SlashCommandOutcome::Handled => Ok(SlashCommandControl::Continue),
-        outcome @ (SlashCommandOutcome::ThemeChanged(_)
+        SlashCommandOutcome::ThemeChanged(_)
         | SlashCommandOutcome::StartThemePalette { .. }
         | SlashCommandOutcome::StartSessionPalette { .. }
         | SlashCommandOutcome::ContinueLatest { .. }
@@ -30,7 +30,7 @@ pub(super) async fn route_outcome(
         | SlashCommandOutcome::ShowSettingsAtPath { .. }
         | SlashCommandOutcome::ShowMemoryConfig
         | SlashCommandOutcome::ShowPermissions
-        | SlashCommandOutcome::ShowMemory) => route_ui_and_settings_outcome(outcome, ctx).await,
+        | SlashCommandOutcome::ShowMemory => route_ui_and_settings_outcome(outcome, ctx).await,
         outcome @ (SlashCommandOutcome::ClearScreen
         | SlashCommandOutcome::ClearConversation
         | SlashCommandOutcome::CompactConversation { .. }
@@ -39,6 +39,7 @@ pub(super) async fn route_outcome(
         | SlashCommandOutcome::ToggleTasksPanel
         | SlashCommandOutcome::ShowJobsPanel
         | SlashCommandOutcome::ShowStatus
+        | SlashCommandOutcome::ShowLogViewer { .. }
         | SlashCommandOutcome::Notify { .. }
         | SlashCommandOutcome::StopAgent
         | SlashCommandOutcome::ManageMcp { .. }
@@ -121,6 +122,9 @@ async fn route_runtime_outcome(
         SlashCommandOutcome::ToggleTasksPanel => handlers::handle_toggle_tasks_panel(ctx).await,
         SlashCommandOutcome::ShowJobsPanel => handlers::handle_show_jobs_panel(ctx).await,
         SlashCommandOutcome::ShowStatus => handlers::handle_show_status(ctx).await,
+        SlashCommandOutcome::ShowLogViewer { format, scope, save } => {
+            handlers::handle_show_log_viewer(ctx, format, scope, save).await
+        }
         SlashCommandOutcome::Notify { message } => handlers::handle_notify(ctx, message).await,
         SlashCommandOutcome::StopAgent => handlers::handle_stop_agent(ctx).await,
         SlashCommandOutcome::ManageMcp { action } => handlers::handle_manage_mcp(ctx, action).await,

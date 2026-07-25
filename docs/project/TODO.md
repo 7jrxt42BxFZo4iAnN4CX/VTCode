@@ -1058,7 +1058,3 @@ LLM request failed: Incorrect API key provided
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ------------------------------------------------------------ Info ------------------------------------------------------------
 Authentication failed for StepFun. The stored API key was rejected — run /secret add stepfun to replace it with a valid key.
-
----
-
-idea: add a new /log command to open VT Code session, trace log, and send it to the user. This will help users debug issues with their session and provide a way to share logs with support or other team members. The /log command should open a new window or tab with the session log, and allow the user to download it as a text file or copy it to the clipboard. Also it is a way to report bugs or issues with the session, and provide context for support or team members to help diagnose and fix the problem. The log should include relevant information such as timestamps, events, errors, and other details that can help identify the root cause of the issue.

@@ -230,6 +230,12 @@ const COMMAND_SKILL_SPECS: &[CommandSkillSpec] = &[
     built_in_command_spec!("tasks", "Toggle the dedicated TODO panel fed by task_tracker output", "/tasks", "tools"),
     built_in_command_spec!("jobs", "Inspect active/background command sessions", "/jobs", "tools"),
     built_in_command_spec!(
+        "log",
+        "View session event log inline (usage: /log [--json|--text] [--thread|--all] [--save])",
+        "/log [--json|--text] [--thread|--all] [--save]",
+        "debug"
+    ),
+    built_in_command_spec!(
         "skills",
         "Open interactive skills manager (usage: /skills, /skills manager)",
         "/skills [manager|list|search|create|load|unload|info|use|validate|package|regenerate-index|help]",
