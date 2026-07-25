@@ -240,7 +240,7 @@ pub(crate) fn create_chat_stream(response: reqwest::Response, model: String) -> 
                 provider::LLMError::Network { message: formatted_error, metadata: None }
             })?;
 
-            buf.extend_from_slice(String::from_utf8_lossy(&chunk).as_bytes());
+            buf.extend_from_slice(&chunk);
 
             while let Some((split_idx, delimiter_len)) = crate::providers::shared::find_sse_boundary_bytes(&buf, offset) {
                 let event = std::str::from_utf8(&buf[offset..split_idx]).expect("valid utf-8 stream data");
@@ -336,7 +336,7 @@ pub(crate) fn create_responses_stream(
                 provider::LLMError::Network { message: formatted_error, metadata: None }
             })?;
 
-            buf.extend_from_slice(String::from_utf8_lossy(&chunk).as_bytes());
+            buf.extend_from_slice(&chunk);
 
             while let Some((split_idx, delimiter_len)) = crate::providers::shared::find_sse_boundary_bytes(&buf, offset) {
                 let event = std::str::from_utf8(&buf[offset..split_idx]).expect("valid utf-8 stream data");

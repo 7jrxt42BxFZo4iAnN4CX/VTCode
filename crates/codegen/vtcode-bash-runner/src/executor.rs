@@ -5,17 +5,16 @@ use anyhow::{anyhow, bail};
 use std::path::Path;
 use std::path::PathBuf;
 
+#[cfg(feature = "exec-events")]
+use parking_lot::Mutex;
 #[cfg(feature = "serde-errors")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "pure-rust")]
 use std::fs;
+#[cfg(feature = "exec-events")]
+use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(feature = "dry-run")]
 use std::sync::{Arc, Mutex};
-#[cfg(feature = "exec-events")]
-use std::sync::{
-    Mutex as StdMutex,
-    atomic::{AtomicU64, Ordering},
-};
 
 #[cfg(feature = "exec-events")]
 use vtcode_exec_events::{
@@ -395,7 +394,7 @@ impl CommandExecutor for PureRustCommandExecutor {
 #[derive(Debug)]
 pub struct EventfulExecutor<E, T> {
     inner: E,
-    emitter: StdMutex<T>,
+    emitter: Mutex<T>,
     counter: AtomicU64,
     id_prefix: String,
 }
@@ -408,7 +407,7 @@ where
     pub fn new(inner: E, emitter: T) -> Self {
         Self {
             inner,
-            emitter: StdMutex::new(emitter),
+            emitter: Mutex::new(emitter),
             counter: AtomicU64::new(0),
             id_prefix: "cmd-".to_string(),
         }
@@ -430,9 +429,8 @@ where
     }
 
     fn emit_event(&self, event: ThreadEvent) {
-        if let Ok(mut emitter) = self.emitter.lock() {
-            EventEmitter::emit(&mut *emitter, &event);
-        }
+        let mut emitter = self.emitter.lock();
+        EventEmitter::emit(&mut *emitter, &event);
     }
 
     fn command_details(
