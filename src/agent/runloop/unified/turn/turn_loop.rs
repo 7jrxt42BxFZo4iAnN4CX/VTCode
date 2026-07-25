@@ -25,8 +25,8 @@ use crate::agent::runloop::unified::run_loop_context::TurnPhase;
 use crate::agent::runloop::unified::tool_call_safety::ToolCallSafetyValidator;
 use crate::agent::runloop::unified::turn::context::TurnLoopResult;
 use crate::agent::runloop::unified::turn::turn_loop_helpers::{
-    ToolLoopLimitAction, extract_turn_config, handle_steering_messages, maybe_handle_planning_enter_trigger,
-    maybe_handle_tool_loop_limit, resolve_safety_tool_call_limits,
+    ToolLoopLimitAction, extract_turn_config, handle_steering_messages, is_stale_approved_plan_pause_response,
+    maybe_handle_planning_enter_trigger, maybe_handle_tool_loop_limit, resolve_safety_tool_call_limits,
 };
 use vtcode_core::acp::ToolPermissionCache;
 use vtcode_core::config::loader::VTCodeConfig;
@@ -103,6 +103,10 @@ const MAX_ASSISTANT_TEXT_RESPONSES_PER_TURN: u32 = 2;
 /// future regression re-enables tools after recovery or otherwise re-triggers
 /// the post-tool failure path cyclically.
 const MAX_POST_TOOL_RECOVERY_CYCLES: u8 = 2;
+/// Bound retries for stale planning-recovery status text after an approved
+/// plan handoff. The response is discarded and the model is reminded that the
+/// new build turn has tools; after two attempts normal failure handling wins.
+const MAX_APPROVED_PLAN_STALE_PAUSE_RETRIES: u8 = 2;
 pub(crate) const POST_TOOL_RECOVERY_REASON: &str =
     "Tool follow-up failed. Tools disabled; respond with text using context and recent tool outputs.";
 const RECOVERY_SYNTHESIS_FALLBACK_FINAL_ANSWER: &str = "Recovery synthesis failed; no tool call applied. The tool outputs gathered above contain the information needed. Re-state your request and the next turn will reuse the gathered context from this conversation history.";
@@ -158,6 +162,7 @@ const POST_TOOL_RECOVERY_REASON_PLAN_MODE: &str = "Planning research completed, 
 /// instead finalize the `<proposed_plan>` from gathered research, otherwise it
 /// loops emitting `<invoke>` research calls during the tool-free recovery pass.
 const RECOVERY_TOOL_CALL_RETRY_DIRECTIVE_PLAN_MODE: &str = "Recovery: in plan mode, tools are disabled and you must finalize the plan. Emit ONLY the `<proposed_plan>` now from the research already gathered in this conversation — each step on a single line (`Action -> files/symbols -> verify:`), no prose, no tool calls, and no `<tool_call>`/`<invoke>`/`<function=...>` markup.";
+const APPROVED_PLAN_STALE_PAUSE_RECOVERY_DIRECTIVE: &str = "Approved-plan execution recovery: the previous response incorrectly claimed that tools were disabled or implementation was paused. The planning approval is complete and the write-capable build agent is active. Continue with the next concrete implementation action now; use task_tracker and execute an edit or verification command. Do not respond with a pause/status message and do not ask for another confirmation.";
 
 /// Count how many assistant text responses the model has emitted in this
 /// turn so far.  Used by the anti-runaway guard to short-circuit when the
@@ -1008,6 +1013,30 @@ pub(crate) async fn run_turn_loop(
                 turn_processing_ctx.plan_session,
                 turn_processing_ctx.working_history.len(),
             );
+        }
+
+        // A recovery directive from the planning turn can leak into the first
+        // approved-plan build request. If the model echoes that stale state as
+        // its answer, do not commit it to the transcript or end execution;
+        // give the fresh write-capable turn a bounded, explicit retry instead.
+        let stale_approved_plan_pause = matches!(
+            &processing_result,
+            TurnProcessingResult::TextResponse { text, .. }
+                if turn_processing_ctx.is_approved_plan_execution()
+                    && is_stale_approved_plan_pause_response(text)
+        );
+        if stale_approved_plan_pause
+            && turn_processing_ctx.harness_state.approved_plan_recovery_retries()
+                < MAX_APPROVED_PLAN_STALE_PAUSE_RETRIES
+        {
+            turn_processing_ctx.harness_state.record_approved_plan_recovery_retry();
+            turn_processing_ctx
+                .working_history
+                .push(uni::Message::system(APPROVED_PLAN_STALE_PAUSE_RECOVERY_DIRECTIVE.to_string()));
+            let _ = turn_processing_ctx
+                .renderer
+                .line(MessageStyle::Info, "Approved-plan execution resumed after clearing stale recovery state.");
+            continue;
         }
 
         // Restore input status if there are no tool calls (turn is completing)

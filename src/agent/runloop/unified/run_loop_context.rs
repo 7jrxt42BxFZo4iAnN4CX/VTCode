@@ -357,6 +357,11 @@ pub(crate) struct HarnessTurnState {
     /// all recovery retries are exhausted, instead of the canned fallback
     /// string, so gathered context is not discarded entirely.
     recovery_rejected_synthesis: Option<String>,
+    /// Marks the fresh turn created by an approved plan handoff. This keeps
+    /// recovery tool-enabled and lets the turn loop discard stale
+    /// "tools are disabled" status responses from the planning turn.
+    approved_plan_execution: bool,
+    approved_plan_recovery_retries: u8,
     /// Set when the planning interview tool is permanently unavailable. The
     /// tool batch consumes this flag after all tool responses have been
     /// appended so the recovery directive is not interleaved with a batch.
@@ -412,6 +417,8 @@ impl HarnessTurnState {
             recovery_retry_count: 0,
             post_tool_recovery_cycles: 0,
             recovery_rejected_synthesis: None,
+            approved_plan_execution: false,
+            approved_plan_recovery_retries: 0,
             interview_denial_recovery_pending: false,
             max_tool_calls,
             max_tool_wall_clock: Duration::from_secs(max_tool_wall_clock_secs),
@@ -632,6 +639,23 @@ impl HarnessTurnState {
 
     pub(crate) fn recovery_is_tool_free(&self) -> bool {
         matches!(self.recovery_mode, Some(RecoveryMode::ToolFreeSynthesis))
+    }
+
+    pub(crate) fn set_approved_plan_execution(&mut self, active: bool) {
+        self.approved_plan_execution = active;
+        self.approved_plan_recovery_retries = 0;
+    }
+
+    pub(crate) fn is_approved_plan_execution(&self) -> bool {
+        self.approved_plan_execution
+    }
+
+    pub(crate) fn approved_plan_recovery_retries(&self) -> u8 {
+        self.approved_plan_recovery_retries
+    }
+
+    pub(crate) fn record_approved_plan_recovery_retry(&mut self) {
+        self.approved_plan_recovery_retries = self.approved_plan_recovery_retries.saturating_add(1);
     }
 
     pub(crate) fn consume_recovery_pass(&mut self) -> bool {

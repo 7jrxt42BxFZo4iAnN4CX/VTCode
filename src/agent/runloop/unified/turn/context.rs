@@ -141,6 +141,10 @@ impl<'a> TurnProcessingContext<'a> {
         self.tool_registry.is_planning_active()
     }
 
+    pub(crate) fn is_approved_plan_execution(&self) -> bool {
+        self.harness_state.is_approved_plan_execution()
+    }
+
     pub(crate) fn set_phase(&mut self, phase: crate::agent::runloop::unified::run_loop_context::TurnPhase) {
         self.harness_state.set_phase(phase);
     }

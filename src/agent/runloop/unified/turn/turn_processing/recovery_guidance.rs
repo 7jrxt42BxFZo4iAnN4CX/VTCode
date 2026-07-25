@@ -10,8 +10,12 @@ fn has_recent_tool_activity(history: &[uni::Message]) -> bool {
     })
 }
 
-pub(super) fn empty_response_recovery_mode(history: &[uni::Message], planning_active: bool) -> RecoveryMode {
-    if planning_active {
+pub(super) fn empty_response_recovery_mode(
+    history: &[uni::Message],
+    planning_active: bool,
+    approved_plan_execution: bool,
+) -> RecoveryMode {
+    if planning_active || approved_plan_execution {
         return RecoveryMode::ToolEnabledRetry;
     }
 
@@ -135,6 +139,15 @@ mod tests {
             assert!(!intro.trim().is_empty());
             assert!(!guidance.trim().is_empty());
         }
+    }
+
+    #[test]
+    fn approved_plan_execution_keeps_empty_response_recovery_tool_enabled() {
+        let history = vec![uni::Message::tool_response(
+            "call-1".to_string(),
+            "tool output".to_string(),
+        )];
+        assert_eq!(empty_response_recovery_mode(&history, false, true), RecoveryMode::ToolEnabledRetry);
     }
 
     #[test]

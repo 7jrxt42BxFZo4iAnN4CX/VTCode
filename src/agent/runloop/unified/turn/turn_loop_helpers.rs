@@ -111,6 +111,33 @@ pub(super) fn effective_max_tool_calls_for_approved_plan_execution(configured_li
     }
 }
 
+/// Detects a stale recovery status response that incorrectly carries the
+/// planning turn's tool-disabled state into the fresh approved-plan execution
+/// turn. This is intentionally narrow: ordinary blocker explanations remain
+/// valid build responses, while the exact pause language is retried with the
+/// write-capable execution context.
+pub(super) fn is_stale_approved_plan_pause_response(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let pause_marker = [
+        "implementation is paused",
+        "implementation paused",
+        "wait for the next turn",
+        "pending step",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker));
+    let unavailable_marker = [
+        "tool use is disabled",
+        "tools are disabled",
+        "normal tool availability is restored",
+        "no edits, builds, or tests were run",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker));
+
+    pause_marker && unavailable_marker
+}
+
 const MAX_TOOL_LOOP_LIMIT_ABSOLUTE_CAP: usize = 120;
 const MAX_TOOL_LOOP_CAP_MULTIPLIER: usize = 3;
 const MAX_TOOL_LOOP_INCREMENT_PER_PROMPT: usize = 50;
@@ -496,7 +523,8 @@ mod tests {
     use super::{
         PLANNING_WORKFLOW_MIN_TOOL_LOOPS, UNLIMITED_TOOL_LOOPS, clamp_tool_loop_increment,
         effective_max_tool_calls_for_approved_plan_execution, effective_max_tool_calls_for_turn, extract_turn_config,
-        handle_steering_messages, resolve_safety_tool_call_limits, resolve_tool_loop_limit, tool_loop_hard_cap,
+        handle_steering_messages, is_stale_approved_plan_pause_response, resolve_safety_tool_call_limits,
+        resolve_tool_loop_limit, tool_loop_hard_cap,
     };
     use crate::agent::runloop::unified::planning_workflow::{
         PlanningIntent, detect_enter_planning_intent, detect_planning_intent,
@@ -698,6 +726,19 @@ mod tests {
         assert_eq!(effective_max_tool_calls_for_approved_plan_execution(32), 120);
         assert_eq!(effective_max_tool_calls_for_approved_plan_execution(160), 160);
         assert_eq!(effective_max_tool_calls_for_approved_plan_execution(0), 0);
+    }
+
+    #[test]
+    fn stale_approved_plan_pause_response_requires_both_pause_and_unavailable_markers() {
+        assert!(is_stale_approved_plan_pause_response(
+            "Implementation is paused because tool use is disabled. Wait for the next turn."
+        ));
+        assert!(!is_stale_approved_plan_pause_response(
+            "The implementation is blocked by a missing Docker daemon; no source edits are safe yet."
+        ));
+        assert!(!is_stale_approved_plan_pause_response(
+            "Implementation is paused while I wait for the user to clarify the API contract."
+        ));
     }
 
     #[test]

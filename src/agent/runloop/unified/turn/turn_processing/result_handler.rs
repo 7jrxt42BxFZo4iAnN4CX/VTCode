@@ -320,8 +320,11 @@ pub(crate) async fn handle_turn_processing_result<'a>(
                 }));
             }
 
-            let recovery_mode =
-                empty_response_recovery_mode(params.ctx.working_history, params.ctx.is_planning_active());
+            let recovery_mode = empty_response_recovery_mode(
+                params.ctx.working_history,
+                params.ctx.is_planning_active(),
+                params.ctx.is_approved_plan_execution(),
+            );
             let recovery_reason = empty_response_recovery_reason(recovery_mode).to_string();
             params.ctx.activate_recovery_with_mode(recovery_reason.clone(), recovery_mode);
             params

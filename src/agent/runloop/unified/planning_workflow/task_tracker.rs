@@ -2,6 +2,21 @@ use vtcode_core::config::constants::tools;
 use vtcode_core::tools::registry::ToolRegistry;
 use vtcode_ui::tui::app::{InlineHandle, InlineMessageKind, PlanContent};
 
+fn render_created_task_tracker(handle: &InlineHandle, output: &serde_json::Value) {
+    let lines = crate::agent::runloop::tool_output::tracker_view_lines(output);
+    if lines.is_empty() {
+        return;
+    }
+
+    // Approval creates the tracker outside the normal tool pipeline, so make
+    // the same panel/transcript updates that a regular task_tracker call gets.
+    // Without this, the checklist exists on disk but remains invisible until
+    // the user manually opens the task panel.
+    handle.update_task_panel(lines.clone());
+    handle.show_task_panel();
+    handle.append_pasted_message(InlineMessageKind::Tool, lines.join("\n"), lines.len());
+}
+
 fn markdown_task_description(line: &str) -> Option<(&str, bool)> {
     let trimmed = line.trim().strip_prefix("- ").unwrap_or(line.trim());
     if let Some(description) = trimmed.strip_prefix("[ ] ") {
@@ -109,12 +124,12 @@ pub(crate) async fn create_task_tracker_from_active_plan(
 
     match tool.execute(args).await {
         Ok(result) => {
+            render_created_task_tracker(handle, &result);
             let message = result
                 .get("message")
                 .and_then(|value| value.as_str())
                 .unwrap_or("Task tracker created");
-            let message = format!("📋 {message}");
-            handle.append_pasted_message(InlineMessageKind::Info, message.clone(), message.lines().count());
+            tracing::info!(message = %message, "Task tracker created during approved-plan handoff");
         }
         Err(err) => {
             tracing::warn!(error = %err, "Failed to auto-create task tracker from approved plan");
