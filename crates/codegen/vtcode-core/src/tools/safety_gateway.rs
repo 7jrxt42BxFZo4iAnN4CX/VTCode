@@ -616,17 +616,6 @@ impl SafetyGateway {
             return decision;
         }
 
-        if self.config.read().planning_active && self.is_mutating_call(tool_name, args) {
-            let reason =
-                format!("Tool '{tool_name}' is blocked in planning workflow (read-only). Finish planning to execute.");
-            tracing::info!(
-                invocation_id = %inv_id,
-                tool = %tool_name,
-                "SafetyGateway: planning workflow violation"
-            );
-            return SafetyDecision::Deny(reason);
-        }
-
         if let Some(ref policy) = self.command_policy
             && let Some(command) = command_text_for_tool(tool_name, args)
             && !policy.allows_text(&command)
@@ -991,17 +980,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_planning_workflow_blocks_mutating() {
+    async fn test_planning_workflow_does_not_double_block_mutating() {
         let gateway = SafetyGateway::new();
         gateway.set_planning_workflow(true);
         let ctx = make_ctx();
 
         let decision = gateway
-            .check_safety(&ctx, "write_file", &serde_json::json!({"path": "/tmp/test"}))
+            .check_safety(&ctx, "apply_patch", &serde_json::json!({"patch": "..."}))
             .await;
 
-        assert!(decision.is_denied());
-        assert!(decision.reason().unwrap().contains("planning workflow"));
+        assert!(decision.needs_approval());
     }
 
     #[tokio::test]
