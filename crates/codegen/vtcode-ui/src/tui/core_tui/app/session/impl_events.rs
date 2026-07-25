@@ -246,7 +246,10 @@ impl Session {
         });
 
         if !in_modal_list {
-            return true;
+            // The floating modal only owns input inside its rendered list.
+            // Let wheel events outside that hitbox reach the transcript so a
+            // long plan remains reviewable while approval is open.
+            return false;
         }
 
         if let Some(wizard) = self.wizard_overlay_mut() {

@@ -278,6 +278,13 @@ pub(crate) async fn finish_planning_workflow(
     handle: &InlineHandle,
     clear_plan_file: bool,
 ) {
+    if !clear_plan_file {
+        let _ = crate::agent::runloop::unified::planning_workflow::create_task_tracker_from_active_plan(
+            tool_registry,
+            handle,
+        )
+        .await;
+    }
     tool_registry.disable_planning();
     tool_registry.restore_post_planning_policies().await;
     let plan_state = tool_registry.planning_workflow_state();

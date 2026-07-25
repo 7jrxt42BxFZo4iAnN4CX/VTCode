@@ -1640,6 +1640,7 @@ mod tests {
     use crate::tui::core_tui::types::{
         InlineMessageKind, InlineSegment, InlineTextStyle, InlineTheme, SecurePromptConfig,
     };
+    use ratatui::Terminal;
     use std::sync::Arc;
 
     fn build_session() -> Session {
@@ -1800,6 +1801,50 @@ mod tests {
         );
 
         assert_eq!(session.core.scroll_offset(), initial_offset);
+    }
+
+    #[test]
+    fn transcript_wheel_scrolls_through_floating_plan_overlay() {
+        let mut session = build_session();
+        for index in 0..40 {
+            session
+                .core
+                .push_line(InlineMessageKind::Agent, vec![text_segment(format!("plan line {index}"))]);
+        }
+        session.show_transient(TransientRequest::List(crate::tui::core_tui::app::types::ListOverlayRequest {
+            title: "Ready to code?".to_string(),
+            lines: vec!["A plan is ready to execute.".to_string()],
+            footer_hint: None,
+            items: vec![crate::tui::core_tui::types::InlineListItem {
+                title: "Yes".to_string(),
+                subtitle: None,
+                badge: None,
+                indent: 0,
+                selection: None,
+                search_value: None,
+            }],
+            selected: None,
+            search: None,
+            hotkeys: Vec::new(),
+        }));
+
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|frame| session.render(frame)).expect("render overlay");
+        let (events, _received) = tokio::sync::mpsc::unbounded_channel();
+
+        session.handle_event(
+            CrosstermEvent::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            }),
+            &events,
+            None,
+        );
+
+        assert!(session.core.scroll_offset() > 0, "transcript should remain scrollable behind the overlay");
     }
 
     fn build_session_with_secure_prompt() -> Session {

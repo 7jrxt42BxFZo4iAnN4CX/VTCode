@@ -2,7 +2,6 @@ mod archive;
 mod metrics;
 mod plan_seed;
 mod support;
-mod task_tracker_auto_create;
 
 use super::*;
 use crate::agent::runloop::git::{compute_session_code_change_delta, normalize_workspace_path};
@@ -18,7 +17,7 @@ use vtcode_core::core::agent::runtime::AgentRuntime;
 use vtcode_core::core::agent::session::AgentSessionState;
 use vtcode_core::core::interfaces::session::PlanningEntrySource;
 
-const PLAN_APPROVED_EXECUTION_DIRECTIVE: &str = "Plan was approved. Start implementation immediately: execute the plan step by step beginning with the first pending step. Do not ask for another implementation confirmation. Finish with a concise execution summary covering the outcome, changed files, verification performed, and remaining blockers.";
+const PLAN_APPROVED_EXECUTION_DIRECTIVE: &str = "Plan was approved. Start implementation immediately: execute the plan step by step beginning with the first pending step. Before the first implementation action, use task_tracker with action=list and mark the first pending task in_progress; update each task as work and verification complete. Do not ask for another implementation confirmation. Finish with a concise execution summary covering the outcome, changed files, verification performed, and remaining blockers.";
 const PLAN_APPROVED_EXECUTION_INPUT: &str = "Implement the approved plan now.";
 
 async fn apply_primary_agent_tool_policy_overrides(
@@ -79,7 +78,9 @@ use crate::agent::runloop::unified::turn::primary_agent_runtime::{
     PrimaryAgentRuntimeSyncContext, builtin_primary_agent_specs, load_primary_agent_specs,
     resolve_approved_plan_execution_agent, sync_primary_agent_permissions, sync_primary_agent_runtime,
 };
-use crate::agent::runloop::unified::turn::turn_loop_helpers::effective_max_tool_calls_for_turn;
+use crate::agent::runloop::unified::turn::turn_loop_helpers::{
+    effective_max_tool_calls_for_approved_plan_execution, effective_max_tool_calls_for_turn,
+};
 use archive::{create_session_archive, refresh_runtime_debug_context_for_next_session, workspace_archive_label};
 use metrics::{
     TurnExecutionMetrics, capture_code_change_snapshot, emit_turn_execution_metrics, estimate_history_bytes,
@@ -90,7 +91,6 @@ use support::{
     latest_assistant_result_text, live_reload_preserves_session_config, prepare_resume_bootstrap_without_archive,
     prompt_startup_planning_workflow, remove_transient_system_notes, take_pending_resumed_user_prompt,
 };
-use task_tracker_auto_create::auto_create_task_tracker_from_plan;
 use tokio::sync::{Notify, mpsc};
 use vtcode_core::llm::provider::MessageRole;
 use vtcode_core::utils::session_archive;
@@ -531,7 +531,7 @@ pub(super) async fn run_single_agent_loop_unified_impl(
 
         if !startup_update_requested_restart {
             loop {
-                let executing_approved_plan = approved_plan_execution_turn;
+                let mut executing_approved_plan = approved_plan_execution_turn;
                 approved_plan_execution_turn = false;
                 use crate::agent::runloop::unified::turn::session::interaction_loop::InteractionOutcome;
 
@@ -714,7 +714,22 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                         (input, prompt_message_index)
                     }
                     InteractionOutcome::PlanApproved { auto_accept, execution_agent } => {
+                        // This approval path starts the implementation turn in
+                        // the same outer iteration, so mark it before the
+                        // HarnessTurnState is constructed below. The queued
+                        // approval path sets the equivalent flag on the next
+                        // iteration.
+                        executing_approved_plan = true;
                         let plan_seed = load_active_plan_seed(&tool_registry).await;
+                        // This direct approval route clears the plan file below,
+                        // so create the persistent task checklist before the
+                        // planning state is torn down.
+                        let _ =
+                            crate::agent::runloop::unified::planning_workflow::create_task_tracker_from_active_plan(
+                                &tool_registry,
+                                &handle,
+                            )
+                            .await;
                         crate::agent::runloop::unified::planning_workflow::finish_planning_workflow(
                             &tool_registry,
                             &mut plan_session,
@@ -821,8 +836,11 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                 let planning_active = tool_registry.is_planning_active();
                 let outcome = match {
                     let mut auto_finish_planning_attempted = false;
-                    let max_tool_calls_per_turn =
-                        effective_max_tool_calls_for_turn(harness_config.max_tool_calls_per_turn, planning_active);
+                    let max_tool_calls_per_turn = if executing_approved_plan {
+                        effective_max_tool_calls_for_approved_plan_execution(harness_config.max_tool_calls_per_turn)
+                    } else {
+                        effective_max_tool_calls_for_turn(harness_config.max_tool_calls_per_turn, planning_active)
+                    };
                     let mut harness_state = HarnessTurnState::new(
                         TurnRunId(turn_run_id.0.clone()),
                         TurnId(turn_id.clone()),
@@ -1032,9 +1050,6 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                         .messages_mut()
                         .push(vtcode_core::llm::provider::Message::system(execution_directive));
                     runtime.queue_follow_up_input(PLAN_APPROVED_EXECUTION_INPUT.to_string());
-                }
-                if plan_approved_execution_pending {
-                    let _ = auto_create_task_tracker_from_plan(&tool_registry, &mut renderer).await;
                 }
                 if executing_approved_plan {
                     let status = match &outcome_result {

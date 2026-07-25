@@ -82,6 +82,12 @@ pub(super) fn resolve_safety_tool_call_limits(
 /// starve planning (checkpoint turn_804: research died at the build-mode cap).
 const PLANNING_WORKFLOW_MIN_TOOL_CALLS_PER_TURN: usize = 120;
 
+/// Approved plans need enough room for implementation and verification after
+/// planning research has already consumed a turn. Keep this floor separate
+/// from ordinary build turns so unrelated requests retain their configured
+/// safety budget.
+const APPROVED_PLAN_MIN_TOOL_CALLS_PER_TURN: usize = 120;
+
 /// Planning-aware per-turn tool-call budget. `0` stays `0` (unlimited);
 /// planning raises the configured limit to the planning research floor.
 pub(in crate::agent::runloop::unified::turn) fn effective_max_tool_calls_for_turn(
@@ -94,6 +100,14 @@ pub(in crate::agent::runloop::unified::turn) fn effective_max_tool_calls_for_tur
         configured_limit.max(PLANNING_WORKFLOW_MIN_TOOL_CALLS_PER_TURN)
     } else {
         configured_limit
+    }
+}
+
+pub(super) fn effective_max_tool_calls_for_approved_plan_execution(configured_limit: usize) -> usize {
+    if configured_limit == 0 {
+        0
+    } else {
+        configured_limit.max(APPROVED_PLAN_MIN_TOOL_CALLS_PER_TURN)
     }
 }
 
@@ -481,8 +495,8 @@ pub(super) async fn maybe_handle_tool_loop_limit(
 mod tests {
     use super::{
         PLANNING_WORKFLOW_MIN_TOOL_LOOPS, UNLIMITED_TOOL_LOOPS, clamp_tool_loop_increment,
-        effective_max_tool_calls_for_turn, extract_turn_config, handle_steering_messages,
-        resolve_safety_tool_call_limits, resolve_tool_loop_limit, tool_loop_hard_cap,
+        effective_max_tool_calls_for_approved_plan_execution, effective_max_tool_calls_for_turn, extract_turn_config,
+        handle_steering_messages, resolve_safety_tool_call_limits, resolve_tool_loop_limit, tool_loop_hard_cap,
     };
     use crate::agent::runloop::unified::planning_workflow::{
         PlanningIntent, detect_enter_planning_intent, detect_planning_intent,
@@ -677,6 +691,13 @@ mod tests {
     #[test]
     fn edit_mode_keeps_configured_tool_call_limit() {
         assert_eq!(effective_max_tool_calls_for_turn(32, false), 32);
+    }
+
+    #[test]
+    fn approved_plan_execution_gets_a_fresh_implementation_budget() {
+        assert_eq!(effective_max_tool_calls_for_approved_plan_execution(32), 120);
+        assert_eq!(effective_max_tool_calls_for_approved_plan_execution(160), 160);
+        assert_eq!(effective_max_tool_calls_for_approved_plan_execution(0), 0);
     }
 
     #[test]

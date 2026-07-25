@@ -19,6 +19,7 @@ pub(crate) mod intent;
 pub(crate) mod plan_approval;
 pub(crate) mod recovery;
 pub(crate) mod start_confirmation;
+pub(crate) mod task_tracker;
 
 // --- Stable interface (the only planning symbols the runloop should name) ---
 
@@ -34,6 +35,7 @@ pub(crate) use plan_approval::{
     PlanApprovalRoute, PlanApprovalTelemetryContext, load_plan_text_for_approval, plan_approval_route,
 };
 pub(crate) use recovery::maybe_condense_truncated_plan;
+pub(crate) use task_tracker::create_task_tracker_from_active_plan;
 
 /// Resolve the current approval request using its original telemetry identity.
 /// The fallback IDs are used only for legacy callers that resolve an approval
