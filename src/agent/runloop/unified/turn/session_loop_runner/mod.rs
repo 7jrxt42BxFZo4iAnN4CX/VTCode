@@ -36,9 +36,48 @@ async fn apply_primary_agent_tool_policy_overrides(
     }
 }
 
+/// Select the write-capable agent that must own an approved-plan execution.
+///
+/// Approval is a hard runtime boundary. If discovery returns a stale or
+/// read-only catalog, falling back to the built-in `build` spec is safer than
+/// continuing with the planning agent and letting the first mutation fail
+/// under the planning policy.
+async fn select_approved_plan_execution_agent(
+    active_primary_agent: &mut vtcode_core::primary_agent::ActivePrimaryAgentState,
+    tool_registry: &vtcode_core::tools::registry::ToolRegistry,
+    workspace: &std::path::Path,
+    requested_agent: Option<&str>,
+    configured_default: Option<&str>,
+) -> Result<String> {
+    let mut specs = match load_primary_agent_specs(tool_registry, workspace).await {
+        Ok(specs) => specs,
+        Err(err) => {
+            tracing::warn!(error = %err, "Primary-agent discovery failed during approved-plan handoff; using built-ins");
+            builtin_primary_agent_specs()
+        }
+    };
+    let mut execution_agent = resolve_approved_plan_execution_agent(requested_agent, configured_default, &specs);
+    if execution_agent.is_none() {
+        specs = builtin_primary_agent_specs();
+        execution_agent = resolve_approved_plan_execution_agent(requested_agent, configured_default, &specs);
+    }
+
+    let execution_agent = execution_agent.ok_or_else(|| {
+        anyhow::anyhow!(
+            "No write-capable primary agent is available to execute the approved plan; the plan was not started"
+        )
+    })?;
+    active_primary_agent
+        .select_from_specs(&specs, &execution_agent)
+        .map_err(|err| {
+            anyhow::anyhow!("Failed to activate approved-plan execution agent '{execution_agent}': {err}")
+        })?;
+    Ok(execution_agent)
+}
+
 use crate::agent::runloop::unified::turn::primary_agent_runtime::{
     PrimaryAgentRuntimeSyncContext, builtin_primary_agent_specs, load_primary_agent_specs,
-    resolve_approved_plan_execution_agent, sync_primary_agent_runtime,
+    resolve_approved_plan_execution_agent, sync_primary_agent_permissions, sync_primary_agent_runtime,
 };
 use crate::agent::runloop::unified::turn::turn_loop_helpers::effective_max_tool_calls_for_turn;
 use archive::{create_session_archive, refresh_runtime_debug_context_for_next_session, workspace_archive_label};
@@ -71,6 +110,7 @@ pub(super) async fn run_single_agent_loop_unified_impl(
     let _terminal_cleanup_guard = TerminalCleanupGuard::new();
 
     let mut config = config.clone();
+    let mut session_skip_confirmations = skip_confirmations;
     let mut resume_state = resume;
     let mut _consecutive_idle_cycles = 0;
     let mut last_activity_time: Option<Instant> = None;
@@ -495,6 +535,75 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                 approved_plan_execution_turn = false;
                 use crate::agent::runloop::unified::turn::session::interaction_loop::InteractionOutcome;
 
+                // The approval turn may have ended before the handoff state
+                // was fully applied (for example after recovery or a stale
+                // primary-agent catalog). Re-establish the execution boundary
+                // before the queued implementation turn can build its request.
+                // This prevents a read-only `plan` agent from surviving the
+                // approval and denying the first shell/edit call.
+                if executing_approved_plan {
+                    if tool_registry.is_planning_active() {
+                        crate::agent::runloop::unified::planning_workflow::finish_planning_workflow(
+                            &tool_registry,
+                            &mut plan_session,
+                            &handle,
+                            false,
+                        )
+                        .await;
+                    }
+                    let configured_default = vt_cfg
+                        .as_ref()
+                        .map(|cfg| cfg.default_primary_agent.as_str())
+                        .filter(|name| !name.trim().is_empty());
+                    let current_agent = active_primary_agent.active().name().to_string();
+                    let execution_agent = select_approved_plan_execution_agent(
+                        &mut active_primary_agent,
+                        &tool_registry,
+                        &config.workspace,
+                        Some(current_agent.as_str()),
+                        configured_default,
+                    )
+                    .await?;
+                    if current_agent != execution_agent {
+                        renderer.line(
+                            MessageStyle::Info,
+                            &format!("Approved plan requires a write-capable agent; switching to {execution_agent}."),
+                        )?;
+                    }
+                    if let Err(err) = force_reload_workspace_config_for_execution(
+                        config.workspace.as_path(),
+                        &config,
+                        &mut vt_cfg,
+                        &mut tool_registry,
+                        async_mcp_manager.as_deref(),
+                    )
+                    .await
+                    {
+                        tracing::warn!(error = %err, "Failed to reload workspace configuration before approved-plan execution");
+                        renderer.line(MessageStyle::Error, &format!("Failed to reload configuration: {err}"))?;
+                    }
+                    sync_primary_agent_permissions(&mut vt_cfg, active_primary_agent.active());
+                    apply_primary_agent_tool_policy_overrides(&tool_registry, active_primary_agent.active()).await;
+                    let mut runtime_sync = PrimaryAgentRuntimeSyncContext {
+                        config: &config,
+                        vt_cfg: vt_cfg.as_ref(),
+                        thread_id: &turn_run_id.0,
+                        active_primary_agent: active_primary_agent.active(),
+                        lifecycle_hooks: &mut lifecycle_hooks,
+                        async_mcp_manager: async_mcp_manager.as_ref(),
+                        tool_registry: &mut tool_registry,
+                        tools: &tools,
+                        tool_catalog: &tool_catalog,
+                        mcp_catalog_initialized: &mut mcp_catalog_initialized,
+                        pending_mcp_refresh: &mut pending_mcp_refresh,
+                        provider_client: &*provider_client,
+                    };
+                    sync_primary_agent_runtime(&mut runtime_sync).await?;
+                    let display = active_primary_agent.active().display_name.clone();
+                    let color = active_primary_agent.active().color.clone().filter(|c| !c.trim().is_empty());
+                    handle.set_primary_agent(Some(display), color);
+                }
+
                 if let Some(controller) = tool_registry.subagent_controller() {
                     controller.set_parent_messages(&runtime.state.messages).await;
                 }
@@ -537,7 +646,7 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                             linked_directories: &mut linked_directories,
                             lifecycle_hooks: &mut lifecycle_hooks,
                             full_auto,
-                            skip_confirmations,
+                            skip_confirmations: session_skip_confirmations,
                             approval_recorder: &approval_recorder,
                             tool_permission_cache: &tool_permission_cache,
                             permissions_state: &permissions_state,
@@ -613,35 +722,20 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                             true,
                         )
                         .await;
-                        let specs = match load_primary_agent_specs(&tool_registry, &config.workspace).await {
-                            Ok(specs) => specs,
-                            Err(err) => {
-                                tracing::warn!(error = %err, "Primary-agent discovery failed during plan handoff; using built-ins");
-                                builtin_primary_agent_specs()
-                            }
-                        };
                         let configured_default = vt_cfg
                             .as_ref()
                             .map(|cfg| cfg.default_primary_agent.as_str())
                             .filter(|name| !name.trim().is_empty());
                         let requested_agent = execution_agent.as_deref();
-                        let mut resolved_execution_agent =
-                            resolve_approved_plan_execution_agent(requested_agent, configured_default, &specs);
-                        let specs = if resolved_execution_agent.is_some() {
-                            specs
-                        } else {
-                            // A custom catalog may contain only read-only
-                            // agents. The built-in build agent is the safe
-                            // final execution boundary for an approved plan.
-                            let builtin_specs = builtin_primary_agent_specs();
-                            resolved_execution_agent = resolve_approved_plan_execution_agent(
-                                requested_agent,
-                                configured_default,
-                                &builtin_specs,
-                            );
-                            builtin_specs
-                        };
-                        if requested_agent != resolved_execution_agent.as_deref() {
+                        let resolved_execution_agent = select_approved_plan_execution_agent(
+                            &mut active_primary_agent,
+                            &tool_registry,
+                            &config.workspace,
+                            requested_agent,
+                            configured_default,
+                        )
+                        .await?;
+                        if requested_agent != Some(resolved_execution_agent.as_str()) {
                             tracing::warn!(
                                 requested_agent = ?requested_agent,
                                 resolved_agent = ?resolved_execution_agent,
@@ -651,19 +745,24 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                                 MessageStyle::Info,
                                 &format!(
                                     "Approved plan requires a write-capable agent; switching to {}.",
-                                    resolved_execution_agent.as_deref().unwrap_or("build")
+                                    resolved_execution_agent
                                 ),
                             )?;
                         }
-                        if let Some(agent) = resolved_execution_agent.as_deref() {
-                            if let Err(err) = active_primary_agent.select_from_specs(&specs, agent) {
-                                tracing::warn!(
-                                    agent = %agent,
-                                    error = %err,
-                                    "Approved-plan execution agent unavailable; keeping current agent"
-                                );
-                            }
+                        if let Err(err) = force_reload_workspace_config_for_execution(
+                            config.workspace.as_path(),
+                            &config,
+                            &mut vt_cfg,
+                            &mut tool_registry,
+                            async_mcp_manager.as_deref(),
+                        )
+                        .await
+                        {
+                            tracing::warn!("Failed to reload workspace configuration at plan approval: {}", err);
+                            renderer.line(MessageStyle::Error, &format!("Failed to reload configuration: {err}"))?;
                         }
+
+                        sync_primary_agent_permissions(&mut vt_cfg, active_primary_agent.active());
                         apply_primary_agent_tool_policy_overrides(&tool_registry, active_primary_agent.active()).await;
                         let mut runtime_sync = PrimaryAgentRuntimeSyncContext {
                             config: &config,
@@ -684,21 +783,9 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                         let execution_color =
                             active_primary_agent.active().color.clone().filter(|c| !c.trim().is_empty());
                         handle.set_primary_agent(Some(execution_display), execution_color);
+                        session_skip_confirmations = auto_accept;
                         handle.set_skip_confirmations(auto_accept);
                         renderer.line(MessageStyle::Info, "Executing approved plan...")?;
-
-                        if let Err(err) = force_reload_workspace_config_for_execution(
-                            config.workspace.as_path(),
-                            &config,
-                            &mut vt_cfg,
-                            &mut tool_registry,
-                            async_mcp_manager.as_deref(),
-                        )
-                        .await
-                        {
-                            tracing::warn!("Failed to reload workspace configuration at plan approval: {}", err);
-                            renderer.line(MessageStyle::Error, &format!("Failed to reload configuration: {err}"))?;
-                        }
 
                         let mut execution_directive = PLAN_APPROVED_EXECUTION_DIRECTIVE.to_string();
                         if let Some(seed) = plan_seed {
@@ -781,7 +868,7 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                         &mut provider_client,
                         &traj,
                         &active_primary_agent,
-                        skip_confirmations,
+                        session_skip_confirmations,
                         full_auto,
                         runtime_steering,
                     );
@@ -881,87 +968,56 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                 // plan-confirmation popup is rendered inside the turn loop rather
                 // than the inline interaction loop.
                 if let Some(requested_agent) = switch_primary_agent {
-                    let mut specs = match load_primary_agent_specs(&tool_registry, &config.workspace).await {
-                        Ok(specs) => specs,
-                        Err(err) => {
-                            tracing::warn!(error = %err, "Primary-agent discovery failed during plan handoff; using built-ins");
-                            builtin_primary_agent_specs()
-                        }
-                    };
                     let configured_default = vt_cfg
                         .as_ref()
                         .map(|cfg| cfg.default_primary_agent.as_str())
                         .filter(|name| !name.trim().is_empty());
-                    let mut execution_agent = resolve_approved_plan_execution_agent(
+                    let execution_agent = select_approved_plan_execution_agent(
+                        &mut active_primary_agent,
+                        &tool_registry,
+                        &config.workspace,
                         Some(requested_agent.as_str()),
                         configured_default,
-                        &specs,
-                    );
-                    if execution_agent.is_none() {
-                        specs = builtin_primary_agent_specs();
-                        execution_agent = resolve_approved_plan_execution_agent(
-                            Some(requested_agent.as_str()),
-                            configured_default,
-                            &specs,
-                        );
-                    }
-                    if execution_agent.as_deref() != Some(requested_agent.as_str()) {
+                    )
+                    .await?;
+                    if execution_agent != requested_agent {
                         tracing::warn!(
                             requested_agent = %requested_agent,
-                            resolved_agent = ?execution_agent,
+                            resolved_agent = %execution_agent,
                             "Approved plan requested a non-executable primary agent; using a write-capable agent"
                         );
                         renderer.line(
                             MessageStyle::Info,
-                            &format!(
-                                "Approved plan requires a write-capable agent; switching to {}.",
-                                execution_agent.as_deref().unwrap_or("build")
-                            ),
+                            &format!("Approved plan requires a write-capable agent; switching to {}.", execution_agent),
                         )?;
                     }
-                    let Some(execution_agent) = execution_agent else {
-                        renderer.line(
-                            MessageStyle::Error,
-                            "No write-capable primary agent is available to execute the approved plan.",
-                        )?;
-                        continue;
+                    session_skip_confirmations = execution_agent.eq_ignore_ascii_case("auto");
+                    handle.set_skip_confirmations(session_skip_confirmations);
+                    sync_primary_agent_permissions(&mut vt_cfg, active_primary_agent.active());
+                    apply_primary_agent_tool_policy_overrides(&tool_registry, active_primary_agent.active()).await;
+                    let mut runtime_sync = PrimaryAgentRuntimeSyncContext {
+                        config: &config,
+                        vt_cfg: vt_cfg.as_ref(),
+                        thread_id: &turn_run_id.0,
+                        active_primary_agent: active_primary_agent.active(),
+                        lifecycle_hooks: &mut lifecycle_hooks,
+                        async_mcp_manager: async_mcp_manager.as_ref(),
+                        tool_registry: &mut tool_registry,
+                        tools: &tools,
+                        tool_catalog: &tool_catalog,
+                        mcp_catalog_initialized: &mut mcp_catalog_initialized,
+                        pending_mcp_refresh: &mut pending_mcp_refresh,
+                        provider_client: &*provider_client,
                     };
-                    match active_primary_agent.select_from_specs(&specs, &execution_agent) {
-                        Ok(_) => {
-                            apply_primary_agent_tool_policy_overrides(&tool_registry, active_primary_agent.active())
-                                .await;
-                            let mut runtime_sync = PrimaryAgentRuntimeSyncContext {
-                                config: &config,
-                                vt_cfg: vt_cfg.as_ref(),
-                                thread_id: &turn_run_id.0,
-                                active_primary_agent: active_primary_agent.active(),
-                                lifecycle_hooks: &mut lifecycle_hooks,
-                                async_mcp_manager: async_mcp_manager.as_ref(),
-                                tool_registry: &mut tool_registry,
-                                tools: &tools,
-                                tool_catalog: &tool_catalog,
-                                mcp_catalog_initialized: &mut mcp_catalog_initialized,
-                                pending_mcp_refresh: &mut pending_mcp_refresh,
-                                provider_client: &*provider_client,
-                            };
-                            sync_primary_agent_runtime(&mut runtime_sync).await?;
-                            let display = active_primary_agent.active().display_name.clone();
-                            let color = active_primary_agent.active().color.clone().filter(|c| !c.trim().is_empty());
-                            handle.set_primary_agent(Some(display), color);
-                            tracing::info!(
-                                target: "vtcode.planning_workflow",
-                                agent = %execution_agent,
-                                "Switched primary agent after plan approval"
-                            );
-                        }
-                        Err(err) => {
-                            tracing::warn!(
-                                agent = %execution_agent,
-                                error = %err,
-                                "Primary agent handoff failed; keeping current agent"
-                            );
-                        }
-                    }
+                    sync_primary_agent_runtime(&mut runtime_sync).await?;
+                    let display = active_primary_agent.active().display_name.clone();
+                    let color = active_primary_agent.active().color.clone().filter(|c| !c.trim().is_empty());
+                    handle.set_primary_agent(Some(display), color);
+                    tracing::info!(
+                        target: "vtcode.planning_workflow",
+                        agent = %execution_agent,
+                        "Switched primary agent after plan approval"
+                    );
                 }
                 if plan_approved_execution_pending {
                     approved_plan_execution_turn = true;

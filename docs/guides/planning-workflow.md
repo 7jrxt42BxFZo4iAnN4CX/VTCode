@@ -112,6 +112,12 @@ the built-in `build` agent. If the dedicated `plan` agent was already active
 when planning began, approval uses the configured default execution agent
 only when that agent can mutate the workspace.
 
+The approval overlay shows a compact synopsis so its choices remain visible,
+while the complete plan markdown is appended to the scrollable TUI transcript
+and remains available from the persisted plan file. The queued implementation
+turn revalidates the handoff, exits any stale planning gate, and refreshes the
+selected agent's permission snapshot before tools are exposed.
+
 ### Clarification Interviews
 
 When the planning agent reaches a material ambiguity, or identifies an open
@@ -190,8 +196,9 @@ scope/decomposition/verification decisions are closed.
 
 ## Review Gate
 
-After a plan is ready, an interactive human-in-the-loop (HITL) confirmation popup presents a structured summary (phases/steps
-checklist, or the raw plan when structured data is absent) and a decision gate.
+After a plan is ready, an interactive human-in-the-loop (HITL) confirmation popup presents a bounded, decision-ready synopsis
+(summary plus numbered steps) and a decision gate. The complete markdown remains available in the persisted plan file and
+runtime plan events; long previews are elided with an explicit count rather than silently clipped.
 
 Approval options:
 

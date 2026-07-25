@@ -39,6 +39,19 @@ pub(crate) struct PrimaryAgentRuntimeSyncContext<'a> {
     pub(crate) provider_client: &'a dyn uni::LLMProvider,
 }
 
+/// Keep the runtime permission snapshot aligned with the selected primary
+/// agent. The snapshot is consulted before the active-agent fallback, so a
+/// plan-to-build handoff must replace permissions inherited from the planning
+/// agent or a prior full-auto runtime.
+pub(crate) fn sync_primary_agent_permissions(
+    vt_cfg: &mut Option<VTCodeConfig>,
+    active_primary_agent: &ActivePrimaryAgent,
+) {
+    if let Some(cfg) = vt_cfg {
+        cfg.runtime_agent_permissions = Some(active_primary_agent.permissions.clone());
+    }
+}
+
 pub(crate) async fn sync_primary_agent_runtime(ctx: &mut PrimaryAgentRuntimeSyncContext<'_>) -> Result<()> {
     let Some(cfg) = ctx.vt_cfg else {
         *ctx.lifecycle_hooks = None;
@@ -152,8 +165,11 @@ pub(crate) fn resolve_approved_plan_execution_agent(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_approved_plan_execution_agent;
+    use super::{resolve_approved_plan_execution_agent, sync_primary_agent_permissions};
+    use vtcode_config::core::permissions::{AgentPermissionsConfig, PermissionDefault};
     use vtcode_config::{builtin_primary_auto_agent, builtin_primary_build_agent, builtin_primary_duck_agent};
+    use vtcode_core::config::loader::VTCodeConfig;
+    use vtcode_core::primary_agent::ActivePrimaryAgent;
 
     #[test]
     fn read_only_requested_agent_falls_back_to_build() {
@@ -180,5 +196,21 @@ mod tests {
         let specs = vec![builtin_primary_duck_agent()];
 
         assert_eq!(resolve_approved_plan_execution_agent(Some("duck"), None, &specs), None);
+    }
+
+    #[test]
+    fn plan_handoff_replaces_stale_runtime_permissions() {
+        let mut vt_cfg = Some(VTCodeConfig {
+            runtime_agent_permissions: Some(AgentPermissionsConfig::new(PermissionDefault::Deny)),
+            ..VTCodeConfig::default()
+        });
+        let build = ActivePrimaryAgent::from_spec(&builtin_primary_build_agent());
+
+        sync_primary_agent_permissions(&mut vt_cfg, &build);
+
+        assert_eq!(
+            vt_cfg.expect("runtime config should remain present").runtime_agent_permissions,
+            Some(build.permissions)
+        );
     }
 }

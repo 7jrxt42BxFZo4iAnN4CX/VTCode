@@ -92,6 +92,15 @@ fn render_confirmation_prompt(handle: &InlineHandle, plan: &PlanContent) {
         append_message(handle, InlineMessageKind::Info, format!("Plan: {}", plan.title));
     }
 
+    // Keep the approval overlay compact, but put the complete persisted draft
+    // in the scrollable transcript so users can review every section before
+    // choosing an execution mode. The overlay's `lines` field is intentionally
+    // bounded by `render_plan_summary` and must not be used for this content.
+    if !plan.raw_content.trim().is_empty() {
+        append_message(handle, InlineMessageKind::Info, "Implementation plan (full):");
+        append_message(handle, InlineMessageKind::Agent, plan.raw_content.clone());
+    }
+
     if let Some(path) = plan.file_path.as_deref()
         && !path.trim().is_empty()
     {
@@ -110,6 +119,7 @@ fn render_confirmation_prompt(handle: &InlineHandle, plan: &PlanContent) {
 /// scannable checklist. Falls back to the raw content or summary when the
 /// structured data is absent, so a malformed or partially synthesized plan
 /// still renders something useful instead of a blank panel.
+#[cfg(test)]
 pub(crate) fn render_structured_plan(plan: &PlanContent) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
 
@@ -170,13 +180,89 @@ pub(crate) fn render_structured_plan(plan: &PlanContent) -> Vec<String> {
     lines
 }
 
+// The confirmation prompt consumes one of the modal's six instruction rows.
+const PLAN_PREVIEW_MAX_LINES: usize = 5;
+const PLAN_PREVIEW_MAX_CHARS: usize = 64;
+
+fn truncate_plan_preview(text: &str) -> String {
+    let text = text.trim();
+    let mut chars = text.chars();
+    let preview: String = chars.by_ref().take(PLAN_PREVIEW_MAX_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{preview}…")
+    } else {
+        preview
+    }
+}
+
+fn numbered_step_description(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let (number, description) = trimmed.split_once('.')?;
+    if number.is_empty() || !number.chars().all(|character| character.is_ascii_digit()) {
+        return None;
+    }
+
+    let description = description.trim();
+    (!description.is_empty()).then(|| format!("{number}. {description}"))
+}
+
+/// Render a bounded, decision-ready plan synopsis for the inline approval UI.
+///
+/// The plan file and plan events retain the complete markdown. The approval
+/// modal has a small instruction viewport, so it receives only the summary and
+/// numbered steps, with long lines elided and an explicit count for omitted
+/// steps.
+pub(crate) fn render_plan_summary(plan: &PlanContent) -> Vec<String> {
+    let mut lines = Vec::new();
+    if !plan.summary.trim().is_empty() {
+        lines.push(format!("Summary: {}", truncate_plan_preview(&plan.summary)));
+    }
+
+    let structured_steps: Vec<String> = plan
+        .phases
+        .iter()
+        .flat_map(|phase| phase.steps.iter())
+        .map(|step| format!("{}. {}", step.number, step.description))
+        .collect();
+    let step_lines = if structured_steps.is_empty() {
+        plan.raw_content.lines().filter_map(numbered_step_description).collect()
+    } else {
+        structured_steps
+    };
+
+    let available_step_lines = PLAN_PREVIEW_MAX_LINES.saturating_sub(lines.len());
+    if step_lines.len() > available_step_lines {
+        let visible_step_count = available_step_lines.saturating_sub(1);
+        lines.extend(
+            step_lines
+                .iter()
+                .take(visible_step_count)
+                .map(|line| truncate_plan_preview(line)),
+        );
+        lines.push(format!("… and {} more plan steps", step_lines.len() - visible_step_count));
+    } else {
+        lines.extend(step_lines.iter().map(|line| truncate_plan_preview(line)));
+    }
+
+    if lines.is_empty() {
+        let fallback = if plan.title.trim().is_empty() {
+            "Plan details are available in the plan file.".to_string()
+        } else {
+            format!("Plan: {}", plan.title.trim())
+        };
+        lines.push(truncate_plan_preview(&fallback));
+    }
+
+    lines
+}
+
 pub(crate) fn build_plan_confirmation_request(plan: &PlanContent, draft_incomplete: bool) -> TransientRequest {
     tracing::info!(
         target: "vtcode.planning_workflow",
         draft_incomplete,
         "build_plan_confirmation_request: building overlay request"
     );
-    let mut lines: Vec<String> = render_structured_plan(plan);
+    let mut lines = render_plan_summary(plan);
     lines.insert(0, "A plan is ready to execute. Would you like to proceed?".to_string());
 
     let footer_hint = plan
@@ -366,7 +452,12 @@ pub(crate) async fn execute_plan_approval(
         "execute_plan_approval: showing confirmation dialog"
     );
 
-    let plan_content = PlanContent::from_markdown("Implementation Plan".to_string(), plan_text, None);
+    let plan_file = tool_registry
+        .planning_workflow_state()
+        .get_plan_file()
+        .await
+        .map(|path| path.to_string_lossy().into_owned());
+    let plan_content = PlanContent::from_markdown("Implementation Plan".to_string(), plan_text, plan_file);
     let outcome = execute_plan_confirmation(handle, session, plan_content, false, ctrl_c_state, ctrl_c_notify).await;
 
     tracing::info!(
@@ -462,12 +553,12 @@ mod tests {
 
     use super::{
         PlanApprovalRoute, PlanConfirmationOutcome, build_plan_confirmation_request, execute_plan_confirmation,
-        plan_approval_route, plan_confirmation_submission_to_outcome, render_structured_plan,
+        plan_approval_route, plan_confirmation_submission_to_outcome, render_plan_summary, render_structured_plan,
     };
     use crate::agent::runloop::unified::state::CtrlCState;
     use vtcode_ui::tui::app::{
-        InlineCommand, InlineEvent, InlineHandle, InlineListSelection, InlineSession, ListOverlayRequest,
-        TransientEvent, TransientHotkeyAction, TransientRequest, TransientSubmission,
+        InlineCommand, InlineEvent, InlineHandle, InlineListSelection, InlineMessageKind, InlineSession,
+        ListOverlayRequest, TransientEvent, TransientHotkeyAction, TransientRequest, TransientSubmission,
     };
     use vtcode_ui::tui::app::{PlanContent, PlanPhase, PlanStep};
 
@@ -550,6 +641,23 @@ mod tests {
             completed_steps: 0,
         };
         assert_eq!(render_structured_plan(&plan), vec!["Only a title".to_string(), String::new()]);
+    }
+
+    #[test]
+    fn plan_summary_preview_keeps_sparse_markdown_decision_complete() {
+        let plan = PlanContent::from_markdown(
+            "Implementation Plan".to_string(),
+            "Summary\nFocus the launch-time improvement on startup latency.\n\n1. Instrument startup timing -> src/startup.rs -> verify: add logs.\n2. Move refresh off the critical path -> src/update.rs -> verify: UI renders first.\n3. Prefer the cached notice -> src/update.rs -> verify: stale refresh is deferred.\n4. Add a bounded fallback -> src/startup.rs -> verify: startup never waits.\n5. Validate with focused tests -> src/startup.rs -> verify: nextest passes.\n\nValidation\n- cargo check --locked",
+            Some(".vtcode/plans/startup.md".to_string()),
+        );
+
+        let lines = render_plan_summary(&plan);
+        assert_eq!(plan.summary, "Focus the launch-time improvement on startup latency.");
+        assert_eq!(lines.len(), 5);
+        assert!(lines[0].starts_with("Summary: Focus the launch-time improvement"));
+        assert!(lines.iter().any(|line| line.starts_with("1. Instrument startup timing")));
+        assert!(lines.iter().any(|line| line == "… and 2 more plan steps"));
+        assert!(!lines.iter().any(|line| line == "Summary"));
     }
 
     // --- C: switch outcomes (submission mapping, request items) ------
@@ -641,12 +749,18 @@ mod tests {
                 .expect("confirmation overlay result");
         assert_eq!(outcome, PlanConfirmationOutcome::AutoAccept);
 
+        let mut transcript_messages = Vec::new();
         let request = loop {
             let command = command_rx.try_recv().expect("confirmation command");
-            if let InlineCommand::ShowTransient { request } = command {
-                break request;
+            match command {
+                InlineCommand::AppendPastedMessage { kind: InlineMessageKind::Agent, text, .. } => {
+                    transcript_messages.push(text);
+                }
+                InlineCommand::ShowTransient { request } => break request,
+                _ => {}
             }
         };
+        assert!(transcript_messages.iter().any(|text| text == "RAW fallback content"));
 
         match *request {
             TransientRequest::List(request) => {
