@@ -12,7 +12,7 @@ use reqwest::StatusCode;
 use serde::Deserialize;
 use tracing::warn;
 use vtcode_config::VTCodeConfig;
-use vtcode_core::config::api_keys::{ApiKeySources, get_api_key};
+use vtcode_core::config::api_keys::{ApiKeySources, get_api_key_with_mode};
 use vtcode_core::config::models::Provider;
 use vtcode_core::copilot::{CopilotAuthStatusKind, list_available_models, probe_auth_status};
 use vtcode_core::llm::providers::llamacpp::fetch_llamacpp_models;
@@ -243,7 +243,7 @@ fn build_static_model_index(options: &[ModelOption]) -> StaticModelIndex {
 fn resolve_openai_dynamic_auth(vt_cfg: Option<&VTCodeConfig>) -> Option<String> {
     let auth_config = vt_cfg.map(|cfg| cfg.auth.openai.clone()).unwrap_or_default();
     let storage_mode = vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default();
-    let api_key = get_api_key("openai", &ApiKeySources::default()).ok();
+    let api_key = get_api_key_with_mode("openai", &ApiKeySources::default(), storage_mode).ok();
 
     vtcode_config::resolve_openai_auth(&auth_config, storage_mode, api_key)
         .ok()

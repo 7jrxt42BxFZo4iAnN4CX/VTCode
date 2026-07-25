@@ -17,6 +17,7 @@ pub(crate) fn auth_storage_dir() -> Result<PathBuf> {
         .clone()
     {
         fs::create_dir_all(&path).context("failed to create auth directory")?;
+        set_private_directory_permissions(&path)?;
         return Ok(path);
     }
 
@@ -42,6 +43,7 @@ pub(crate) fn auth_storage_dir() -> Result<PathBuf> {
         .join("auth");
 
     fs::create_dir_all(&auth_dir).context("failed to create auth directory")?;
+    set_private_directory_permissions(&auth_dir)?;
 
     // Cache for subsequent calls. If another thread set it first, discard ours.
     let _ = CACHED_PATH.set(auth_dir.clone());
@@ -58,6 +60,7 @@ pub(crate) fn legacy_auth_storage_path() -> Result<PathBuf> {
         .clone()
     {
         fs::create_dir_all(&path).context("failed to create auth directory")?;
+        set_private_directory_permissions(&path)?;
         return Ok(path.join("auth.json"));
     }
 
@@ -91,6 +94,19 @@ pub(crate) fn write_private_file(path: &Path, contents: &[u8]) -> Result<()> {
         .with_context(|| format!("failed to persist private file {}", path.display()))?;
     #[cfg(unix)]
     set_private_path_permissions(path)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_private_directory_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .with_context(|| format!("failed to set permissions on {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn set_private_directory_permissions(_path: &Path) -> Result<()> {
     Ok(())
 }
 

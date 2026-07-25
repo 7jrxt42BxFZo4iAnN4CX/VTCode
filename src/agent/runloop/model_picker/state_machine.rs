@@ -1,4 +1,4 @@
-use vtcode_core::config::api_keys::{ApiKeySources, get_api_key};
+use vtcode_core::config::api_keys::{ApiKeySources, get_api_key_with_mode};
 
 use super::selection::supports_gpt5_none_reasoning;
 use super::*;
@@ -79,6 +79,7 @@ impl ModelPickerState {
         };
         if self.inline_enabled {
             show_secure_api_modal(renderer, selection, self.workspace.as_deref());
+            return Ok(());
         }
         prompt_api_key_plain(renderer, selection, self.workspace.as_deref())
     }
@@ -587,7 +588,12 @@ impl ModelPickerState {
             return Ok(Some(ExistingKey::WorkspaceDotenv));
         }
 
-        if get_api_key(provider, &ApiKeySources::default()).is_ok() {
+        let storage_mode = self
+            .vt_cfg
+            .as_ref()
+            .map(|cfg| cfg.agent.credential_storage_mode)
+            .unwrap_or_default();
+        if get_api_key_with_mode(provider, &ApiKeySources::default(), storage_mode).is_ok() {
             return Ok(Some(ExistingKey::StoredCredential));
         }
 

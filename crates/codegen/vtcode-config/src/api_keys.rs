@@ -105,15 +105,28 @@ pub fn load_dotenv() -> Result<()> {
 /// Adding a new built-in provider only requires:
 /// - A `Provider` variant with `default_api_key_env()` returning the env var name
 /// - (Optional) a match arm here only if the provider needs special fallback logic
-pub fn get_api_key(provider: &str, _sources: &ApiKeySources) -> Result<String> {
+pub fn get_api_key(provider: &str, sources: &ApiKeySources) -> Result<String> {
+    get_api_key_with_mode(provider, sources, crate::auth::AuthCredentialsStoreMode::default())
+}
+
+/// Get an API key using the configured secure-storage backend.
+///
+/// Environment variables remain the highest-priority source. Secure storage
+/// is read with `storage_mode` so a key written to an explicitly configured
+/// backend is resolved from that same backend on every startup.
+pub fn get_api_key_with_mode(
+    provider: &str,
+    _sources: &ApiKeySources,
+    storage_mode: crate::auth::AuthCredentialsStoreMode,
+) -> Result<String> {
     let normalized_provider = provider.to_lowercase();
     let inferred_env = api_key_env_var(&normalized_provider);
 
     // Generic path: read the inferred env var for any provider.
     if let Some(key) = read_env_var(&inferred_env)
-        && !key.is_empty()
+        && !key.trim().is_empty()
     {
-        return Ok(key);
+        return Ok(key.trim().to_owned());
     }
 
     // Provider-specific fallback logic. Most providers are handled by the generic
@@ -122,14 +135,14 @@ pub fn get_api_key(provider: &str, _sources: &ApiKeySources) -> Result<String> {
     let provider_result = match normalized_provider.as_str() {
         // Gemini falls back to GOOGLE_API_KEY for backward compatibility
         "gemini" => {
-            if let Some(key) = read_env_var("GOOGLE_API_KEY").filter(|k| !k.is_empty()) {
-                return Ok(key);
+            if let Some(key) = read_env_var("GOOGLE_API_KEY").filter(|k| !k.trim().is_empty()) {
+                return Ok(key.trim().to_owned());
             }
             Err(anyhow::anyhow!("GEMINI_API_KEY or GOOGLE_API_KEY not set"))
         }
         // OpenRouter tries OAuth token from encrypted storage first
         "openrouter" => {
-            if let Ok(Some(token)) = crate::auth::load_oauth_token() {
+            if let Ok(Some(token)) = crate::auth::load_oauth_token_with_mode(storage_mode) {
                 tracing::debug!("Using OAuth token for OpenRouter authentication");
                 return Ok(token.api_key);
             }
@@ -137,8 +150,8 @@ pub fn get_api_key(provider: &str, _sources: &ApiKeySources) -> Result<String> {
         }
         // Qwen has an alternate env var name
         "qwen" => {
-            if let Some(key) = read_env_var("DASHSCOPE_API_KEY").filter(|k| !k.is_empty()) {
-                return Ok(key);
+            if let Some(key) = read_env_var("DASHSCOPE_API_KEY").filter(|k| !k.trim().is_empty()) {
+                return Ok(key.trim().to_owned());
             }
             Err(anyhow::anyhow!("QWEN_API_KEY or DASHSCOPE_API_KEY not set"))
         }
@@ -164,7 +177,7 @@ pub fn get_api_key(provider: &str, _sources: &ApiKeySources) -> Result<String> {
     }
 
     // Try secure storage (keyring) only after env/config lookup fails.
-    if let Ok(Some(key)) = get_custom_api_key_from_secure_storage(&normalized_provider) {
+    if let Ok(Some(key)) = get_custom_api_key_from_secure_storage(&normalized_provider, storage_mode) {
         return Ok(key);
     }
 
@@ -184,11 +197,16 @@ pub fn get_api_key(provider: &str, _sources: &ApiKeySources) -> Result<String> {
 /// * `Ok(Some(String))` - The API key if found in secure storage
 /// * `Ok(None)` - If no key is stored for this provider
 /// * `Err` - If there was an error accessing secure storage
-fn get_custom_api_key_from_secure_storage(provider: &str) -> Result<Option<String>> {
+fn get_custom_api_key_from_secure_storage(
+    provider: &str,
+    storage_mode: crate::auth::AuthCredentialsStoreMode,
+) -> Result<Option<String>> {
     let storage = CustomApiKeyStorage::new(provider);
-    // The auth layer handles keyring-to-file fallback internally.
-    let mode = crate::auth::AuthCredentialsStoreMode::default();
-    storage.load(mode)
+    // The auth layer handles keyring-to-file fallback internally when the
+    // configured mode permits it.
+    storage
+        .load(storage_mode)
+        .map(|value| value.filter(|key| !key.trim().is_empty()))
 }
 
 /// Where a provider's credential was discovered.
@@ -256,6 +274,14 @@ pub struct DiscoveredProvider {
 /// Prefer this over [`provider_credential_source`] when you need to surface
 /// *which* env var was read (e.g. the first-run wizard and `api_key_hint`).
 pub fn provider_credential_detail(provider: Provider) -> Option<DiscoveredProvider> {
+    provider_credential_detail_with_mode(provider, crate::auth::AuthCredentialsStoreMode::default())
+}
+
+/// Determine whether a provider has a usable credential using `storage_mode`.
+pub fn provider_credential_detail_with_mode(
+    provider: Provider,
+    storage_mode: crate::auth::AuthCredentialsStoreMode,
+) -> Option<DiscoveredProvider> {
     if provider.is_local() {
         return Some(DiscoveredProvider {
             provider,
@@ -272,14 +298,21 @@ pub fn provider_credential_detail(provider: Provider) -> Option<DiscoveredProvid
     }
 
     // OAuth-backed providers: an active session counts as ready.
-    if matches!(provider, Provider::OpenRouter) && crate::auth::load_oauth_token().ok().flatten().is_some() {
+    if matches!(provider, Provider::OpenRouter)
+        && crate::auth::load_oauth_token_with_mode(storage_mode).ok().flatten().is_some()
+    {
         return Some(DiscoveredProvider {
             provider,
             source: CredentialSource::OAuth,
             env_var: None,
         });
     }
-    if matches!(provider, Provider::OpenAI) && crate::auth::load_openai_chatgpt_session().ok().flatten().is_some() {
+    if matches!(provider, Provider::OpenAI)
+        && crate::auth::load_openai_chatgpt_session_with_mode(storage_mode)
+            .ok()
+            .flatten()
+            .is_some()
+    {
         return Some(DiscoveredProvider {
             provider,
             source: CredentialSource::OAuth,
@@ -310,7 +343,7 @@ pub fn provider_credential_detail(provider: Provider) -> Option<DiscoveredProvid
     }
 
     // Secure storage (OS keyring with encrypted-file fallback).
-    if has_stored_credential(provider) {
+    if has_stored_credential(provider, storage_mode) {
         return Some(DiscoveredProvider {
             provider,
             source: CredentialSource::SecureStorage,
@@ -339,9 +372,16 @@ fn provider_credential_source(provider: Provider) -> Option<CredentialSource> {
 /// `vtcode.toml` custom providers — the first-run wizard runs before a config
 /// exists. Runtime custom-provider auth is handled by `resolve_runtime_provider_auth`.
 pub fn discover_available_providers() -> Vec<DiscoveredProvider> {
+    discover_available_providers_with_mode(crate::auth::AuthCredentialsStoreMode::default())
+}
+
+/// Scan all built-in providers using the configured secure-storage backend.
+pub fn discover_available_providers_with_mode(
+    storage_mode: crate::auth::AuthCredentialsStoreMode,
+) -> Vec<DiscoveredProvider> {
     Provider::all_providers()
         .into_iter()
-        .filter_map(provider_credential_detail)
+        .filter_map(|provider| provider_credential_detail_with_mode(provider, storage_mode))
         .collect()
 }
 
@@ -373,8 +413,8 @@ fn alternate_env_var(provider: Provider) -> Option<&'static str> {
     }
 }
 
-fn has_stored_credential(provider: Provider) -> bool {
-    get_custom_api_key_from_secure_storage(provider.as_ref())
+fn has_stored_credential(provider: Provider, storage_mode: crate::auth::AuthCredentialsStoreMode) -> bool {
+    get_custom_api_key_from_secure_storage(provider.as_ref(), storage_mode)
         .ok()
         .flatten()
         .is_some()
@@ -383,7 +423,6 @@ fn has_stored_credential(provider: Provider) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::{AuthCredentialsStoreMode, CustomApiKeyStorage};
     use std::sync::Mutex;
 
     // Serialise all env-override tests so that one test's Drop restore cannot
@@ -738,15 +777,10 @@ mod tests {
     }
 
     #[test]
-    fn get_api_key_falls_through_to_secure_storage_for_generic_providers() {
-        // Providers without a dedicated match arm (e.g. stepfun, deepseek) must
-        // still fall through to the secure-storage fallback. Regression test for
-        // the bug where the `_` arm returned early and skipped keyring lookup.
-        with_overrides(&[("STEPFUN_API_KEY", None)], || {
-            let storage = CustomApiKeyStorage::new("stepfun");
-            storage.store("test-stepfun-key", AuthCredentialsStoreMode::default()).unwrap();
-
-            let result = get_api_key("stepfun", &default_sources());
+    fn get_api_key_trims_non_empty_environment_values() {
+        with_override("STEPFUN_API_KEY", Some("  test-stepfun-key  "), || {
+            let result =
+                get_api_key_with_mode("stepfun", &default_sources(), crate::auth::AuthCredentialsStoreMode::File);
             assert_eq!(result.unwrap(), "test-stepfun-key");
         });
     }

@@ -3,7 +3,7 @@ use std::path::Path;
 use vtcode_config::auth::CustomApiKeyStorage;
 use vtcode_config::{read_workspace_env_value, resolve_openai_auth, write_workspace_env_value};
 
-use vtcode_core::config::api_keys::{ApiKeySources, get_api_key};
+use vtcode_core::config::api_keys::{ApiKeySources, get_api_key_with_mode};
 use vtcode_core::config::loader::VTCodeConfig;
 use vtcode_core::config::models::Provider;
 use vtcode_core::config::types::AgentConfig as CoreAgentConfig;
@@ -308,15 +308,16 @@ async fn resolve_runtime_api_key(
     if selection.provider_enum == Some(Provider::OpenAI)
         && let Some(cfg) = vt_cfg
     {
-        let api_key = get_api_key(&selection.provider, &ApiKeySources::default())
-            .inspect_err(|err| {
-                tracing::debug!(
-                    error = %err,
-                    provider = %selection.provider,
-                    "Failed to read API key from keychain; falling back to configured auth"
-                );
-            })
-            .ok();
+        let api_key =
+            get_api_key_with_mode(&selection.provider, &ApiKeySources::default(), cfg.agent.credential_storage_mode)
+                .inspect_err(|err| {
+                    tracing::debug!(
+                        error = %err,
+                        provider = %selection.provider,
+                        "Failed to read API key from keychain; falling back to configured auth"
+                    );
+                })
+                .ok();
         let resolved = resolve_openai_auth(&cfg.auth.openai, cfg.agent.credential_storage_mode, api_key)?;
         return Ok((resolved.api_key().to_string(), resolved.handle()));
     }
@@ -371,7 +372,8 @@ async fn resolve_runtime_api_key(
     }
 
     if selection.provider_enum.is_some() {
-        return get_api_key(&selection.provider, &ApiKeySources::default())
+        let storage_mode = vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default();
+        return get_api_key_with_mode(&selection.provider, &ApiKeySources::default(), storage_mode)
             .with_context(|| format!("API key not found for provider '{}'", selection.provider))
             .map(|key| (key, None));
     }

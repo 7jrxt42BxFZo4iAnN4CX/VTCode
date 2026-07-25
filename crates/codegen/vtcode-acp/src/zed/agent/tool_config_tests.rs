@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
+use vtcode_config::auth::AuthCredentialsStoreMode;
 use vtcode_config::{SubagentDiscoveryInput, discover_subagents};
 use vtcode_core::config::constants::tools;
 use vtcode_core::config::core::PromptCachingConfig;
@@ -58,6 +59,7 @@ async fn build_agent_with_tools_config(workspace: &Path, tools_config: ToolsConf
 
     ZedAgent::new(
         core_config,
+        AuthCredentialsStoreMode::default(),
         zed_config,
         tools_config,
         CommandsConfig::default(),

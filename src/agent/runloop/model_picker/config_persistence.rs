@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use vtcode_config::auth::CustomApiKeyStorage;
 use vtcode_core::config::loader::VTCodeConfig;
@@ -30,7 +30,7 @@ pub(super) async fn persist_selection(
 
     let mut config = config.clone();
     config.agent.provider = selection.provider.clone();
-    apply_api_key_state(&mut config, selection);
+    apply_api_key_state(&mut config, selection)?;
     config.agent.default_model = selection.model.clone();
     config.agent.reasoning_effort = selection.reasoning;
     config.provider.openai.service_tier = synced_openai_service_tier(selection);
@@ -54,25 +54,26 @@ pub(crate) async fn persist_lightweight_selection(workspace: &std::path::Path, m
     Ok(config)
 }
 
-fn apply_api_key_state(config: &mut VTCodeConfig, selection: &ModelSelectionResult) {
+fn apply_api_key_state(config: &mut VTCodeConfig, selection: &ModelSelectionResult) -> Result<()> {
     if selection.provider_enum == Some(Provider::OpenAI) && selection.uses_chatgpt_auth {
         config.agent.api_key_env = selection.env_key.clone();
         config.agent.custom_api_keys.remove(&selection.provider);
-        return;
+        return Ok(());
     }
 
     if uses_provider_api_key(selection) {
         config.agent.api_key_env = selection.env_key.clone();
         if selection.api_key.is_some() {
-            sync_stored_api_key(config, selection);
+            sync_stored_api_key(config, selection)?;
         }
-        return;
+        return Ok(());
     }
 
     config.agent.api_key_env.clear();
     if selection.api_key.is_some() {
-        clear_stored_api_key(config, &selection.provider);
+        clear_stored_api_key(config, &selection.provider)?;
     }
+    Ok(())
 }
 
 fn uses_provider_api_key(selection: &ModelSelectionResult) -> bool {
@@ -87,29 +88,31 @@ fn uses_provider_api_key(selection: &ModelSelectionResult) -> bool {
     }
 }
 
-fn sync_stored_api_key(config: &mut VTCodeConfig, selection: &ModelSelectionResult) {
+fn sync_stored_api_key(config: &mut VTCodeConfig, selection: &ModelSelectionResult) -> Result<()> {
     if selection.provider_enum == Some(Provider::OpenAI) && selection.uses_chatgpt_auth {
-        return;
+        return Ok(());
     }
 
     if let Some(api_key) = selection.api_key.as_deref() {
         let storage_mode = config.agent.credential_storage_mode;
         let key_storage = CustomApiKeyStorage::new(&selection.provider);
-        if let Err(err) = key_storage.store(api_key, storage_mode) {
-            tracing::warn!("Failed to store API key for provider '{}' securely: {}", selection.provider, err);
-        }
-        config.agent.custom_api_keys.insert(selection.provider.clone(), String::new());
-        return;
+        key_storage
+            .store(api_key, storage_mode)
+            .with_context(|| format!("failed to persist API key for provider '{}' securely", selection.provider))?;
+        config.agent.custom_api_keys.remove(&selection.provider);
+        return Ok(());
     }
 
-    clear_stored_api_key(config, &selection.provider);
+    clear_stored_api_key(config, &selection.provider)
 }
 
-fn clear_stored_api_key(config: &mut VTCodeConfig, provider: &str) {
+fn clear_stored_api_key(config: &mut VTCodeConfig, provider: &str) -> Result<()> {
     config.agent.custom_api_keys.remove(provider);
     let storage_mode = config.agent.credential_storage_mode;
     let key_storage = CustomApiKeyStorage::new(provider);
-    let _ = key_storage.clear(storage_mode);
+    key_storage
+        .clear(storage_mode)
+        .with_context(|| format!("failed to clear API key for provider '{provider}' securely"))
 }
 
 #[cfg(test)]

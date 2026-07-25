@@ -4,6 +4,7 @@ use std::str::FromStr;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use tracing::warn;
+use vtcode_config::auth::AuthCredentialsStoreMode;
 use vtcode_core::config::models::{ModelId, Provider};
 use vtcode_core::config::types::ReasoningEffortLevel;
 use vtcode_core::core::threads::{ThreadBootstrap, build_thread_archive_metadata};
@@ -569,6 +570,7 @@ mod tests {
 
         ZedAgent::new(
             core_config,
+            AuthCredentialsStoreMode::default(),
             AgentClientProtocolZedConfig::default(),
             ToolsConfig::default(),
             CommandsConfig::default(),

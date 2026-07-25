@@ -6,6 +6,7 @@ use crate::agent::runloop::unified::{context_manager, palettes};
 use crate::agent::runloop::welcome::SessionBootstrap;
 use anyhow::Result;
 use tracing::warn;
+use vtcode_core::config::api_keys::{ApiKeySources, get_api_key_with_mode};
 use vtcode_core::config::loader::VTCodeConfig;
 use vtcode_core::config::types::AgentConfig as CoreAgentConfig;
 use vtcode_core::llm::provider as uni;
@@ -114,9 +115,7 @@ fn maybe_render_openai_priority_notice(
     let default_auth = vtcode_auth::OpenAIAuthConfig::default();
     let auth_cfg = vt_cfg.map(|cfg| &cfg.auth.openai).unwrap_or(&default_auth);
     let storage_mode = vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default();
-    let api_key =
-        vtcode_core::config::api_keys::get_api_key("openai", &vtcode_core::config::api_keys::ApiKeySources::default())
-            .ok();
+    let api_key = get_api_key_with_mode("openai", &ApiKeySources::default(), storage_mode).ok();
     let overview = vtcode_config::auth::summarize_openai_credentials(auth_cfg, storage_mode, api_key)?;
     let Some(notice) = overview.notice.as_deref() else {
         return Ok(());

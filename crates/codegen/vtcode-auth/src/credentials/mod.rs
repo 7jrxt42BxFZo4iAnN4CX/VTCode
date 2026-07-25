@@ -21,7 +21,7 @@ pub use storage::CredentialStorage;
 
 use std::collections::BTreeMap;
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 
 /// Custom API Key storage for provider-specific keys.
 ///
@@ -44,7 +44,18 @@ impl CustomApiKeyStorage {
 
     /// Store an API key securely.
     pub fn store(&self, api_key: &str, mode: AuthCredentialsStoreMode) -> Result<()> {
+        let api_key = api_key.trim();
+        if api_key.is_empty() {
+            bail!("API key cannot be empty");
+        }
         self.storage.store_with_mode(api_key, mode)?;
+        let persisted = self
+            .storage
+            .load_with_mode(mode)
+            .context("failed to verify persisted API key")?;
+        if persisted.as_deref() != Some(api_key) {
+            bail!("secure storage did not return the API key after saving");
+        }
         let _ = legacy::clear_for_provider(&self.provider);
         Ok(())
     }
@@ -52,7 +63,8 @@ impl CustomApiKeyStorage {
     /// Retrieve a stored API key.
     pub fn load(&self, mode: AuthCredentialsStoreMode) -> Result<Option<String>> {
         if let Some(key) = self.storage.load_with_mode(mode)? {
-            return Ok(Some(key));
+            let key = key.trim();
+            return Ok((!key.is_empty()).then(|| key.to_owned()));
         }
 
         self.load_legacy_auth_json(mode)
@@ -70,13 +82,13 @@ impl CustomApiKeyStorage {
             return Ok(None);
         };
 
-        if let Err(err) = self.storage.store_with_mode(&legacy_entry.api_key, mode) {
+        if let Err(err) = self.store(&legacy_entry.api_key, mode) {
             tracing::warn!(
                 "Failed to migrate legacy plaintext auth.json entry for provider '{}' into secure storage: {}",
                 self.provider,
                 err
             );
-            return Ok(Some(legacy_entry.api_key));
+            return Err(err).context("failed to migrate legacy API key into secure storage");
         }
 
         let path = crate::storage_paths::legacy_auth_storage_path().ok();
@@ -88,7 +100,7 @@ impl CustomApiKeyStorage {
             "Migrated legacy plaintext auth.json entry for provider '{}' into secure storage",
             self.provider
         );
-        Ok(Some(legacy_entry.api_key))
+        self.load(mode)
     }
 }
 
@@ -143,4 +155,64 @@ pub fn clear_custom_api_keys(providers: &[String], mode: AuthCredentialsStoreMod
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serial_test::serial;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    struct TestAuthDirGuard {
+        temp_dir: Option<TempDir>,
+        previous: Option<PathBuf>,
+    }
+
+    impl TestAuthDirGuard {
+        fn new() -> Self {
+            let temp_dir = TempDir::new().expect("create temp auth dir");
+            let previous = crate::storage_paths::auth_storage_dir_override_for_tests().expect("read auth dir override");
+            crate::storage_paths::set_auth_storage_dir_override_for_tests(Some(temp_dir.path().to_path_buf()))
+                .expect("set temp auth dir override");
+            Self { temp_dir: Some(temp_dir), previous }
+        }
+    }
+
+    impl Drop for TestAuthDirGuard {
+        fn drop(&mut self) {
+            crate::storage_paths::set_auth_storage_dir_override_for_tests(self.previous.clone())
+                .expect("restore auth dir override");
+            if let Some(temp_dir) = self.temp_dir.take() {
+                temp_dir.close().expect("remove temp auth dir");
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    #[cfg(unix)]
+    fn file_api_key_storage_round_trips_with_private_permissions() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+
+        let guard = TestAuthDirGuard::new();
+        let storage = CustomApiKeyStorage::new("stepfun");
+        storage
+            .store("test-stepfun-key", AuthCredentialsStoreMode::File)
+            .expect("store API key");
+        assert_eq!(
+            storage.load(AuthCredentialsStoreMode::File).expect("load API key").as_deref(),
+            Some("test-stepfun-key")
+        );
+
+        let auth_dir = guard.temp_dir.as_ref().expect("test auth dir").path();
+        assert_eq!(fs::metadata(auth_dir).expect("auth dir metadata").permissions().mode() & 0o777, 0o700);
+        let credential_file = fs::read_dir(auth_dir)
+            .expect("read auth dir")
+            .map(|entry| entry.expect("credential entry").path())
+            .find(|path| path.extension().and_then(|extension| extension.to_str()) == Some("json"))
+            .expect("credential file");
+        assert_eq!(fs::metadata(credential_file).expect("credential metadata").permissions().mode() & 0o777, 0o600);
+    }
 }

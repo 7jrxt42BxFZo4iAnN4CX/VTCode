@@ -46,7 +46,7 @@ use futures::StreamExt;
 use serde_json::json;
 use std::sync::Arc;
 use tracing::warn;
-use vtcode_core::config::api_keys::{ApiKeySources, get_api_key};
+use vtcode_core::config::api_keys::{ApiKeySources, get_api_key_with_mode};
 use vtcode_core::llm::factory::ProviderConfig;
 use vtcode_core::llm::factory::create_provider_with_config;
 use vtcode_core::llm::provider::{LLMRequest, LLMStreamEvent, Message};
@@ -594,5 +594,5 @@ fn resolve_api_key_for_provider(agent: &ZedAgent, provider: &str) -> String {
         return agent.config.api_key.clone();
     }
 
-    get_api_key(provider, &ApiKeySources::default()).unwrap_or_default()
+    get_api_key_with_mode(provider, &ApiKeySources::default(), agent.credential_storage_mode).unwrap_or_default()
 }

@@ -23,7 +23,7 @@ use vtcode_config::PromptCacheRetention;
 use vtcode_config::auth::{OpenAIChatGptAuthHandle, resolve_openai_auth};
 use vtcode_config::workspace_env::read_workspace_env_value;
 use vtcode_core::cli::args::{Cli, Commands};
-use vtcode_core::config::api_keys::{ApiKeySources, get_api_key};
+use vtcode_core::config::api_keys::{ApiKeySources, get_api_key_with_mode};
 use vtcode_core::config::loader::VTCodeConfig;
 use vtcode_core::config::models::{Provider, ProviderModelSupport, model_catalog_entry};
 use vtcode_core::config::types::AgentConfig as CoreAgentConfig;
@@ -342,7 +342,9 @@ async fn resolve_runtime_provider_auth(
     }
 
     if selection.provider.eq_ignore_ascii_case("openai") {
-        let api_key = get_api_key(&selection.provider, &ApiKeySources::default()).ok();
+        let api_key =
+            get_api_key_with_mode(&selection.provider, &ApiKeySources::default(), config.agent.credential_storage_mode)
+                .ok();
         let resolved = resolve_openai_auth(&config.auth.openai, config.agent.credential_storage_mode, api_key)
             .with_context(|| missing_api_key_message(config, selection, first_run_occurred, command, workspace))?;
         return Ok((resolved.api_key().to_string(), resolved.handle()));
@@ -378,8 +380,9 @@ async fn resolve_runtime_provider_auth(
         }
     }
 
-    let api_key = get_api_key(&selection.provider, &ApiKeySources::default())
-        .with_context(|| missing_api_key_message(config, selection, first_run_occurred, command, workspace))?;
+    let api_key =
+        get_api_key_with_mode(&selection.provider, &ApiKeySources::default(), config.agent.credential_storage_mode)
+            .with_context(|| missing_api_key_message(config, selection, first_run_occurred, command, workspace))?;
     Ok((api_key, None))
 }
 

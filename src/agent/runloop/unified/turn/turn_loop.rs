@@ -755,7 +755,13 @@ pub(crate) async fn run_turn_loop(
                                 .provider
                                 .parse::<vtcode_core::config::models::Provider>()
                                 .map(|p| {
-                                    let has = vtcode_config::api_keys::provider_credential_detail(p).is_some();
+                                    let storage_mode = turn_processing_ctx
+                                        .vt_cfg
+                                        .map(|cfg| cfg.agent.credential_storage_mode)
+                                        .unwrap_or_default();
+                                    let has =
+                                        vtcode_config::api_keys::provider_credential_detail_with_mode(p, storage_mode)
+                                            .is_some();
                                     (p.label().to_string(), p.as_ref().to_string(), p.uses_managed_auth(), has)
                                 })
                                 .unwrap_or_else(|_| {

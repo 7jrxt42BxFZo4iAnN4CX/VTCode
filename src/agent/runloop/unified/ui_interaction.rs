@@ -17,7 +17,7 @@ use tokio::time::MissedTickBehavior;
 use vtcode_commons::stop_hints::with_stop_hint;
 
 use vtcode_commons::terminal_detection::TerminalType;
-use vtcode_core::config::api_keys::{ApiKeySources, get_api_key};
+use vtcode_core::config::api_keys::{ApiKeySources, get_api_key_with_mode};
 use vtcode_core::config::loader::layers::ConfigLayerSource;
 use vtcode_core::config::loader::{ConfigManager, VTCodeConfig};
 use vtcode_core::config::mcp::McpTransportConfig;
@@ -137,11 +137,11 @@ async fn render_auth_usage_status(
         .line(MessageStyle::Info, &format!("  OpenRouter: {}", short_oauth_status_openrouter(&openrouter_status)))?;
     renderer.line(MessageStyle::Info, &format!("  GitHub Copilot: {}", short_copilot_status(&copilot_status)))?;
 
+    let storage_mode = ctx.vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default();
     if ctx.config.provider.eq_ignore_ascii_case("openai") {
         let default_auth = vtcode_auth::OpenAIAuthConfig::default();
         let auth_cfg = ctx.vt_cfg.map(|cfg| &cfg.auth.openai).unwrap_or(&default_auth);
-        let storage_mode = ctx.vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default();
-        let api_key = get_api_key("openai", &ApiKeySources::default()).ok();
+        let api_key = get_api_key_with_mode("openai", &ApiKeySources::default(), storage_mode).ok();
         let overview = vtcode_config::auth::summarize_openai_credentials(auth_cfg, storage_mode, api_key)?;
         let usage_status = if ctx.config.openai_chatgpt_auth.is_some() {
             "using ChatGPT subscription"
@@ -163,7 +163,7 @@ async fn render_auth_usage_status(
             renderer.line(MessageStyle::Info, &format!("  Recommendation: {recommendation}"))?;
         }
     } else if ctx.config.provider.eq_ignore_ascii_case("openrouter") {
-        let api_key = get_api_key("openrouter", &ApiKeySources::default()).ok();
+        let api_key = get_api_key_with_mode("openrouter", &ApiKeySources::default(), storage_mode).ok();
         let usage_status = match openrouter_status {
             vtcode_auth::AuthStatus::Authenticated { .. } => "using OpenRouter OAuth",
             vtcode_auth::AuthStatus::NotAuthenticated if api_key.is_some() => "using OPENROUTER_API_KEY",

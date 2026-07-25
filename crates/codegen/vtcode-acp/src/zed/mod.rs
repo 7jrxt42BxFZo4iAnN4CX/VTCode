@@ -50,6 +50,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::Path;
     use tokio::fs;
+    use vtcode_config::auth::AuthCredentialsStoreMode;
     use vtcode_config::{SubagentDiscoveryInput, discover_subagents};
     use vtcode_core::config::core::PromptCachingConfig;
     use vtcode_core::config::models::{ModelId, Provider};
@@ -97,6 +98,7 @@ mod tests {
 
         ZedAgent::new(
             core_config,
+            AuthCredentialsStoreMode::default(),
             zed_config,
             tools_config,
             CommandsConfig::default(),

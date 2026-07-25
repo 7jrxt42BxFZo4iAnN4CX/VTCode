@@ -7,6 +7,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::warn;
+use vtcode_config::auth::AuthCredentialsStoreMode;
 use vtcode_core::config::ToolDocumentationMode;
 use vtcode_core::config::types::{AgentConfig as CoreAgentConfig, CapabilityLevel};
 use vtcode_core::config::{AgentClientProtocolZedConfig, CommandsConfig, ToolsConfig};
@@ -33,6 +34,7 @@ mod updates;
 /// `cx.spawn` tasks and held inside the global connection registry.
 pub(crate) struct ZedAgent {
     config: CoreAgentConfig,
+    credential_storage_mode: AuthCredentialsStoreMode,
     system_prompt: String,
     sessions: Arc<Mutex<HashMap<acp::SessionId, SessionHandle>>>,
     next_session_id: AtomicU64,
@@ -52,6 +54,7 @@ pub(crate) struct ZedAgent {
 impl ZedAgent {
     pub(crate) async fn new(
         config: CoreAgentConfig,
+        credential_storage_mode: AuthCredentialsStoreMode,
         zed_config: AgentClientProtocolZedConfig,
         tools_config: ToolsConfig,
         commands_config: CommandsConfig,
@@ -99,6 +102,7 @@ impl ZedAgent {
 
         Self {
             config,
+            credential_storage_mode,
             system_prompt,
             sessions: Arc::new(Mutex::new(HashMap::with_capacity(10))),
             next_session_id: AtomicU64::new(0),

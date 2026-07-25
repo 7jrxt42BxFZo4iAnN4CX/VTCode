@@ -4,9 +4,7 @@ use crossterm::terminal::enable_raw_mode;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use unicode_width::UnicodeWidthChar;
-use vtcode_config::api_keys::{
-    CredentialSource, DiscoveredProvider, has_oauth_or_managed_auth, provider_credential_detail,
-};
+use vtcode_config::api_keys::{CredentialSource, DiscoveredProvider, has_oauth_or_managed_auth};
 use vtcode_config::auth::{AuthCredentialsStoreMode, CustomApiKeyStorage};
 use vtcode_config::workspace_env::{
     MigrationOutcome, migrate_single_env_key, read_workspace_env_value, read_workspace_env_values,
@@ -21,9 +19,9 @@ pub async fn handle_secret_command(
     storage_mode: AuthCredentialsStoreMode,
 ) -> Result<()> {
     match command {
-        SecretSubcommand::List => render_secret_status_table(None),
+        SecretSubcommand::List => render_secret_status_table(None, storage_mode),
         SecretSubcommand::Status { provider_name } => {
-            render_secret_status_table(provider_name.map(secret_provider_to_provider))
+            render_secret_status_table(provider_name.map(secret_provider_to_provider), storage_mode)
         }
         SecretSubcommand::Add { provider_name } => {
             handle_add(secret_provider_to_provider(provider_name), workspace, storage_mode).await
@@ -35,7 +33,7 @@ pub async fn handle_secret_command(
     }
 }
 
-fn render_secret_status_table(filter: Option<Provider>) -> Result<()> {
+fn render_secret_status_table(filter: Option<Provider>, storage_mode: AuthCredentialsStoreMode) -> Result<()> {
     println!("API Key Status");
     println!();
 
@@ -44,7 +42,10 @@ fn render_secret_status_table(filter: Option<Provider>) -> Result<()> {
         None => Provider::all_providers(),
     };
 
-    let details: Vec<DiscoveredProvider> = providers.iter().filter_map(|&p| provider_credential_detail(p)).collect();
+    let details: Vec<DiscoveredProvider> = providers
+        .iter()
+        .filter_map(|&p| vtcode_config::api_keys::provider_credential_detail_with_mode(p, storage_mode))
+        .collect();
 
     for detail in &details {
         let source = detail.source;

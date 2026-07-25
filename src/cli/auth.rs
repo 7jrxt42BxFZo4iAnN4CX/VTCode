@@ -14,7 +14,7 @@ use vtcode_auth::{
     save_openai_chatgpt_session_with_mode, start_auth_code_callback_server,
 };
 use vtcode_config::VTCodeConfig;
-use vtcode_core::config::api_keys::{ApiKeySources, get_api_key};
+use vtcode_core::config::api_keys::ApiKeySources;
 use vtcode_core::copilot::{
     COPILOT_AUTH_DOC_PATH, CopilotAuthEvent, CopilotAuthStatus, CopilotAuthStatusKind, login_with_events,
     logout_with_events, probe_auth_status,
@@ -535,8 +535,12 @@ pub(crate) async fn handle_show_auth_command(vt_cfg: Option<&VTCodeConfig>, prov
             render_copilot_auth_status(probe_auth_status(&auth_cfg, Some(&workspace)).await);
         }
         Some(value) => match value.parse::<OAuthProvider>() {
-            Ok(OAuthProvider::OpenRouter) => render_openrouter_auth_status(openrouter_auth_status(vt_cfg)?),
-            Ok(OAuthProvider::OpenAi) => render_openai_auth_status(openai_auth_status(vt_cfg)?),
+            Ok(OAuthProvider::OpenRouter) => {
+                render_openrouter_auth_status(openrouter_auth_status(vt_cfg)?, credential_storage_mode(vt_cfg))
+            }
+            Ok(OAuthProvider::OpenAi) => {
+                render_openai_auth_status(openai_auth_status(vt_cfg)?, credential_storage_mode(vt_cfg))
+            }
             Err(()) => {
                 return Err(anyhow!(
                     "Authentication is not supported for provider '{value}'. Supported providers: openai, openrouter, copilot, codex"
@@ -555,9 +559,9 @@ pub(crate) async fn handle_show_auth_command(vt_cfg: Option<&VTCodeConfig>, prov
                 Err(err) => return Err(err),
             }
             println!();
-            render_openrouter_auth_status(openrouter_auth_status(vt_cfg)?);
+            render_openrouter_auth_status(openrouter_auth_status(vt_cfg)?, credential_storage_mode(vt_cfg));
             println!();
-            render_openai_auth_status(openai_auth_status(vt_cfg)?);
+            render_openai_auth_status(openai_auth_status(vt_cfg)?, credential_storage_mode(vt_cfg));
             println!();
             let workspace = current_auth_workspace();
             let auth_cfg = vt_cfg.map(|cfg| cfg.auth.copilot.clone()).unwrap_or_default();
@@ -759,7 +763,7 @@ fn cli_browser_open_approved(input: &str) -> bool {
     matches!(input.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
-fn render_openrouter_auth_status(status: AuthStatus) {
+fn render_openrouter_auth_status(status: AuthStatus, storage_mode: AuthCredentialsStoreMode) {
     match status {
         AuthStatus::Authenticated { label, age_seconds, expires_in } => {
             println!("OpenRouter: authenticated (OAuth)");
@@ -772,8 +776,14 @@ fn render_openrouter_auth_status(status: AuthStatus) {
             }
         }
         AuthStatus::NotAuthenticated => {
-            if get_api_key(OPENROUTER_PROVIDER, &ApiKeySources::default()).is_ok() {
-                println!("OpenRouter: using OPENROUTER_API_KEY");
+            if vtcode_core::config::api_keys::get_api_key_with_mode(
+                OPENROUTER_PROVIDER,
+                &ApiKeySources::default(),
+                storage_mode,
+            )
+            .is_ok()
+            {
+                println!("OpenRouter: using configured API key");
             } else {
                 println!("OpenRouter: not authenticated");
             }
@@ -781,7 +791,7 @@ fn render_openrouter_auth_status(status: AuthStatus) {
     }
 }
 
-fn render_openai_auth_status(status: OpenAIChatGptAuthStatus) {
+fn render_openai_auth_status(status: OpenAIChatGptAuthStatus, storage_mode: AuthCredentialsStoreMode) {
     match status {
         OpenAIChatGptAuthStatus::Authenticated { label, age_seconds, expires_in } => {
             println!("OpenAI: authenticated (ChatGPT)");
@@ -794,8 +804,14 @@ fn render_openai_auth_status(status: OpenAIChatGptAuthStatus) {
             }
         }
         OpenAIChatGptAuthStatus::NotAuthenticated => {
-            if get_api_key(OPENAI_PROVIDER, &ApiKeySources::default()).is_ok() {
-                println!("OpenAI: using OPENAI_API_KEY");
+            if vtcode_core::config::api_keys::get_api_key_with_mode(
+                OPENAI_PROVIDER,
+                &ApiKeySources::default(),
+                storage_mode,
+            )
+            .is_ok()
+            {
+                println!("OpenAI: using configured API key");
             } else {
                 println!("OpenAI: not authenticated");
             }

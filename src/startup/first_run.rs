@@ -2,8 +2,9 @@ use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
 use vtcode_config::api_keys::{
-    CredentialSource, DiscoveredProvider, discover_available_providers, provider_credential_detail,
+    CredentialSource, DiscoveredProvider, discover_available_providers_with_mode, provider_credential_detail_with_mode,
 };
+use vtcode_config::auth::AuthCredentialsStoreMode;
 use vtcode_core::cli::args::{Cli, Commands};
 use vtcode_core::config::constants::{defaults, llm_generation};
 use vtcode_core::config::loader::{ConfigManager, VTCodeConfig};
@@ -87,7 +88,8 @@ async fn run_first_run_setup(workspace: &Path, config: &mut VTCodeConfig, mode: 
     // env vars, loaded .env, OS keyring, OAuth, managed auth, or local). This
     // drives the provider list's "ready" markers and the default cursor, and
     // lets the API-key prompt skip re-pasting keys the user already has.
-    let discovered = discover_available_providers();
+    let storage_mode = config.agent.credential_storage_mode;
+    let discovered = discover_available_providers_with_mode(storage_mode);
     render_discovery_summary(&mut renderer, &discovered)?;
 
     let (provider, model, lightweight_model, reasoning, persistent_memory, trust) = match mode {
@@ -106,7 +108,7 @@ async fn run_first_run_setup(workspace: &Path, config: &mut VTCodeConfig, mode: 
             // Interactive API key entry — skips the paste prompt when the key is
             // already in the environment or OS keyring; stores pasted keys in
             // the OS keyring (not workspace .env).
-            prompt_api_key_interactive(&mut renderer, provider)?;
+            prompt_api_key_interactive(&mut renderer, provider, storage_mode)?;
             renderer.line(MessageStyle::Info, "")?;
 
             let default_model = default_model_for_provider(provider);
@@ -155,7 +157,7 @@ async fn run_first_run_setup(workspace: &Path, config: &mut VTCodeConfig, mode: 
                 MessageStyle::Info,
                 &format!("Persistent memory: {}", persistent_memory_label(persistent_memory)),
             )?;
-            renderer.line(MessageStyle::Info, &api_key_hint(provider))?;
+            renderer.line(MessageStyle::Info, &api_key_hint(provider, storage_mode))?;
             renderer.line(MessageStyle::Info, &format!("Workspace trust: {}", trust_label(trust)))?;
             renderer.line(MessageStyle::Info, "")?;
 
@@ -182,7 +184,16 @@ async fn run_first_run_setup(workspace: &Path, config: &mut VTCodeConfig, mode: 
         .with_context(|| format!("Failed to persist workspace trust level for {}", workspace.display()))?;
 
     renderer.line(MessageStyle::Info, "")?;
-    render_setup_summary(&mut renderer, provider, &model, &lightweight_model, reasoning, persistent_memory, trust)?;
+    render_setup_summary(
+        &mut renderer,
+        provider,
+        &model,
+        &lightweight_model,
+        reasoning,
+        persistent_memory,
+        trust,
+        storage_mode,
+    )?;
     render_optional_search_tools_notice(&mut renderer).await?;
     renderer.line(
         MessageStyle::Status,
@@ -221,10 +232,17 @@ fn render_setup_summary(
     reasoning: ReasoningEffortLevel,
     persistent_memory_enabled: bool,
     trust: WorkspaceTrustLevel,
+    storage_mode: AuthCredentialsStoreMode,
 ) -> Result<()> {
-    for (style, line) in
-        setup_summary_lines(provider, model, lightweight_model, reasoning, persistent_memory_enabled, trust)
-    {
+    for (style, line) in setup_summary_lines(
+        provider,
+        model,
+        lightweight_model,
+        reasoning,
+        persistent_memory_enabled,
+        trust,
+        storage_mode,
+    ) {
         renderer.line(style, &line)?;
     }
     renderer.line(MessageStyle::Info, "")?;
@@ -238,6 +256,7 @@ fn setup_summary_lines(
     reasoning: ReasoningEffortLevel,
     persistent_memory_enabled: bool,
     trust: WorkspaceTrustLevel,
+    storage_mode: AuthCredentialsStoreMode,
 ) -> Vec<(MessageStyle, String)> {
     let mut lines = Vec::with_capacity(12);
     lines.push((
@@ -259,7 +278,7 @@ fn setup_summary_lines(
             trust_label(trust)
         ),
     ));
-    lines.push((MessageStyle::Status, format!("Auth: {}", api_key_hint(provider))));
+    lines.push((MessageStyle::Status, format!("Auth: {}", api_key_hint(provider, storage_mode))));
     lines.push((MessageStyle::Status, "What's available now:".to_string()));
     lines.extend(
         capability_highlight_lines(persistent_memory_enabled)
@@ -298,14 +317,14 @@ fn persistent_memory_label(enabled: bool) -> &'static str {
     if enabled { "On" } else { "Off" }
 }
 
-fn api_key_hint(provider: Provider) -> String {
+fn api_key_hint(provider: Provider, storage_mode: AuthCredentialsStoreMode) -> String {
     if provider.is_local() {
         return "No API key required for local provider.".to_string();
     }
     if provider.uses_managed_auth() {
         return format!("Run `vtcode login {}` to authenticate.", provider);
     }
-    match provider_credential_detail(provider) {
+    match provider_credential_detail_with_mode(provider, storage_mode) {
         Some(detail) => match detail.source {
             CredentialSource::Env => {
                 let var = detail.env_var.unwrap_or_else(|| provider.default_api_key_env());
@@ -445,6 +464,7 @@ mod tests {
             ReasoningEffortLevel::None,
             false,
             WorkspaceTrustLevel::ToolsPolicy,
+            AuthCredentialsStoreMode::default(),
         );
         let rendered = lines.into_iter().map(|(_style, line)| line).collect::<Vec<_>>().join("\n");
 

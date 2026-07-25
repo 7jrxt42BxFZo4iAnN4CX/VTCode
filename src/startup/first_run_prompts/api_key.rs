@@ -1,5 +1,5 @@
 use anyhow::Result;
-use vtcode_config::api_keys::{CredentialSource, provider_credential_detail};
+use vtcode_config::api_keys::CredentialSource;
 use vtcode_config::auth::{AuthCredentialsStoreMode, CustomApiKeyStorage};
 use vtcode_core::config::models::Provider;
 use vtcode_core::utils::ansi::{AnsiRenderer, MessageStyle};
@@ -14,15 +14,19 @@ use super::secret_input::{mask_key, read_secret_line};
 /// 2. Managed-auth provider → defer to its CLI (`vtcode login <provider>`).
 /// 3. Credential already discoverable in the process environment (shell export
 ///    or loaded `.env`) or in secure storage / OAuth → confirm and skip. When
-///    a key is already in the OS keyring, the user may choose to replace it.
+///    a key is already in secure storage, the user may choose to replace it.
 /// 4. Otherwise → prompt to paste. The pasted key is read with terminal echo
 ///    disabled (so it does not appear in scrollback), shown back as a masked
-///    preview for confirmation, and stored in the OS keyring via
+///    preview for confirmation, and stored in secure storage via
 ///    `CustomApiKeyStorage` (with encrypted-file fallback) — **not** the
 ///    workspace `.env`. Whitespace paste mistakes re-prompt instead of
 ///    silently skipping. The env var name is surfaced as the preferred,
 ///    no-duplication alternative.
-pub(crate) fn prompt_api_key_interactive(renderer: &mut AnsiRenderer, provider: Provider) -> Result<()> {
+pub(crate) fn prompt_api_key_interactive(
+    renderer: &mut AnsiRenderer,
+    provider: Provider,
+    storage_mode: AuthCredentialsStoreMode,
+) -> Result<()> {
     if provider.is_local() {
         renderer
             .line(MessageStyle::Info, &format!("No API key required for {} (local provider).", provider.label()))?;
@@ -42,7 +46,7 @@ pub(crate) fn prompt_api_key_interactive(renderer: &mut AnsiRenderer, provider: 
     }
 
     let env_key = provider.default_api_key_env();
-    let detail = provider_credential_detail(provider);
+    let detail = vtcode_config::api_keys::provider_credential_detail_with_mode(provider, storage_mode);
 
     // Already have a credential — confirm and skip the paste prompt, unless
     // the user wants to replace a stored keyring key.
@@ -58,7 +62,7 @@ pub(crate) fn prompt_api_key_interactive(renderer: &mut AnsiRenderer, provider: 
             CredentialSource::SecureStorage => {
                 renderer.line(
                     MessageStyle::Status,
-                    &format!("Found a stored {} key in your OS keyring.", provider.label()),
+                    &format!("Found a stored {} key in secure storage.", provider.label()),
                 )?;
                 if ask_replace_stored_key(renderer)? {
                     // Fall through to the paste flow to overwrite the stored key.
@@ -87,7 +91,7 @@ pub(crate) fn prompt_api_key_interactive(renderer: &mut AnsiRenderer, provider: 
 
     // No credential yet (or the user chose to replace a stored one) — prompt
     // to paste. Loop so a paste mistake re-prompts instead of dead-ending.
-    prompt_paste_flow(renderer, provider, env_key)
+    prompt_paste_flow(renderer, provider, env_key, storage_mode)
 }
 
 /// Ask whether to replace an existing keyring key. Returns `true` for
@@ -110,12 +114,17 @@ fn ask_replace_stored_key(renderer: &mut AnsiRenderer) -> Result<bool> {
     }
 }
 
-/// Echo-off paste → validate → masked confirm → store in OS keyring.
+/// Echo-off paste → validate → masked confirm → store in secure storage.
 ///
 /// Loops on validation failure or a "don't save" confirmation so the user can
 /// re-enter without restarting the wizard. Exits on: empty input (skip),
 /// successful save, or `SetupInterrupted` (Ctrl-C, propagated as an error).
-fn prompt_paste_flow(renderer: &mut AnsiRenderer, provider: Provider, env_key: &'static str) -> Result<()> {
+fn prompt_paste_flow(
+    renderer: &mut AnsiRenderer,
+    provider: Provider,
+    env_key: &'static str,
+    storage_mode: AuthCredentialsStoreMode,
+) -> Result<()> {
     renderer.line(MessageStyle::Status, &format!("Set up your {} API key (env: {env_key}).", provider.label()))?;
     renderer.line(
         MessageStyle::Info,
@@ -162,14 +171,14 @@ fn prompt_paste_flow(renderer: &mut AnsiRenderer, provider: Provider, env_key: &
             continue;
         }
 
-        // Store in the OS keyring (encrypted-file fallback is handled by the auth layer).
+        // Store in the configured secure backend (the auth layer handles any
+        // platform-specific keyring or encrypted-file fallback).
         let storage = CustomApiKeyStorage::new(provider.as_ref());
-        let mode = AuthCredentialsStoreMode::default();
         storage
-            .store(&key, mode)
-            .map_err(|e| anyhow::anyhow!("Failed to store {} API key in OS keyring: {e}", provider.label()))?;
+            .store(&key, storage_mode)
+            .map_err(|e| anyhow::anyhow!("Failed to store {} API key securely: {e}", provider.label()))?;
 
-        renderer.line(MessageStyle::Status, "API key saved to your OS keyring (not workspace environment files).")?;
+        renderer.line(MessageStyle::Status, "API key saved to secure storage (not workspace environment files).")?;
         renderer.line(
             MessageStyle::Info,
             &format!("To use the env var instead, export {env_key} in your shell and clear this key with /model."),
@@ -185,7 +194,7 @@ fn confirm_save(renderer: &mut AnsiRenderer, provider: Provider, key: &str) -> R
         MessageStyle::Info,
         &format!("{} key received: {} — length {} chars.", provider.label(), mask_key(key), key.chars().count()),
     )?;
-    renderer.line(MessageStyle::Info, "Save to OS keyring? [Y]es (Enter) / [n]o / re-enter [r]")?;
+    renderer.line(MessageStyle::Info, "Save to secure storage? [Y]es (Enter) / [n]o / re-enter [r]")?;
     loop {
         let input = prompt_with_placeholder("[Enter=yes / n=no / r=re-enter]")?;
         let trimmed = input.trim().to_ascii_lowercase();

@@ -1,7 +1,7 @@
 use anstyle::{AnsiColor, Color, Effects, Style as AnsiStyle};
 use anyhow::Result;
-use vtcode_auth::{AuthStatus, OpenAIChatGptAuthStatus, OpenAIResolvedAuthSource};
-use vtcode_core::config::api_keys::{ApiKeySources, get_api_key};
+use vtcode_auth::{AuthCredentialsStoreMode, AuthStatus, OpenAIChatGptAuthStatus, OpenAIResolvedAuthSource};
+use vtcode_core::config::api_keys::ApiKeySources;
 use vtcode_core::copilot::{
     COPILOT_AUTH_DOC_PATH, CopilotAuthEvent, CopilotAuthStatus, CopilotAuthStatusKind, login_with_events,
     logout_with_events, probe_auth_status,
@@ -31,6 +31,13 @@ use crate::cli::auth::{
 const OAUTH_PROVIDER_PREFIX: &str = "oauth-provider:";
 const OAUTH_PROVIDER_BACK: &str = "oauth-provider:back";
 const OPENAI_MANUAL_PROMPT_ID: &str = "openai_manual_callback";
+
+fn credential_storage_mode(ctx: &SlashCommandContext<'_>) -> AuthCredentialsStoreMode {
+    ctx.vt_cfg
+        .as_ref()
+        .map(|cfg| cfg.agent.credential_storage_mode)
+        .unwrap_or_default()
+}
 
 pub(crate) async fn handle_start_oauth_provider_picker(
     mut ctx: SlashCommandContext<'_>,
@@ -216,7 +223,13 @@ pub(crate) async fn handle_oauth_logout(
         }
         OPENROUTER_PROVIDER => {
             if matches!(openrouter_auth_status(vt_cfg)?, AuthStatus::NotAuthenticated) {
-                if get_api_key(OPENROUTER_PROVIDER, &ApiKeySources::default()).is_ok() {
+                if vtcode_core::config::api_keys::get_api_key_with_mode(
+                    OPENROUTER_PROVIDER,
+                    &ApiKeySources::default(),
+                    credential_storage_mode(&ctx),
+                )
+                .is_ok()
+                {
                     ctx.renderer.line(
                         MessageStyle::Info,
                         "OpenRouter OAuth token already cleared; using OPENROUTER_API_KEY.",
@@ -233,7 +246,13 @@ pub(crate) async fn handle_oauth_logout(
         }
         OPENAI_PROVIDER => {
             if matches!(openai_auth_status(vt_cfg)?, OpenAIChatGptAuthStatus::NotAuthenticated) {
-                if get_api_key(OPENAI_PROVIDER, &ApiKeySources::default()).is_ok() {
+                if vtcode_core::config::api_keys::get_api_key_with_mode(
+                    OPENAI_PROVIDER,
+                    &ApiKeySources::default(),
+                    credential_storage_mode(&ctx),
+                )
+                .is_ok()
+                {
                     ctx.renderer
                         .line(MessageStyle::Info, "OpenAI ChatGPT session already cleared; using OPENAI_API_KEY.")?;
                 } else {
@@ -324,9 +343,10 @@ pub(crate) async fn handle_show_auth_status(
     ctx.renderer.line(MessageStyle::Info, "Authentication Status")?;
     ctx.renderer.line(MessageStyle::Output, "")?;
     let vt_cfg = ctx.vt_cfg.as_ref();
+    let storage_mode = credential_storage_mode(&ctx);
 
     if provider.is_none() || provider.as_deref() == Some(OPENROUTER_PROVIDER) {
-        render_openrouter_auth_status(ctx.renderer, openrouter_auth_status(vt_cfg)?)?;
+        render_openrouter_auth_status(ctx.renderer, openrouter_auth_status(vt_cfg)?, storage_mode)?;
     }
 
     if provider.is_none() {
@@ -334,7 +354,7 @@ pub(crate) async fn handle_show_auth_status(
     }
 
     if provider.is_none() || provider.as_deref() == Some(OPENAI_PROVIDER) {
-        render_openai_auth_status(ctx.renderer, openai_auth_status(vt_cfg)?)?;
+        render_openai_auth_status(ctx.renderer, openai_auth_status(vt_cfg)?, storage_mode)?;
         render_openai_credential_overview(
             ctx.renderer,
             vt_cfg,
@@ -771,7 +791,11 @@ fn openrouter_modal_badge(action: OAuthProviderAction, status: &AuthStatus) -> S
     }
 }
 
-fn render_openrouter_auth_status(renderer: &mut AnsiRenderer, status: AuthStatus) -> Result<()> {
+fn render_openrouter_auth_status(
+    renderer: &mut AnsiRenderer,
+    status: AuthStatus,
+    storage_mode: AuthCredentialsStoreMode,
+) -> Result<()> {
     match status {
         AuthStatus::Authenticated { label, age_seconds, expires_in } => {
             renderer.line(MessageStyle::Info, "OpenRouter: authenticated (OAuth)")?;
@@ -784,8 +808,14 @@ fn render_openrouter_auth_status(renderer: &mut AnsiRenderer, status: AuthStatus
             }
         }
         AuthStatus::NotAuthenticated => {
-            if get_api_key(OPENROUTER_PROVIDER, &ApiKeySources::default()).is_ok() {
-                renderer.line(MessageStyle::Info, "OpenRouter: using OPENROUTER_API_KEY")?;
+            if vtcode_core::config::api_keys::get_api_key_with_mode(
+                OPENROUTER_PROVIDER,
+                &ApiKeySources::default(),
+                storage_mode,
+            )
+            .is_ok()
+            {
+                renderer.line(MessageStyle::Info, "OpenRouter: using configured API key")?;
             } else {
                 renderer.line(MessageStyle::Info, "OpenRouter: not authenticated")?;
             }
@@ -794,7 +824,11 @@ fn render_openrouter_auth_status(renderer: &mut AnsiRenderer, status: AuthStatus
     Ok(())
 }
 
-fn render_openai_auth_status(renderer: &mut AnsiRenderer, status: OpenAIChatGptAuthStatus) -> Result<()> {
+fn render_openai_auth_status(
+    renderer: &mut AnsiRenderer,
+    status: OpenAIChatGptAuthStatus,
+    storage_mode: AuthCredentialsStoreMode,
+) -> Result<()> {
     match status {
         OpenAIChatGptAuthStatus::Authenticated { label, age_seconds, expires_in } => {
             renderer.line(MessageStyle::Info, "OpenAI: authenticated (ChatGPT)")?;
@@ -808,8 +842,14 @@ fn render_openai_auth_status(renderer: &mut AnsiRenderer, status: OpenAIChatGptA
             }
         }
         OpenAIChatGptAuthStatus::NotAuthenticated => {
-            if get_api_key(OPENAI_PROVIDER, &ApiKeySources::default()).is_ok() {
-                renderer.line(MessageStyle::Info, "OpenAI: using OPENAI_API_KEY")?;
+            if vtcode_core::config::api_keys::get_api_key_with_mode(
+                OPENAI_PROVIDER,
+                &ApiKeySources::default(),
+                storage_mode,
+            )
+            .is_ok()
+            {
+                renderer.line(MessageStyle::Info, "OpenAI: using configured API key")?;
             } else {
                 renderer.line(MessageStyle::Info, "OpenAI: not authenticated")?;
             }
@@ -908,7 +948,9 @@ fn summarize_current_openai_credentials(
     let default_auth = vtcode_auth::OpenAIAuthConfig::default();
     let auth_cfg = vt_cfg.map(|cfg| &cfg.auth.openai).unwrap_or(&default_auth);
     let storage_mode = vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default();
-    let api_key = get_api_key(OPENAI_PROVIDER, &ApiKeySources::default()).ok();
+    let api_key =
+        vtcode_core::config::api_keys::get_api_key_with_mode(OPENAI_PROVIDER, &ApiKeySources::default(), storage_mode)
+            .ok();
     vtcode_config::auth::summarize_openai_credentials(auth_cfg, storage_mode, api_key)
 }
 
@@ -917,7 +959,14 @@ async fn sync_openai_runtime_if_active(ctx: &mut SlashCommandContext<'_>) -> Res
         return Ok(());
     }
 
-    let api_key = get_api_key(OPENAI_PROVIDER, &ApiKeySources::default()).ok();
+    let storage_mode = ctx
+        .vt_cfg
+        .as_ref()
+        .map(|cfg| cfg.agent.credential_storage_mode)
+        .unwrap_or_default();
+    let api_key =
+        vtcode_core::config::api_keys::get_api_key_with_mode(OPENAI_PROVIDER, &ApiKeySources::default(), storage_mode)
+            .ok();
     let (runtime_api_key, runtime_auth) = match ctx.vt_cfg.as_ref() {
         Some(cfg) => {
             match vtcode_config::auth::resolve_openai_auth(&cfg.auth.openai, cfg.agent.credential_storage_mode, api_key)

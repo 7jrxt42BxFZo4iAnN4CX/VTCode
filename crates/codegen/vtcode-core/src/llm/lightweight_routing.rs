@@ -1,12 +1,13 @@
 use anyhow::{Context, Result};
 
-use crate::config::api_keys::{ApiKeySources, get_api_key};
+use crate::config::api_keys::{ApiKeySources, get_api_key_with_mode};
 use crate::config::constants::model_helpers;
 use crate::config::loader::VTCodeConfig;
 use crate::config::models::{ModelId, Provider};
 use crate::config::types::AgentConfig as RuntimeAgentConfig;
 use crate::llm::factory::{ProviderConfig, create_provider_with_config, infer_provider_from_model};
 use crate::llm::provider::LLMProvider;
+use vtcode_config::auth::AuthCredentialsStoreMode;
 
 /// Features that may use a lightweight (cheaper, faster) model instead of the
 /// primary model to reduce cost and latency.
@@ -246,7 +247,8 @@ pub fn create_provider_for_model_route(
     runtime_config: &RuntimeAgentConfig,
     vt_cfg: Option<&VTCodeConfig>,
 ) -> Result<Box<dyn LLMProvider>> {
-    let api_key = resolve_api_key_for_model_route(route, runtime_config);
+    let storage_mode = vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default();
+    let api_key = resolve_api_key_for_model_route_with_mode(route, runtime_config, storage_mode);
     create_provider_with_config(
         &route.provider_name,
         ProviderConfig {
@@ -272,6 +274,15 @@ pub fn create_provider_for_model_route(
 /// targets the same provider as the main model, or falling back to environment
 /// variables otherwise.
 pub fn resolve_api_key_for_model_route(route: &ModelRoute, runtime_config: &RuntimeAgentConfig) -> Option<String> {
+    resolve_api_key_for_model_route_with_mode(route, runtime_config, AuthCredentialsStoreMode::default())
+}
+
+/// Resolve a lightweight route key using the configured secure-storage mode.
+pub fn resolve_api_key_for_model_route_with_mode(
+    route: &ModelRoute,
+    runtime_config: &RuntimeAgentConfig,
+    storage_mode: AuthCredentialsStoreMode,
+) -> Option<String> {
     if route
         .provider_name
         .eq_ignore_ascii_case(main_model_route(runtime_config).provider_name.as_str())
@@ -280,7 +291,7 @@ pub fn resolve_api_key_for_model_route(route: &ModelRoute, runtime_config: &Runt
         return Some(runtime_config.api_key.clone());
     }
 
-    get_api_key(&route.provider_name, &ApiKeySources::default()).ok()
+    get_api_key_with_mode(&route.provider_name, &ApiKeySources::default(), storage_mode).ok()
 }
 
 fn feature_uses_shared_model(

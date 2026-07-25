@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use vtcode_core::config::LifecycleHooksConfig;
 use vtcode_core::config::ToolPolicy;
-use vtcode_core::config::api_keys::{ApiKeySources, get_api_key};
+use vtcode_core::config::api_keys::{ApiKeySources, get_api_key_with_mode};
 use vtcode_core::config::loader::{ConfigManager, VTCodeConfig};
 use vtcode_core::config::types::AgentConfig as CoreAgentConfig;
 use vtcode_core::tools::ripgrep_binary::RIPGREP_INSTALL_COMMAND;
@@ -204,7 +204,8 @@ pub(crate) async fn run_checkup_diagnostics(
         if provider_for_api_check.eq_ignore_ascii_case("openai") && config.openai_chatgpt_auth.is_some() {
             DoctorCheckOutcome::Pass("ChatGPT subscription active for OpenAI".to_string())
         } else if provider_requires_api_key(provider_for_api_check) {
-            match get_api_key(provider_for_api_check, &ApiKeySources::default()) {
+            let storage_mode = vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default();
+            match get_api_key_with_mode(provider_for_api_check, &ApiKeySources::default(), storage_mode) {
                 Ok(_) => DoctorCheckOutcome::Pass(format!("API key configured for '{provider_for_api_check}'")),
                 Err(err) => {
                     let detail = err.to_string();

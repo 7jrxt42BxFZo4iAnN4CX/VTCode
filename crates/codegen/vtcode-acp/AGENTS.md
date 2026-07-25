@@ -17,6 +17,7 @@
 - ACP 1.0.1 uses SACP builder + handlers, not the old `impl acp::Agent` trait. `handlers.rs` registers SACP request/notification handlers around `ZedAgent`.
 - `ZedAgent` is `Send + Sync` (`Arc<Mutex<_>>` + `AtomicBool`) so it can be moved into SACP `cx.spawn` tasks.
 - Tool execution RPCs (`fs/read_text_file`, `terminal/create`, `session/request_permission`) must be called from inside a `cx.spawn(...)` task — invoking them directly from an SACP request handler deadlocks the dispatch loop.
+- `ZedAgent` carries the configured `AuthCredentialsStoreMode`; provider-key resolution must use that mode rather than the platform default.
 
 ## Gotchas
 

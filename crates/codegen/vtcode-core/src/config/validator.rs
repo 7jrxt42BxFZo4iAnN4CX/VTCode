@@ -8,7 +8,7 @@ use serde_json::Value as JsonValue;
 use std::path::Path;
 
 use crate::config::api_keys::ApiKeySources;
-use crate::config::api_keys::get_api_key;
+use crate::config::api_keys::get_api_key_with_mode;
 use crate::config::constants::models::openai::RESPONSES_API_MODELS;
 use crate::config::loader::VTCodeConfig;
 use crate::config::models::{Provider, model_catalog_entry, supported_models_for_provider};
@@ -135,7 +135,11 @@ impl ConfigValidator {
         if !is_custom_provider
             && !is_codex_provider
             && managed_auth_provider.is_none()
-            && let Err(e) = get_api_key(&config.agent.provider, &ApiKeySources::default())
+            && let Err(e) = get_api_key_with_mode(
+                &config.agent.provider,
+                &ApiKeySources::default(),
+                config.agent.credential_storage_mode,
+            )
         {
             result.errors.push(format!(
                 "API key not found for provider '{}': {}. Set {} environment variable.",
@@ -198,7 +202,12 @@ impl ConfigValidator {
 
         // Check API key
         if !is_custom_provider && !is_codex_provider && managed_auth_provider.is_none() {
-            get_api_key(&config.agent.provider, &ApiKeySources::default()).with_context(|| {
+            get_api_key_with_mode(
+                &config.agent.provider,
+                &ApiKeySources::default(),
+                config.agent.credential_storage_mode,
+            )
+            .with_context(|| {
                 format!(
                     "API key not found for provider '{}'. Set {} environment variable.",
                     config.agent.provider,
