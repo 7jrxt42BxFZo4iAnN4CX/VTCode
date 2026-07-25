@@ -1530,17 +1530,14 @@ async fn reentrancy_guard_blocks_recursive_tool_loops() -> Result<()> {
         .await?;
     registry.allow_all_tools().await?;
 
-    let response = registry.execute_tool(REENTRANT_TOOL_NAME, json!({"input": "loop"})).await?;
+    let err = registry
+        .execute_tool(REENTRANT_TOOL_NAME, json!({"input": "loop"}))
+        .await
+        .expect_err("reentrancy guard must reject recursive tool loops");
 
-    assert_eq!(response.get("reentrant_call_blocked").and_then(Value::as_bool), Some(true));
-    assert_eq!(response.pointer("/error/error_type").and_then(Value::as_str), Some("PolicyViolation"));
-    assert!(
-        response
-            .pointer("/error/message")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .contains("REENTRANCY GUARD")
-    );
+    let err_msg = err.to_string();
+    assert!(err_msg.contains("tool reentrancy blocked"));
+    assert!(err.chain().any(|cause| cause.to_string().contains(REENTRANT_TOOL_NAME)));
 
     Ok(())
 }
@@ -1568,16 +1565,15 @@ async fn reentrancy_guard_blocks_cross_tool_cycles() -> Result<()> {
         .await?;
     registry.allow_all_tools().await?;
 
-    let response = registry
+    let err = registry
         .execute_tool(MUTUAL_REENTRANT_TOOL_A, json!({"input": "cycle"}))
-        .await?;
+        .await
+        .expect_err("reentrancy guard must reject cross-tool cycles");
 
-    assert_eq!(response.get("reentrant_call_blocked").and_then(Value::as_bool), Some(true));
-    assert_eq!(response.pointer("/error/error_type").and_then(Value::as_str), Some("PolicyViolation"));
-
-    let stack_trace = response.get("stack_trace").and_then(Value::as_str).unwrap_or_default();
-    assert!(stack_trace.contains(MUTUAL_REENTRANT_TOOL_A));
-    assert!(stack_trace.contains(MUTUAL_REENTRANT_TOOL_B));
+    let err_msg = err.to_string();
+    assert!(err_msg.contains("tool reentrancy blocked"));
+    assert!(err.chain().any(|cause| cause.to_string().contains(MUTUAL_REENTRANT_TOOL_A)));
+    assert!(err.chain().any(|cause| cause.to_string().contains(MUTUAL_REENTRANT_TOOL_B)));
 
     Ok(())
 }

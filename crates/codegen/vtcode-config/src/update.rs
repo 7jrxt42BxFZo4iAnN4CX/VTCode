@@ -9,7 +9,9 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
+
+static UPDATE_CONFIG_CACHE: OnceLock<RwLock<Option<UpdateConfig>>> = OnceLock::new();
 
 /// Release channel for VT Code updates
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
@@ -92,14 +94,14 @@ fn default_download_timeout() -> u64 {
 impl UpdateConfig {
     /// Load update configuration from default location
     pub fn load() -> Result<Self> {
-        static CACHE: OnceLock<UpdateConfig> = OnceLock::new();
+        let lock = UPDATE_CONFIG_CACHE.get_or_init(|| RwLock::new(None));
 
-        if let Some(cached) = CACHE.get() {
+        if let Some(cached) = lock.read().unwrap().as_ref() {
             return Ok(cached.clone());
         }
 
         let config = Self::load_inner()?;
-        let _ = CACHE.set(config.clone());
+        let _ = lock.write().unwrap().insert(config.clone());
         Ok(config)
     }
 
@@ -134,6 +136,11 @@ impl UpdateConfig {
 
         fs::write(&config_path, content)
             .with_context(|| format!("Failed to write update config: {}", config_path.display()))?;
+
+        // Invalidate the in-process cache so the next load() observes the new file.
+        if let Some(lock) = UPDATE_CONFIG_CACHE.get() {
+            let _ = lock.write().unwrap().take();
+        }
 
         Ok(())
     }

@@ -119,38 +119,31 @@ impl ToolRegistry {
         let Some(path_str) = path_str else {
             return false;
         };
-        let path = std::path::Path::new(path_str);
 
-        // Legacy workspace-scoped plan path (.vtcode/plans/) compatibility.
-        let plans_suffix = std::path::Path::new(".vtcode").join("plans");
+        // Canonicalize the path to prevent traversal attacks. A malicious path
+        // like "../../etc/.vtcode/plans/../../etc/passwd" must NOT pass.
+        let Ok(absolute) = std::fs::canonicalize(path_str) else {
+            return false;
+        };
 
-        // Check if path contains .vtcode/plans/
-        if path_str.contains(".vtcode/plans/") || path_str.contains(".vtcode\\plans\\") {
-            return true;
-        }
-
-        // Also check if it's a relative path under plans directory
-        if path.starts_with(&plans_suffix) {
-            return true;
-        }
-
-        // Check absolute legacy path against workspace root
         let workspace = self.inventory.workspace_root();
         let plans_dir = workspace.join(".vtcode").join("plans");
-        if path.starts_with(&plans_dir) {
+        let canonical_plans = match std::fs::canonicalize(&plans_dir) {
+            Ok(dir) => dir,
+            Err(_) => plans_dir,
+        };
+
+        if absolute.starts_with(&canonical_plans) {
             return true;
         }
 
-        // Default ephemeral plan storage path under /tmp.
-        if path_str.contains("/tmp/vtcode-plans/") || path_str.contains("\\tmp\\vtcode-plans\\") {
-            return true;
-        }
         let tmp_plans = std::env::temp_dir().join("vtcode-plans");
-        if path.starts_with(&tmp_plans) {
-            return true;
-        }
+        let canonical_tmp = match std::fs::canonicalize(&tmp_plans) {
+            Ok(dir) => dir,
+            Err(_) => tmp_plans,
+        };
 
-        false
+        absolute.starts_with(&canonical_tmp)
     }
 
     /// Check if a unified tool call represents a read-only action.

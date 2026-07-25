@@ -837,14 +837,14 @@ impl ToolRegistry {
                     false,
                     None,
                     args_for_recording.clone(),
-                    error_message,
+                    error_message.clone(),
                     None,
                     None,
                     None,
                     None,
                     false,
                 );
-                return Ok(payload);
+                return Err(anyhow!(error_message).context("tool reentrancy blocked"));
             }
         };
 
@@ -1794,6 +1794,13 @@ impl ToolRegistry {
                 Ok(normalized_value)
             }
             Err(err) => {
+                // Reentrancy violations must surface as hard errors rather
+                // than wrapped Ok(error_object) so nested callers see the
+                // failure and can react appropriately.
+                if err.to_string().contains("tool reentrancy blocked") {
+                    return Err(err);
+                }
+
                 let error = ToolExecutionError::from_anyhow(
                     tool_name_owned.clone(),
                     &err,
