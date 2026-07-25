@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
 
@@ -10,6 +12,41 @@ use crate::loader::layers::{
     ConfigLayerEntry, ConfigLayerMetadata, ConfigLayerSource, ConfigLayerStack, LayerDisabledReason,
 };
 use vtcode_commons::canonicalize;
+
+type CachedManager = Arc<ConfigManager>;
+
+#[cfg(not(test))]
+static WORKSPACE_CACHE: Mutex<Option<HashMap<PathBuf, CachedManager>>> = Mutex::new(None);
+
+#[cfg(not(test))]
+fn with_cache_mut(f: impl FnOnce(&mut HashMap<PathBuf, CachedManager>)) {
+    let mut guard = WORKSPACE_CACHE.lock().expect("config cache lock poisoned");
+    guard.get_or_insert_with(HashMap::new);
+    f(guard.as_mut().expect("cache initialized"))
+}
+
+#[cfg(not(test))]
+fn cache_get(workspace: &Path) -> Option<CachedManager> {
+    WORKSPACE_CACHE
+        .lock()
+        .expect("config cache lock poisoned")
+        .as_ref()
+        .and_then(|map| map.get(workspace).cloned())
+}
+
+#[cfg(not(test))]
+fn cache_insert(workspace: PathBuf, manager: CachedManager) {
+    with_cache_mut(move |map| {
+        map.insert(workspace, manager);
+    });
+}
+
+#[cfg(not(test))]
+fn cache_remove(workspace: &Path) {
+    with_cache_mut(|map| {
+        map.remove(workspace);
+    });
+}
 
 fn canonicalize_workspace_root(path: &Path) -> PathBuf {
     canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
@@ -53,8 +90,40 @@ impl ConfigManager {
         Self::load_from_workspace(std::env::current_dir()?)
     }
 
+    /// Invalidate the cached configuration for a specific workspace.
+    ///
+    /// Call this when config files may have changed on disk and the next
+    /// `load_from_workspace` call should perform a fresh read instead of
+    /// returning a previously cached result.
+    pub fn invalidate_workspace_cache(workspace: impl AsRef<Path>) {
+        let _ = workspace;
+        #[cfg(not(test))]
+        {
+            let workspace = workspace.as_ref();
+            cache_remove(workspace);
+        }
+    }
+
     /// Load configuration from a specific workspace
     pub fn load_from_workspace(workspace: impl AsRef<Path>) -> Result<Self> {
+        let workspace = workspace.as_ref();
+        #[cfg(not(test))]
+        let canonical_workspace = canonicalize_workspace_root(workspace);
+
+        #[cfg(not(test))]
+        if let Some(cached) = cache_get(&canonical_workspace) {
+            return Ok(cached.as_ref().clone());
+        }
+
+        let manager = Self::load_from_workspace_impl(workspace)?;
+
+        #[cfg(not(test))]
+        cache_insert(canonical_workspace, Arc::new(manager.clone()));
+
+        Ok(manager)
+    }
+
+    fn load_from_workspace_impl(workspace: impl AsRef<Path>) -> Result<Self> {
         let t0 = std::time::Instant::now();
         let workspace = workspace.as_ref();
         let defaults_provider = defaults::current_config_defaults();
@@ -636,6 +705,11 @@ impl ConfigManager {
             let cwd = std::env::current_dir().context("Failed to resolve current directory")?;
             let path = cwd.join(&self.config_file_name);
             Self::save_config_to_path(path, config)?;
+        }
+
+        #[cfg(not(test))]
+        if let Some(workspace) = &self.workspace_root {
+            Self::invalidate_workspace_cache(workspace);
         }
 
         self.sync_from_config(config)

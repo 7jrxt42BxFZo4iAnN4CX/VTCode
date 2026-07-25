@@ -9,6 +9,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 /// Release channel for VT Code updates
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
@@ -91,6 +92,18 @@ fn default_download_timeout() -> u64 {
 impl UpdateConfig {
     /// Load update configuration from default location
     pub fn load() -> Result<Self> {
+        static CACHE: OnceLock<UpdateConfig> = OnceLock::new();
+
+        if let Some(cached) = CACHE.get() {
+            return Ok(cached.clone());
+        }
+
+        let config = Self::load_inner()?;
+        let _ = CACHE.set(config.clone());
+        Ok(config)
+    }
+
+    fn load_inner() -> Result<Self> {
         let config_path = Self::config_path().context("Failed to determine update config path")?;
 
         if !config_path.exists() {

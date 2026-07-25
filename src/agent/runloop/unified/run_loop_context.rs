@@ -211,6 +211,7 @@ impl CrossTurnTracker {
     /// - `read_only_signatures`: signatures of read-only tool calls this turn.
     /// - `written_files`: paths of files written this turn.
     /// - `shell_command`: last shell command signature, if any.
+    /// - `planning_active`: whether the planning workflow is currently active.
     ///
     /// Returns a warning string if a loop or stuck pattern is detected.
     pub(crate) fn seal_turn(
@@ -218,6 +219,7 @@ impl CrossTurnTracker {
         read_only_signatures: &[String],
         written_files: &HashSet<String>,
         shell_command: Option<&str>,
+        planning_active: bool,
     ) -> Option<String> {
         let mut signatures: Vec<String> = read_only_signatures.to_vec();
         for path in written_files {
@@ -265,7 +267,7 @@ impl CrossTurnTracker {
         if !signatures.is_empty() {
             if had_mutation {
                 self.zero_mutation_turns = 0;
-            } else {
+            } else if !planning_active {
                 self.zero_mutation_turns = self.zero_mutation_turns.saturating_add(1);
             }
         }
@@ -275,7 +277,7 @@ impl CrossTurnTracker {
             return loop_warning;
         }
 
-        if self.zero_mutation_turns >= STUCK_ZERO_MUTATION_THRESHOLD {
+        if !planning_active && self.zero_mutation_turns >= STUCK_ZERO_MUTATION_THRESHOLD {
             return Some(format!(
                 "No progress detected for {} consecutive turns (all read-only tool calls, \
                  no file mutations or command executions). Synthesize a final answer from \
@@ -1375,7 +1377,7 @@ mod tests {
         let mut tracker = CrossTurnTracker::new();
         let read_sigs = vec!["apply_patch::read::src/main.rs".to_string()];
         let written = HashSet::new();
-        assert!(tracker.seal_turn(&read_sigs, &written, None).is_none());
+        assert!(tracker.seal_turn(&read_sigs, &written, None, false).is_none());
     }
 
     #[test]
@@ -1385,10 +1387,10 @@ mod tests {
         let written = HashSet::new();
 
         // First turn: no warning
-        assert!(tracker.seal_turn(&read_sigs, &written, None).is_none());
+        assert!(tracker.seal_turn(&read_sigs, &written, None, false).is_none());
 
         // Second turn with same signatures: cross-turn loop detected
-        let warning = tracker.seal_turn(&read_sigs, &written, None);
+        let warning = tracker.seal_turn(&read_sigs, &written, None, false);
         assert!(warning.is_some());
         assert!(warning.unwrap().contains("Cross-turn loop detected"));
     }
@@ -1400,8 +1402,8 @@ mod tests {
         let read_sigs_2 = vec!["apply_patch::read::src/lib.rs".to_string()];
         let written = HashSet::new();
 
-        assert!(tracker.seal_turn(&read_sigs_1, &written, None).is_none());
-        assert!(tracker.seal_turn(&read_sigs_2, &written, None).is_none());
+        assert!(tracker.seal_turn(&read_sigs_1, &written, None, false).is_none());
+        assert!(tracker.seal_turn(&read_sigs_2, &written, None, false).is_none());
     }
 
     #[test]
@@ -1415,11 +1417,11 @@ mod tests {
         let sigs_2 = vec!["apply_patch::read::src/b.rs".to_string()];
         let sigs_3 = vec!["apply_patch::read::src/c.rs".to_string()];
 
-        assert!(tracker.seal_turn(&sigs_1, &written, None).is_none());
-        assert!(tracker.seal_turn(&sigs_2, &written, None).is_none());
+        assert!(tracker.seal_turn(&sigs_1, &written, None, false).is_none());
+        assert!(tracker.seal_turn(&sigs_2, &written, None, false).is_none());
 
         // Third consecutive read-only turn: stuck warning
-        let warning = tracker.seal_turn(&sigs_3, &written, None);
+        let warning = tracker.seal_turn(&sigs_3, &written, None, false);
         assert!(warning.is_some());
         assert!(warning.unwrap().contains("No progress detected"));
     }
@@ -1432,20 +1434,20 @@ mod tests {
         // Two read-only turns with different signatures (avoid cross-turn loop)
         let sigs_a = vec!["apply_patch::read::src/a.rs".to_string()];
         let sigs_b = vec!["apply_patch::read::src/b.rs".to_string()];
-        assert!(tracker.seal_turn(&sigs_a, &empty_written, None).is_none());
-        assert!(tracker.seal_turn(&sigs_b, &empty_written, None).is_none());
+        assert!(tracker.seal_turn(&sigs_a, &empty_written, None, false).is_none());
+        assert!(tracker.seal_turn(&sigs_b, &empty_written, None, false).is_none());
 
         // A mutating turn resets the counter
         let mut written = HashSet::new();
         written.insert("src/main.rs".to_string());
         let sigs_c = vec!["apply_patch::read::src/c.rs".to_string()];
-        assert!(tracker.seal_turn(&sigs_c, &written, None).is_none());
+        assert!(tracker.seal_turn(&sigs_c, &written, None, false).is_none());
 
         // Two more read-only turns: no stuck warning (counter was reset)
         let sigs_d = vec!["apply_patch::read::src/d.rs".to_string()];
         let sigs_e = vec!["apply_patch::read::src/e.rs".to_string()];
-        assert!(tracker.seal_turn(&sigs_d, &empty_written, None).is_none());
-        assert!(tracker.seal_turn(&sigs_e, &empty_written, None).is_none());
+        assert!(tracker.seal_turn(&sigs_d, &empty_written, None, false).is_none());
+        assert!(tracker.seal_turn(&sigs_e, &empty_written, None, false).is_none());
     }
 
     #[test]
@@ -1455,8 +1457,8 @@ mod tests {
         let empty_written = HashSet::new();
 
         // Empty turns should not trigger warnings or corrupt state
-        assert!(tracker.seal_turn(&empty_sigs, &empty_written, None).is_none());
-        assert!(tracker.seal_turn(&empty_sigs, &empty_written, None).is_none());
+        assert!(tracker.seal_turn(&empty_sigs, &empty_written, None, false).is_none());
+        assert!(tracker.seal_turn(&empty_sigs, &empty_written, None, false).is_none());
     }
 
     #[test]
@@ -1474,8 +1476,8 @@ mod tests {
             "apply_patch::read::src/main.rs".to_string(),
         ];
 
-        assert!(tracker.seal_turn(&sigs_a, &written, None).is_none());
-        let warning = tracker.seal_turn(&sigs_b, &written, None);
+        assert!(tracker.seal_turn(&sigs_a, &written, None, false).is_none());
+        let warning = tracker.seal_turn(&sigs_b, &written, None, false);
         assert!(warning.is_some());
         assert!(warning.unwrap().contains("Cross-turn loop detected"));
     }

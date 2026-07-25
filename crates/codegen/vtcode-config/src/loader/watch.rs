@@ -79,6 +79,7 @@ impl ConfigWatcher {
     ///
     /// Returns an error when internal watcher state cannot be updated.
     pub async fn load_config(&mut self) -> Result<()> {
+        ConfigManager::invalidate_workspace_cache(&self.workspace_path);
         let config = ConfigManager::load_from_workspace(&self.workspace_path)
             .ok()
             .map(|manager| manager.config().clone());
@@ -195,6 +196,7 @@ impl SimpleConfigWatcher {
     }
 
     pub fn load_config(&mut self) -> Option<VTCodeConfig> {
+        ConfigManager::invalidate_workspace_cache(&self.workspace_path);
         let config = ConfigManager::load_from_workspace(&self.workspace_path)
             .ok()
             .map(|manager| manager.config().clone());

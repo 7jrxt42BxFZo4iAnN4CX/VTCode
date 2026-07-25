@@ -639,9 +639,9 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                 let mut cross_turn_read_sigs: Vec<String> = Vec::new();
                 let mut cross_turn_written: HashSet<String> = HashSet::new();
                 let mut cross_turn_shell_cmd: Option<String> = None;
+                let planning_active = tool_registry.is_planning_active();
                 let outcome = match {
                     let mut auto_finish_planning_attempted = false;
-                    let planning_active = tool_registry.is_planning_active();
                     let max_tool_calls_per_turn =
                         effective_max_tool_calls_for_turn(harness_config.max_tool_calls_per_turn, planning_active);
                     let mut harness_state = HarnessTurnState::new(
@@ -732,6 +732,7 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                     &cross_turn_read_sigs,
                     &cross_turn_written,
                     cross_turn_shell_cmd.as_deref(),
+                    planning_active,
                 ) {
                     tracing::warn!(warning = %cross_turn_warning, "Cross-turn loop detector triggered");
                     working_history.push(vtcode_core::llm::provider::Message::system(cross_turn_warning));

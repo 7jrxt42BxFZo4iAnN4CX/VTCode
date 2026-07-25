@@ -10,7 +10,11 @@ fn has_recent_tool_activity(history: &[uni::Message]) -> bool {
     })
 }
 
-pub(super) fn empty_response_recovery_mode(history: &[uni::Message]) -> RecoveryMode {
+pub(super) fn empty_response_recovery_mode(history: &[uni::Message], planning_active: bool) -> RecoveryMode {
+    if planning_active {
+        return RecoveryMode::ToolEnabledRetry;
+    }
+
     if has_recent_tool_activity(history) {
         RecoveryMode::ToolFreeSynthesis
     } else {
