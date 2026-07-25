@@ -11,7 +11,6 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Value, json};
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::Semaphore;
 use vtcode_commons::diff_paths::looks_like_diff_content;
 
 use crate::tools::file_ops::read_byte_range;
@@ -317,31 +316,15 @@ impl ReadFileHandler {
         }
 
         let progress = BatchProgress::new(args.reads.len());
-        let semaphore = Arc::new(Semaphore::new(args.max_concurrency.min(args.reads.len())));
 
         let results: Vec<BatchReadResult> = stream::iter(args.reads)
             .map(|req| {
-                let sem = semaphore.clone();
                 let prog = progress.clone();
                 async move {
-                    match sem.acquire().await {
-                        Ok(permit) => {
-                            let _permit = permit;
-                            prog.file_started(&req.file_path).await;
-                            let result = self.read_single_batch_request(&req).await;
-                            prog.file_completed();
-                            result
-                        }
-                        Err(e) => {
-                            prog.file_started(&req.file_path).await;
-                            prog.file_completed();
-                            BatchReadResult {
-                                file_path: req.file_path,
-                                ranges: Vec::new(),
-                                error: Some(format!("concurrency limit exceeded: {e}")),
-                            }
-                        }
-                    }
+                    prog.file_started(&req.file_path).await;
+                    let result = self.read_single_batch_request(&req).await;
+                    prog.file_completed();
+                    result
                 }
             })
             .buffer_unordered(args.max_concurrency)

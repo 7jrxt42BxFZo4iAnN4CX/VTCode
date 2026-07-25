@@ -18,9 +18,9 @@ impl ReasoningBuffer {
         }
 
         self.text.push_str(chunk);
-        self.last_chunk = Some(chunk.to_string());
-
-        Some(chunk.to_string())
+        let owned = chunk.to_string();
+        self.last_chunk = Some(owned.clone());
+        Some(owned)
     }
 
     pub(crate) fn finalize(self) -> Option<String> {

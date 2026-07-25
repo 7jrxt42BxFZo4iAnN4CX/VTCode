@@ -7,15 +7,17 @@
 
 use crate::error_display;
 use crate::provider::{
-    AnthropicOptionalU32Override, AnthropicThinkingModeOverride, LLMError, LLMRequest, MessageRole, ToolChoice,
+    AnthropicOptionalStringOverride, AnthropicOptionalU32Override, AnthropicThinkingModeOverride, LLMError, LLMRequest,
+    MessageRole, ToolChoice,
 };
 use vtcode_config::core::AnthropicConfig;
 use vtcode_config::types::ReasoningEffortLevel;
 
 use super::capabilities::{
-    adaptive_thinking_always_on, allowed_efforts_for_model, claude_thinking_profile, effort_allowed_for_model,
-    matches_model, resolve_model_name, supports_assistant_prefill, supports_effort, supports_manual_interleaved_beta,
-    supports_manual_thinking_budget, supports_structured_output, supports_task_budget,
+    adaptive_thinking_always_on, allowed_efforts_for_model, claude_thinking_profile, default_effort_for_model,
+    effort_allowed_for_model, effort_is_at_most_high, matches_model, rejects_sampling, resolve_model_name,
+    supports_assistant_prefill, supports_effort, supports_manual_interleaved_beta, supports_manual_thinking_budget,
+    supports_structured_output, supports_task_budget,
 };
 
 pub fn validate_request(
@@ -56,8 +58,9 @@ pub fn validate_request(
     let resolved_model = resolve_model_name(&request.model, default_model);
     let effective_thinking_mode = resolve_effective_thinking_mode(request, default_model, anthropic_config);
 
-    // Models with adaptive thinking always on (Fable 5, Mythos 5, Opus 4.8) reject disabled thinking.
+    // Models with adaptive thinking always on (Fable 5, Mythos 5) reject disabled thinking.
     // Sonnet 5 has default thinking on but allows disabling via `thinking: {type: "disabled"}`.
+    // Opus 5 allows disabling thinking only at effort ≤ high.
     if adaptive_thinking_always_on(resolved_model, default_model)
         && matches!(effective_thinking_mode, EffectiveThinkingMode::Disabled)
     {
@@ -70,14 +73,24 @@ pub fn validate_request(
         return Err(LLMError::InvalidRequest { message: formatted_error, metadata: None });
     }
 
-    let rejects_sampling = matches_model(resolved_model, vtcode_config::constants::models::anthropic::CLAUDE_SONNET_5)
-        || matches_model(resolved_model, vtcode_config::constants::models::anthropic::CLAUDE_FABLE_5)
-        || matches_model(resolved_model, vtcode_config::constants::models::anthropic::CLAUDE_MYTHOS_5)
-        || matches_model(resolved_model, vtcode_config::constants::models::anthropic::CLAUDE_OPUS_4_8);
-    if rejects_sampling && (request.temperature.is_some() || request.top_p.is_some() || request.top_k.is_some()) {
+    if matches_model(resolved_model, vtcode_config::constants::models::anthropic::CLAUDE_OPUS_5)
+        && matches!(effective_thinking_mode, EffectiveThinkingMode::Disabled)
+    {
+        if !effort_is_at_most_high(request, anthropic_config) {
+            let formatted_error = error_display::format_llm_error(
+                "Anthropic",
+                "Claude Opus 5 does not support disabled thinking at xhigh or max effort. Lower effort to high or below, or remove the disable-thinking path.",
+            );
+            return Err(LLMError::InvalidRequest { message: formatted_error, metadata: None });
+        }
+    }
+
+    if rejects_sampling(&request.model, default_model)
+        && (request.temperature.is_some() || request.top_p.is_some() || request.top_k.is_some())
+    {
         let formatted_error = error_display::format_llm_error(
             "Anthropic",
-            "Claude Sonnet 5, Fable 5, Mythos 5, and Opus 4.8 reject explicit temperature, top_p, and top_k values; omit sampling parameters entirely.",
+            "Claude Opus 5, Sonnet 5, Fable 5, Mythos 5, and Opus 4.8 reject explicit temperature, top_p, and top_k values; omit sampling parameters entirely.",
         );
         return Err(LLMError::InvalidRequest { message: formatted_error, metadata: None });
     }
@@ -123,14 +136,24 @@ pub fn validate_request(
         validate_reasoning_constraints(request, default_model, anthropic_config)?;
     }
 
-    if request_uses_assistant_prefill(request) && !supports_assistant_prefill(resolved_model, default_model) {
-        let formatted_error = error_display::format_llm_error(
-            "Anthropic",
-            &format!(
-                "{resolved_model} does not support assistant-message prefills. Use system instructions or structured outputs instead."
-            ),
-        );
-        return Err(LLMError::InvalidRequest { message: formatted_error, metadata: None });
+    // Prefill constraints only apply to models that support prefill.
+    // For models that don't support prefill, the request builder silently omits it.
+    if supports_assistant_prefill(resolved_model, default_model) {
+        if request_uses_assistant_prefill(request) && thinking_active {
+            let formatted_error = error_display::format_llm_error(
+                "Anthropic",
+                "Assistant-message prefills are not supported when thinking is enabled. Use system instructions instead.",
+            );
+            return Err(LLMError::InvalidRequest { message: formatted_error, metadata: None });
+        }
+
+        if request_uses_assistant_prefill(request) && request.output_format.is_some() {
+            let formatted_error = error_display::format_llm_error(
+                "Anthropic",
+                "Assistant-message prefills are not supported when structured outputs are enabled.",
+            );
+            return Err(LLMError::InvalidRequest { message: formatted_error, metadata: None });
+        }
     }
 
     if let Some(task_budget) = effective_task_budget_tokens(request, anthropic_config)
@@ -142,22 +165,6 @@ pub fn validate_request(
             &format!(
                 "task_budget_tokens ({task_budget}) must be at least 20000 for Claude Opus 4.7/4.8, Fable 5, and Mythos 5."
             ),
-        );
-        return Err(LLMError::InvalidRequest { message: formatted_error, metadata: None });
-    }
-
-    if request_uses_assistant_prefill(request) && thinking_active {
-        let formatted_error = error_display::format_llm_error(
-            "Anthropic",
-            "Assistant-message prefills are not supported when thinking is enabled. Use system instructions instead.",
-        );
-        return Err(LLMError::InvalidRequest { message: formatted_error, metadata: None });
-    }
-
-    if request_uses_assistant_prefill(request) && request.output_format.is_some() {
-        let formatted_error = error_display::format_llm_error(
-            "Anthropic",
-            "Assistant-message prefills are not supported when structured outputs are enabled.",
         );
         return Err(LLMError::InvalidRequest { message: formatted_error, metadata: None });
     }
@@ -247,7 +254,7 @@ fn resolve_effective_thinking_mode(
     }
 }
 
-fn request_uses_assistant_prefill(request: &LLMRequest) -> bool {
+pub(crate) fn request_uses_assistant_prefill(request: &LLMRequest) -> bool {
     request.prefill.is_some()
         || request
             .coding_agent_settings

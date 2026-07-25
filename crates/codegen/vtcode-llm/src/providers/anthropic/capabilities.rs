@@ -288,6 +288,15 @@ pub fn effective_context_size(model: &str) -> usize {
     }
 }
 
+pub(crate) fn rejects_sampling(model: &str, default_model: &str) -> bool {
+    let requested = resolve_model_name(model, default_model);
+    matches_model(requested, models::anthropic::CLAUDE_SONNET_5)
+        || matches_model(requested, models::anthropic::CLAUDE_FABLE_5)
+        || matches_model(requested, models::anthropic::CLAUDE_MYTHOS_5)
+        || matches_model(requested, models::anthropic::CLAUDE_OPUS_5)
+        || matches_model(requested, models::anthropic::CLAUDE_OPUS_4_8)
+}
+
 pub(crate) fn supports_structured_output(model: &str, default_model: &str) -> bool {
     let requested = resolve_model_name(model, default_model);
 
@@ -326,4 +335,38 @@ pub(crate) fn supported_models() -> Vec<String> {
     supported.sort();
     supported.dedup();
     supported
+}
+
+/// Returns true if the effective effort for this request is "low", "medium", or "high"
+/// (i.e., at most high, not xhigh or max).
+///
+/// This is used by Opus 5 disabled-thinking validation: Opus 5 only allows
+/// `thinking: {type: "disabled"}` at effort ≤ high. When the override is `Omit`,
+/// the API uses the model default effort, so we check that instead of the config.
+pub(crate) fn effort_is_at_most_high(
+    request: &crate::provider::LLMRequest,
+    anthropic_config: &vtcode_config::core::AnthropicConfig,
+) -> bool {
+    use crate::provider::{AnthropicOptionalStringOverride, LLMRequest};
+    use vtcode_config::types::ReasoningEffortLevel;
+
+    if let Some(overrides) = request.anthropic_request_overrides.as_ref() {
+        match &overrides.effort {
+            AnthropicOptionalStringOverride::Explicit(effort) => {
+                return matches!(effort.to_ascii_lowercase().as_str(), "low" | "medium" | "high");
+            }
+            AnthropicOptionalStringOverride::Omit => {
+                return default_effort_for_model(&request.model, "").is_some_and(|effort| effort <= "high");
+            }
+            AnthropicOptionalStringOverride::Inherit => {}
+        }
+    }
+
+    if let Some(effort) = request.effort.as_ref() {
+        return matches!(effort.to_ascii_lowercase().as_str(), "low" | "medium" | "high");
+    }
+    if let Some(effort) = request.reasoning_effort {
+        return matches!(effort, ReasoningEffortLevel::Low | ReasoningEffortLevel::Medium | ReasoningEffortLevel::High);
+    }
+    matches!(anthropic_config.effort.as_str(), "low" | "medium" | "high")
 }

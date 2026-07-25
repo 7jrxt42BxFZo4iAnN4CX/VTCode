@@ -20,7 +20,8 @@ use vtcode_config::core::{AdvisorConfig, AnthropicConfig, AnthropicPromptCacheSe
 use vtcode_config::types::ReasoningEffortLevel;
 
 use super::capabilities::{
-    default_effort_for_model, effort_allowed_for_model, resolve_model_name, supports_effort, supports_task_budget,
+    default_effort_for_model, effort_allowed_for_model, rejects_sampling, resolve_model_name, supports_effort,
+    supports_task_budget,
 };
 use super::prompt_cache::{get_messages_cache_ttl, get_tools_cache_ttl};
 use messages::{build_messages, hoist_largest_user_message};
@@ -170,6 +171,7 @@ pub(crate) fn convert_to_anthropic_format(
         &messages_cache_control,
         ctx.prompt_cache_settings,
         &mut breakpoints_remaining,
+        ctx.model,
     )?;
     let messages_breakpoints_used = messages_breakpoints_before.saturating_sub(breakpoints_remaining);
     let explicit_breakpoints_used = max_breakpoints.saturating_sub(breakpoints_remaining);
@@ -238,12 +240,11 @@ pub(crate) fn convert_to_anthropic_format(
         None
     };
 
-    let effective_temperature =
-        if thinking_val.is_some() || resolved_model == vtcode_config::constants::models::anthropic::CLAUDE_OPUS_4_8 {
-            None
-        } else {
-            request.temperature
-        };
+    let effective_temperature = if thinking_val.is_some() || rejects_sampling(resolved_model, ctx.model) {
+        None
+    } else {
+        request.temperature
+    };
 
     let top_level_cache_control =
         if ctx.prompt_cache_enabled && explicit_breakpoints_used < max_breakpoints && !has_uncached_runtime_context {

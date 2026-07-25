@@ -105,14 +105,12 @@ impl LLMProvider for OpenRouterProvider {
                                             .get("reasoning_details")
                                             .and_then(|v| v.as_array())
                                         {
-                                            // Extract new reasoning text from structured details
-                                            let prev_reasoning = aggregator.reasoning.clone();
+                                            let prev_reasoning_len = aggregator.reasoning.len();
                                             aggregator.set_reasoning_details(reasoning_details);
 
-                                            // If reasoning text grew, yield the delta
                                             if let Some(new_reasoning) = crate::providers::common::extract_reasoning_text_from_detail_values(reasoning_details) {
-                                                if new_reasoning.len() > prev_reasoning.len() {
-                                                    let delta = new_reasoning[prev_reasoning.len()..].to_string();
+                                                if new_reasoning.len() > prev_reasoning_len {
+                                                    let delta = new_reasoning[prev_reasoning_len..].to_string();
                                                     if !delta.trim().is_empty() {
                                                         yield LLMStreamEvent::Reasoning { delta };
                                                     }
@@ -205,14 +203,14 @@ impl LLMProvider for OpenRouterProvider {
                                             .get("reasoning_details")
                                             .and_then(|v| v.as_array())
                                         {
-                                            let prev_reasoning = aggregator.reasoning.clone();
+                                            let prev_reasoning_len = aggregator.reasoning.len();
                                             aggregator.set_reasoning_details(reasoning_details);
 
                                             if let Some(new_reasoning) =
                                                 crate::providers::common::extract_reasoning_text_from_detail_values(reasoning_details)
                                             {
-                                                if new_reasoning.len() > prev_reasoning.len() {
-                                                    let delta = new_reasoning[prev_reasoning.len()..].to_string();
+                                                if new_reasoning.len() > prev_reasoning_len {
+                                                    let delta = new_reasoning[prev_reasoning_len..].to_string();
                                                     if !delta.trim().is_empty() {
                                                         yield NormalizedStreamEvent::ReasoningDelta { delta };
                                                     }

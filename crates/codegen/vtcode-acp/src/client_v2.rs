@@ -531,8 +531,7 @@ impl AcpClientV2 {
 
             // Process complete events
             while let Some(event_end) = buffer.find("\n\n") {
-                let event = buffer[..event_end].to_string();
-                buffer = buffer[event_end + 2..].to_string();
+                let event = buffer.drain(..event_end + 2).collect::<String>();
 
                 // Parse SSE event fields
                 let mut event_type = None;

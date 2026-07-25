@@ -2,12 +2,16 @@ use hashbrown::HashSet;
 
 use crate::error_display;
 use crate::provider::{ContentPart, LLMError, LLMRequest, Message, MessageContent, MessageRole};
-use crate::providers::anthropic::capabilities::supports_mid_conversation_system_messages;
+use crate::providers::anthropic::capabilities::{
+    supports_assistant_prefill, supports_mid_conversation_system_messages,
+};
+use crate::providers::anthropic::validation::request_uses_assistant_prefill;
 use crate::providers::anthropic_types::{
     AnthropicContentBlock, AnthropicMessage, AnthropicToolResultBlock, AnthropicToolUseBlock, CacheControl, ImageSource,
 };
 use crate::providers::common::normalize_reasoning_detail_object;
 use serde_json::{Value, json};
+use tracing::warn;
 use vtcode_config::core::AnthropicPromptCacheSettings;
 
 pub(crate) fn hoist_largest_user_message(messages: &mut Vec<Message>) {
@@ -38,10 +42,11 @@ pub(crate) fn build_messages(
     messages_cache_control: &Option<CacheControl>,
     prompt_cache_settings: &AnthropicPromptCacheSettings,
     breakpoints_remaining: &mut usize,
+    default_model: &str,
 ) -> Result<Vec<AnthropicMessage>, LLMError> {
     let mut messages = Vec::with_capacity(messages_to_process.len());
     let mut tool_use_ids = HashSet::new();
-    let allow_mid_conversation_system = supports_mid_conversation_system_messages(&request.model, &request.model);
+    let allow_mid_conversation_system = supports_mid_conversation_system_messages(&request.model, default_model);
     let allow_container_uploads = request
         .tools
         .as_ref()
@@ -166,7 +171,14 @@ pub(crate) fn build_messages(
         }
     }
 
-    add_prefill_message(request, &mut messages);
+    if supports_assistant_prefill(&request.model, default_model) {
+        add_prefill_message(request, &mut messages);
+    } else if request_uses_assistant_prefill(request) {
+        tracing::warn!(
+            model = %request.model,
+            "assistant prefill omitted: model does not support prefill; request included prefill/coding_agent_settings/character_reinforcement"
+        );
+    }
 
     if messages.is_empty() {
         let formatted_error =
@@ -445,7 +457,7 @@ mod tests {
         let mut breakpoints_remaining = 4usize;
 
         let messages =
-            build_messages(&request, &source_messages, &cache_control, &settings, &mut breakpoints_remaining)
+            build_messages(&request, &source_messages, &cache_control, &settings, &mut breakpoints_remaining, "")
                 .expect("build_messages");
 
         assert_eq!(message_anchor_flags(&messages), vec![false, true, true]);
@@ -462,7 +474,7 @@ mod tests {
         let mut breakpoints_remaining = 0usize;
 
         let messages =
-            build_messages(&request, &source_messages, &cache_control, &settings, &mut breakpoints_remaining)
+            build_messages(&request, &source_messages, &cache_control, &settings, &mut breakpoints_remaining, "")
                 .expect("build_messages");
 
         assert_eq!(message_anchor_flags(&messages), vec![false, false, false]);
@@ -479,7 +491,7 @@ mod tests {
         let mut breakpoints_remaining = 1usize;
 
         let messages =
-            build_messages(&request, &source_messages, &cache_control, &settings, &mut breakpoints_remaining)
+            build_messages(&request, &source_messages, &cache_control, &settings, &mut breakpoints_remaining, "")
                 .expect("build_messages");
 
         assert_eq!(message_anchor_flags(&messages), vec![false, false, true]);
@@ -502,7 +514,7 @@ mod tests {
         let mut breakpoints_remaining = 4usize;
 
         let messages =
-            build_messages(&request, &source_messages, &cache_control, &settings, &mut breakpoints_remaining)
+            build_messages(&request, &source_messages, &cache_control, &settings, &mut breakpoints_remaining, "")
                 .expect("build_messages");
 
         // Both long messages qualify (default threshold is 256 chars); the short

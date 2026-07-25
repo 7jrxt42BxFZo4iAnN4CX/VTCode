@@ -43,7 +43,9 @@ impl TagStreamSanitizer {
     pub(crate) fn process_chunk(&mut self, chunk: &str) -> Vec<LLMStreamEvent> {
         let mut events = Vec::new();
         let mut current_pos = 0;
-        let chunk_str = format!("{}{}", self.partial_tag, chunk);
+        let mut chunk_str = String::with_capacity(self.partial_tag.len() + chunk.len());
+        chunk_str.push_str(&self.partial_tag);
+        chunk_str.push_str(chunk);
         self.partial_tag.clear();
 
         while current_pos < chunk_str.len() {

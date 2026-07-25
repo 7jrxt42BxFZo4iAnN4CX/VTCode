@@ -179,7 +179,7 @@ mod validation_tests {
     }
 
     #[test]
-    fn test_validate_sonnet_4_6_rejects_prefill_without_thinking() {
+    fn test_validate_sonnet_4_6_omits_prefill_without_thinking() {
         let config = AnthropicConfig {
             extended_thinking_enabled: false,
             ..AnthropicConfig::default()
@@ -191,11 +191,11 @@ mod validation_tests {
             ..Default::default()
         };
 
-        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config).is_err());
+        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config).is_ok());
     }
 
     #[test]
-    fn test_validate_sonnet_4_6_rejects_prefill_thought_without_thinking() {
+    fn test_validate_sonnet_4_6_omits_prefill_thought_without_thinking() {
         let config = AnthropicConfig {
             extended_thinking_enabled: false,
             ..AnthropicConfig::default()
@@ -210,7 +210,7 @@ mod validation_tests {
             ..Default::default()
         };
 
-        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config).is_err());
+        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config).is_ok());
     }
 
     #[test]
@@ -322,7 +322,7 @@ mod validation_tests {
     }
 
     #[test]
-    fn test_validate_structured_outputs_rejects_prefill() {
+    fn test_validate_structured_outputs_omits_prefill_for_unsupported_model() {
         let config = AnthropicConfig::default();
         let request = LLMRequest {
             messages: vec![Message::user("hi".to_string())].into(),
@@ -339,7 +339,7 @@ mod validation_tests {
             ..Default::default()
         };
 
-        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config).is_err());
+        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config).is_ok());
     }
 
     #[test]

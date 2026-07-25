@@ -3,12 +3,18 @@ use crate::providers::anthropic_types::{ThinkingConfig, ThinkingDisplay};
 use crate::rig_adapter::RigProviderCapabilities;
 use serde_json::{Value, json};
 use std::env;
+use tracing::warn;
 use vtcode_config::constants::env_vars;
 use vtcode_config::core::AnthropicConfig;
 use vtcode_config::models::Provider;
 use vtcode_config::types::ReasoningEffortLevel;
 
-use super::super::capabilities::{claude_thinking_profile, resolve_model_name, supports_reasoning_effort};
+use vtcode_config::constants::models::anthropic;
+
+use super::super::capabilities::{
+    claude_thinking_profile, default_effort_for_model, effort_is_at_most_high, matches_model, resolve_model_name,
+    supports_reasoning_effort,
+};
 
 fn resolve_configured_thinking_display(anthropic_config: &AnthropicConfig) -> Option<ThinkingDisplay> {
     anthropic_config.thinking_display.and_then(|d| match d {
@@ -50,13 +56,26 @@ pub(crate) fn build_thinking_config(
     default_model: &str,
 ) -> (Option<ThinkingConfig>, Option<Value>) {
     let resolved_model = resolve_model_name(&request.model, default_model);
-    let thinking_enabled =
-        anthropic_config.extended_thinking_enabled && supports_reasoning_effort(resolved_model, default_model);
+    let profile = claude_thinking_profile(resolved_model, default_model);
     let display = resolve_thinking_display(request, anthropic_config);
+    let default_thinking = profile.is_some_and(|p| p.default_thinking_enabled);
 
     if let Some(overrides) = request.anthropic_request_overrides.as_ref() {
         match overrides.thinking_mode {
-            AnthropicThinkingModeOverride::Disabled => return (None, None),
+            AnthropicThinkingModeOverride::Disabled => {
+                if default_thinking {
+                    if matches_model(resolved_model, anthropic::CLAUDE_OPUS_5) {
+                        if effort_is_at_most_high(request, anthropic_config) {
+                            return (Some(ThinkingConfig::Disabled), None);
+                        }
+                        return (None, None);
+                    }
+                    if matches_model(resolved_model, anthropic::CLAUDE_SONNET_5) {
+                        return (Some(ThinkingConfig::Disabled), None);
+                    }
+                }
+                return (None, None);
+            }
             AnthropicThinkingModeOverride::Adaptive => {
                 return (Some(ThinkingConfig::Adaptive { display }), None);
             }
@@ -67,12 +86,21 @@ pub(crate) fn build_thinking_config(
         }
     }
 
+    let thinking_enabled = if default_thinking {
+        if !anthropic_config.extended_thinking_enabled {
+            tracing::warn!(
+                model = %request.model,
+                "extended_thinking_enabled=false overridden by model default thinking profile; thinking will be enabled"
+            );
+        }
+        true
+    } else {
+        anthropic_config.extended_thinking_enabled && supports_reasoning_effort(resolved_model, default_model)
+    };
+
     if thinking_enabled {
-        if claude_thinking_profile(resolved_model, default_model)
-            .is_some_and(|profile| matches!(profile.mode, super::super::capabilities::ClaudeThinkingMode::Adaptive))
-        {
-            if claude_thinking_profile(resolved_model, default_model)
-                .is_some_and(|profile| profile.supports_manual_budget)
+        if profile.is_some_and(|p| matches!(p.mode, super::super::capabilities::ClaudeThinkingMode::Adaptive)) {
+            if profile.is_some_and(|p| p.supports_manual_budget)
                 && let Some(explicit_budget) = request.thinking_budget
             {
                 return (manual_thinking_config(explicit_budget, request.max_tokens, display), None);
@@ -105,9 +133,7 @@ pub(crate) fn build_thinking_config(
             return (Some(thinking), None);
         }
     } else if let Some(effort) = request.reasoning_effort {
-        if claude_thinking_profile(resolved_model, default_model)
-            .is_some_and(|profile| matches!(profile.mode, super::super::capabilities::ClaudeThinkingMode::Adaptive))
-        {
+        if profile.is_some_and(|p| matches!(p.mode, super::super::capabilities::ClaudeThinkingMode::Adaptive)) {
             return (None, None);
         }
 
@@ -126,17 +152,17 @@ pub(crate) fn build_thinking_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vtcode_config::constants::models;
+    use vtcode_config::constants::models::anthropic;
 
     #[test]
     fn ignores_explicit_budget_for_opus_4_8() {
         let request = LLMRequest {
-            model: models::anthropic::CLAUDE_OPUS_4_8.to_string(),
+            model: anthropic::CLAUDE_OPUS_4_8.to_string(),
             thinking_budget: Some(2048),
             ..Default::default()
         };
         let config = AnthropicConfig::default();
-        let (thinking, _) = build_thinking_config(&request, &config, models::anthropic::DEFAULT_MODEL);
+        let (thinking, _) = build_thinking_config(&request, &config, anthropic::DEFAULT_MODEL);
 
         assert!(matches!(thinking, Some(ThinkingConfig::Adaptive { .. })));
     }
@@ -144,14 +170,14 @@ mod tests {
     #[test]
     fn adaptive_thinking_includes_summarized_display() {
         let request = LLMRequest {
-            model: models::anthropic::CLAUDE_SONNET_4_6.to_string(),
+            model: anthropic::CLAUDE_SONNET_4_6.to_string(),
             ..Default::default()
         };
         let config = AnthropicConfig {
             thinking_display: Some(vtcode_config::ThinkingDisplayMode::Summarized),
             ..AnthropicConfig::default()
         };
-        let (thinking, _) = build_thinking_config(&request, &config, models::anthropic::DEFAULT_MODEL);
+        let (thinking, _) = build_thinking_config(&request, &config, anthropic::DEFAULT_MODEL);
 
         match thinking {
             Some(ThinkingConfig::Adaptive { display: Some(ThinkingDisplay::Summarized) }) => {}
@@ -162,14 +188,14 @@ mod tests {
     #[test]
     fn adaptive_thinking_includes_omitted_display() {
         let request = LLMRequest {
-            model: models::anthropic::CLAUDE_SONNET_4_6.to_string(),
+            model: anthropic::CLAUDE_SONNET_4_6.to_string(),
             ..Default::default()
         };
         let config = AnthropicConfig {
             thinking_display: Some(vtcode_config::ThinkingDisplayMode::Omitted),
             ..AnthropicConfig::default()
         };
-        let (thinking, _) = build_thinking_config(&request, &config, models::anthropic::DEFAULT_MODEL);
+        let (thinking, _) = build_thinking_config(&request, &config, anthropic::DEFAULT_MODEL);
 
         match thinking {
             Some(ThinkingConfig::Adaptive { display: Some(ThinkingDisplay::Omitted) }) => {}
@@ -180,14 +206,14 @@ mod tests {
     #[test]
     fn adaptive_thinking_includes_display_for_sonnet_4_6_when_configured() {
         let request = LLMRequest {
-            model: models::anthropic::CLAUDE_SONNET_4_6.to_string(),
+            model: anthropic::CLAUDE_SONNET_4_6.to_string(),
             ..Default::default()
         };
         let config = AnthropicConfig {
             thinking_display: Some(vtcode_config::ThinkingDisplayMode::Summarized),
             ..AnthropicConfig::default()
         };
-        let (thinking, _) = build_thinking_config(&request, &config, models::anthropic::DEFAULT_MODEL);
+        let (thinking, _) = build_thinking_config(&request, &config, anthropic::DEFAULT_MODEL);
 
         match thinking {
             Some(ThinkingConfig::Adaptive { display: Some(ThinkingDisplay::Summarized) }) => {}
@@ -198,11 +224,11 @@ mod tests {
     #[test]
     fn thinking_display_defaults_to_none() {
         let request = LLMRequest {
-            model: models::anthropic::CLAUDE_SONNET_4_6.to_string(),
+            model: anthropic::CLAUDE_SONNET_4_6.to_string(),
             ..Default::default()
         };
         let config = AnthropicConfig::default();
-        let (thinking, _) = build_thinking_config(&request, &config, models::anthropic::DEFAULT_MODEL);
+        let (thinking, _) = build_thinking_config(&request, &config, anthropic::DEFAULT_MODEL);
 
         match thinking {
             Some(ThinkingConfig::Adaptive { display: None }) => {}
