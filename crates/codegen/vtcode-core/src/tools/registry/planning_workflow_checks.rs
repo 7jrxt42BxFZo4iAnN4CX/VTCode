@@ -14,6 +14,7 @@ const FILE_WRITING_TOOLS: &[&str] = &[
     crate::config::constants::tools::CREATE_FILE,
     crate::config::constants::tools::EDIT_FILE,
     crate::config::constants::tools::SEARCH_REPLACE,
+    crate::config::constants::tools::APPLY_PATCH,
 ];
 
 impl ToolRegistry {

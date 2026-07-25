@@ -134,7 +134,7 @@ pub fn validate_prompt_catalog_alignment(
             return Err(AlignmentError::PlanningWorkflowPromptPolicyMismatch { expected_line });
         }
 
-        const MUTATING_HINTS: &[&str] = &["apply_patch", "file_operation write", "file_operation edit"];
+        const MUTATING_HINTS: &[&str] = &["file_operation write", "file_operation edit"];
         for &hint in MUTATING_HINTS {
             if system_instruction.contains(hint) {
                 return Err(AlignmentError::MutatingToolInPlanningWorkflowPrompt { tool_name: hint });
@@ -292,13 +292,13 @@ mod tests {
     #[test]
     fn mutating_tool_in_planning_workflow_prompt_detected() {
         let err = validate_prompt_catalog_alignment(
-            &format!("{PLANNING_WORKFLOW_INTERVIEW_POLICY_LINE}\nyou may call apply_patch to write files"),
+            &format!("{PLANNING_WORKFLOW_INTERVIEW_POLICY_LINE}\nyou may call file_operation write to mutate files"),
             &snapshot(true),
             true,
             false,
         )
         .expect_err("canary should fire");
-        assert_eq!(err, AlignmentError::MutatingToolInPlanningWorkflowPrompt { tool_name: "apply_patch" });
+        assert_eq!(err, AlignmentError::MutatingToolInPlanningWorkflowPrompt { tool_name: "file_operation write" });
     }
 
     #[test]

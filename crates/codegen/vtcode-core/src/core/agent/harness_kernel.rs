@@ -316,7 +316,7 @@ mod tests {
 
         assert!(names.contains(&tools::CODE_SEARCH));
         assert!(names.contains(&tools::UNIFIED_FILE));
-        assert!(!names.contains(&tools::APPLY_PATCH));
+        assert!(names.contains(&tools::APPLY_PATCH));
         assert!(!names.contains(&tools::WRITE_FILE));
     }
 

@@ -435,7 +435,7 @@ async fn planning_mode_filters_provider_facing_mutating_tools() {
     runner.tool_registry.enable_planning();
 
     let snapshot = runner.build_universal_tool_snapshot().await.expect("snapshot");
-    assert_provider_catalogues_inactive_tool(&snapshot, tools::APPLY_PATCH);
+    assert_provider_exposes_tool(&snapshot, tools::APPLY_PATCH);
     assert_provider_hides_tool(&snapshot, tools::READ_FILE);
     assert_provider_exposes_tool(&snapshot, tools::CODE_SEARCH);
     assert_eq!(
