@@ -4,13 +4,83 @@ use serde_json::Value;
 /// Conservative allow-list of read-only inspection commands used by
 /// `command_session`. Any command that could write, move, or delete must be
 /// rejected so it is not cached or parallelized as read-only.
+///
+/// `cd` is included because changing the working directory mutates nothing;
+/// models habitually prefix exploration with `cd <workspace> && …` and plan
+/// mode must not reject that pattern (checkpoint turn_810).
 const READONLY_UNIFIED_EXEC_COMMANDS: &[&str] = &[
     "rg", "ls", "cat", "diff", "find", "wc", "grep", "egrep", "fgrep", "head", "tail", "sort", "uniq", "awk", "sed",
-    "cut", "tr", "ast-grep", "sg", "echo", "pwd", "printf", "true", "false", "test",
+    "cut", "tr", "ast-grep", "sg", "echo", "pwd", "printf", "true", "false", "test", "cd", "fd", "tree", "which",
+    "stat", "file", "du", "df", "realpath", "basename", "dirname", "nl", "column", "jq", "date", "whoami", "uname",
 ];
 
 pub fn is_readonly_base_command(command: &str) -> bool {
     READONLY_UNIFIED_EXEC_COMMANDS.contains(&command)
+}
+
+/// Read-only subcommand allow-list for multi-word tools whose base command is
+/// not inherently safe (`git`, `cargo`, package managers). Only inspection
+/// subcommands are listed; anything that can mutate the worktree, index,
+/// refs, or lockfiles must stay out.
+fn is_readonly_subcommand(first: &str, second: Option<&str>, third: Option<&str>) -> bool {
+    match first {
+        "git" => matches!(
+            second,
+            Some(
+                "status"
+                    | "log"
+                    | "diff"
+                    | "show"
+                    | "blame"
+                    | "ls-files"
+                    | "rev-parse"
+                    | "describe"
+                    | "shortlog"
+                    | "grep"
+            )
+        ),
+        "cargo" => match second {
+            Some("check" | "test" | "metadata" | "tree" | "clippy") => true,
+            Some("nextest") => matches!(third, Some("run" | "list")),
+            _ => false,
+        },
+        "npm" | "pnpm" | "yarn" => match second {
+            Some("test") => true,
+            Some("run") => matches!(third, Some("test")),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Leading command words of a shell segment, skipping flags and `VAR=value`
+/// assignments. Bounded to the first three words, which is all the
+/// subcommand allow-list needs (e.g. `cargo nextest run`).
+fn segment_command_words(segment: &str) -> Vec<String> {
+    segment
+        .split_whitespace()
+        .filter(|token| !token.starts_with('-') && !token.contains('='))
+        .take(3)
+        .map(|token| token.to_ascii_lowercase())
+        .collect()
+}
+
+/// A shell segment (one `&&`-chain element, possibly a `|` pipeline) is
+/// read-only when every pipeline stage starts with an allow-listed base
+/// command or an allow-listed read-only subcommand (`git log`, `cargo tree`).
+fn is_readonly_segment(segment: &str) -> bool {
+    let trimmed = segment.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    trimmed.split('|').all(|sub| {
+        let words = segment_command_words(sub);
+        let Some(first) = words.first() else {
+            return false;
+        };
+        is_readonly_base_command(first)
+            || is_readonly_subcommand(first, words.get(1).map(String::as_str), words.get(2).map(String::as_str))
+    })
 }
 
 pub fn is_readonly_command_session_command(args: &Value) -> bool {
@@ -22,111 +92,21 @@ pub fn is_readonly_command_session_command(args: &Value) -> bool {
         return true;
     }
 
-    let Some(command) = parts.first().map(String::as_str) else {
-        return false;
-    };
-
-    if is_readonly_base_command(command) {
-        // Verify the raw command has no redirections, command substitutions, or
-        // destructive subcommands (e.g. `find -delete`, `-exec rm`).
-        if !is_readonly_command_string(args) {
-            return false;
-        }
-        // For pipelines, every segment must start with an allow-listed command.
-        if !is_readonly_pipeline_segments(args) {
-            return false;
-        }
-        // For `&&`-chained commands, every segment must start with an
-        // allow-listed command. This allows harmless exploration like
-        // `ls -la && echo '---' && ls -la crates/` in plan mode while
-        // blocking `ls -la && rm foo.txt` (checkpoint turn_726).
-        return is_readonly_chained_segments(args);
-    }
-
-    match command {
-        "git" => matches!(parts.get(1).map(String::as_str), Some("status")),
-        "cargo" => matches!(parts.get(1).map(String::as_str), Some("check" | "test")),
-        "npm" | "pnpm" | "yarn" => match parts.get(1).map(String::as_str) {
-            Some("test") => true,
-            Some("run") => matches!(parts.get(2).map(String::as_str), Some("test")),
-            _ => false,
-        },
-        _ => false,
-    }
-}
-
-/// For `&&`-chained commands, ensure every segment begins with an allow-listed
-/// read-only command. This prevents read-only classification of constructs like
-/// `ls -la && rm foo.txt` or `cat a.txt && tee b.txt`. Mirrors the pipeline
-/// segment check but for `&&` chaining (checkpoint turn_726: plan mode blocked
-/// `ls -la && echo '---' && ls -la crates/` because `&&` was rejected outright,
-/// forcing the model to fall back to `request_user_input` which was also denied).
-pub fn is_readonly_chained_segments(args: &Value) -> bool {
     let Some(raw) = raw_command_text(args) else {
         return false;
     };
 
-    // First split by `&&` to get chain segments, then each segment may also
-    // contain `|` pipelines — the pipeline check is handled separately by
-    // `is_readonly_pipeline_segments`, so here we only need to verify the
-    // first command of each `&&` segment is allow-listed.
-    let segments: Vec<&str> = raw.split("&&").map(str::trim).collect();
-    if segments.len() <= 1 {
-        return true;
-    }
-
-    for segment in &segments {
-        if segment.is_empty() {
-            return false;
-        }
-        // A `&&` segment may itself be a pipeline (e.g. `ls -la | head -5`).
-        // Check the first command of the first pipeline sub-segment.
-        let first_part = segment.split('|').next().unwrap_or(segment).trim();
-        let first_command = first_part
-            .split_whitespace()
-            .find(|token| !token.starts_with('-') && !token.contains('='))
-            .map(|token| token.to_ascii_lowercase());
-        let Some(first_command) = first_command else {
-            return false;
-        };
-        if !is_readonly_base_command(&first_command) {
-            return false;
-        }
-    }
-
-    true
-}
-
-/// For pipelined commands, ensure every segment begins with an allow-listed
-/// read-only command. This prevents read-only caching of constructs like
-/// `cat a.txt | tee b.txt` or `grep x | rm`.
-pub fn is_readonly_pipeline_segments(args: &Value) -> bool {
-    let Some(raw) = raw_command_text(args) else {
+    // Verify the raw command has no redirections, command substitutions, or
+    // destructive subcommands (e.g. `find -delete`, `-exec rm`, `sed -i`).
+    if !is_readonly_command_string(args) {
         return false;
-    };
-
-    let segments: Vec<&str> = raw.split('|').map(str::trim).collect();
-    if segments.len() <= 1 {
-        return true;
     }
 
-    for segment in segments {
-        if segment.is_empty() {
-            return false;
-        }
-        let first_command = segment
-            .split_whitespace()
-            .find(|token| !token.starts_with('-') && !token.contains('='))
-            .map(|token| token.to_ascii_lowercase());
-        let Some(first_command) = first_command else {
-            return false;
-        };
-        if !is_readonly_base_command(&first_command) {
-            return false;
-        }
-    }
-
-    true
+    // Every `&&`-chain segment — and every `|` pipeline stage within each
+    // segment — must be an allow-listed read-only command. This permits
+    // harmless exploration like `cd repo && git log --oneline | head -20`
+    // while rejecting `ls && rm foo.txt` (checkpoints turn_726, turn_810).
+    raw.split("&&").all(is_readonly_segment)
 }
 
 #[cfg(test)]
@@ -134,54 +114,98 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn run_cmd(command: &str) -> Value {
+        json!({"action": "run", "command": command})
+    }
+
     #[test]
     fn and_chain_allows_readonly_segments() {
-        assert!(is_readonly_chained_segments(&json!({"command": "ls -la && echo '---' && ls -la crates/"})));
-        assert!(is_readonly_chained_segments(&json!({"command": "pwd && ls src/"})));
-        assert!(is_readonly_chained_segments(&json!({"command": "cat foo.txt && grep bar"})));
+        assert!(is_readonly_command_session_command(&run_cmd("ls -la && echo '---' && ls -la crates/")));
+        assert!(is_readonly_command_session_command(&run_cmd("pwd && ls src/")));
+        assert!(is_readonly_command_session_command(&run_cmd("cat foo.txt && grep bar")));
     }
 
     #[test]
     fn and_chain_rejects_destructive_segments() {
-        assert!(!is_readonly_chained_segments(&json!({"command": "ls -la && rm foo.txt"})));
-        assert!(!is_readonly_chained_segments(&json!({"command": "cat x && mv a b"})));
-        assert!(!is_readonly_chained_segments(&json!({"command": "true && cp a b"})));
+        assert!(!is_readonly_command_session_command(&run_cmd("ls -la && rm foo.txt")));
+        assert!(!is_readonly_command_session_command(&run_cmd("cat x && mv a b")));
+        assert!(!is_readonly_command_session_command(&run_cmd("true && cp a b")));
     }
 
     #[test]
     fn and_chain_rejects_non_allowlisted_segments() {
-        assert!(!is_readonly_chained_segments(&json!({"command": "ls -la && python script.py"})));
-        assert!(!is_readonly_chained_segments(&json!({"command": "ls -la && cargo build"})));
+        assert!(!is_readonly_command_session_command(&run_cmd("ls -la && python script.py")));
+        assert!(!is_readonly_command_session_command(&run_cmd("ls -la && cargo build")));
     }
 
     #[test]
     fn and_chain_allows_pipeline_within_segment() {
-        // A `&&` segment may itself be a pipeline — only the first command
-        // of each `&&` segment needs to be allow-listed here; the pipeline
-        // segment check is handled by `is_readonly_pipeline_segments`.
-        assert!(is_readonly_chained_segments(&json!({"command": "ls -la | head -5 && echo done"})));
+        assert!(is_readonly_command_session_command(&run_cmd("ls -la | head -5 && echo done")));
     }
 
     #[test]
     fn and_chain_single_command_passes() {
-        assert!(is_readonly_chained_segments(&json!({"command": "ls -la"})));
-        assert!(is_readonly_chained_segments(&json!({"command": "echo hi"})));
+        assert!(is_readonly_command_session_command(&run_cmd("ls -la")));
+        assert!(is_readonly_command_session_command(&run_cmd("echo hi")));
     }
 
     #[test]
     fn readonly_command_session_allows_and_chain() {
         // The exact pattern from checkpoint turn_726 that was blocked.
-        assert!(is_readonly_command_session_command(&json!({
-            "action": "run",
-            "command": "ls -la /path/ && echo '---' && ls -la /path/crates/"
-        })));
+        assert!(is_readonly_command_session_command(&run_cmd("ls -la /path/ && echo '---' && ls -la /path/crates/")));
     }
 
     #[test]
     fn readonly_command_session_rejects_destructive_and_chain() {
-        assert!(!is_readonly_command_session_command(&json!({
-            "action": "run",
-            "command": "ls -la && rm foo.txt"
-        })));
+        assert!(!is_readonly_command_session_command(&run_cmd("ls -la && rm foo.txt")));
+    }
+
+    #[test]
+    fn cd_prefixed_exploration_is_readonly() {
+        // Exact patterns from checkpoint turn_810 that plan mode rejected:
+        // the model habitually prefixes exploration with `cd <workspace> &&`.
+        assert!(is_readonly_command_session_command(&run_cmd("cd /repo && sed -n '440,520p' Cargo.toml")));
+        assert!(is_readonly_command_session_command(&run_cmd(
+            "cd /repo && ls -la && echo '---' && rg --files -g 'Cargo.toml' | sed -n '1,120p'"
+        )));
+        // `cd` must not become a bypass for mutating chains.
+        assert!(!is_readonly_command_session_command(&run_cmd("cd /repo && cargo build")));
+        assert!(!is_readonly_command_session_command(&run_cmd("cd /repo && rm -rf target")));
+    }
+
+    #[test]
+    fn git_readonly_subcommands_allowed_in_chains_and_pipelines() {
+        assert!(is_readonly_command_session_command(&run_cmd("git log --oneline | head -20")));
+        assert!(is_readonly_command_session_command(&run_cmd("cd /repo && git diff")));
+        assert!(is_readonly_command_session_command(&run_cmd("git show HEAD")));
+        assert!(is_readonly_command_session_command(&run_cmd("git blame src/main.rs | head")));
+        // Mutating git subcommands stay rejected.
+        assert!(!is_readonly_command_session_command(&run_cmd("git checkout main")));
+        assert!(!is_readonly_command_session_command(&run_cmd("cd /repo && git push")));
+        assert!(!is_readonly_command_session_command(&run_cmd("git commit -m 'x'")));
+    }
+
+    #[test]
+    fn cargo_readonly_subcommands_allowed() {
+        assert!(is_readonly_command_session_command(&run_cmd("cargo metadata")));
+        assert!(is_readonly_command_session_command(&run_cmd("cargo tree | head -50")));
+        assert!(is_readonly_command_session_command(&run_cmd("cargo nextest run")));
+        assert!(!is_readonly_command_session_command(&run_cmd("cargo build")));
+        assert!(!is_readonly_command_session_command(&run_cmd("cargo publish")));
+    }
+
+    #[test]
+    fn stderr_merge_is_not_a_write_redirection() {
+        assert!(is_readonly_command_session_command(&run_cmd("cargo check 2>&1 | head -c 4000")));
+        // A real file redirection is still rejected.
+        assert!(!is_readonly_command_session_command(&run_cmd("cargo check > out.txt")));
+    }
+
+    #[test]
+    fn extra_inspection_base_commands_are_readonly() {
+        assert!(is_readonly_command_session_command(&run_cmd("tree -L 2 crates/")));
+        assert!(is_readonly_command_session_command(&run_cmd("fd -e rs planner")));
+        assert!(is_readonly_command_session_command(&run_cmd("stat Cargo.toml && file target")));
+        assert!(is_readonly_command_session_command(&run_cmd("which cargo")));
     }
 }

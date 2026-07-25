@@ -252,4 +252,37 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn planning_workflow_allows_cd_prefixed_exploration() -> Result<()> {
+        // Checkpoint turn_810: plan mode rejected `cd <workspace> && sed …`
+        // because `cd` was not allow-listed, blocking all file exploration.
+        let temp_dir = TempDir::new()?;
+        let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
+        registry.enable_planning();
+
+        assert!(registry.is_planning_active_allowed(
+            tools::UNIFIED_EXEC,
+            &json!({"action": "run", "command": "cd /repo && sed -n '440,520p' Cargo.toml"})
+        ));
+        assert!(registry.is_planning_active_allowed(
+            tools::UNIFIED_EXEC,
+            &json!({"action": "run", "command": "cd /repo && ls -la && rg --files -g 'Cargo.toml' | sed -n '1,120p'"})
+        ));
+        assert!(registry.is_planning_active_allowed(
+            tools::UNIFIED_EXEC,
+            &json!({"action": "run", "command": "git log --oneline | head -20"})
+        ));
+        // Mutating chains stay blocked.
+        assert!(!registry.is_planning_active_allowed(
+            tools::UNIFIED_EXEC,
+            &json!({"action": "run", "command": "cd /repo && cargo build"})
+        ));
+        assert!(!registry.is_planning_active_allowed(
+            tools::UNIFIED_EXEC,
+            &json!({"action": "run", "command": "cd /repo && git push"})
+        ));
+
+        Ok(())
+    }
 }

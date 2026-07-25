@@ -11,6 +11,16 @@ During planning, the agent can:
 - analyse patterns and constraints before proposing changes
 - run explicitly safe inspection or validation commands when the active permission policy allows them
 
+Shell commands in plan mode are validated against a read-only allow-list. Allowed patterns include:
+
+- inspection base commands: `rg`, `ls`, `cat`, `sed`, `grep`, `find`, `head`, `tail`, `fd`, `tree`, `stat`, `file`, `which`, `jq`, and similar
+- `cd` prefixes: `cd <dir> && <read-only command>` (changing directory mutates nothing)
+- read-only subcommands: `git status|log|diff|show|blame|ls-files|rev-parse|describe|shortlog|grep`, `cargo check|test|clippy|metadata|tree|nextest run`, `npm|pnpm|yarn test`
+- `&&` chains and `|` pipelines where every segment is itself read-only
+- `2>&1` stderr merges (no file is written)
+
+Rejected: file redirections (`>`, `>>`), command substitution (`$(...)`, backticks), `;` chaining, in-place edits (`sed -i`), and any segment starting with a mutating or unknown command (`rm`, `mv`, `cargo build`, `git push`, arbitrary scripts).
+
 During planning, mutating tools should be denied unless a project explicitly allows durable planning artefacts such as files under `.vtcode/plans/`.
 
 `task_tracker` is available for checklist state. Planning output should use `<proposed_plan>...</proposed_plan>` when the agent is ready for user review.

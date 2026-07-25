@@ -509,6 +509,12 @@ pub(crate) async fn run_turn_loop(
         ctx.safety_validator.set_limits(max_per_turn, max_per_session);
         ctx.safety_validator.start_turn();
     }
+    // Tracks whether planning-aware budgets are already in effect. When
+    // planning is entered mid-turn (via the enter trigger below), the limits
+    // computed above used `planning_active = false` and must be re-applied so
+    // the planning research floor (120 calls/turn) takes effect immediately
+    // instead of exhausting the smaller build-mode budget (checkpoint turn_804).
+    let mut planning_limits_applied = ctx.is_planning_active();
 
     loop {
         if handle_steering_messages(&mut ctx, working_history, &mut result).await? {
@@ -520,6 +526,23 @@ pub(crate) async fn run_turn_loop(
 
         if maybe_handle_planning_enter_trigger(&mut ctx, working_history, step_count, &mut result).await? {
             break;
+        }
+
+        // Planning entered mid-turn: re-derive turn config and budgets with
+        // `planning_active = true` so research isn't capped by the smaller
+        // build-mode limits that were computed at turn start.
+        if !planning_limits_applied && ctx.is_planning_active() {
+            planning_limits_applied = true;
+            turn_config = extract_turn_config(ctx.vt_cfg, true, ctx.renderer.supports_inline_ui());
+            if ctx.plan_session.is_interview_denied() {
+                turn_config.request_user_input_enabled = false;
+            }
+            current_max_tool_loops = current_max_tool_loops.max(turn_config.max_tool_loops);
+            ctx.harness_state.max_tool_calls =
+                super::turn_loop_helpers::effective_max_tool_calls_for_turn(ctx.harness_state.max_tool_calls, true);
+            let (max_per_turn, max_per_session) =
+                resolve_safety_tool_call_limits(ctx.harness_state.max_tool_calls, turn_config.max_session_turns, true);
+            ctx.safety_validator.set_limits(max_per_turn, max_per_session);
         }
 
         let transition = maybe_handle_planning_exit_trigger(

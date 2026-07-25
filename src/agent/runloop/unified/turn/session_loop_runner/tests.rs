@@ -2,7 +2,6 @@ use super::{
     archive::NextRuntimeArchiveId,
     archive::next_runtime_archive_id_request,
     archive::workspace_archive_label,
-    effective_max_tool_calls_for_turn,
     support::{
         TurnHistoryCheckpoint, build_tracked_file_freshness_note, build_unrelated_dirty_worktree_note,
         checkpoint_session_archive_start, latest_assistant_result_text, prepare_resume_bootstrap_without_archive,
@@ -49,25 +48,6 @@ fn resume_session(intent: ArchivedSessionIntent) -> ResumeSession {
     };
 
     ResumeSession::from_listing(&listing, intent)
-}
-
-#[test]
-fn planning_workflow_applies_tool_call_floor() {
-    assert_eq!(effective_max_tool_calls_for_turn(32, true), 120);
-    assert_eq!(effective_max_tool_calls_for_turn(64, true), 120);
-    assert_eq!(effective_max_tool_calls_for_turn(120, true), 120);
-    assert_eq!(effective_max_tool_calls_for_turn(200, true), 200);
-}
-
-#[test]
-fn zero_tool_call_limit_stays_unlimited_in_all_modes() {
-    assert_eq!(effective_max_tool_calls_for_turn(0, true), 0);
-    assert_eq!(effective_max_tool_calls_for_turn(0, false), 0);
-}
-
-#[test]
-fn edit_mode_keeps_configured_tool_call_limit() {
-    assert_eq!(effective_max_tool_calls_for_turn(32, false), 32);
 }
 
 #[test]

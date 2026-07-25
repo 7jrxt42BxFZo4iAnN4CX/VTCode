@@ -273,11 +273,14 @@ pub fn is_readonly_command_string(args: &Value) -> bool {
     // mode, forcing the model to fall back to `request_user_input` which was
     // also denied, dead-ending the turn).
     // Pipelines are allowed here but validated segment-by-segment by the caller.
-    if trimmed.contains('>')
-        || trimmed.contains("<(")
-        || trimmed.contains(">(")
-        || trimmed.contains(';')
-        || trimmed.contains("||")
+    // `2>&1` merely merges stderr into stdout (no file is written), so it is
+    // stripped before scanning for write redirections — plan mode must not
+    // reject `cargo check 2>&1 | head -c 4000` style inspection.
+    let without_stderr_merge = trimmed.replace("2>&1", "");
+    if without_stderr_merge.contains('>')
+        || without_stderr_merge.contains("<(")
+        || without_stderr_merge.contains(';')
+        || without_stderr_merge.contains("||")
     {
         return false;
     }
@@ -730,6 +733,14 @@ mod tests {
         // segment against an allow-list of safe commands.
         assert!(is_readonly_command_string(&json!({"command": "diff a b | wc -l"})));
         assert!(is_readonly_command_string(&json!({"command": "grep x src | sort | uniq"})));
+    }
+
+    #[test]
+    fn is_readonly_command_string_allows_stderr_merge() {
+        // `2>&1` merges streams without writing a file; real redirections stay rejected.
+        assert!(is_readonly_command_string(&json!({"command": "cargo check 2>&1 | head -c 4000"})));
+        assert!(!is_readonly_command_string(&json!({"command": "cargo check 2>&1 > out.txt"})));
+        assert!(!is_readonly_command_string(&json!({"command": "ls 2> errors.txt"})));
     }
 
     #[test]

@@ -76,6 +76,27 @@ pub(super) fn resolve_safety_tool_call_limits(
     (turn_limit, session_limit)
 }
 
+/// Minimum per-turn tool-call budget while the planning workflow is active.
+/// Plan-mode research legitimately needs far more read-only calls than a
+/// build-mode turn; a lower configured `max_tool_calls_per_turn` must not
+/// starve planning (checkpoint turn_804: research died at the build-mode cap).
+const PLANNING_WORKFLOW_MIN_TOOL_CALLS_PER_TURN: usize = 120;
+
+/// Planning-aware per-turn tool-call budget. `0` stays `0` (unlimited);
+/// planning raises the configured limit to the planning research floor.
+pub(in crate::agent::runloop::unified::turn) fn effective_max_tool_calls_for_turn(
+    configured_limit: usize,
+    planning_active: bool,
+) -> usize {
+    if configured_limit == 0 {
+        0
+    } else if planning_active {
+        configured_limit.max(PLANNING_WORKFLOW_MIN_TOOL_CALLS_PER_TURN)
+    } else {
+        configured_limit
+    }
+}
+
 const MAX_TOOL_LOOP_LIMIT_ABSOLUTE_CAP: usize = 120;
 const MAX_TOOL_LOOP_CAP_MULTIPLIER: usize = 3;
 const MAX_TOOL_LOOP_INCREMENT_PER_PROMPT: usize = 50;
@@ -459,8 +480,9 @@ pub(super) async fn maybe_handle_tool_loop_limit(
 #[cfg(test)]
 mod tests {
     use super::{
-        PLANNING_WORKFLOW_MIN_TOOL_LOOPS, UNLIMITED_TOOL_LOOPS, clamp_tool_loop_increment, extract_turn_config,
-        handle_steering_messages, resolve_safety_tool_call_limits, resolve_tool_loop_limit, tool_loop_hard_cap,
+        PLANNING_WORKFLOW_MIN_TOOL_LOOPS, UNLIMITED_TOOL_LOOPS, clamp_tool_loop_increment,
+        effective_max_tool_calls_for_turn, extract_turn_config, handle_steering_messages,
+        resolve_safety_tool_call_limits, resolve_tool_loop_limit, tool_loop_hard_cap,
     };
     use crate::agent::runloop::unified::planning_workflow::{
         PlanningIntent, detect_enter_planning_intent, detect_planning_intent,
@@ -636,6 +658,25 @@ mod tests {
     #[test]
     fn resolve_safety_tool_call_limits_keeps_planning_workflow_session_unbounded() {
         assert_eq!(resolve_safety_tool_call_limits(48, 40, true), (48, usize::MAX));
+    }
+
+    #[test]
+    fn planning_workflow_applies_tool_call_floor() {
+        assert_eq!(effective_max_tool_calls_for_turn(32, true), 120);
+        assert_eq!(effective_max_tool_calls_for_turn(64, true), 120);
+        assert_eq!(effective_max_tool_calls_for_turn(120, true), 120);
+        assert_eq!(effective_max_tool_calls_for_turn(200, true), 200);
+    }
+
+    #[test]
+    fn zero_tool_call_limit_stays_unlimited_in_all_modes() {
+        assert_eq!(effective_max_tool_calls_for_turn(0, true), 0);
+        assert_eq!(effective_max_tool_calls_for_turn(0, false), 0);
+    }
+
+    #[test]
+    fn edit_mode_keeps_configured_tool_call_limit() {
+        assert_eq!(effective_max_tool_calls_for_turn(32, false), 32);
     }
 
     #[test]

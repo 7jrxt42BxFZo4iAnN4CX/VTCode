@@ -1,5 +1,4 @@
 mod archive;
-mod execution_policy;
 mod metrics;
 mod plan_seed;
 mod support;
@@ -22,8 +21,8 @@ use vtcode_core::core::interfaces::session::PlanningEntrySource;
 const PLAN_APPROVED_EXECUTION_DIRECTIVE: &str = "Plan was approved. Start implementation immediately: execute the plan step by step beginning with the first pending step. Do not ask for another implementation confirmation.";
 const PLAN_APPROVED_EXECUTION_INPUT: &str = "Implement the approved plan now.";
 
+use crate::agent::runloop::unified::turn::turn_loop_helpers::effective_max_tool_calls_for_turn;
 use archive::{create_session_archive, refresh_runtime_debug_context_for_next_session, workspace_archive_label};
-use execution_policy::effective_max_tool_calls_for_turn;
 use metrics::{
     TurnExecutionMetrics, capture_code_change_snapshot, emit_turn_execution_metrics, estimate_history_bytes,
 };

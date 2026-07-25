@@ -23,12 +23,16 @@ VT Code should also able to trigger plan mode on demand for demanding and comple
 
 ===
 
-check and relax plan mode tools policy permission so that VT Code can use read tools to read and explore file, currently it is being blocked
+[fix plan mode - Use AmpCode Fable]
+
+check and fix plan mode tools policy, shell permission so that VT Code can use read tools to read and explore file, currently it is being blocked
 
 ALSO CRITICAL: extend plan mode tools call limit
 " Safety validation failed: Per-turn tool limit reached (max: 48). Wait or adjust config."
 " Shell execution is blocked"
 log: /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/checkpoints/turn_804.json
+
+"Read-only planning is active and shell access is currently denied by the planning workflow." /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/checkpoints/turn_810.json
 
 "• I can’t open files directly here because exec_command is blocked by tool policy"
 " I cannot currently open files directly because shell execution is denied by
@@ -39,3 +43,5 @@ log:
 /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/checkpoints/turn_795.json
 
 /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/checkpoints/turn_801.json
+
+==> should we open Plan mode tools and shell access to allow VT Code to read and explore files, and execute shell commands to complete the task? it should be like build mode but prevent and **restrict** Write/Update tool
