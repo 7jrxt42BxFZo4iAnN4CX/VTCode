@@ -1066,3 +1066,71 @@ async fn planning_synthesis_truncated_retries_with_compact_spec() {
         "final answer must not be the truncated draft"
     );
 }
+
+#[tokio::test]
+async fn approval_input_without_plan_synthesizes_before_approval() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Clone)]
+    struct PlanProvider {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl uni::LLMProvider for PlanProvider {
+        fn name(&self) -> &str {
+            "openai"
+        }
+
+        fn supports_streaming(&self) -> bool {
+            false
+        }
+
+        async fn generate(&self, request: uni::LLMRequest) -> Result<uni::LLMResponse, uni::LLMError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(uni::LLMResponse {
+                content: Some(
+                    "<proposed_plan>\nSummary: optimize one startup subsystem.\n1. Measure -> src/main.rs -> verify: cargo check --locked\nValidation: run the focused startup test.\nAssumptions: preserve public APIs.\n</proposed_plan>"
+                        .to_string(),
+                ),
+                model: request.model,
+                tool_calls: None,
+                usage: None,
+                finish_reason: uni::FinishReason::Stop,
+                reasoning: None,
+                reasoning_details: None,
+                organization_id: None,
+                request_id: None,
+                tool_references: Vec::new(),
+                compaction: None,
+            })
+        }
+
+        fn supported_models(&self) -> Vec<String> {
+            vec!["noop-model".to_string()]
+        }
+
+        fn validate_request(&self, _request: &uni::LLMRequest) -> Result<(), uni::LLMError> {
+            Ok(())
+        }
+    }
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut backing = TestTurnProcessingBacking::new(4).await;
+    backing.activate_planning_for_test();
+    backing.initialize_plan_file_for_test().await;
+    backing.set_provider(Box::new(PlanProvider { calls: calls.clone() }));
+
+    let mut history = vec![uni::Message::user("yes".to_string())];
+    run_turn_loop(&mut history, backing.turn_loop_context())
+        .await
+        .expect("missing-plan approval should continue to synthesis");
+
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "the missing-plan path must synthesize exactly once");
+    assert!(
+        history
+            .iter()
+            .any(|message| { message.content.as_text().contains("no completed plan draft exists yet") })
+    );
+}

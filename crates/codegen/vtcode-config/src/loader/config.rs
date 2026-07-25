@@ -618,8 +618,8 @@ theme = "ciapre-dark"
 # Enable TODO planning helper mode for structured task management
 todo_planning_mode = true
 
-# UI surface to use ("auto", "alternate", "inline")
-ui_surface = "auto"
+# UI surface to use ("inline" by default; "auto" and "alternate" are also supported)
+ui_surface = "inline"
 
 # Maximum number of conversation turns before rotating context (affects memory usage)
 # Lower values reduce memory footprint but may lose context; higher values preserve context but use more memory

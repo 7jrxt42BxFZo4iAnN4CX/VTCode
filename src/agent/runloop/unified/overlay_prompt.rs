@@ -101,6 +101,7 @@ where
                 );
                 ctrl_c_state.reset();
                 if let Some(mapped) = map_submission(submission) {
+                    close_overlay(handle).await;
                     return Ok(OverlayWaitOutcome::Submitted(mapped));
                 }
             }
@@ -110,6 +111,7 @@ where
                     "wait_for_overlay_submission: cancelled event"
                 );
                 ctrl_c_state.reset();
+                close_overlay(handle).await;
                 return Ok(OverlayWaitOutcome::Cancelled);
             }
             InlineEvent::Exit => {

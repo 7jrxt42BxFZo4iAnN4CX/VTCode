@@ -185,6 +185,10 @@ pub(crate) enum InteractionOutcome {
     PlanApproved {
         /// If true, auto-accept file edits without prompting
         auto_accept: bool,
+        /// Primary agent selected by the planning state for approved-plan
+        /// execution. This already includes prior-agent restoration and the
+        /// configured fallback when planning started from the plan agent.
+        execution_agent: Option<String>,
     },
 }
 

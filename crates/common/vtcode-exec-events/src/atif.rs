@@ -425,6 +425,8 @@ impl AtifTrajectoryBuilder {
             | ThreadEvent::ItemStarted(_)
             | ThreadEvent::ItemUpdated(_)
             | ThreadEvent::PlanDelta(_)
+            | ThreadEvent::PlanApprovalRequested(_)
+            | ThreadEvent::PlanApprovalResolved(_)
             | ThreadEvent::PermissionRequested(_)
             | ThreadEvent::PermissionResolved(_)
             | ThreadEvent::Interjected(_)

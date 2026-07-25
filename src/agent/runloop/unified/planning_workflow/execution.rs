@@ -5,6 +5,7 @@ use tokio::sync::Notify;
 use vtcode_core::config::constants::tools;
 use vtcode_core::core::interfaces::session::PlanningEntrySource;
 use vtcode_core::tools::registry::ExecSettlementMode;
+use vtcode_core::utils::ansi::MessageStyle;
 
 use crate::agent::runloop::unified::planning_workflow_state::{
     render_planning_workflow_next_step_hint, transition_to_planning_workflow,
@@ -21,6 +22,22 @@ use crate::agent::runloop::unified::tool_pipeline::status::{ToolExecutionStatus,
 /// in `vtcode-core` cannot silently drift apart.
 const PLAN_STATUS_PENDING_CONFIRMATION: &str = "pending_confirmation";
 const PLAN_STATUS_SUCCESS: &str = "success";
+
+fn headless_planning_entry_requires_confirmation(
+    supports_inline_ui: bool,
+    skip_confirmations: bool,
+    full_auto: bool,
+) -> bool {
+    !supports_inline_ui && !skip_confirmations && !full_auto
+}
+
+fn inline_planning_entry_requires_confirmation(
+    supports_inline_ui: bool,
+    skip_confirmations: bool,
+    full_auto: bool,
+) -> bool {
+    supports_inline_ui && !skip_confirmations && !full_auto
+}
 
 pub(crate) async fn handle_start_planning(
     ctx: &mut RunLoopContext<'_>,
@@ -62,6 +79,19 @@ pub(crate) async fn handle_start_planning(
     if let ToolExecutionStatus::Success { ref output, .. } = tool_result {
         let status = output.get("status").and_then(|s| s.as_str());
         if status == Some(PLAN_STATUS_PENDING_CONFIRMATION) {
+            if headless_planning_entry_requires_confirmation(
+                ctx.renderer.supports_inline_ui(),
+                ctx.skip_confirmations,
+                ctx.full_auto,
+            ) {
+                let _ = ctx.renderer.line(
+                    MessageStyle::Info,
+                    "Planning workflow entry is awaiting confirmation. Run `/plan` in the next turn to continue, or use an approved full-auto/skip-confirmations policy.",
+                );
+                let mut outcome = ToolPipelineOutcome::from_status(tool_result);
+                outcome.stop_after_tool = true;
+                return Some(outcome);
+            }
             return Some(
                 handle_enter_pending_confirmation(ctx, args_val, output, ctrl_c_state, ctrl_c_notify, max_tool_retries)
                     .await,
@@ -86,7 +116,9 @@ async fn enter_planning_workflow_after_start(ctx: &mut RunLoopContext<'_>) {
         ctx.session_stats,
         ctx.plan_session,
         ctx.handle,
-        PlanningEntrySource::UserRequest,
+        PlanningEntrySource::AgentSuggestion,
+        ctx.agent_name.clone(),
+        ctx.default_primary_agent.clone(),
         false,
         false,
     )
@@ -111,7 +143,11 @@ async fn handle_enter_pending_confirmation(
     let description = output.get("description").and_then(Value::as_str).map(|s| s.to_string());
     let plan_file = output.get("plan_file").and_then(Value::as_str).map(|s| s.to_string());
 
-    let decision = if ctx.renderer.supports_inline_ui() {
+    let decision = if inline_planning_entry_requires_confirmation(
+        ctx.renderer.supports_inline_ui(),
+        ctx.skip_confirmations,
+        ctx.full_auto,
+    ) {
         match present_start_planning_confirmation(
             ctx.handle,
             ctx.session,
@@ -168,4 +204,29 @@ async fn handle_enter_pending_confirmation(
     }
 
     ToolPipelineOutcome::from_status(tool_result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{headless_planning_entry_requires_confirmation, inline_planning_entry_requires_confirmation};
+
+    #[test]
+    fn headless_entry_waits_for_confirmation_under_interactive_policy() {
+        assert!(headless_planning_entry_requires_confirmation(false, false, false));
+    }
+
+    #[test]
+    fn headless_entry_can_continue_under_automatic_policy() {
+        assert!(!headless_planning_entry_requires_confirmation(false, true, false));
+        assert!(!headless_planning_entry_requires_confirmation(false, false, true));
+        assert!(!headless_planning_entry_requires_confirmation(true, false, false));
+    }
+
+    #[test]
+    fn inline_entry_bypasses_confirmation_under_automatic_policy() {
+        assert!(inline_planning_entry_requires_confirmation(true, false, false));
+        assert!(!inline_planning_entry_requires_confirmation(true, true, false));
+        assert!(!inline_planning_entry_requires_confirmation(true, false, true));
+        assert!(!inline_planning_entry_requires_confirmation(false, false, false));
+    }
 }

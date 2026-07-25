@@ -20,6 +20,7 @@ use crate::agent::runloop::unified::turn::context::{
 };
 
 use super::error_handling::tool_denial_diagnostic;
+use super::helpers::check_is_argument_error;
 use crate::agent::runloop::unified::tool_routing::ToolPermissionFlow;
 mod budget;
 mod fallbacks;
@@ -407,7 +408,15 @@ pub(crate) async fn validate_tool_call<'a>(
                         fallback_tool_args,
                     ),
                 );
-                return Ok(ValidationResult::Blocked);
+                // Malformed arguments are actionable tool feedback, not a
+                // policy violation. Keep the blocked-call fuse reserved for
+                // actual guard and permission denials so one bad model payload
+                // cannot terminate the turn before the model can self-correct.
+                return Ok(if check_is_argument_error(&err.to_string()) {
+                    ValidationResult::Handled
+                } else {
+                    ValidationResult::Blocked
+                });
             }
         }
     };

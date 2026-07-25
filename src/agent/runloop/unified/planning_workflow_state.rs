@@ -1,5 +1,6 @@
 use crate::agent::runloop::unified::state::SessionStats;
 use anyhow::Result;
+use vtcode_config::builtin_primary_build_agent;
 use vtcode_core::core::interfaces::session::PlanningEntrySource;
 use vtcode_core::tools::registry::ToolRegistry;
 use vtcode_core::utils::ansi::{AnsiRenderer, MessageStyle};
@@ -31,6 +32,26 @@ pub(crate) struct PlanningWorkflowSessionState {
     /// the planning session, falling back to autonomous plan synthesis
     /// instead of looping (see checkpoint turn_655/turn_660).
     interview_denied: bool,
+    /// Allows one bounded synthesis retry after an interview denial. The
+    /// retry gives the model a direct instruction to emit a completed plan
+    /// from the research already gathered instead of ending with an approval
+    /// hint that has no draft behind it.
+    plan_synthesis_retry_used: bool,
+    /// Primary agent that was active before the planning workflow began.
+    /// Used to restore execution to the prior mode when planning was entered
+    /// by selecting the dedicated plan agent.
+    previous_primary_agent: Option<String>,
+    /// Configured execution agent to use when planning started from the
+    /// dedicated `plan` agent without a previous execution agent.
+    fallback_primary_agent: Option<String>,
+    /// Telemetry identity for the latest unresolved plan approval request.
+    pending_approval: Option<PendingPlanApproval>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PendingPlanApproval {
+    pub(crate) thread_id: String,
+    pub(crate) turn_id: String,
 }
 
 impl PlanningWorkflowSessionState {
@@ -44,6 +65,10 @@ impl PlanningWorkflowSessionState {
         self.budget_exhausted = false;
         self.recovery_exhausted = false;
         self.interview_denied = false;
+        self.plan_synthesis_retry_used = false;
+        self.previous_primary_agent = None;
+        self.fallback_primary_agent = None;
+        self.pending_approval = None;
     }
 
     pub(crate) fn exit(&mut self) {
@@ -51,6 +76,10 @@ impl PlanningWorkflowSessionState {
         self.budget_exhausted = false;
         self.recovery_exhausted = false;
         self.interview_denied = false;
+        self.plan_synthesis_retry_used = false;
+        self.previous_primary_agent = None;
+        self.fallback_primary_agent = None;
+        self.pending_approval = None;
     }
 
     #[allow(dead_code)]
@@ -81,6 +110,10 @@ impl PlanningWorkflowSessionState {
     #[allow(dead_code)]
     pub(crate) fn mark_interview_pending(&mut self) {
         self.interview_pending = true;
+    }
+
+    pub(crate) fn clear_interview_pending(&mut self) {
+        self.interview_pending = false;
     }
 
     pub(crate) fn record_interview_result(&mut self, answered_questions: usize, cancelled: bool) {
@@ -134,6 +167,59 @@ impl PlanningWorkflowSessionState {
     pub(crate) fn is_interview_denied(&self) -> bool {
         self.interview_denied
     }
+
+    pub(crate) fn plan_synthesis_retry_allowed(&self) -> bool {
+        self.interview_denied && !self.plan_synthesis_retry_used
+    }
+
+    pub(crate) fn mark_plan_synthesis_retry_used(&mut self) {
+        self.plan_synthesis_retry_used = true;
+    }
+
+    pub(crate) fn interview_forcing_allowed(&self) -> bool {
+        !self.is_budget_exhausted() && !self.is_recovery_exhausted() && !self.is_interview_denied()
+    }
+
+    pub(crate) fn set_previous_primary_agent(&mut self, agent: Option<String>) {
+        self.previous_primary_agent = agent.filter(|name| !name.trim().is_empty());
+    }
+
+    pub(crate) fn set_fallback_primary_agent(&mut self, agent: Option<String>) {
+        self.fallback_primary_agent = agent.filter(|name| !name.trim().is_empty());
+    }
+
+    pub(crate) fn previous_primary_agent(&self) -> Option<&str> {
+        self.previous_primary_agent.as_deref()
+    }
+
+    /// Resolve the primary agent that should execute an approved plan.
+    ///
+    /// Planning may be entered from an execution agent or by selecting the
+    /// dedicated `plan` agent. Keep this decision at the planning-state
+    /// boundary so inline, headless, and automatic approval paths cannot drift
+    /// into different handoff behavior.
+    pub(crate) fn execution_agent_after_approval(&self, active_agent_name: &str) -> Option<String> {
+        if let Some(previous) = self
+            .previous_primary_agent()
+            .filter(|agent| !agent.eq_ignore_ascii_case(active_agent_name) && !agent.eq_ignore_ascii_case("plan"))
+        {
+            return Some(previous.to_owned());
+        }
+
+        active_agent_name.eq_ignore_ascii_case("plan").then(|| {
+            self.fallback_primary_agent
+                .clone()
+                .unwrap_or_else(|| builtin_primary_build_agent().name)
+        })
+    }
+
+    pub(crate) fn mark_plan_approval_pending(&mut self, thread_id: String, turn_id: String) {
+        self.pending_approval = Some(PendingPlanApproval { thread_id, turn_id });
+    }
+
+    pub(crate) fn take_pending_plan_approval(&mut self) -> Option<PendingPlanApproval> {
+        self.pending_approval.take()
+    }
 }
 
 pub(crate) const PLANNING_WORKFLOW_REVIEW_AND_EXECUTE_HINT: &str =
@@ -161,6 +247,8 @@ pub(crate) async fn transition_to_planning_workflow(
     plan_session: &mut PlanningWorkflowSessionState,
     handle: &InlineHandle,
     entry_source: PlanningEntrySource,
+    previous_primary_agent: Option<String>,
+    fallback_primary_agent: Option<String>,
     reset_plan_file: bool,
     reset_plan_baseline: bool,
 ) {
@@ -179,6 +267,8 @@ pub(crate) async fn transition_to_planning_workflow(
 
     session_stats.reset_for_planning_workflow_entry();
     plan_session.enter(entry_source);
+    plan_session.set_previous_primary_agent(previous_primary_agent);
+    plan_session.set_fallback_primary_agent(fallback_primary_agent);
     handle.force_redraw();
 }
 
@@ -252,6 +342,22 @@ mod tests {
     }
 
     #[test]
+    fn interview_denial_allows_one_plan_synthesis_retry() {
+        let mut state = PlanningWorkflowSessionState::default();
+        state.enter(PlanningEntrySource::UserRequest);
+        state.mark_interview_denied();
+
+        assert!(state.plan_synthesis_retry_allowed());
+        state.mark_plan_synthesis_retry_used();
+        assert!(!state.plan_synthesis_retry_allowed());
+
+        state.exit();
+        state.enter(PlanningEntrySource::UserRequest);
+        assert!(!state.is_interview_denied());
+        assert!(!state.plan_synthesis_retry_allowed());
+    }
+
+    #[test]
     fn budget_and_recovery_exhaustion_cleared_by_enter_and_exit() {
         let mut state = PlanningWorkflowSessionState::default();
         state.enter(PlanningEntrySource::UserRequest);
@@ -293,5 +399,55 @@ mod tests {
         state.record_interview_result(10, false);
         assert_eq!(state.interview_cycles_completed(), 1);
         assert!(!state.last_interview_cancelled());
+    }
+
+    #[test]
+    fn previous_primary_agent_is_retained_only_for_active_planning_session() {
+        let mut state = PlanningWorkflowSessionState::default();
+        state.enter(PlanningEntrySource::AgentSelection);
+        state.set_previous_primary_agent(Some("build".to_string()));
+
+        assert_eq!(state.previous_primary_agent(), Some("build"));
+
+        state.exit();
+        assert_eq!(state.previous_primary_agent(), None);
+    }
+
+    #[test]
+    fn approved_plan_restores_prior_agent_or_falls_back_from_plan_agent() {
+        let mut state = PlanningWorkflowSessionState::default();
+        state.enter(PlanningEntrySource::AgentSuggestion);
+        state.set_previous_primary_agent(Some("auto".to_string()));
+
+        assert_eq!(state.execution_agent_after_approval("plan"), Some("auto".to_string()));
+
+        state.set_previous_primary_agent(None);
+        assert_eq!(state.execution_agent_after_approval("plan"), Some("build".to_string()));
+        assert_eq!(state.execution_agent_after_approval("auto"), None);
+    }
+
+    #[test]
+    fn configured_execution_fallback_wins_over_builtin_build() {
+        let mut state = PlanningWorkflowSessionState::default();
+        state.enter(PlanningEntrySource::UserRequest);
+        state.set_fallback_primary_agent(Some("duck".to_string()));
+
+        assert_eq!(state.execution_agent_after_approval("plan"), Some("duck".to_string()));
+    }
+
+    #[test]
+    fn pending_approval_identity_is_consumed_once() {
+        let mut state = PlanningWorkflowSessionState::default();
+        state.enter(PlanningEntrySource::UserRequest);
+        state.mark_plan_approval_pending("thread-1".to_string(), "turn-2".to_string());
+
+        assert_eq!(
+            state.take_pending_plan_approval(),
+            Some(super::PendingPlanApproval {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-2".to_string(),
+            })
+        );
+        assert_eq!(state.take_pending_plan_approval(), None);
     }
 }

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Keep this file concise and under 150 lines. Root guidance belongs here; detailed explanations belong in `docs/`, skills, `.vtcode/memory/`, or crate-local `AGENTS.md` files.
+Keep this file concise and under 150 lines. Root guidance belongs here; detailed explanations belong in `docs/`, skills, `.vtcode/memory/`, or crate-local `AGENTS.md` files. For all coding tasks use your judgement to decide an appropriate lower power model and run that in a subagent.
 
 ## Rules
 
@@ -33,28 +33,28 @@ Keep this file concise and under 150 lines. Root guidance belongs here; detailed
 
 Cargo workspace, ~30 crates. Rust stable, MSRV 1.88, edition 2024. `default-members` = root, `vtcode-core`, `vtcode-ui` only.
 
-| Crate | Role |
-|---|---|
-| `vtcode` (root `src/`) | Binary, CLI, session bootstrap |
-| `crates/codegen/vtcode-core` | Agent loop, tools, prompts, LLM orchestration, UI |
-| `crates/codegen/vtcode-ui` | Unified UI: design system, theme registry, TUI framework |
-| `crates/codegen/vtcode-config` | Config loading and schema |
-| `crates/codegen/vtcode-bash-runner` | Shell execution sandbox |
-| `crates/codegen/vtcode-acp` | Agent Client Protocol (Zed) |
-| `crates/codegen/vtcode-auth` | OAuth and credential storage |
-| `crates/codegen/vtcode-indexer` | Code indexing and search |
-| `crates/common/vtcode-exec-events` | `ThreadEvent` contract and ATIF export |
-| `crates/common/vtcode-commons` | Shared utilities |
-| `crates/common/vtcode-macros` | Procedural macros |
-| `crates/common/vtcode-utility-tool-specs` | JSON schemas for utility, file, and collaboration/HITL tools |
-| `crates/codegen/vtcode-llm` | LLM provider abstraction, client implementations, streaming (partial extraction) |
-| `crates/codegen/vtcode-skills` | Skill types, discovery, loading, and validation (partial extraction) |
-| `crates/codegen/vtcode-session-store` | Unified per-session state store: append-only `ThreadEvent` log, derived views, retention, cross-session query (single source of truth) |
-| `crates/codegen/vtcode-eval` | Agent evaluation framework: pass@k/pass^k metrics, capability/regression evals, environment-based outcome verification |
-| `crates/codegen/vtcode-safety` | Command safety detection, execution policies, sandboxing |
-| `crates/codegen/vtcode-a2a` | Agent2Agent (A2A) protocol client and server |
-| `crates/codegen/vtcode-mcp` | Model Context Protocol client, connection pooling, tool discovery |
-| `crates/codegen/xtask` | Release packaging automation |
+| Crate                                     | Role                                                                                                                                   |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `vtcode` (root `src/`)                    | Binary, CLI, session bootstrap                                                                                                         |
+| `crates/codegen/vtcode-core`              | Agent loop, tools, prompts, LLM orchestration, UI                                                                                      |
+| `crates/codegen/vtcode-ui`                | Unified UI: design system, theme registry, TUI framework                                                                               |
+| `crates/codegen/vtcode-config`            | Config loading and schema                                                                                                              |
+| `crates/codegen/vtcode-bash-runner`       | Shell execution sandbox                                                                                                                |
+| `crates/codegen/vtcode-acp`               | Agent Client Protocol (Zed)                                                                                                            |
+| `crates/codegen/vtcode-auth`              | OAuth and credential storage                                                                                                           |
+| `crates/codegen/vtcode-indexer`           | Code indexing and search                                                                                                               |
+| `crates/common/vtcode-exec-events`        | `ThreadEvent` contract and ATIF export                                                                                                 |
+| `crates/common/vtcode-commons`            | Shared utilities                                                                                                                       |
+| `crates/common/vtcode-macros`             | Procedural macros                                                                                                                      |
+| `crates/common/vtcode-utility-tool-specs` | JSON schemas for utility, file, and collaboration/HITL tools                                                                           |
+| `crates/codegen/vtcode-llm`               | LLM provider abstraction, client implementations, streaming (partial extraction)                                                       |
+| `crates/codegen/vtcode-skills`            | Skill types, discovery, loading, and validation (partial extraction)                                                                   |
+| `crates/codegen/vtcode-session-store`     | Unified per-session state store: append-only `ThreadEvent` log, derived views, retention, cross-session query (single source of truth) |
+| `crates/codegen/vtcode-eval`              | Agent evaluation framework: pass@k/pass^k metrics, capability/regression evals, environment-based outcome verification                 |
+| `crates/codegen/vtcode-safety`            | Command safety detection, execution policies, sandboxing                                                                               |
+| `crates/codegen/vtcode-a2a`               | Agent2Agent (A2A) protocol client and server                                                                                           |
+| `crates/codegen/vtcode-mcp`               | Model Context Protocol client, connection pooling, tool discovery                                                                      |
+| `crates/codegen/xtask`                    | Release packaging automation                                                                                                           |
 
 New reusable logic: put it in an existing small crate or a new one. Keep it out of `vtcode-core` by default unless tightly coupled to the core runtime.
 
@@ -62,28 +62,28 @@ New reusable logic: put it in an existing small crate or a new one. Keep it out 
 
 Every crate has its own AGENTS.md with crate-specific conventions:
 
-| Crate | AGENTS.md |
-|---|---|
-| `vtcode` (binary) | [src/AGENTS.md](src/AGENTS.md) |
-| `vtcode-core` | [crates/codegen/vtcode-core/AGENTS.md](crates/codegen/vtcode-core/AGENTS.md) |
-| `vtcode-ui` | [crates/codegen/vtcode-ui/AGENTS.md](crates/codegen/vtcode-ui/AGENTS.md) |
-| `vtcode-config` | [crates/codegen/vtcode-config/AGENTS.md](crates/codegen/vtcode-config/AGENTS.md) |
-| `vtcode-bash-runner` | [crates/codegen/vtcode-bash-runner/AGENTS.md](crates/codegen/vtcode-bash-runner/AGENTS.md) |
-| `vtcode-acp` | [crates/codegen/vtcode-acp/AGENTS.md](crates/codegen/vtcode-acp/AGENTS.md) |
-| `vtcode-auth` | [crates/codegen/vtcode-auth/AGENTS.md](crates/codegen/vtcode-auth/AGENTS.md) |
-| `vtcode-indexer` | [crates/codegen/vtcode-indexer/AGENTS.md](crates/codegen/vtcode-indexer/AGENTS.md) |
-| `vtcode-exec-events` | [crates/common/vtcode-exec-events/AGENTS.md](crates/common/vtcode-exec-events/AGENTS.md) |
-| `vtcode-commons` | [crates/common/vtcode-commons/AGENTS.md](crates/common/vtcode-commons/AGENTS.md) |
-| `vtcode-macros` | [crates/common/vtcode-macros/AGENTS.md](crates/common/vtcode-macros/AGENTS.md) |
+| Crate                       | AGENTS.md                                                                                              |
+| --------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `vtcode` (binary)           | [src/AGENTS.md](src/AGENTS.md)                                                                         |
+| `vtcode-core`               | [crates/codegen/vtcode-core/AGENTS.md](crates/codegen/vtcode-core/AGENTS.md)                           |
+| `vtcode-ui`                 | [crates/codegen/vtcode-ui/AGENTS.md](crates/codegen/vtcode-ui/AGENTS.md)                               |
+| `vtcode-config`             | [crates/codegen/vtcode-config/AGENTS.md](crates/codegen/vtcode-config/AGENTS.md)                       |
+| `vtcode-bash-runner`        | [crates/codegen/vtcode-bash-runner/AGENTS.md](crates/codegen/vtcode-bash-runner/AGENTS.md)             |
+| `vtcode-acp`                | [crates/codegen/vtcode-acp/AGENTS.md](crates/codegen/vtcode-acp/AGENTS.md)                             |
+| `vtcode-auth`               | [crates/codegen/vtcode-auth/AGENTS.md](crates/codegen/vtcode-auth/AGENTS.md)                           |
+| `vtcode-indexer`            | [crates/codegen/vtcode-indexer/AGENTS.md](crates/codegen/vtcode-indexer/AGENTS.md)                     |
+| `vtcode-exec-events`        | [crates/common/vtcode-exec-events/AGENTS.md](crates/common/vtcode-exec-events/AGENTS.md)               |
+| `vtcode-commons`            | [crates/common/vtcode-commons/AGENTS.md](crates/common/vtcode-commons/AGENTS.md)                       |
+| `vtcode-macros`             | [crates/common/vtcode-macros/AGENTS.md](crates/common/vtcode-macros/AGENTS.md)                         |
 | `vtcode-utility-tool-specs` | [crates/common/vtcode-utility-tool-specs/AGENTS.md](crates/common/vtcode-utility-tool-specs/AGENTS.md) |
-| `vtcode-llm` | [crates/codegen/vtcode-llm/AGENTS.md](crates/codegen/vtcode-llm/AGENTS.md) |
-| `vtcode-skills` | [crates/codegen/vtcode-skills/AGENTS.md](crates/codegen/vtcode-skills/AGENTS.md) |
-| `vtcode-session-store` | [crates/codegen/vtcode-session-store/AGENTS.md](crates/codegen/vtcode-session-store/AGENTS.md) |
-| `vtcode-eval` | [crates/codegen/vtcode-eval/AGENTS.md](crates/codegen/vtcode-eval/AGENTS.md) |
-| `vtcode-safety` | [crates/codegen/vtcode-safety/AGENTS.md](crates/codegen/vtcode-safety/AGENTS.md) |
-| `vtcode-a2a` | [crates/codegen/vtcode-a2a/AGENTS.md](crates/codegen/vtcode-a2a/AGENTS.md) |
-| `vtcode-mcp` | [crates/codegen/vtcode-mcp/AGENTS.md](crates/codegen/vtcode-mcp/AGENTS.md) |
-| `xtask` | [crates/codegen/xtask/AGENTS.md](crates/codegen/xtask/AGENTS.md) |
+| `vtcode-llm`                | [crates/codegen/vtcode-llm/AGENTS.md](crates/codegen/vtcode-llm/AGENTS.md)                             |
+| `vtcode-skills`             | [crates/codegen/vtcode-skills/AGENTS.md](crates/codegen/vtcode-skills/AGENTS.md)                       |
+| `vtcode-session-store`      | [crates/codegen/vtcode-session-store/AGENTS.md](crates/codegen/vtcode-session-store/AGENTS.md)         |
+| `vtcode-eval`               | [crates/codegen/vtcode-eval/AGENTS.md](crates/codegen/vtcode-eval/AGENTS.md)                           |
+| `vtcode-safety`             | [crates/codegen/vtcode-safety/AGENTS.md](crates/codegen/vtcode-safety/AGENTS.md)                       |
+| `vtcode-a2a`                | [crates/codegen/vtcode-a2a/AGENTS.md](crates/codegen/vtcode-a2a/AGENTS.md)                             |
+| `vtcode-mcp`                | [crates/codegen/vtcode-mcp/AGENTS.md](crates/codegen/vtcode-mcp/AGENTS.md)                             |
+| `xtask`                     | [crates/codegen/xtask/AGENTS.md](crates/codegen/xtask/AGENTS.md)                                       |
 
 After significant changes (new modules, convention shifts, discovered gotchas, public API changes), use the `audit-module-agents` skill to check if the affected crate's AGENTS.md needs updating. Keep each local AGENTS.md under 30 lines.
 
@@ -97,19 +97,19 @@ Session-independent knowledge lives in `.vtcode/memory/` (gitignored): `gotchas.
 - Prefer `./scripts/check-dev.sh` (10-30s) over `./scripts/check.sh` (2-5m) for iteration.
 - Release builds keep `debug-assertions = true` and `overflow-checks = true` in `[profile.release]`. `debug_assert!` and overflow checks are NOT disabled in prod: a violated invariant must crash loud, not let the program run under wrong assumptions (see kristoff.it/blog/fix-your-asserts). Use `assert!`/`debug_assert!` for invariants that always hold; gate expensive diagnostics behind `#[cfg(debug_assertions)]` since that branch still compiles out of release when the flag is off elsewhere.
 
-| Change | Command |
-|---|---|
-| Fast gate | `./scripts/check-dev.sh` |
-| + tests (quick) | `./scripts/check-dev.sh --test` |
-| + tests (changed crates) | `./scripts/check-dev.sh --changed` |
-| + workspace | `./scripts/check-dev.sh --workspace` |
-| + lints | `./scripts/check-dev.sh --lints` |
-| Harness PTY/TUI | `./scripts/check.sh harness` |
-| Release/PR | `./scripts/check.sh` |
-| Ast-grep rules | `vtcode check ast-grep` |
-| Hawk dead-code/visibility | `./scripts/hawk.sh` |  
-| Hawk (deny warnings) | `./scripts/hawk.sh --deny` |
-| Ast-grep scan | `ast-grep scan` (requires `sgconfig.yml` + `rules/`) |
+| Change                    | Command                                              |
+| ------------------------- | ---------------------------------------------------- |
+| Fast gate                 | `./scripts/check-dev.sh`                             |
+| + tests (quick)           | `./scripts/check-dev.sh --test`                      |
+| + tests (changed crates)  | `./scripts/check-dev.sh --changed`                   |
+| + workspace               | `./scripts/check-dev.sh --workspace`                 |
+| + lints                   | `./scripts/check-dev.sh --lints`                     |
+| Harness PTY/TUI           | `./scripts/check.sh harness`                         |
+| Release/PR                | `./scripts/check.sh`                                 |
+| Ast-grep rules            | `vtcode check ast-grep`                              |
+| Hawk dead-code/visibility | `./scripts/hawk.sh`                                  |
+| Hawk (deny warnings)      | `./scripts/hawk.sh --deny`                           |
+| Ast-grep scan             | `ast-grep scan` (requires `sgconfig.yml` + `rules/`) |
 
 Narrow commands: `cargo check`, `cargo nextest run`, `cargo nextest run --profile quick`, `cargo fmt`, `cargo clippy`. **Never use `cargo test` — always use `cargo nextest run`.**
 

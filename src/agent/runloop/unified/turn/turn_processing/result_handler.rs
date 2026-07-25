@@ -839,4 +839,35 @@ Please re-run with tools enabled."#
         );
         assert!(backing.last_history_message_contains("3 matches"));
     }
+
+    #[tokio::test]
+    async fn denied_interview_retries_plain_text_once_before_approval() {
+        let mut backing = TestTurnProcessingBacking::new(4).await;
+        backing.activate_planning_for_test();
+        backing.mark_interview_denied_for_test();
+
+        let mut ctx = backing.turn_processing_context();
+        let mut repeated_tool_attempts = LoopTracker::new();
+        let mut turn_modified_files = BTreeSet::new();
+        let response = TurnProcessingResult::TextResponse {
+            text: "Next open decision: none from available evidence. Type yes to start this plan.".to_string(),
+            reasoning: Vec::new(),
+            reasoning_details: None,
+            proposed_plan: None,
+        };
+
+        let first = handle_turn_processing_result(HandleTurnProcessingResultParams {
+            ctx: &mut ctx,
+            processing_result: response,
+            response_streamed: false,
+            step_count: 1,
+            repeated_tool_attempts: &mut repeated_tool_attempts,
+            turn_modified_files: &mut turn_modified_files,
+            max_tool_loops: 4,
+            tool_repeat_limit: 4,
+        })
+        .await
+        .expect("denied interview response should schedule synthesis");
+        assert!(matches!(first, TurnHandlerOutcome::Continue));
+    }
 }

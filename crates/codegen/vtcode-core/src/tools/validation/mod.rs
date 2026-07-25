@@ -11,6 +11,7 @@ use serde_json::Value;
 /// Returns a JSON object with:
 /// - `required`: array of required field names
 /// - `properties`: object mapping field name -> its declared `type` (or `"any"` if absent)
+///   with enum choices and numeric bounds included when present
 ///
 /// This is intentionally compact so it can be included in validation error
 /// payloads without bloating the context.
@@ -24,7 +25,7 @@ pub fn condensed_schema_hint(schema: &Value) -> Option<Value> {
         // Surface enum options inline (e.g. "string(grep|glob|list)") so a
         // model that passed an invalid value can self-correct instead of
         // retrying blind with the same malformed arguments.
-        let rendered = match def.get("enum").and_then(Value::as_array) {
+        let mut rendered = match def.get("enum").and_then(Value::as_array) {
             Some(options) if !options.is_empty() => {
                 let joined = options
                     .iter()
@@ -38,6 +39,21 @@ pub fn condensed_schema_hint(schema: &Value) -> Option<Value> {
             }
             _ => type_str,
         };
+
+        let bounds = [("min", def.get("minimum")), ("max", def.get("maximum"))]
+            .into_iter()
+            .filter_map(|(label, value)| value.map(|value| format!("{label}={value}")))
+            .collect::<Vec<_>>();
+        if !bounds.is_empty() {
+            if rendered.ends_with(')') {
+                rendered.pop();
+                rendered.push(',');
+            } else {
+                rendered.push('(');
+            }
+            rendered.push_str(&bounds.join(","));
+            rendered.push(')');
+        }
         prop_types.insert(name.clone(), Value::String(rendered));
     }
 
@@ -162,5 +178,18 @@ mod tests {
         let error = jsonschema::validate(&schema, &instance).unwrap_err();
         let msg = describe_jsonschema_error(&error);
         assert!(msg.contains("missing required property 'action'"), "msg was: {msg}");
+    }
+
+    #[test]
+    fn numeric_bounds_are_included_in_schema_hint() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "max_results": {"type": "integer", "minimum": 1, "maximum": 100}
+            }
+        });
+
+        let hint = condensed_schema_hint(&schema).expect("object schema should produce a hint");
+        assert_eq!(hint["properties"]["max_results"], "integer(min=1,max=100)");
     }
 }

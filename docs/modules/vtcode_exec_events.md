@@ -24,6 +24,11 @@ variant captures a specific moment in the lifecycle of an execution thread:
 -   **Tooling and search** – `McpToolCallItem` and `WebSearchItem` track external tool
     invocations and provider metadata, including optional arguments and raw result payloads
     for audit trails.F:crates/common/vtcode-exec-events/src/lib.rs†L202-L240
+-   **Plan approval lifecycle** – `plan.delta` and the completed plan item carry plan
+    content; `plan.approval.requested` marks the pending review gate and
+    `plan.approval.resolved` records the decision (`execute`, `auto_accept`, `revise`,
+    `cancel`, `switch_build`, or `switch_auto`) and whether policy resolved it
+    automatically.
 -   **Errors** – `ThreadErrorEvent` and `ErrorItem` record terminal failures alongside the
     human-readable messages surfaced to operators.F:crates/common/vtcode-exec-events/src/lib.rs†L41-L44F:crates/common/vtcode-exec-events/src/lib.rs†L242-L248
 

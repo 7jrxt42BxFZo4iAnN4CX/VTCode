@@ -14,8 +14,8 @@ fn tool_calls_result(tool_calls: Vec<uni::ToolCall>, assistant_text: impl Into<S
 }
 
 #[test]
-fn maybe_force_planning_workflow_interview_passes_text_response() {
-    let mut stats = SessionStats::default();
+fn maybe_force_planning_workflow_interview_waits_until_discovery_is_ready() {
+    let stats = SessionStats::default();
     let mut plan_session = PlanningWorkflowSessionState::default();
     let processing_result = TurnProcessingResult::TextResponse {
         text: "Proceeding with planning research.".to_string(),
@@ -24,13 +24,10 @@ fn maybe_force_planning_workflow_interview_passes_text_response() {
         proposed_plan: None,
     };
 
-    stats.record_tool(tools::READ_FILE);
-    plan_session.increment_turns();
-
     let result = maybe_force_planning_workflow_interview(
         processing_result,
         Some("Proceeding with planning research."),
-        &mut stats,
+        &stats,
         &mut plan_session,
         1,
     );
@@ -38,7 +35,7 @@ fn maybe_force_planning_workflow_interview_passes_text_response() {
         TurnProcessingResult::TextResponse { text, .. } => {
             assert_eq!(text, "Proceeding with planning research.");
         }
-        _ => panic!("Expected text response without forced interview tool call"),
+        _ => panic!("Expected text response before planning discovery is ready"),
     }
 }
 
@@ -70,11 +67,12 @@ fn maybe_force_planning_workflow_interview_appends_reminder_when_plan_ready() {
 
     stats.record_tool(tools::READ_FILE);
     plan_session.increment_turns();
+    plan_session.record_interview_result(1, false);
 
     let result = maybe_force_planning_workflow_interview(
         processing_result,
         Some("<proposed_plan>\nPlan content\n</proposed_plan>"),
-        &mut stats,
+        &stats,
         &mut plan_session,
         2,
     );
@@ -106,9 +104,9 @@ fn maybe_force_planning_workflow_interview_does_not_duplicate_reminder() {
 
     stats.record_tool(tools::READ_FILE);
     plan_session.increment_turns();
+    plan_session.record_interview_result(1, false);
 
-    let result =
-        maybe_force_planning_workflow_interview(processing_result, Some(&text), &mut stats, &mut plan_session, 3);
+    let result = maybe_force_planning_workflow_interview(processing_result, Some(&text), &stats, &mut plan_session, 3);
     match result {
         TurnProcessingResult::TextResponse { text, .. } => {
             assert_eq!(text.matches(PLANNING_WORKFLOW_REMINDER).count(), 1);
@@ -118,10 +116,11 @@ fn maybe_force_planning_workflow_interview_does_not_duplicate_reminder() {
 }
 
 #[test]
-fn maybe_force_planning_workflow_interview_strips_request_user_input_calls() {
+fn maybe_force_planning_workflow_interview_preserves_allowed_request_user_input_calls() {
     let mut stats = SessionStats::default();
     let mut plan_session = PlanningWorkflowSessionState::default();
     plan_session.increment_turns();
+    stats.record_tool(tools::READ_FILE);
 
     let processing_result = tool_calls_result(
         vec![
@@ -129,7 +128,7 @@ fn maybe_force_planning_workflow_interview_strips_request_user_input_calls() {
             uni::ToolCall::function(
                 "call_interview".to_string(),
                 tools::REQUEST_USER_INPUT.to_string(),
-                "{}".to_string(),
+                r#"{"questions":[{"id":"scope","header":"Scope","question":"Which scope should the plan cover?","options":[{"label":"Focused","description":"Keep the change narrow."},{"label":"Broad","description":"Include adjacent behavior."}]}]}"#.to_string(),
             ),
         ],
         String::new(),
@@ -138,17 +137,78 @@ fn maybe_force_planning_workflow_interview_strips_request_user_input_calls() {
     let result = maybe_force_planning_workflow_interview(
         processing_result,
         Some("Going to read files."),
-        &mut stats,
+        &stats,
         &mut plan_session,
         3,
     );
     match result {
         TurnProcessingResult::ToolCalls { tool_calls, .. } => {
-            assert_eq!(tool_calls.len(), 1);
-            let name = tool_calls.first().map(|call| call.tool_name()).unwrap_or("");
-            assert_eq!(name, tools::READ_FILE);
+            assert_eq!(tool_calls.len(), 2);
+            assert_eq!(tool_calls[0].tool_name(), tools::READ_FILE);
+            assert_eq!(tool_calls[1].tool_name(), tools::REQUEST_USER_INPUT);
+            assert!(plan_session.interview_shown());
         }
-        _ => panic!("Expected tool calls with request_user_input stripped"),
+        _ => panic!("Expected tool calls with request_user_input preserved"),
+    }
+}
+
+#[test]
+fn maybe_force_planning_workflow_interview_injects_fallback_after_discovery() {
+    let mut stats = SessionStats::default();
+    let mut plan_session = PlanningWorkflowSessionState::default();
+    stats.record_tool(tools::READ_FILE);
+    plan_session.increment_turns();
+
+    let processing_result = TurnProcessingResult::TextResponse {
+        text: "The repository evidence is collected.".to_string(),
+        reasoning: Vec::new(),
+        reasoning_details: None,
+        proposed_plan: None,
+    };
+
+    let result = maybe_force_planning_workflow_interview(
+        processing_result,
+        Some("The repository evidence is collected."),
+        &stats,
+        &mut plan_session,
+        4,
+    );
+
+    match result {
+        TurnProcessingResult::ToolCalls { tool_calls, .. } => {
+            assert_eq!(tool_calls.len(), 1);
+            assert_eq!(tool_calls[0].tool_name(), tools::REQUEST_USER_INPUT);
+            assert!(tool_calls[0].args().is_some_and(|args| args.get("questions").is_some()));
+            assert!(plan_session.interview_shown());
+        }
+        _ => panic!("Expected a fallback request_user_input tool call"),
+    }
+}
+
+#[test]
+fn maybe_force_planning_workflow_interview_prioritizes_open_decision_before_plan_approval() {
+    let mut stats = SessionStats::default();
+    let mut plan_session = PlanningWorkflowSessionState::default();
+    stats.record_tool(tools::READ_FILE);
+    plan_session.increment_turns();
+
+    let text = "<proposed_plan>\nNext open decision: choose the migration scope.\n</proposed_plan>";
+    let processing_result = TurnProcessingResult::TextResponse {
+        text: text.to_string(),
+        reasoning: Vec::new(),
+        reasoning_details: None,
+        proposed_plan: None,
+    };
+
+    let result = maybe_force_planning_workflow_interview(processing_result, Some(text), &stats, &mut plan_session, 5);
+
+    match result {
+        TurnProcessingResult::ToolCalls { tool_calls, assistant_text, .. } => {
+            assert_eq!(tool_calls.len(), 1);
+            assert_eq!(tool_calls[0].tool_name(), tools::REQUEST_USER_INPUT);
+            assert!(assistant_text.is_empty());
+        }
+        _ => panic!("Expected clarification before plan approval"),
     }
 }
 

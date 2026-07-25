@@ -148,7 +148,7 @@ python3 scripts/generate_config_field_reference.py
 | `agent.todo_planning_mode` | `boolean` | no | `true` | Enable TODO planning helper mode for structured task management |
 | `agent.tool_documentation_mode` | `string` | no | `"progressive"` | Tool documentation mode controlling token overhead for tool definitions Options: minimal (~800 tokens), progressive (~1.2k), full (~3k current) Progressive: signatures upfront, detailed docs on-demand (recommended) Minimal: signatures only, pi-coding-agent style (power users) Full: all documentation upfront (current behavior, default) |
 | `agent.trim_system_prompt` | `boolean` | no | `false` | Trim low-priority system prompt sections when over budget. Opt-in: silently dropping instructions changes agent behavior, so the default only warns. |
-| `agent.ui_surface` | `string` | no | `"auto"` | Preferred rendering surface for the interactive chat UI (auto, alternate, inline) |
+| `agent.ui_surface` | `string` | no | `"inline"` | Preferred rendering surface for the interactive chat UI (inline by default; auto, alternate, inline) |
 | `agent.user_instructions` | `null \| string` | no | `null` | Custom instructions provided by the user via configuration to guide agent behavior |
 | `agent.verbosity` | `string` | no | `"medium"` | Verbosity level for output text (low, medium, high) Applies to: GPT-5.4-family Responses workflows and other models that support verbosity control |
 | `agent.vibe_coding.enable_conversation_memory` | `boolean` | no | `true` | Enable conversation memory for pronoun resolution |

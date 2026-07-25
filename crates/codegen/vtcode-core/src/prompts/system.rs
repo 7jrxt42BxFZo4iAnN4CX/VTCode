@@ -58,7 +58,7 @@ pub const PLANNING_WORKFLOW_NO_AUTO_EXIT_LINE: &str =
     "Do not auto-exit Planning workflow; wait for explicit implementation intent.";
 /// Shared Planning workflow task-tracking line clarifying availability and aliasing.
 /// Implementation prompt used when transitioning from planning to execution.
-pub const PLANNING_WORKFLOW_IMPLEMENTATION_PROMPT: &str = "Implement the approved plan.";
+pub const PLANNING_WORKFLOW_IMPLEMENTATION_PROMPT: &str = "Implement the approved plan. Finish with a concise execution summary covering outcome, changed files, verification performed, and remaining blockers.";
 /// Hint shown when planning workflow is active.
 pub const PLANNING_WORKFLOW_HINT: &str =
     "Planning workflow is active. Type `implement` to start execution or continue refining the plan.";
@@ -117,7 +117,8 @@ pub const DEFAULT_OPERATING_PROFILE_DELTA: &str = r#"## Operating Profile
 - Put normal shell commands in `exec_command.cmd`; they are not separate function tools. Follow the active shell profile's syntax.
 - Treat completion language as a checkpoint, not proof; only stop when verification is resolved.
 - When tools are available, read and search before answering; implement directly rather than describing what should be done.
-- Use Planning workflow for research/spec work; stay read-only until implementation intent is explicit."#;
+- Use Planning workflow for research/spec work; stay read-only until implementation intent is explicit.
+- For demanding, ambiguous, or multi-phase tasks, suggest `start_planning` and wait for user confirmation before entering it."#;
 
 pub const MINIMAL_OPERATING_PROFILE_DELTA: &str = r#"## Operating Profile
 
@@ -129,7 +130,8 @@ pub const LIGHTWEIGHT_OPERATING_PROFILE_DELTA: &str = r#"## Operating Profile
 
 - Act and verify in one thread.
 - Completion language is a checkpoint.
-- Use `task_tracker` for nontrivial work."#;
+- Use `task_tracker` for nontrivial work.
+- Suggest `start_planning` for demanding or ambiguous multi-phase tasks; the user must confirm entry."#;
 
 pub const SPECIALIZED_OPERATING_PROFILE_DELTA: &str = r#"## Operating Profile
 

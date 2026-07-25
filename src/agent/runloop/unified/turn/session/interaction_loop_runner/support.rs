@@ -13,28 +13,26 @@ use vtcode_core::config::EditorToolConfig;
 use vtcode_core::config::constants::tools as tool_names;
 use vtcode_core::config::loader::VTCodeConfig;
 use vtcode_core::core::threads::ArchivedSessionIntent;
-use vtcode_core::hooks::{LifecycleHookEngine, SessionStartTrigger};
 use vtcode_core::llm::ModelResolver;
 use vtcode_core::llm::provider as uni;
-use vtcode_core::notifications::set_global_notification_hook_engine;
 use vtcode_core::scheduler::{DurableTaskStore, SchedulerDaemon};
 use vtcode_core::tools::continuation::{PtyContinuationArgs, ReadChunkContinuationArgs};
 use vtcode_core::tools::terminal_app::{EditorLaunchConfig, TerminalAppLauncher};
 use vtcode_core::ui::theme;
 use vtcode_core::ui::{inline_theme_from_core_styles, to_tui_appearance};
 use vtcode_core::utils::ansi::MessageStyle;
-use vtcode_core::{build_primary_agent_hook_config, build_primary_agent_runtime_config};
 use vtcode_ui::tui::app::{ContentPart as UiContentPart, SubmittedInput};
 
 use crate::agent::runloop::prompt::refine_and_enrich_prompt;
 use crate::agent::runloop::unified::async_mcp_manager::{AsyncMcpManager, approval_policy_from_human_in_the_loop};
 use crate::agent::runloop::unified::inline_events::InlineLoopAction;
 use crate::agent::runloop::unified::interactive_features::{PromptSuggestionSource, generate_inline_prompt_suggestion};
-use crate::agent::runloop::unified::session_setup::{
-    active_deferred_tool_policy, apply_ide_context_snapshot, ide_context_status_label_from_bridge,
-    refresh_tool_snapshot,
-};
+use crate::agent::runloop::unified::session_setup::{apply_ide_context_snapshot, ide_context_status_label_from_bridge};
 use crate::agent::runloop::unified::status_line::InputStatusState;
+use crate::agent::runloop::unified::turn::primary_agent_runtime::{
+    PrimaryAgentRuntimeSyncContext, load_primary_agent_specs as load_primary_agent_specs_for_runtime,
+    sync_primary_agent_runtime as sync_primary_agent_runtime_context,
+};
 use crate::agent::runloop::unified::turn::session::slash_commands::run_with_event_loop_suspended;
 use crate::startup::{auto_grant_tui_full_auto_workspace_trust, ensure_full_auto_workspace_trust};
 
@@ -841,7 +839,10 @@ pub(super) async fn resolve_inline_loop_action(
             };
             let message = format!("Plan approved. Starting execution ({mode}).");
             ctx.renderer.line(MessageStyle::Info, &message)?;
-            InlineLoopActionResolution::Outcome(InteractionOutcome::PlanApproved { auto_accept })
+            let execution_agent = ctx
+                .plan_session
+                .execution_agent_after_approval(ctx.active_primary_agent.active().name());
+            InlineLoopActionResolution::Outcome(InteractionOutcome::PlanApproved { auto_accept, execution_agent })
         }
         InlineLoopAction::PlanEditRequested => {
             ctx.renderer
@@ -933,8 +934,7 @@ pub(crate) async fn handle_select_primary_agent(
             .reset_to_default_from_specs(&specs)
             .display_name
             .clone();
-        sync_primary_agent_hook_runtime(ctx).await?;
-        sync_primary_agent_mcp_runtime(ctx, state).await?;
+        sync_primary_agent_runtime(ctx, state).await?;
         set_primary_agent_display(ctx, display_name);
         return Ok(());
     };
@@ -957,23 +957,24 @@ pub(crate) async fn handle_select_primary_agent(
         }
     }
 
+    let previous_primary_agent = ctx.active_primary_agent.active().name().to_string();
     match ctx.active_primary_agent.select_from_specs(&specs, &name) {
         Ok(active) => {
             let display_name = active.display_name.clone();
             let is_plan_agent = active.identity.name.eq_ignore_ascii_case("plan");
             let policy_overrides = active.tool_policy_overrides.clone();
-            sync_primary_agent_hook_runtime(ctx).await?;
-            // Apply per-agent tool policy overrides before refreshing the tool snapshot
-            for (tool_name, policy) in &policy_overrides {
-                if let Err(err) = ctx.tool_registry.set_tool_policy(tool_name, policy.clone()).await {
-                    tracing::warn!("Failed to apply tool policy override for '{}' on agent switch: {}", tool_name, err);
-                }
-            }
-            sync_primary_agent_mcp_runtime(ctx, state).await?;
-            set_primary_agent_display(ctx, display_name);
-            // Deactivate planning workflow when switching away from the plan
-            // agent so the state does not leak into other modes.
+            // Resolve and close the planning gate before any runtime
+            // reconfiguration can fail, so switching away cannot leave a
+            // dangling approval request.
             if !is_plan_agent && ctx.tool_registry.is_planning_active() {
+                crate::agent::runloop::unified::planning_workflow::resolve_plan_approval(
+                    ctx.plan_session,
+                    ctx.harness_emitter,
+                    ctx.thread_id,
+                    ctx.thread_id,
+                    vtcode_core::exec::events::PlanApprovalDecision::Cancel,
+                    false,
+                );
                 crate::agent::runloop::unified::planning_workflow::finish_planning_workflow(
                     ctx.tool_registry,
                     ctx.plan_session,
@@ -982,6 +983,14 @@ pub(crate) async fn handle_select_primary_agent(
                 )
                 .await;
             }
+            // Apply per-agent tool policy overrides before refreshing the tool snapshot
+            for (tool_name, policy) in &policy_overrides {
+                if let Err(err) = ctx.tool_registry.set_tool_policy(tool_name, policy.clone()).await {
+                    tracing::warn!("Failed to apply tool policy override for '{}' on agent switch: {}", tool_name, err);
+                }
+            }
+            sync_primary_agent_runtime(ctx, state).await?;
+            set_primary_agent_display(ctx, display_name);
             // Activating the plan agent also enters the planning workflow so
             // both "plan" concepts stay unified.
             if is_plan_agent && !ctx.tool_registry.is_planning_active() {
@@ -991,6 +1000,8 @@ pub(crate) async fn handle_select_primary_agent(
                     ctx.plan_session,
                     ctx.handle,
                     PlanningEntrySource::AgentSelection,
+                    Some(previous_primary_agent),
+                    ctx.vt_cfg.as_ref().map(|cfg| cfg.default_primary_agent.clone()),
                     true,
                     true,
                 )
@@ -1006,69 +1017,25 @@ pub(crate) async fn handle_select_primary_agent(
     Ok(())
 }
 
-async fn sync_primary_agent_hook_runtime(ctx: &mut InteractionLoopContext<'_>) -> Result<()> {
-    let Some(cfg) = ctx.vt_cfg.as_ref() else {
-        *ctx.lifecycle_hooks = None;
-        set_global_notification_hook_engine(None);
-        return Ok(());
-    };
-
-    let transcript_path = match ctx.lifecycle_hooks.as_ref() {
-        Some(hooks) => hooks.transcript_path().await,
-        None => None,
-    };
-    let hooks_config = build_primary_agent_hook_config(&cfg.hooks, ctx.active_primary_agent.active());
-    let next = LifecycleHookEngine::new_with_session(
-        ctx.config.workspace.clone(),
-        &hooks_config,
-        SessionStartTrigger::Startup,
-        ctx.thread_id,
-    )?;
-    if let (Some(hooks), Some(path)) = (next.as_ref(), transcript_path) {
-        hooks.update_transcript_path(Some(path)).await;
-    }
-
-    set_global_notification_hook_engine(next.clone());
-    *ctx.lifecycle_hooks = next;
-    Ok(())
-}
-
-async fn sync_primary_agent_mcp_runtime(
+async fn sync_primary_agent_runtime(
     ctx: &mut InteractionLoopContext<'_>,
     state: &mut InteractionState<'_>,
 ) -> Result<()> {
-    let (Some(manager), Some(cfg)) = (ctx.async_mcp_manager.as_ref(), ctx.vt_cfg.as_ref()) else {
-        return Ok(());
+    let mut runtime = PrimaryAgentRuntimeSyncContext {
+        config: ctx.config,
+        vt_cfg: ctx.vt_cfg.as_ref(),
+        thread_id: ctx.thread_id,
+        active_primary_agent: ctx.active_primary_agent.active(),
+        lifecycle_hooks: ctx.lifecycle_hooks,
+        async_mcp_manager: ctx.async_mcp_manager.as_ref(),
+        tool_registry: ctx.tool_registry,
+        tools: ctx.tools,
+        tool_catalog: ctx.tool_catalog,
+        mcp_catalog_initialized: state.mcp_catalog_initialized,
+        pending_mcp_refresh: state.pending_mcp_refresh,
+        provider_client: &**ctx.provider_client,
     };
-    if !cfg.mcp.enabled {
-        return Ok(());
-    }
-
-    let merged_mcp = build_primary_agent_runtime_config(cfg, ctx.active_primary_agent.active()).mcp;
-    let restarted_mcp_runtime = manager.reconfigure_active_runtime(merged_mcp).await?;
-    ctx.tool_registry.clear_mcp_client().await;
-    *state.mcp_catalog_initialized = false;
-    *state.pending_mcp_refresh = true;
-
-    let tool_documentation_mode = cfg.agent.tool_documentation_mode;
-    let deferred_tool_policy = active_deferred_tool_policy(ctx.config, ctx.vt_cfg.as_ref(), &**ctx.provider_client);
-    refresh_tool_snapshot(
-        ctx.tool_registry,
-        ctx.tools,
-        ctx.tool_catalog,
-        ctx.config,
-        ctx.vt_cfg.as_ref(),
-        tool_documentation_mode,
-        &deferred_tool_policy,
-    )
-    .await;
-    ctx.tool_catalog.mark_pending_refresh("primary_agent_mcp_reconfigure");
-
-    if restarted_mcp_runtime {
-        tracing::debug!("Restarted active MCP runtime after primary agent switch");
-    }
-
-    Ok(())
+    sync_primary_agent_runtime_context(&mut runtime).await
 }
 
 async fn load_primary_agent_specs_or_report(
@@ -1085,22 +1052,7 @@ async fn load_primary_agent_specs_or_report(
 }
 
 async fn load_primary_agent_specs(ctx: &InteractionLoopContext<'_>) -> Result<Vec<vtcode_config::SubagentSpec>> {
-    if let Some(controller) = ctx.tool_registry.subagent_controller() {
-        let specs = controller
-            .effective_specs()
-            .await
-            .into_iter()
-            .filter(|spec| spec.is_primary())
-            .collect::<Vec<_>>();
-        if !specs.is_empty() {
-            return Ok(specs);
-        }
-    }
-
-    let discovered =
-        vtcode_config::discover_subagents(&vtcode_config::SubagentDiscoveryInput::new(ctx.config.workspace.clone()))
-            .with_context(|| format!("Failed to discover primary agents in {}", ctx.config.workspace.display()))?;
-    Ok(discovered.effective.into_iter().filter(|spec| spec.is_primary()).collect())
+    load_primary_agent_specs_for_runtime(ctx.tool_registry, &ctx.config.workspace).await
 }
 
 fn set_primary_agent_display(ctx: &mut InteractionLoopContext<'_>, name: String) {

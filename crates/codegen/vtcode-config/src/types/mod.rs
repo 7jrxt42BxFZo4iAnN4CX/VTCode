@@ -377,9 +377,9 @@ impl<'de> Deserialize<'de> for VerbosityLevel {
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum UiSurfacePreference {
-    #[default]
     Auto,
     Alternate,
+    #[default]
     Inline,
 }
 
@@ -551,6 +551,11 @@ mod tests {
         assert_eq!(ShellPromptProfile::parse("posix"), Some(ShellPromptProfile::UnixLike));
         assert_eq!(ShellPromptProfile::parse("PowerShell"), Some(ShellPromptProfile::PowerShell));
         assert_eq!(ShellPromptProfile::parse("unknown"), None);
+    }
+
+    #[test]
+    fn ui_surface_defaults_to_inline() {
+        assert_eq!(UiSurfacePreference::default(), UiSurfacePreference::Inline);
     }
 
     #[test]

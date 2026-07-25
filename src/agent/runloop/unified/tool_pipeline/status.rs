@@ -48,6 +48,10 @@ pub(crate) struct ToolPipelineOutcome {
     /// this name after the tool completes. Used by the plan-mode "switch to
     /// build/auto agent" decision at the plan-ready gate.
     pub pending_primary_agent: Option<String>,
+    /// When true, finish the current turn after recording this tool result.
+    /// Used when a headless policy requires user confirmation that cannot be
+    /// collected through an inline prompt.
+    pub stop_after_tool: bool,
 }
 
 impl ToolPipelineOutcome {
@@ -60,6 +64,7 @@ impl ToolPipelineOutcome {
             status,
             command_success,
             pending_primary_agent: None,
+            stop_after_tool: false,
         }
     }
 
@@ -227,6 +232,14 @@ mod tests {
         assert_eq!(s.total, 0);
         assert!(!batch.is_partial_success());
         assert_eq!(batch.summary_line(), "no tools executed");
+    }
+
+    #[test]
+    fn tool_pipeline_outcomes_continue_by_default() {
+        let outcome = ToolPipelineOutcome::from_status(ToolExecutionStatus::Cancelled);
+
+        assert!(!outcome.stop_after_tool);
+        assert!(outcome.pending_primary_agent.is_none());
     }
 
     #[test]

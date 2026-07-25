@@ -187,6 +187,31 @@ impl ResponseBuilder {
                 // the full final plan content.
             }
 
+            ThreadEvent::PlanApprovalRequested(evt) => {
+                self.emit_custom_event(
+                    emitter,
+                    "vtcode.plan_approval_requested",
+                    json!({
+                        "thread_id": evt.thread_id,
+                        "turn_id": evt.turn_id,
+                        "plan_file": evt.plan_file,
+                    }),
+                );
+            }
+
+            ThreadEvent::PlanApprovalResolved(evt) => {
+                self.emit_custom_event(
+                    emitter,
+                    "vtcode.plan_approval_resolved",
+                    json!({
+                        "thread_id": evt.thread_id,
+                        "turn_id": evt.turn_id,
+                        "decision": evt.decision,
+                        "automatic": evt.automatic,
+                    }),
+                );
+            }
+
             ThreadEvent::Error(evt) => {
                 if self.response.status.is_terminal() {
                     return;
@@ -1155,8 +1180,9 @@ mod tests {
     use crate::provider::{FinishReason, LLMResponse, NormalizedStreamEvent, ToolCall};
     use serde_json::json;
     use vtcode_exec_events::{
-        AgentMessageItem, CommandExecutionItem, CommandExecutionStatus, ItemCompletedEvent, ItemStartedEvent, PlanItem,
-        ThreadStartedEvent, ToolCallStatus, ToolInvocationItem, ToolOutputItem, TurnCompletedEvent, Usage,
+        AgentMessageItem, CommandExecutionItem, CommandExecutionStatus, ItemCompletedEvent, ItemStartedEvent,
+        PlanApprovalDecision, PlanApprovalRequestedEvent, PlanApprovalResolvedEvent, PlanItem, ThreadStartedEvent,
+        ToolCallStatus, ToolInvocationItem, ToolOutputItem, TurnCompletedEvent, Usage,
     };
 
     #[test]
@@ -1350,6 +1376,45 @@ mod tests {
             }
             _ => panic!("expected custom output for plan item"),
         }
+    }
+
+    #[test]
+    fn test_plan_approval_events_map_to_custom_extensions() {
+        let mut builder = ResponseBuilder::new("gpt-5");
+        let mut emitter = VecStreamEmitter::new();
+
+        builder.process_event(
+            &ThreadEvent::PlanApprovalRequested(PlanApprovalRequestedEvent {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                plan_file: Some(".vtcode/plans/task.md".to_string()),
+            }),
+            &mut emitter,
+        );
+        builder.process_event(
+            &ThreadEvent::PlanApprovalResolved(PlanApprovalResolvedEvent {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-2".to_string(),
+                decision: PlanApprovalDecision::Execute,
+                automatic: false,
+            }),
+            &mut emitter,
+        );
+
+        let events = emitter.into_events();
+        let custom_events = events
+            .iter()
+            .filter_map(|event| match event {
+                ResponseStreamEvent::CustomEvent { event_type, data, .. } => Some((event_type.as_str(), data)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(custom_events.len(), 2);
+        assert_eq!(custom_events[0].0, "vtcode.plan_approval_requested");
+        assert_eq!(custom_events[0].1["plan_file"], ".vtcode/plans/task.md");
+        assert_eq!(custom_events[1].0, "vtcode.plan_approval_resolved");
+        assert_eq!(custom_events[1].1["decision"], "execute");
+        assert_eq!(custom_events[1].1["automatic"], false);
     }
 
     #[test]

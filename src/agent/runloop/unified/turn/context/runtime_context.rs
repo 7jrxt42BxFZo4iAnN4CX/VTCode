@@ -341,12 +341,15 @@ impl<'a> TurnProcessingContext<'a> {
             state.harness_state,
             state.harness_emitter,
             auto_permission,
+            state.skip_confirmations,
+            state.full_auto,
         );
         ctx.active_agent_permissions = llm_ctx
             .vt_cfg
             .and_then(|cfg| cfg.runtime_agent_permissions.as_ref())
             .or(Some(&llm_ctx.active_primary_agent.active().permissions));
         ctx.agent_name = Some(llm_ctx.active_primary_agent.active().identity.name.clone());
+        ctx.default_primary_agent = llm_ctx.vt_cfg.map(|cfg| cfg.default_primary_agent.clone());
         // The primary agent loop is always for the primary agent, not a subagent
         ctx.is_subagent = false;
         ctx

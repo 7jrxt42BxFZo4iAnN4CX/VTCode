@@ -23,6 +23,7 @@ use serde_json::Value;
 use vtcode_core::acp::{PermissionGrant, ToolPermissionCache};
 use vtcode_core::command_safety::parse_bash_lc_commands;
 use vtcode_core::config::PermissionsConfig;
+use vtcode_core::config::constants::tools;
 use vtcode_core::config::loader::ConfigManager;
 use vtcode_core::core::interfaces::ui::UiSession;
 use vtcode_core::exec::events::PermissionDecision;
@@ -1036,6 +1037,18 @@ pub(crate) async fn ensure_tool_permission_with_call_id<S: UiSession + ?Sized>(
     let full_auto_allowlist_active = tool_registry.current_full_auto_allowlist().await.is_some();
     if full_auto_allowlist_active && !tool_registry.is_allowed_in_full_auto(&normalized_tool_name).await {
         return Ok(ToolPermissionFlow::Denied);
+    }
+
+    // `request_user_input` is itself the user-facing HITL surface. In an
+    // inline session it must go directly to the wizard instead of being
+    // classified as an ordinary `Other` request and stopped by a second
+    // generic permission prompt. Explicit policy/permission denies and the
+    // full-auto allowlist have already been enforced above.
+    if normalized_tool_name == tools::REQUEST_USER_INPUT
+        && renderer.supports_inline_ui()
+        && policy_decision == ToolPermissionDecision::Allow
+    {
+        return Ok(approve_tool_permission_no_cache(tool_registry, tool_name).await);
     }
 
     let effective_permission_decision =

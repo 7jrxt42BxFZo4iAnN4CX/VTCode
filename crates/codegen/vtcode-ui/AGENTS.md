@@ -22,3 +22,4 @@
 
 - `vtcode-commons` provides `anstyle_utils` gated behind a `tui` feature — the style bridging in `design/` depends on it.
 - The `crossterm` dependency enables `event-stream` and `osc52` features; do not duplicate these in downstream crates.
+- Standalone and core session defaults are inline; callers that need alternate-screen rendering must opt in explicitly.

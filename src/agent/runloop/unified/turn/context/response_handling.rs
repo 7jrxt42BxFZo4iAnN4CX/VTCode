@@ -1,6 +1,8 @@
 use super::*;
 use crate::agent::runloop::unified::ui_interaction_stream_helpers::render_compact_reasoning_block;
 
+const DENIED_INTERVIEW_PLAN_SYNTHESIS_RETRY_DIRECTIVE: &str = "Planning recovery: the interactive interview is unavailable, and the previous response did not contain a completed plan. Do not ask another question or offer approval yet. Emit exactly one compact `<proposed_plan>` now from the repository evidence already in this conversation; include Summary, numbered `Action -> files/symbols -> verify:` steps, Validation, and short Assumptions. Do not emit tool calls.";
+
 impl<'a> TurnProcessingContext<'a> {
     pub(crate) fn handle_assistant_response(
         &mut self,
@@ -144,6 +146,11 @@ impl<'a> TurnProcessingContext<'a> {
             crate::agent::runloop::unified::turn::provider_noise::strip_provider_noise(&text)
         };
         let final_text = text.clone();
+        let denied_interview_plan_retry = self.is_planning_active()
+            && !tool_free_recovery_pass
+            && proposed_plan.is_none()
+            && !text.trim().is_empty()
+            && self.plan_session.plan_synthesis_retry_allowed();
         let consecutive_relaxed = self.harness_state.consecutive_relaxed_continuations;
         let continuation_decision = if tool_free_recovery_pass {
             // Tool-free recovery is terminal: the text produced during recovery
@@ -210,6 +217,23 @@ impl<'a> TurnProcessingContext<'a> {
             self.finish_recovery_pass();
         }
 
+        // A permanent interview denial is different from a cancelled
+        // interview: the model must still produce a real draft before the
+        // user can approve it. The denial diagnostic is advisory, so some
+        // models answer only with "type yes" instead of emitting a plan.
+        // Give that response one bounded synthesis retry. This keeps the
+        // approval path draft-backed without re-enabling the unavailable
+        // interview tool or allowing an unbounded continuation loop.
+        if denied_interview_plan_retry {
+            self.plan_session.mark_plan_synthesis_retry_used();
+            self.push_system_message(DENIED_INTERVIEW_PLAN_SYNTHESIS_RETRY_DIRECTIVE);
+            tracing::info!(
+                target: "vtcode.planning_workflow",
+                "retrying denied interview response as a bounded plan synthesis"
+            );
+            return Ok(TurnHandlerOutcome::Continue);
+        }
+
         tracing::info!(
             target: "vtcode.turn.metrics",
             metric = "text_response_decision",
@@ -246,14 +270,19 @@ impl<'a> TurnProcessingContext<'a> {
         }
         self.harness_state.stop_hook_active = false;
 
-        if self.is_planning_active()
-            && let Some(plan_text) = proposed_plan
-        {
-            use vtcode_core::utils::ansi::MessageStyle;
-            self.renderer.line(MessageStyle::Info, "Plan ready for approval:")?;
-            self.renderer.line(MessageStyle::Response, &plan_text)?;
-            self.emit_plan_events(&plan_text).await;
+        let mut plan_approved_execution_pending = false;
+        if let Some(plan_text) = proposed_plan {
+            let planning_active = self.is_planning_active();
+            tracing::info!(
+                target: "vtcode.planning_workflow",
+                plan_ready = true,
+                planning_active,
+                "completed plan reached approval handoff"
+            );
+            // Persist before publishing the approval request so consumers that
+            // follow the event's plan_file can read the completed draft.
             let _persisted = persist_plan_draft(&self.tool_registry.planning_workflow_state(), &plan_text).await?;
+            self.emit_plan_events(&plan_text).await;
 
             let require_confirmation = self.vt_cfg.map(|cfg| cfg.agent.require_plan_confirmation).unwrap_or(true);
             let supports_inline = self.renderer.supports_inline_ui();
@@ -264,8 +293,21 @@ impl<'a> TurnProcessingContext<'a> {
                 supports_inline_ui = supports_inline,
                 "plan approval overlay condition check"
             );
-            if require_confirmation && supports_inline {
-                use crate::agent::runloop::unified::planning_workflow::execute_plan_approval;
+            let approval_route = crate::agent::runloop::unified::planning_workflow::plan_approval_route(
+                require_confirmation,
+                supports_inline,
+                self.skip_confirmations,
+                self.full_auto,
+            );
+            tracing::info!(
+                target: "vtcode.planning_workflow",
+                ?approval_route,
+                "plan approval route selected"
+            );
+            if approval_route == crate::agent::runloop::unified::planning_workflow::PlanApprovalRoute::Inline {
+                use crate::agent::runloop::unified::planning_workflow::{
+                    PlanApprovalTelemetryContext, execute_plan_approval,
+                };
                 return execute_plan_approval(
                     self.tool_registry,
                     self.plan_session,
@@ -274,27 +316,80 @@ impl<'a> TurnProcessingContext<'a> {
                     self.ctrl_c_state,
                     self.ctrl_c_notify,
                     &plan_text,
+                    self.active_primary_agent.active().name(),
+                    PlanApprovalTelemetryContext {
+                        emitter: self.harness_emitter,
+                        thread_id: &self.harness_state.run_id.0,
+                        turn_id: &self.harness_state.turn_id.0,
+                    },
                 )
                 .await;
             }
 
-            self.renderer.line(
-                MessageStyle::Info,
-                "Type `approve` or `implement` to begin execution, or `edit` to revise the plan.",
-            )?;
+            use vtcode_core::utils::ansi::MessageStyle;
+            self.renderer.line(MessageStyle::Info, "Plan ready for approval:")?;
+            self.renderer.line(MessageStyle::Response, &plan_text)?;
+            if approval_route == crate::agent::runloop::unified::planning_workflow::PlanApprovalRoute::Headless {
+                self.renderer.line(
+                    MessageStyle::Info,
+                    "Plan is awaiting approval. Type `approve`, `implement`, or `yes` to begin execution, or `edit` to revise the plan.",
+                )?;
+                return Ok(TurnHandlerOutcome::Break(TurnLoopResult::Completed {
+                    plan_approved_execution_pending: false,
+                }));
+            }
+
+            let execution_agent = self
+                .plan_session
+                .execution_agent_after_approval(self.active_primary_agent.active().name());
+            self.renderer
+                .line(MessageStyle::Info, "Plan approved by the active execution policy; starting implementation.")?;
+            crate::agent::runloop::unified::planning_workflow::resolve_plan_approval(
+                self.plan_session,
+                self.harness_emitter,
+                &self.harness_state.run_id.0,
+                &self.harness_state.turn_id.0,
+                vtcode_core::exec::events::PlanApprovalDecision::AutoAccept,
+                true,
+            );
+            crate::agent::runloop::unified::planning_workflow::finish_planning_workflow(
+                self.tool_registry,
+                self.plan_session,
+                self.handle,
+                false,
+            )
+            .await;
+            plan_approved_execution_pending = true;
+            if let Some(agent) = execution_agent {
+                return Ok(TurnHandlerOutcome::SwitchPrimaryAgent(agent));
+            }
         }
 
-        Ok(TurnHandlerOutcome::Break(TurnLoopResult::Completed { plan_approved_execution_pending: true }))
+        Ok(TurnHandlerOutcome::Break(TurnLoopResult::Completed { plan_approved_execution_pending }))
     }
 
-    async fn emit_plan_events(&self, plan_text: &str) {
+    async fn emit_plan_events(&mut self, plan_text: &str) {
+        let turn_id = self.harness_state.turn_id.0.clone();
+        let thread_id = self.harness_state.run_id.0.clone();
+        self.plan_session.mark_plan_approval_pending(thread_id.clone(), turn_id.clone());
         let Some(emitter) = self.harness_emitter else {
             return;
         };
-
-        let turn_id = self.harness_state.turn_id.0.clone();
-        let thread_id = self.harness_state.run_id.0.clone();
         let item_id = format!("{turn_id}-plan");
+        let plan_path = self
+            .tool_registry
+            .planning_workflow_state()
+            .get_plan_file()
+            .await
+            .map(|path| path.display().to_string());
+
+        let _ = emitter.emit(crate::agent::runloop::unified::inline_events::harness::harness_event(
+            vtcode_core::exec::events::HarnessEventKind::PlanningStarted,
+            Some("Planning workflow produced a plan for review.".to_string()),
+            plan_path.clone(),
+            None,
+            None,
+        ));
 
         let start_item = ThreadItem {
             id: item_id.clone(),
@@ -314,6 +409,19 @@ impl<'a> TurnProcessingContext<'a> {
             details: ThreadItemDetails::Plan(PlanItem { text: plan_text.to_string() }),
         };
         let _ = emitter.emit(ThreadEvent::ItemCompleted(ItemCompletedEvent { item: completed_item }));
+        let _ = emitter.emit(crate::agent::runloop::unified::inline_events::harness::harness_event(
+            vtcode_core::exec::events::HarnessEventKind::PlanningCompleted,
+            Some("Plan is ready for user approval.".to_string()),
+            plan_path.clone(),
+            None,
+            None,
+        ));
+        crate::agent::runloop::unified::planning_workflow::emit_plan_approval_requested(
+            self.harness_emitter,
+            self.harness_state.run_id.0.clone(),
+            self.harness_state.turn_id.0.clone(),
+            plan_path,
+        );
     }
 }
 

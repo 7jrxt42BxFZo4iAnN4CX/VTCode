@@ -1,6 +1,7 @@
 //! Planning workflow and mutation detection helpers for ToolRegistry.
 
 use serde_json::Value;
+use vtcode_commons::canonicalize;
 
 use super::ToolRegistry;
 use crate::tools::tool_intent::{ToolIntent, classify_tool_intent};
@@ -122,13 +123,13 @@ impl ToolRegistry {
 
         // Canonicalize the path to prevent traversal attacks. A malicious path
         // like "../../etc/.vtcode/plans/../../etc/passwd" must NOT pass.
-        let Ok(absolute) = std::fs::canonicalize(path_str) else {
+        let Ok(absolute) = canonicalize(path_str) else {
             return false;
         };
 
         let workspace = self.inventory.workspace_root();
         let plans_dir = workspace.join(".vtcode").join("plans");
-        let canonical_plans = match std::fs::canonicalize(&plans_dir) {
+        let canonical_plans = match canonicalize(&plans_dir) {
             Ok(dir) => dir,
             Err(_) => plans_dir,
         };
@@ -138,7 +139,7 @@ impl ToolRegistry {
         }
 
         let tmp_plans = std::env::temp_dir().join("vtcode-plans");
-        let canonical_tmp = match std::fs::canonicalize(&tmp_plans) {
+        let canonical_tmp = match canonicalize(&tmp_plans) {
             Ok(dir) => dir,
             Err(_) => tmp_plans,
         };

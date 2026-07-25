@@ -498,6 +498,59 @@ async fn active_agent_deny_default_denies_non_allowed_requests() {
 }
 
 #[tokio::test]
+async fn inline_request_user_input_bypasses_generic_permission_prompt() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
+    let mut session = create_headless_session();
+    let handle = session.clone_inline_handle();
+    let mut renderer = AnsiRenderer::with_inline_ui(handle.clone(), Default::default());
+    let ctrl_c_state = Arc::new(crate::agent::runloop::unified::state::CtrlCState::new());
+    let ctrl_c_notify = Arc::new(Notify::new());
+    let permissions = PermissionsConfig::default();
+
+    let flow = ensure_tool_permission(
+        ToolPermissionsContext {
+            tool_registry: &registry,
+            renderer: &mut renderer,
+            handle: &handle,
+            session: &mut session,
+            default_placeholder: None,
+            ctrl_c_state: &ctrl_c_state,
+            ctrl_c_notify: &ctrl_c_notify,
+            hooks: None,
+            justification: None,
+            approval_recorder: None,
+            decision_ledger: None,
+            tool_permission_cache: None,
+            permissions_state: None,
+            active_agent_permissions: None,
+            hitl_notification_bell: false,
+            approval_policy: reject_all_approvals(),
+            skip_confirmations: false,
+            permissions_config: Some(&permissions),
+            auto_permission_runtime: None,
+            active_thread_label: None,
+            session_stats: None,
+            safety_approval_justification: None,
+            harness_emitter: None,
+        },
+        tools::REQUEST_USER_INPUT,
+        Some(&json!({
+            "questions": [{
+                "id": "scope",
+                "header": "Scope",
+                "question": "Which scope should the plan cover?",
+                "options": [{"label": "Focused", "description": "Keep the change narrow."}]
+            }]
+        })),
+    )
+    .await
+    .expect("permission flow");
+
+    assert_eq!(flow, ToolPermissionFlow::Approved { updated_args: None });
+}
+
+#[tokio::test]
 async fn matching_allow_rule_allows_tool_call() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;

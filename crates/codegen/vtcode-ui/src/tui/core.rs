@@ -47,7 +47,7 @@ impl Default for CoreSessionOptions {
     fn default() -> Self {
         Self {
             placeholder: None,
-            surface_preference: SessionSurface::Auto,
+            surface_preference: SessionSurface::default(),
             inline_rows: crate::tui::config::constants::ui::DEFAULT_INLINE_VIEWPORT_ROWS,
             event_callback: None,
             focus_callback: None,

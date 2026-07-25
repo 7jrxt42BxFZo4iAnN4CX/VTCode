@@ -79,7 +79,7 @@ pub struct AgentConfig {
     #[serde(default = "default_todo_planning_mode")]
     pub todo_planning_mode: bool,
 
-    /// Preferred rendering surface for the interactive chat UI (auto, alternate, inline)
+    /// Preferred rendering surface for the interactive chat UI (inline by default; auto, alternate, inline)
     #[serde(default)]
     pub ui_surface: UiSurfacePreference,
 

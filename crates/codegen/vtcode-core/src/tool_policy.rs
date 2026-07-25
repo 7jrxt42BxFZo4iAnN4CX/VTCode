@@ -32,6 +32,9 @@ const AUTO_ALLOW_TOOLS: &[&str] = &[
     tools::START_PLANNING,
     tools::TASK_TRACKER,
     tools::READ_FILE,
+    // This tool dispatches to the interactive front-end wizard. Asking the
+    // user is safe and must not be intercepted by a second permission prompt.
+    tools::REQUEST_USER_INPUT,
     // Whitelist the core execution tool itself; individual shell commands remain
     // gated by command/sandbox approval policy.
     tools::UNIFIED_EXEC,

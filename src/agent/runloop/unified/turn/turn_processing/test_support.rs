@@ -291,6 +291,17 @@ impl TestTurnProcessingBacking {
             .enter(vtcode_core::core::interfaces::session::PlanningEntrySource::UserRequest);
     }
 
+    pub(crate) fn mark_interview_denied_for_test(&mut self) {
+        self.plan_session.mark_interview_denied();
+    }
+
+    pub(crate) async fn initialize_plan_file_for_test(&self) {
+        self.tool_registry
+            .planning_workflow_state()
+            .set_plan_file(Some(self.workspace_path().join(".vtcode/plans/plan.md")))
+            .await;
+    }
+
     pub(crate) fn last_history_message_contains(&self, needle: &str) -> bool {
         self.working_history
             .last()

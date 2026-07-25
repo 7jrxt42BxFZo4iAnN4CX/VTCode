@@ -3,6 +3,7 @@ pub(crate) mod context;
 mod finalization;
 pub(crate) mod guards;
 pub(crate) mod harmony;
+pub(crate) mod primary_agent_runtime;
 pub(crate) mod provider_noise;
 mod recovery_flow;
 pub(crate) mod session;

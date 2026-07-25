@@ -23,6 +23,8 @@ pub(crate) enum PlanningIntent {
     ExitAndImplement,
     /// User explicitly wants to stay in planning workflow.
     StayInPlanning,
+    /// User declines or abandons the current plan.
+    CancelPlanning,
     /// No planning-related intent detected.
     None,
 }
@@ -53,6 +55,10 @@ pub(crate) fn detect_planning_intent(text: &str, assistant_prompted_implementati
     // planning revision without requiring the longer "keep planning" phrase.
     if planning::matches_stay_intent(&normalized) || is_stay_token(trimmed) {
         return PlanningIntent::StayInPlanning;
+    }
+
+    if is_cancel_token(trimmed) {
+        return PlanningIntent::CancelPlanning;
     }
 
     // Priority 2-3: Direct exit commands, approval words/phrases, and exit
@@ -141,6 +147,10 @@ fn is_stay_token(trimmed: &str) -> bool {
     matches!(trimmed, "edit" | "revise")
 }
 
+fn is_cancel_token(trimmed: &str) -> bool {
+    matches!(trimmed, "no" | "n" | "cancel" | "cancel plan" | "abandon" | "abandon plan")
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -207,10 +217,8 @@ mod tests {
     }
 
     #[test]
-    fn bare_no_token_does_not_force_stay_in_planning() {
-        // `no` abandons the plan — it falls through to None so the model can
-        // respond naturally to the user's "no" rather than forcing them back.
-        assert_eq!(detect_planning_intent("no", false), PlanningIntent::None);
+    fn bare_no_token_cancels_planning() {
+        assert_eq!(detect_planning_intent("no", false), PlanningIntent::CancelPlanning);
     }
 
     #[test]

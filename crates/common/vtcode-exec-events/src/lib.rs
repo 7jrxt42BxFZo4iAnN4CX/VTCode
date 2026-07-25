@@ -19,7 +19,7 @@ pub mod atif;
 pub mod trace;
 
 /// Semantic version of the serialized event schema exported by this crate.
-pub const EVENT_SCHEMA_VERSION: &str = "0.8.0";
+pub const EVENT_SCHEMA_VERSION: &str = "0.9.0";
 
 /// Wraps a [`ThreadEvent`] with schema metadata so downstream consumers can
 /// negotiate compatibility before processing an event stream.
@@ -377,6 +377,12 @@ pub enum ThreadEvent {
     /// Streaming delta for a plan item in Planning workflow.
     #[serde(rename = "plan.delta")]
     PlanDelta(PlanDeltaEvent),
+    /// Indicates that a completed plan is waiting for an implementation decision.
+    #[serde(rename = "plan.approval.requested")]
+    PlanApprovalRequested(PlanApprovalRequestedEvent),
+    /// Records the user's or policy's decision about a completed plan.
+    #[serde(rename = "plan.approval.resolved")]
+    PlanApprovalResolved(PlanApprovalResolvedEvent),
     /// Represents a fatal error.
     #[serde(rename = "error")]
     Error(ThreadErrorEvent),
@@ -667,6 +673,52 @@ pub struct PlanDeltaEvent {
     pub item_id: String,
     /// Incremental plan text chunk.
     pub delta: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+pub struct PlanApprovalRequestedEvent {
+    /// Identifier of the thread emitting the approval request.
+    pub thread_id: String,
+    /// Identifier of the turn that produced the plan.
+    pub turn_id: String,
+    /// Plan file associated with the approval request, when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_file: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum PlanApprovalDecision {
+    /// Execute with normal per-edit approval prompts.
+    Execute,
+    /// Execute with automatic edit approval enabled.
+    AutoAccept,
+    /// Keep planning and revise the proposed plan.
+    Revise,
+    /// Dismiss the approval request without implementing.
+    Cancel,
+    /// Hand the plan to the build primary agent.
+    SwitchBuild,
+    /// Hand the plan to the auto primary agent.
+    SwitchAuto,
+    /// Catch-all for decisions added in newer schema versions.
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+pub struct PlanApprovalResolvedEvent {
+    /// Identifier of the thread emitting the approval decision.
+    pub thread_id: String,
+    /// Identifier of the turn in which the decision was made.
+    pub turn_id: String,
+    /// Decision selected by the user or active execution policy.
+    pub decision: PlanApprovalDecision,
+    /// Whether the decision came from policy rather than an interactive user action.
+    pub automatic: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1195,6 +1247,61 @@ mod tests {
         assert_eq!(versioned.schema_version, EVENT_SCHEMA_VERSION);
         assert_eq!(versioned.event, event);
         assert_eq!(versioned.into_event(), event);
+    }
+
+    #[test]
+    fn plan_approval_events_round_trip_with_decision() {
+        let requested = ThreadEvent::PlanApprovalRequested(PlanApprovalRequestedEvent {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-2".to_string(),
+            plan_file: Some(".vtcode/plans/change.md".to_string()),
+        });
+        let resolved = ThreadEvent::PlanApprovalResolved(PlanApprovalResolvedEvent {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-3".to_string(),
+            decision: PlanApprovalDecision::AutoAccept,
+            automatic: false,
+        });
+
+        for event in [requested, resolved] {
+            let serialized = serde_json::to_string(&event).expect("serialize plan approval event");
+            let restored: ThreadEvent = serde_json::from_str(&serialized).expect("deserialize plan approval event");
+            assert_eq!(restored, event);
+        }
+    }
+
+    #[test]
+    fn plan_approval_decision_uses_stable_wire_names() {
+        let event = ThreadEvent::PlanApprovalResolved(PlanApprovalResolvedEvent {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            decision: PlanApprovalDecision::SwitchBuild,
+            automatic: false,
+        });
+
+        let serialized = serde_json::to_value(event).expect("serialize plan approval decision");
+        assert_eq!(serialized["type"], "plan.approval.resolved");
+        assert_eq!(serialized["decision"], "switch_build");
+    }
+
+    #[test]
+    fn plan_approval_decision_is_forward_compatible() {
+        let payload = serde_json::json!({
+            "type": "plan.approval.resolved",
+            "thread_id": "thread-1",
+            "turn_id": "turn-1",
+            "decision": "future_decision",
+            "automatic": true,
+        });
+        let event: ThreadEvent = serde_json::from_value(payload).expect("future decision should deserialize");
+        assert!(matches!(
+            event,
+            ThreadEvent::PlanApprovalResolved(PlanApprovalResolvedEvent {
+                decision: PlanApprovalDecision::Unknown,
+                automatic: true,
+                ..
+            })
+        ));
     }
 
     #[cfg(feature = "serde-json")]

@@ -15,6 +15,8 @@ pub enum PlanningEntrySource {
     UserRequest,
     /// Planning activated by selecting the `plan` primary agent via Tab/palette.
     AgentSelection,
+    /// Planning suggested by the active execution agent for a demanding task.
+    AgentSuggestion,
 }
 
 impl PlanningEntrySource {

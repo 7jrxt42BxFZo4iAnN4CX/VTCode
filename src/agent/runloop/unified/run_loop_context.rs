@@ -806,9 +806,16 @@ pub(crate) struct RunLoopContext<'a> {
     pub harness_state: &'a mut HarnessTurnState,
     pub harness_emitter: Option<&'a HarnessEventEmitter>,
     pub auto_permission: Option<AutoPermissionRuntimeContext<'a>>,
+    /// Whether ordinary confirmation prompts are bypassed for this turn.
+    pub skip_confirmations: bool,
+    /// Whether the session is operating under full-auto policy.
+    pub full_auto: bool,
     pub active_agent_permissions: Option<&'a AgentPermissionsConfig>,
     /// Name of the currently active agent, if known
     pub agent_name: Option<String>,
+    /// Configured execution agent used when a plan is approved from the
+    /// dedicated planning agent without a previous agent to restore.
+    pub default_primary_agent: Option<String>,
     /// Whether the current agent is a subagent
     pub is_subagent: bool,
 }
@@ -860,6 +867,8 @@ impl<'a> RunLoopContext<'a> {
             harness_state,
             harness_emitter,
             None,
+            false,
+            false,
         )
     }
 
@@ -883,6 +892,8 @@ impl<'a> RunLoopContext<'a> {
         harness_state: &'a mut HarnessTurnState,
         harness_emitter: Option<&'a HarnessEventEmitter>,
         auto_permission: Option<AutoPermissionRuntimeContext<'a>>,
+        skip_confirmations: bool,
+        full_auto: bool,
     ) -> Self {
         Self {
             renderer,
@@ -902,8 +913,11 @@ impl<'a> RunLoopContext<'a> {
             harness_state,
             harness_emitter,
             auto_permission,
+            skip_confirmations,
+            full_auto,
             active_agent_permissions: None,
             agent_name: None,
+            default_primary_agent: None,
             is_subagent: false,
         }
     }

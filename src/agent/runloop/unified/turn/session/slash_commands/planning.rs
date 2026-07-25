@@ -37,6 +37,8 @@ pub(crate) async fn handle_toggle_planning_workflow(
             ctx.plan_session,
             ctx.handle,
             PlanningEntrySource::UserRequest,
+            Some(ctx.active_primary_agent.active().name().to_string()),
+            ctx.vt_cfg.as_ref().map(|cfg| cfg.default_primary_agent.clone()),
             true,
             true,
         )
@@ -56,6 +58,14 @@ pub(crate) async fn handle_toggle_planning_workflow(
         )?;
         crate::agent::runloop::unified::planning_workflow_state::render_planning_workflow_next_step_hint(ctx.renderer)?;
     } else {
+        crate::agent::runloop::unified::planning_workflow::resolve_plan_approval(
+            ctx.plan_session,
+            ctx.harness_emitter,
+            ctx.thread_id,
+            ctx.thread_id,
+            vtcode_core::exec::events::PlanApprovalDecision::Cancel,
+            false,
+        );
         crate::agent::runloop::unified::planning_workflow::finish_planning_workflow(
             ctx.tool_registry,
             ctx.plan_session,

@@ -16,6 +16,7 @@ const TOOL_LIST_FILES: &str = tools::LIST_FILES;
 const TOOL_APPLY_PATCH: &str = tools::APPLY_PATCH;
 const TOOL_REQUEST_USER_INPUT: &str = tools::REQUEST_USER_INPUT;
 const TOOL_TASK_TRACKER: &str = tools::TASK_TRACKER;
+const TOOL_START_PLANNING: &str = tools::START_PLANNING;
 
 /// Generate compact cross-tool guidance based on the tools available in the session.
 pub fn generate_tool_guidelines(available_tools: &[String], capability_level: Option<CapabilityLevel>) -> String {
@@ -38,6 +39,7 @@ pub fn generate_tool_guidelines_for_profile(
     let has_read_file = available_tools.iter().any(|tool| tool == TOOL_READ_FILE);
     let has_list_files = available_tools.iter().any(|tool| tool == TOOL_LIST_FILES);
     let has_apply_patch = available_tools.iter().any(|tool| tool == TOOL_APPLY_PATCH);
+    let has_start_planning = available_tools.iter().any(|tool| tool == TOOL_START_PLANNING);
 
     let mut lines = Vec::new();
     if let Some(mode_line) = capability_mode_line(capability_level, has_exec, has_apply_patch) {
@@ -68,6 +70,11 @@ pub fn generate_tool_guidelines_for_profile(
     }
     if has_search || has_exec {
         lines.push("- Run independent tools in parallel when their inputs do not depend on each other.".to_string());
+    }
+    if has_start_planning {
+        lines.push(
+            "- For demanding, ambiguous, or multi-phase tasks, call `start_planning` to ask the user before entering the read-only Planning workflow; do not use it for straightforward changes.".to_string(),
+        );
     }
 
     if lines.is_empty() {
@@ -564,6 +571,15 @@ mod tests {
         let guidelines = generate_tool_guidelines_for_profile(&tools, None, ResolvedShellPromptProfile::UnixLike);
         assert!(guidelines.contains("parallel"), "Should include parallel tool call guidance");
         assert!(guidelines.contains("inputs do not depend"), "Should mention independent inputs");
+    }
+
+    #[test]
+    fn execution_agents_can_suggest_planning_for_demanding_tasks() {
+        let tools = vec![TOOL_START_PLANNING.to_string(), TOOL_EXEC_COMMAND.to_string()];
+        let guidelines = generate_tool_guidelines_for_profile(&tools, None, ResolvedShellPromptProfile::UnixLike);
+
+        assert!(guidelines.contains("call `start_planning`"));
+        assert!(guidelines.contains("do not use it for straightforward changes"));
     }
 
     #[test]

@@ -219,3 +219,127 @@ fn append_summary_lines(
         handle.append_line(InlineMessageKind::Info, vec![summary_segment(format!("    answer: {answer_text}"))]);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use serde_json::json;
+    use tokio::sync::{Notify, mpsc};
+
+    use super::execute_request_user_input_tool;
+    use crate::agent::runloop::unified::state::CtrlCState;
+    use vtcode_ui::tui::app::{
+        InlineCommand, InlineEvent, InlineHandle, InlineListSelection, InlineSession, TransientEvent, TransientRequest,
+        TransientSubmission,
+    };
+
+    fn next_transient_request(command_rx: &mut mpsc::UnboundedReceiver<InlineCommand>) -> TransientRequest {
+        loop {
+            match command_rx.try_recv() {
+                Ok(InlineCommand::ShowTransient { request }) => return *request,
+                Ok(_) => {}
+                Err(error) => panic!("expected a transient request, got {error:?}"),
+            }
+        }
+    }
+
+    fn test_handles() -> (
+        InlineHandle,
+        mpsc::UnboundedReceiver<InlineCommand>,
+        mpsc::UnboundedSender<InlineEvent>,
+        InlineSession,
+    ) {
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let handle = InlineHandle::new_for_tests(command_tx);
+        let session = InlineSession { handle: handle.clone(), events: event_rx };
+        (handle, command_rx, event_tx, session)
+    }
+
+    #[tokio::test]
+    async fn request_user_input_shows_wizard_and_returns_selected_answer() {
+        let (handle, mut command_rx, event_tx, mut session) = test_handles();
+        let ctrl_c_state = Arc::new(CtrlCState::new());
+        let ctrl_c_notify = Arc::new(Notify::new());
+        let args = json!({
+            "questions": [{
+                "id": "goal",
+                "header": "Goal",
+                "question": "What should this change deliver?",
+                "options": [{
+                    "label": "Small scope",
+                    "description": "Keep the implementation focused."
+                }, {
+                    "label": "Broader scope",
+                    "description": "Cover adjacent behavior in the same change."
+                }]
+            }]
+        });
+
+        event_tx
+            .send(InlineEvent::Transient(TransientEvent::Submitted(TransientSubmission::Wizard(vec![
+                InlineListSelection::RequestUserInputAnswer {
+                    question_id: "goal".to_string(),
+                    selected: vec!["Small scope".to_string()],
+                    other: None,
+                },
+            ]))))
+            .expect("send wizard answer");
+
+        let output = execute_request_user_input_tool(&handle, &mut session, &args, &ctrl_c_state, &ctrl_c_notify)
+            .await
+            .expect("request_user_input result");
+
+        assert_eq!(output["answers"]["goal"]["selected"], json!(["Small scope"]));
+        match next_transient_request(&mut command_rx) {
+            TransientRequest::Wizard(request) => {
+                assert_eq!(request.title, "Goal");
+                assert_eq!(request.steps.len(), 1);
+                assert_eq!(request.steps[0].question, "What should this change deliver?");
+                assert!(request.steps[0].items.iter().any(|item| {
+                    item.title.contains("Small scope")
+                        && matches!(
+                            item.selection.as_ref(),
+                            Some(InlineListSelection::RequestUserInputAnswer { question_id, .. })
+                                if question_id == "goal"
+                        )
+                }));
+            }
+            other => panic!("expected wizard request, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn request_user_input_cancellation_returns_cancelled_without_answers() {
+        let (handle, mut command_rx, event_tx, mut session) = test_handles();
+        let ctrl_c_state = Arc::new(CtrlCState::new());
+        let ctrl_c_notify = Arc::new(Notify::new());
+        let args = json!({
+            "questions": [{
+                "id": "goal",
+                "header": "Goal",
+                "question": "What should this change deliver?"
+            }]
+        });
+
+        event_tx
+            .send(InlineEvent::Transient(TransientEvent::Cancelled))
+            .expect("send wizard cancellation");
+
+        let output = execute_request_user_input_tool(&handle, &mut session, &args, &ctrl_c_state, &ctrl_c_notify)
+            .await
+            .expect("cancelled request_user_input result");
+
+        assert_eq!(output["cancelled"], json!(true));
+        assert!(output.get("answers").is_none());
+        assert!(matches!(next_transient_request(&mut command_rx), TransientRequest::Wizard(_)));
+        loop {
+            match command_rx.try_recv() {
+                Ok(InlineCommand::CloseTransient) => break,
+                Ok(_) => {}
+                Err(error) => panic!("expected close command, got {error:?}"),
+            }
+        }
+    }
+}

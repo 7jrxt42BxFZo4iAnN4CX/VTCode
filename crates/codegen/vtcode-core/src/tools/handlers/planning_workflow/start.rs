@@ -216,8 +216,7 @@ impl Tool for StartPlanningTool {
             "instructions": [
                 "1. Explore files and capture repository facts before drafting the plan",
                 "2. Ask or close only material blocking decisions",
-                "3. Emit one compact <proposed_plan> spec (fit ~1500 tokens; steps as `Action -> files -> verify:`, file:symbol refs over prose) and persist it to the plan file",
-                "4. Emit one compact <proposed_plan> spec (fit ~1500 tokens; steps as `Action -> files/symbols -> verify:`, file:symbol refs over prose) and persist it to the plan file"
+                "3. Emit one compact <proposed_plan> spec (fit ~1500 tokens; steps as `Action -> files/symbols -> verify:`, file:symbol refs over prose) and persist it to the plan file"
             ],
             "workflow_phases": [
                 "Phase A: Explore facts",
@@ -232,7 +231,7 @@ impl Tool for StartPlanningTool {
     }
 
     fn description(&self) -> &str {
-        "Enter Planning workflow for read-safe exploration. In Planning workflow, you can only inspect files, search code, and write canonical plan artifacts. Use this when you need to understand requirements before making changes. Do NOT call this if you already have a clear plan: proceed with exec_command for shell inspection and validation, and apply_patch for edits."
+        "Suggest Planning workflow for demanding, ambiguous, or multi-phase tasks. The user must confirm entry; after confirmation, use exec_command for read-only inspection and search while mutating tools such as apply_patch remain blocked, then emit one compact <proposed_plan> for review. Do NOT call this for straightforward changes or when the implementation is already clear."
     }
 
     fn parameter_schema(&self) -> Option<Value> {

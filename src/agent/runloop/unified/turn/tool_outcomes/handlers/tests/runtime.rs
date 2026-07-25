@@ -158,6 +158,30 @@ async fn active_primary_agent_policy_blocks_hallucinated_denied_tool_call() {
 }
 
 #[tokio::test]
+async fn invalid_preflight_arguments_do_not_trip_blocked_tool_guard() {
+    let mut backing = TestContextBacking::new(4).await;
+    backing.tool_registry.enable_planning();
+    let mut ctx = backing.turn_processing_context();
+
+    let result = validate_tool_call(
+        &mut ctx,
+        "invalid_code_search",
+        tool_names::CODE_SEARCH,
+        &json!({"query": "session setup", "max_results": 120}),
+    )
+    .await
+    .expect("invalid arguments should be returned as structured tool feedback");
+
+    assert!(matches!(result, ValidationResult::Handled));
+    assert_eq!(ctx.harness_state.consecutive_blocked_tool_calls, 0);
+    assert!(
+        ctx.working_history
+            .iter()
+            .any(|message| { message.role == uni::MessageRole::Tool && message.content.as_text().contains("max=100") })
+    );
+}
+
+#[tokio::test]
 async fn repeated_shell_guard_activates_recovery_without_breaking_turn() {
     let mut backing = TestContextBacking::new(4).await;
     let mut ctx = backing.turn_processing_context();

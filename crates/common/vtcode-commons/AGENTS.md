@@ -4,16 +4,10 @@
 
 ## Module Groups
 
-| Area | Modules |
-|---|---|
-| Traits | `paths/` (WorkspacePaths, PathResolver), `errors/` (ErrorFormatter, ErrorReporter), `telemetry/` (TelemetrySink) |
-| Display | `ansi/`, `colors/`, `styling/`, `diff_preview/`, `color256_theme/`, `color_policy/` |
-| LLM | `llm/` (BackendKind, LLMError, Usage) |
-| Filesystem | `fs/`, `diff/`, `diff_paths/`, `vtcodegitignore/`, `workspace_snapshot/` (env-delta fingerprint: `capture`/`diff`/`is_drift`) |
-| Text | `tokens/`, `unicode/`, `sanitizer/`, `slug/`, `formatting/` |
-| Async | `async_utils/`, `thread_safety/` (RelaxedAtomic) |
-| Interjection | `interjection/` (EventQueue, InterjectionBuffer, format_interjection, user_query) |
-| Other | `editor/`, `http/`, `project/`, `validation/`, `serde_helpers/`, `env_lock/` |
+- Traits: `paths/`, `errors/`, `telemetry/`.
+- Display: `ansi/`, `colors/`, `styling/`, `diff_preview/`, `color256_theme/`, `color_policy/`; LLM: `llm/`.
+- Filesystem: `fs/`, `diff/`, `diff_paths/`, `vtcodegitignore/`, `workspace_snapshot/`; text: `tokens/`, `unicode/`, `sanitizer/`, `slug/`, `formatting/`.
+- Async: `async_utils/`, `thread_safety/`; interjection: `interjection/`; other: `editor/`, `http/`, `project/`, `validation/`, `serde_helpers/`, `env_lock/`.
 
 ## Rules
 
@@ -31,3 +25,4 @@
 - `env_lock/` is macOS-specific env mutex — used by `vtcode` binary, not by library crates.
 - `utils/` contains `calculate_sha256()` used by `vtcode-indexer`.
 - `formatting/` owns the canonical middle-truncation helpers `truncate_middle` (head+tail, control chars sanitized) and `truncate_path_middle` (separator-aware, for path display). Downstream crates delegate here — do not re-implement per crate.
+- `ui_protocol::SessionSurface` defaults to `Inline`; callers requiring alternate-screen detection must request `Auto` or `Alternate` explicitly.

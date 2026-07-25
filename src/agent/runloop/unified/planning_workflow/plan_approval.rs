@@ -9,11 +9,13 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::sync::Notify;
+use vtcode_core::exec::events::PlanApprovalDecision;
 use vtcode_ui::tui::app::{
     InlineHandle, InlineListItem, InlineListSelection, InlineMessageKind, InlineSession, ListOverlayRequest,
     PlanContent, TransientHotkey, TransientHotkeyAction, TransientHotkeyKey, TransientRequest, TransientSubmission,
 };
 
+use crate::agent::runloop::unified::inline_events::harness::HarnessEventEmitter;
 use crate::agent::runloop::unified::overlay_prompt::{OverlayWaitOutcome, show_overlay_and_wait};
 use crate::agent::runloop::unified::state::CtrlCState;
 
@@ -32,6 +34,38 @@ pub(crate) enum PlanConfirmationOutcome {
     SwitchBuild,
     /// User chose to hand off execution to the auto primary agent.
     SwitchAuto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlanApprovalRoute {
+    Inline,
+    Headless,
+    Automatic,
+}
+
+pub(crate) fn plan_approval_route(
+    require_confirmation: bool,
+    supports_inline_ui: bool,
+    skip_confirmations: bool,
+    full_auto: bool,
+) -> PlanApprovalRoute {
+    if require_confirmation && !skip_confirmations && !full_auto {
+        if supports_inline_ui {
+            PlanApprovalRoute::Inline
+        } else {
+            PlanApprovalRoute::Headless
+        }
+    } else {
+        PlanApprovalRoute::Automatic
+    }
+}
+
+/// Event identity carried through the approval overlay so all outcomes are
+/// recorded against the same planning turn without widening the function API.
+pub(crate) struct PlanApprovalTelemetryContext<'a> {
+    pub(crate) emitter: Option<&'a HarnessEventEmitter>,
+    pub(crate) thread_id: &'a str,
+    pub(crate) turn_id: &'a str,
 }
 
 fn line_count(text: &str) -> usize {
@@ -290,6 +324,19 @@ pub(crate) async fn execute_plan_confirmation(
     })
 }
 
+/// Load the persisted plan draft for an approval request received on a later
+/// turn, such as a textual `approve` message. The initial plan turn passes its
+/// draft directly through `execute_plan_approval`; subsequent turns must use
+/// the persisted copy so they can present the same popup instead of bypassing
+/// confirmation.
+pub(crate) async fn load_plan_text_for_approval(tool_registry: &ToolRegistry) -> Option<String> {
+    let plan_file = tool_registry.planning_workflow_state().get_plan_file().await?;
+    tokio::fs::read_to_string(plan_file)
+        .await
+        .ok()
+        .filter(|text| !text.trim().is_empty())
+}
+
 use crate::agent::runloop::unified::planning_workflow_state::{PlanningWorkflowSessionState, finish_planning_workflow};
 use crate::agent::runloop::unified::turn::context::{TurnHandlerOutcome, TurnLoopResult};
 use vtcode_config::{builtin_primary_auto_agent, builtin_primary_build_agent};
@@ -311,6 +358,8 @@ pub(crate) async fn execute_plan_approval(
     ctrl_c_state: &Arc<CtrlCState>,
     ctrl_c_notify: &Arc<Notify>,
     plan_text: &str,
+    active_agent_name: &str,
+    telemetry: PlanApprovalTelemetryContext<'_>,
 ) -> Result<TurnHandlerOutcome> {
     tracing::info!(
         target: "vtcode.planning_workflow",
@@ -326,27 +375,52 @@ pub(crate) async fn execute_plan_approval(
         "execute_plan_approval: dialog closed"
     );
 
+    let (decision, automatic) = match outcome.as_ref() {
+        Ok(PlanConfirmationOutcome::Execute) => (PlanApprovalDecision::Execute, false),
+        Ok(PlanConfirmationOutcome::AutoAccept) => (PlanApprovalDecision::AutoAccept, false),
+        Ok(PlanConfirmationOutcome::EditPlan) => (PlanApprovalDecision::Revise, false),
+        Ok(PlanConfirmationOutcome::SwitchBuild) => (PlanApprovalDecision::SwitchBuild, false),
+        Ok(PlanConfirmationOutcome::SwitchAuto) => (PlanApprovalDecision::SwitchAuto, false),
+        Ok(PlanConfirmationOutcome::Cancel) | Err(_) => (PlanApprovalDecision::Cancel, false),
+    };
+    super::resolve_plan_approval(
+        plan_session,
+        telemetry.emitter,
+        telemetry.thread_id,
+        telemetry.turn_id,
+        decision,
+        automatic,
+    );
+
     match outcome {
         Ok(PlanConfirmationOutcome::Execute) => {
-            finish_planning_workflow(tool_registry, plan_session, handle, true).await;
+            let execution_agent = plan_session.execution_agent_after_approval(active_agent_name);
+            finish_planning_workflow(tool_registry, plan_session, handle, false).await;
             handle.set_skip_confirmations(false);
             tracing::info!(
                 target: "vtcode.planning_workflow",
                 "User approved plan via inline overlay (manual edit approvals); enabling mutating tools"
             );
-            Ok(TurnHandlerOutcome::Break(TurnLoopResult::Completed { plan_approved_execution_pending: true }))
+            Ok(execution_agent.map_or(
+                TurnHandlerOutcome::Break(TurnLoopResult::Completed { plan_approved_execution_pending: true }),
+                TurnHandlerOutcome::SwitchPrimaryAgent,
+            ))
         }
         Ok(PlanConfirmationOutcome::AutoAccept) => {
-            finish_planning_workflow(tool_registry, plan_session, handle, true).await;
+            let execution_agent = plan_session.execution_agent_after_approval(active_agent_name);
+            finish_planning_workflow(tool_registry, plan_session, handle, false).await;
             handle.set_skip_confirmations(true);
             tracing::info!(
                 target: "vtcode.planning_workflow",
                 "User approved plan via inline overlay (auto-accept); enabling mutating tools"
             );
-            Ok(TurnHandlerOutcome::Break(TurnLoopResult::Completed { plan_approved_execution_pending: true }))
+            Ok(execution_agent.map_or(
+                TurnHandlerOutcome::Break(TurnLoopResult::Completed { plan_approved_execution_pending: true }),
+                TurnHandlerOutcome::SwitchPrimaryAgent,
+            ))
         }
         Ok(PlanConfirmationOutcome::SwitchBuild) => {
-            finish_planning_workflow(tool_registry, plan_session, handle, true).await;
+            finish_planning_workflow(tool_registry, plan_session, handle, false).await;
             handle.set_skip_confirmations(false);
             tracing::info!(
                 target: "vtcode.planning_workflow",
@@ -355,7 +429,7 @@ pub(crate) async fn execute_plan_approval(
             Ok(TurnHandlerOutcome::SwitchPrimaryAgent(builtin_primary_build_agent().name))
         }
         Ok(PlanConfirmationOutcome::SwitchAuto) => {
-            finish_planning_workflow(tool_registry, plan_session, handle, true).await;
+            finish_planning_workflow(tool_registry, plan_session, handle, false).await;
             handle.set_skip_confirmations(true);
             tracing::info!(
                 target: "vtcode.planning_workflow",
@@ -382,12 +456,18 @@ pub(crate) async fn execute_plan_approval(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use tokio::sync::{Notify, mpsc};
+
     use super::{
-        PlanConfirmationOutcome, build_plan_confirmation_request, plan_confirmation_submission_to_outcome,
-        render_structured_plan,
+        PlanApprovalRoute, PlanConfirmationOutcome, build_plan_confirmation_request, execute_plan_confirmation,
+        plan_approval_route, plan_confirmation_submission_to_outcome, render_structured_plan,
     };
+    use crate::agent::runloop::unified::state::CtrlCState;
     use vtcode_ui::tui::app::{
-        InlineListSelection, ListOverlayRequest, TransientHotkeyAction, TransientRequest, TransientSubmission,
+        InlineCommand, InlineEvent, InlineHandle, InlineListSelection, InlineSession, ListOverlayRequest,
+        TransientEvent, TransientHotkeyAction, TransientRequest, TransientSubmission,
     };
     use vtcode_ui::tui::app::{PlanContent, PlanPhase, PlanStep};
 
@@ -424,6 +504,14 @@ mod tests {
     }
 
     // --- B: render_structured_plan ----------------------------------------
+
+    #[test]
+    fn approval_route_separates_inline_headless_and_automatic_policies() {
+        assert_eq!(plan_approval_route(true, true, false, false), PlanApprovalRoute::Inline);
+        assert_eq!(plan_approval_route(true, false, false, false), PlanApprovalRoute::Headless);
+        assert_eq!(plan_approval_route(true, false, true, false), PlanApprovalRoute::Automatic);
+        assert_eq!(plan_approval_route(false, true, false, false), PlanApprovalRoute::Automatic);
+    }
 
     #[test]
     fn render_structured_plan_prefers_phases_over_raw() {
@@ -530,5 +618,152 @@ mod tests {
                 .any(|s| matches!(s, InlineListSelection::PlanApprovalSwitchAuto))
         );
         assert!(selections.iter().any(|s| matches!(s, InlineListSelection::PlanApprovalExecute)));
+    }
+
+    #[tokio::test]
+    async fn execute_plan_confirmation_emits_confirmation_overlay() {
+        let (command_tx, mut command_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let handle = InlineHandle::new_for_tests(command_tx);
+        let mut session = InlineSession { handle: handle.clone(), events: event_rx };
+        let ctrl_c_state = Arc::new(CtrlCState::new());
+        let ctrl_c_notify = Arc::new(Notify::new());
+
+        event_tx
+            .send(InlineEvent::Transient(TransientEvent::Submitted(TransientSubmission::Selection(
+                InlineListSelection::PlanApprovalAutoAccept,
+            ))))
+            .expect("send confirmation selection");
+
+        let outcome =
+            execute_plan_confirmation(&handle, &mut session, sample_plan(), false, &ctrl_c_state, &ctrl_c_notify)
+                .await
+                .expect("confirmation overlay result");
+        assert_eq!(outcome, PlanConfirmationOutcome::AutoAccept);
+
+        let request = loop {
+            let command = command_rx.try_recv().expect("confirmation command");
+            if let InlineCommand::ShowTransient { request } = command {
+                break request;
+            }
+        };
+
+        match *request {
+            TransientRequest::List(request) => {
+                assert_eq!(request.title, "Ready to code?");
+                assert!(request.lines.iter().any(|line| line.contains("A plan is ready")));
+                assert!(
+                    request
+                        .items
+                        .iter()
+                        .any(|item| { item.selection == Some(InlineListSelection::PlanApprovalAutoAccept) })
+                );
+            }
+            other => panic!("expected plan confirmation list, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_plan_confirmation_edit_selection_returns_to_planning() {
+        let (command_tx, mut command_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let handle = InlineHandle::new_for_tests(command_tx);
+        let mut session = InlineSession { handle: handle.clone(), events: event_rx };
+        let ctrl_c_state = Arc::new(CtrlCState::new());
+        let ctrl_c_notify = Arc::new(Notify::new());
+
+        event_tx
+            .send(InlineEvent::Transient(TransientEvent::Submitted(TransientSubmission::Selection(
+                InlineListSelection::PlanApprovalEditPlan,
+            ))))
+            .expect("send edit selection");
+
+        let outcome =
+            execute_plan_confirmation(&handle, &mut session, sample_plan(), false, &ctrl_c_state, &ctrl_c_notify)
+                .await
+                .expect("edit confirmation result");
+        assert_eq!(outcome, PlanConfirmationOutcome::EditPlan);
+
+        let request = loop {
+            let command = command_rx.try_recv().expect("confirmation command");
+            if let InlineCommand::ShowTransient { request } = command {
+                break request;
+            }
+        };
+        assert!(matches!(
+            *request,
+            TransientRequest::List(ListOverlayRequest { items, .. })
+                if items.iter().any(|item| item.selection == Some(InlineListSelection::PlanApprovalEditPlan))
+        ));
+        loop {
+            match command_rx.try_recv() {
+                Ok(InlineCommand::CloseTransient) => break,
+                Ok(_) => {}
+                Err(error) => panic!("expected close command, got {error:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_plan_confirmation_cancellation_is_not_approval() {
+        let (command_tx, mut command_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let handle = InlineHandle::new_for_tests(command_tx);
+        let mut session = InlineSession { handle: handle.clone(), events: event_rx };
+        let ctrl_c_state = Arc::new(CtrlCState::new());
+        let ctrl_c_notify = Arc::new(Notify::new());
+
+        event_tx
+            .send(InlineEvent::Transient(TransientEvent::Cancelled))
+            .expect("send confirmation cancellation");
+
+        let outcome =
+            execute_plan_confirmation(&handle, &mut session, sample_plan(), false, &ctrl_c_state, &ctrl_c_notify)
+                .await
+                .expect("cancelled confirmation result");
+        assert_eq!(outcome, PlanConfirmationOutcome::Cancel);
+
+        loop {
+            match command_rx.try_recv() {
+                Ok(InlineCommand::CloseTransient) => break,
+                Ok(_) => {}
+                Err(error) => panic!("expected close command, got {error:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_plan_confirmation_editor_hotkey_seeds_edit_command() {
+        let (command_tx, mut command_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let handle = InlineHandle::new_for_tests(command_tx);
+        let mut session = InlineSession { handle: handle.clone(), events: event_rx };
+        let ctrl_c_state = Arc::new(CtrlCState::new());
+        let ctrl_c_notify = Arc::new(Notify::new());
+
+        event_tx
+            .send(InlineEvent::Transient(TransientEvent::Submitted(TransientSubmission::Hotkey(
+                TransientHotkeyAction::LaunchEditor,
+            ))))
+            .expect("send editor hotkey");
+
+        let outcome =
+            execute_plan_confirmation(&handle, &mut session, sample_plan(), false, &ctrl_c_state, &ctrl_c_notify)
+                .await
+                .expect("editor confirmation result");
+        assert_eq!(outcome, PlanConfirmationOutcome::EditPlan);
+
+        let mut saw_input = false;
+        while let Ok(command) = command_rx.try_recv() {
+            match command {
+                InlineCommand::SetInput(input) => {
+                    assert_eq!(input, "/edit");
+                    saw_input = true;
+                }
+                InlineCommand::CloseTransient => {}
+                _ => {}
+            }
+        }
+        assert!(saw_input, "editor hotkey should seed the /edit command");
     }
 }

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use serde_json::json;
 use vtcode_core::llm::provider as uni;
 
@@ -124,12 +122,21 @@ pub(super) struct InterviewToolCallFilter {
     pub(super) had_non_interview_tool_calls: bool,
 }
 
+/// Policy for the pure tool-call transformation boundary.
+///
+/// State transitions such as `interview_pending` and `interview_shown` belong
+/// to the planning-workflow orchestrator, after it observes this result.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct InterviewToolCallFilterPolicy {
+    pub(super) allow_interview: bool,
+    pub(super) response_has_plan: bool,
+}
+
+/// Keep only interview calls that are executable in the current plan response.
+/// This function deliberately does not mutate planning session state.
 pub(super) fn filter_interview_tool_calls(
     processing_result: TurnProcessingResult,
-    plan_session: &mut crate::agent::runloop::unified::planning_workflow_state::PlanningWorkflowSessionState,
-    allow_interview: bool,
-    response_has_plan: bool,
-    needs_interview: bool,
+    policy: InterviewToolCallFilterPolicy,
 ) -> InterviewToolCallFilter {
     use vtcode_core::config::constants::tools;
 
@@ -156,26 +163,16 @@ pub(super) fn filter_interview_tool_calls(
 
         if is_interview {
             had_interview = true;
-            // request_user_input is removed from plan mode; do not pass it through
+            // Let the normal HITL pipeline own the inline wizard. A planning
+            // response may have produced this call directly, or the
+            // orchestrator may have injected it as a deterministic fallback.
+            if policy.allow_interview && !policy.response_has_plan {
+                filtered.push(call);
+            }
         } else {
             had_non_interview = true;
             filtered.push(call);
         }
-    }
-
-    // Do NOT mark interview as pending when budget is exhausted — no further
-    // LLM calls are possible and re-forcing would loop forever. The same
-    // applies when post-tool recovery is exhausted (saturated planning context)
-    // or when the interview is permanently denied (policy/capability failure).
-    if needs_interview
-        && had_interview
-        && (had_non_interview || !allow_interview)
-        && !response_has_plan
-        && !plan_session.is_budget_exhausted()
-        && !plan_session.is_recovery_exhausted()
-        && !plan_session.is_interview_denied()
-    {
-        plan_session.mark_interview_pending();
     }
 
     let processing_result = if filtered.is_empty() {

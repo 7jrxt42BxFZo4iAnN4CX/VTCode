@@ -46,9 +46,9 @@ pub struct SecurePromptConfig {
 /// Standalone surface preference for selecting inline vs alternate rendering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SessionSurface {
-    #[default]
     Auto,
     Alternate,
+    #[default]
     Inline,
 }
 

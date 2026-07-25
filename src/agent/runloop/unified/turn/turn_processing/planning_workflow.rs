@@ -18,8 +18,13 @@ mod interview_forcing;
 mod interview_payload;
 
 use crate::agent::runloop::unified::turn::context::TurnProcessingResult;
+use crate::agent::runloop::unified::turn::turn_processing::response_processing::extract_interview_questions;
 pub(crate) use gating::planning_workflow_interview_ready;
-use interview_forcing::{filter_interview_tool_calls, maybe_append_planning_workflow_reminder};
+use gating::{InterviewGate, evaluate_interview_gate};
+use interview_forcing::{
+    InterviewToolCallFilter, InterviewToolCallFilterPolicy, filter_interview_tool_calls,
+    inject_planning_workflow_interview, maybe_append_planning_workflow_reminder, strip_assistant_text,
+};
 
 #[cfg(test)]
 use super::response_processing::prepare_tool_calls;
@@ -33,19 +38,130 @@ const PLANNING_WORKFLOW_REMINDER: &str = vtcode_core::prompts::system::PLANNING_
 pub(crate) fn maybe_force_planning_workflow_interview(
     processing_result: TurnProcessingResult,
     response_text: Option<&str>,
-    _session_stats: &mut crate::agent::runloop::unified::state::SessionStats,
+    session_stats: &crate::agent::runloop::unified::state::SessionStats,
     plan_session: &mut PlanningWorkflowSessionState,
-    _conversation_len: usize,
+    conversation_len: usize,
 ) -> TurnProcessingResult {
-    let filter_outcome = filter_interview_tool_calls(processing_result, plan_session, false, false, false);
-    let processing_result = filter_outcome.processing_result;
-
-    let response_has_plan = response_text.map(|text| text.contains("<proposed_plan>")).unwrap_or(false);
-    if response_has_plan {
-        return maybe_append_planning_workflow_reminder(processing_result);
+    if !plan_session.interview_forcing_allowed() {
+        return processing_result;
+    }
+    let gate = evaluate_interview_gate(response_text, session_stats, plan_session);
+    if gate.response_has_plan {
+        return handle_plan_response(processing_result, gate, plan_session, conversation_len);
     }
 
-    processing_result
+    handle_non_plan_response(processing_result, response_text, gate, plan_session, conversation_len)
+}
+
+fn handle_plan_response(
+    processing_result: TurnProcessingResult,
+    gate: InterviewGate,
+    plan_session: &mut PlanningWorkflowSessionState,
+    conversation_len: usize,
+) -> TurnProcessingResult {
+    let filtered = filter_interview_tool_calls(
+        processing_result,
+        InterviewToolCallFilterPolicy {
+            allow_interview: gate.allow_interview,
+            response_has_plan: gate.response_has_plan,
+        },
+    )
+    .processing_result;
+
+    if gate.allow_interview && gate.needs_interview {
+        return inject_planning_workflow_interview(strip_assistant_text(filtered), plan_session, conversation_len);
+    }
+
+    maybe_append_planning_workflow_reminder(filtered)
+}
+
+fn handle_non_plan_response(
+    processing_result: TurnProcessingResult,
+    response_text: Option<&str>,
+    gate: InterviewGate,
+    plan_session: &mut PlanningWorkflowSessionState,
+    conversation_len: usize,
+) -> TurnProcessingResult {
+    let filter = filter_interview_tool_calls(
+        processing_result,
+        InterviewToolCallFilterPolicy {
+            allow_interview: gate.allow_interview,
+            response_has_plan: gate.response_has_plan,
+        },
+    );
+    let InterviewToolCallFilter {
+        processing_result,
+        had_interview_tool_calls,
+        had_non_interview_tool_calls,
+    } = filter;
+
+    if plan_session.interview_pending() {
+        return handle_pending_interview(
+            had_interview_tool_calls,
+            had_non_interview_tool_calls,
+            gate,
+            processing_result,
+            plan_session,
+            conversation_len,
+        );
+    }
+
+    let explicit_questions = response_text
+        .map(|text| !extract_interview_questions(text).is_empty())
+        .unwrap_or(false);
+    if explicit_questions {
+        if gate.allow_interview {
+            plan_session.mark_interview_shown();
+        }
+        return processing_result;
+    }
+
+    if had_interview_tool_calls {
+        if gate.allow_interview {
+            plan_session.mark_interview_shown();
+        } else {
+            plan_session.mark_interview_pending();
+        }
+        return processing_result;
+    }
+
+    if had_non_interview_tool_calls {
+        if gate.needs_interview {
+            plan_session.mark_interview_pending();
+        }
+        return processing_result;
+    }
+
+    if !gate.allow_interview || !gate.needs_interview {
+        return processing_result;
+    }
+
+    inject_planning_workflow_interview(processing_result, plan_session, conversation_len)
+}
+
+fn handle_pending_interview(
+    had_interview_tool_calls: bool,
+    had_non_interview_tool_calls: bool,
+    gate: InterviewGate,
+    processing_result: TurnProcessingResult,
+    plan_session: &mut PlanningWorkflowSessionState,
+    conversation_len: usize,
+) -> TurnProcessingResult {
+    if !gate.needs_interview {
+        plan_session.clear_interview_pending();
+        return processing_result;
+    }
+
+    if had_interview_tool_calls && gate.allow_interview {
+        plan_session.mark_interview_shown();
+        return processing_result;
+    }
+
+    if had_non_interview_tool_calls || !gate.allow_interview {
+        return processing_result;
+    }
+
+    inject_planning_workflow_interview(processing_result, plan_session, conversation_len)
 }
 
 #[cfg(test)]

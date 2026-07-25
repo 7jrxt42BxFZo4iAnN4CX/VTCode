@@ -42,7 +42,7 @@ impl Default for SessionOptions {
     fn default() -> Self {
         Self {
             placeholder: None,
-            surface_preference: SessionSurface::Auto,
+            surface_preference: SessionSurface::default(),
             inline_rows: crate::tui::config::constants::ui::DEFAULT_INLINE_VIEWPORT_ROWS,
             event_callback: None,
             focus_callback: None,
@@ -207,5 +207,10 @@ mod tests {
         assert_eq!(options.surface_preference, SessionSurface::Inline);
         assert_eq!(options.inline_rows, 24);
         assert_eq!(options.workspace_root, Some(PathBuf::from("/workspace/demo")));
+    }
+
+    #[test]
+    fn session_options_default_uses_inline_surface() {
+        assert_eq!(SessionOptions::default().surface_preference, SessionSurface::Inline);
     }
 }

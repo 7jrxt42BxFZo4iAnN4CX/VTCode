@@ -1,28 +1,48 @@
+use std::sync::Arc;
+
+use tokio::sync::Notify;
+use vtcode_config::VTCodeConfig;
+use vtcode_core::exec::events::PlanApprovalDecision;
 use vtcode_core::llm::provider as uni;
 use vtcode_core::tools::registry::ToolRegistry;
 use vtcode_core::utils::ansi::AnsiRenderer;
-use vtcode_ui::tui::app::InlineHandle;
+use vtcode_ui::tui::app::{InlineHandle, InlineSession};
 
 use crate::agent::runloop::unified::planning_workflow::{
-    PlanningIntent, assistant_recently_prompted_implementation, detect_planning_intent,
+    PlanApprovalRoute, PlanApprovalTelemetryContext, PlanningIntent, assistant_recently_prompted_implementation,
+    detect_planning_intent, execute_plan_approval, load_plan_text_for_approval, plan_approval_route,
 };
 use crate::agent::runloop::unified::planning_workflow_state::{
     PlanningWorkflowSessionState, finish_planning_workflow, short_confirmation_hint_with_fallback,
 };
-use crate::agent::runloop::unified::turn::context::TurnLoopResult;
-use vtcode_config::builtin_primary_build_agent;
+use crate::agent::runloop::unified::state::CtrlCState;
+use crate::agent::runloop::unified::turn::context::{TurnHandlerOutcome, TurnLoopResult};
 
 const PLANNING_WORKFLOW_EXIT_TRIGGER_STATUS: &str = "Planning workflow: implementation intent detected from your message. Exiting planning mode and proceeding with execution.";
+const PLANNING_WORKFLOW_MISSING_PLAN_SYNTHESIS_DIRECTIVE: &str = "Planning recovery: implementation was requested, but no completed plan draft exists yet. Do not implement and do not ask for approval. Synthesize exactly one compact `<proposed_plan>` from the repository evidence already gathered, including Summary, numbered `Action -> files/symbols -> verify:` steps, Validation, and short Assumptions. Do not emit tool calls.";
+
+pub(crate) struct PlanningExitContext<'a> {
+    pub(crate) active_agent_name: &'a str,
+    pub(crate) session: &'a mut InlineSession,
+    pub(crate) ctrl_c_state: &'a Arc<CtrlCState>,
+    pub(crate) ctrl_c_notify: &'a Arc<Notify>,
+    pub(crate) vt_cfg: Option<&'a VTCodeConfig>,
+    pub(crate) skip_confirmations: bool,
+    pub(crate) full_auto: bool,
+    pub(crate) telemetry: PlanApprovalTelemetryContext<'a>,
+}
 
 /// Outcome of checking whether the planning workflow should exit this turn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PlanningTransition {
     /// No planning transition; continue the turn normally.
     None,
     /// User approved the plan; proceed with execution.
-    ExitAndImplement,
+    ExitAndImplement { execution_agent: Option<String> },
     /// User wants to stay in planning mode.
     StayInPlanning,
+    /// User abandoned the current plan without starting execution.
+    CancelPlanning,
 }
 
 impl PlanningTransition {
@@ -32,11 +52,13 @@ impl PlanningTransition {
     pub(crate) fn into_result_and_agent(self) -> (TurnLoopResult, Option<String>) {
         match self {
             PlanningTransition::None => (TurnLoopResult::Completed { plan_approved_execution_pending: false }, None),
-            PlanningTransition::ExitAndImplement => (
-                TurnLoopResult::Completed { plan_approved_execution_pending: true },
-                Some(builtin_primary_build_agent().name),
-            ),
+            PlanningTransition::ExitAndImplement { execution_agent } => {
+                (TurnLoopResult::Completed { plan_approved_execution_pending: true }, execution_agent)
+            }
             PlanningTransition::StayInPlanning => {
+                (TurnLoopResult::Completed { plan_approved_execution_pending: false }, None)
+            }
+            PlanningTransition::CancelPlanning => {
                 (TurnLoopResult::Completed { plan_approved_execution_pending: false }, None)
             }
         }
@@ -44,7 +66,7 @@ impl PlanningTransition {
 
     /// Whether the turn loop should break after this transition.
     #[inline]
-    pub(crate) fn should_break(self) -> bool {
+    pub(crate) fn should_break(&self) -> bool {
         !matches!(self, PlanningTransition::None)
     }
 }
@@ -59,8 +81,9 @@ pub(crate) async fn maybe_handle_planning_exit_trigger(
     tool_registry: &mut ToolRegistry,
     plan_session: &mut PlanningWorkflowSessionState,
     handle: &InlineHandle,
-    working_history: &[uni::Message],
+    working_history: &mut Vec<uni::Message>,
     auto_finish_planning_attempted: &mut bool,
+    exit_context: PlanningExitContext<'_>,
 ) -> anyhow::Result<PlanningTransition> {
     if !tool_registry.is_planning_active() {
         return Ok(PlanningTransition::None);
@@ -80,14 +103,109 @@ pub(crate) async fn maybe_handle_planning_exit_trigger(
 
     let transition = match intent {
         PlanningIntent::ExitAndImplement => {
+            let Some(plan_text) = load_plan_text_for_approval(tool_registry).await else {
+                display_status(
+                    renderer,
+                    "No completed plan draft exists yet. I will synthesize the plan from the gathered evidence before showing approval.",
+                )?;
+                // A textual `yes`/`implement` is not an approval when there
+                // is no persisted draft. Keep the user choice attached to
+                // this turn, but continue through one model request so the
+                // plan can be synthesized and then routed to the normal
+                // approval overlay. The turn-local guard prevents the same
+                // user message from re-entering this branch on the next loop
+                // iteration.
+                *auto_finish_planning_attempted = true;
+                working_history
+                    .push(uni::Message::system(PLANNING_WORKFLOW_MISSING_PLAN_SYNTHESIS_DIRECTIVE.to_string()));
+                return Ok(PlanningTransition::None);
+            };
+
             *auto_finish_planning_attempted = true;
+
+            let require_confirmation = exit_context
+                .vt_cfg
+                .map(|cfg| cfg.agent.require_plan_confirmation)
+                .unwrap_or(true);
+            let approval_route = plan_approval_route(
+                require_confirmation,
+                renderer.supports_inline_ui(),
+                exit_context.skip_confirmations,
+                exit_context.full_auto,
+            );
+            tracing::info!(
+                target: "vtcode.planning_workflow",
+                ?approval_route,
+                "textual plan approval requested"
+            );
+
+            if approval_route == PlanApprovalRoute::Inline {
+                let outcome = execute_plan_approval(
+                    tool_registry,
+                    plan_session,
+                    handle,
+                    exit_context.session,
+                    exit_context.ctrl_c_state,
+                    exit_context.ctrl_c_notify,
+                    &plan_text,
+                    exit_context.active_agent_name,
+                    exit_context.telemetry,
+                )
+                .await?;
+
+                return Ok(match outcome {
+                    TurnHandlerOutcome::SwitchPrimaryAgent(execution_agent) => {
+                        PlanningTransition::ExitAndImplement { execution_agent: Some(execution_agent) }
+                    }
+                    TurnHandlerOutcome::Break(TurnLoopResult::Completed { plan_approved_execution_pending: true }) => {
+                        PlanningTransition::ExitAndImplement { execution_agent: None }
+                    }
+                    TurnHandlerOutcome::Break(_) | TurnHandlerOutcome::Continue => PlanningTransition::StayInPlanning,
+                });
+            }
+
             display_status(renderer, PLANNING_WORKFLOW_EXIT_TRIGGER_STATUS)?;
-            finish_planning_workflow(tool_registry, plan_session, handle, true).await;
-            PlanningTransition::ExitAndImplement
+            let execution_agent = plan_session.execution_agent_after_approval(exit_context.active_agent_name);
+            let decision = if approval_route == PlanApprovalRoute::Automatic {
+                PlanApprovalDecision::AutoAccept
+            } else {
+                PlanApprovalDecision::Execute
+            };
+            super::resolve_plan_approval(
+                plan_session,
+                exit_context.telemetry.emitter,
+                exit_context.telemetry.thread_id,
+                exit_context.telemetry.turn_id,
+                decision,
+                approval_route == PlanApprovalRoute::Automatic,
+            );
+            finish_planning_workflow(tool_registry, plan_session, handle, false).await;
+            PlanningTransition::ExitAndImplement { execution_agent }
         }
         PlanningIntent::StayInPlanning => {
             display_status(renderer, &short_confirmation_hint_with_fallback())?;
+            super::resolve_plan_approval(
+                plan_session,
+                exit_context.telemetry.emitter,
+                exit_context.telemetry.thread_id,
+                exit_context.telemetry.turn_id,
+                PlanApprovalDecision::Revise,
+                false,
+            );
             PlanningTransition::StayInPlanning
+        }
+        PlanningIntent::CancelPlanning => {
+            display_status(renderer, "Planning workflow cancelled; the plan was not implemented.")?;
+            super::resolve_plan_approval(
+                plan_session,
+                exit_context.telemetry.emitter,
+                exit_context.telemetry.thread_id,
+                exit_context.telemetry.turn_id,
+                PlanApprovalDecision::Cancel,
+                false,
+            );
+            finish_planning_workflow(tool_registry, plan_session, handle, true).await;
+            PlanningTransition::CancelPlanning
         }
         PlanningIntent::None => PlanningTransition::None,
     };

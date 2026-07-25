@@ -163,6 +163,12 @@ pub(crate) async fn handle_tool_execution_result<'a>(
         record_mcp_tool_event(t_ctx, tool_name, &pipeline_outcome.status);
     }
 
+    if pipeline_outcome.stop_after_tool {
+        return Ok(Some(TurnHandlerOutcome::Break(TurnLoopResult::Completed {
+            plan_approved_execution_pending: false,
+        })));
+    }
+
     // 3. If the tool requested a primary-agent handoff (plan-mode "switch to
     //    build/auto agent" decision), surface it so the turn loop can switch
     //    the active agent after this turn.

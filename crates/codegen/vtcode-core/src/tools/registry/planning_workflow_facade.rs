@@ -15,6 +15,10 @@ const PLAN_MODE_EXPLORATION_TOOLS: &[&str] = &[
     tool_names::LIST_FILES,
     tool_names::GREP_FILE,
     tool_names::TASK_TRACKER,
+    // Planning clarification and interview answers are handled by the
+    // front-end's inline wizard, so they must not be blocked by the ordinary
+    // tool permission prompt before the wizard can be shown.
+    tool_names::REQUEST_USER_INPUT,
 ];
 
 impl ToolRegistry {
@@ -167,6 +171,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn planning_override_allows_inline_interview_permission() {
+        let temp_dir = TempDir::new().expect("tempdir");
+        let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
+        registry
+            .set_tool_policy(tools::REQUEST_USER_INPUT, ToolPolicy::Deny)
+            .await
+            .expect("set explicit interview policy");
+
+        registry.apply_planning_mode_policy_overrides().await;
+
+        assert!(
+            registry
+                .preflight_tool_permission(tools::REQUEST_USER_INPUT)
+                .await
+                .expect("preflight inline interview")
+        );
+    }
+
+    #[tokio::test]
     async fn apply_planning_mode_policy_overrides_is_idempotent() {
         let temp_dir = TempDir::new().expect("tempdir");
         let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
@@ -191,15 +214,24 @@ mod tests {
 
         // Set exec_command to Prompt explicitly so we can verify restoration
         registry.set_tool_policy(tools::EXEC_COMMAND, ToolPolicy::Prompt).await.ok();
+        // The inline interview must also restore an explicit user policy after
+        // planning exits; plan mode is only a scoped override.
+        registry.set_tool_policy(tools::REQUEST_USER_INPUT, ToolPolicy::Deny).await.ok();
 
         registry.apply_planning_mode_policy_overrides().await;
         assert_eq!(registry.get_tool_policy(tools::EXEC_COMMAND).await, ToolPolicy::Allow);
+        assert_eq!(registry.get_tool_policy(tools::REQUEST_USER_INPUT).await, ToolPolicy::Allow);
 
         registry.restore_post_planning_policies().await;
         assert_eq!(
             registry.get_tool_policy(tools::EXEC_COMMAND).await,
             ToolPolicy::Prompt,
             "exec_command policy should be restored to Prompt"
+        );
+        assert_eq!(
+            registry.get_tool_policy(tools::REQUEST_USER_INPUT).await,
+            ToolPolicy::Deny,
+            "request_user_input policy should be restored after the inline interview"
         );
     }
 

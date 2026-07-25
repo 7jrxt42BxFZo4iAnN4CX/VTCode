@@ -83,6 +83,12 @@ mod tests {
     }
 
     #[test]
+    fn ui_surface_defaults_to_inline() {
+        assert_eq!(SessionSurface::default(), SessionSurface::Inline);
+        assert_eq!(crate::tui::config::UiSurfacePreference::default(), crate::tui::config::UiSurfacePreference::Inline);
+    }
+
+    #[test]
     fn keyboard_protocol_conversion_roundtrip() {
         let settings = KeyboardProtocolSettings {
             enabled: true,

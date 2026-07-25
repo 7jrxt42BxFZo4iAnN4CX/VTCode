@@ -85,12 +85,11 @@ pub(crate) fn process_llm_response(
         && let Some(ref text) = final_text
     {
         let extraction = extract_any_plan(text);
-        final_text = Some(
-            text.replace("<proposed_plan>", "")
-                .replace("</proposed_plan>", "")
-                .replace("<plan>", "")
-                .replace("</plan>", ""),
-        );
+        // The plan is rendered once by the approval flow below. Keep only the
+        // non-plan prose in the normal assistant response; retaining the plan
+        // body here makes the transcript render it a second time before the
+        // approval heading is emitted.
+        final_text = Some(extraction.stripped_text);
         proposed_plan = extraction.plan_text;
     }
 
@@ -105,6 +104,10 @@ pub(crate) fn process_llm_response(
         && looks_like_structured_plan(text)
     {
         proposed_plan = Some(text.trim().to_string());
+        // Untagged structured responses are themselves the plan. They are
+        // rendered by the approval flow, so do not also append them as a
+        // normal assistant response.
+        final_text = Some(String::new());
     }
 
     // A completed plan is a terminal planning response. Providers sometimes
@@ -721,7 +724,7 @@ mod tests {
     }
 
     #[test]
-    fn process_llm_response_keeps_plan_visible_in_planning_workflow() {
+    fn process_llm_response_removes_plan_from_duplicate_assistant_text() {
         let response = LLMResponse {
             content: Some("Intro\n<proposed_plan>\n- Step 1\n</proposed_plan>\nOutro".to_string()),
             tool_calls: None,
@@ -742,7 +745,7 @@ mod tests {
 
         match result {
             TurnProcessingResult::TextResponse { text, proposed_plan, .. } => {
-                assert_eq!(text, "Intro\n\n- Step 1\n\nOutro");
+                assert_eq!(text, "Intro\n\nOutro");
                 assert!(!text.contains("<proposed_plan>"));
                 assert_eq!(proposed_plan.as_deref(), Some("- Step 1"));
             }

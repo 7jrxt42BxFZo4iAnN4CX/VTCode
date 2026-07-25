@@ -7,8 +7,6 @@
 //! the readiness/need decision independently testable and decoupled from
 //! orchestration (`super::maybe_force_planning_workflow_interview`), which is
 //! the only caller outside this module.
-#![allow(dead_code)]
-
 use vtcode_core::config::constants::tools;
 
 use super::MIN_PLANNING_WORKFLOW_TURNS_BEFORE_INTERVIEW;
@@ -18,6 +16,13 @@ use crate::agent::runloop::unified::state::SessionStats;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct InterviewNeedState {
+    pub(super) response_has_plan: bool,
+    pub(super) needs_interview: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct InterviewGate {
+    pub(super) allow_interview: bool,
     pub(super) response_has_plan: bool,
     pub(super) needs_interview: bool,
 }
@@ -48,11 +53,23 @@ pub(crate) fn planning_workflow_interview_ready(
     // once `request_user_input` has been permanently denied (policy/capability
     // failure, not a user cancellation), re-forcing it would just repeat the
     // same denial every turn (checkpoint turn_655/turn_660).
-    if plan_session.is_budget_exhausted() || plan_session.is_recovery_exhausted() || plan_session.is_interview_denied()
-    {
+    if !plan_session.interview_forcing_allowed() {
         return false;
     }
     has_discovery_tool(session_stats) && plan_session.turns() >= MIN_PLANNING_WORKFLOW_TURNS_BEFORE_INTERVIEW
+}
+
+pub(super) fn evaluate_interview_gate(
+    response_text: Option<&str>,
+    session_stats: &SessionStats,
+    plan_session: &PlanningWorkflowSessionState,
+) -> InterviewGate {
+    let need_state = interview_need_state(response_text, plan_session);
+    InterviewGate {
+        allow_interview: planning_workflow_interview_ready(session_stats, plan_session),
+        response_has_plan: need_state.response_has_plan,
+        needs_interview: need_state.needs_interview,
+    }
 }
 
 /// Whether the planning session still needs an interview cycle, and whether

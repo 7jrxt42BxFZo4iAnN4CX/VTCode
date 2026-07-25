@@ -125,19 +125,9 @@ const PLANNING_RECOVERY_SYNTHESIS_FALLBACK: &str = "Planning research completed,
 ///   - `no` → abandon the plan
 ///   - `edit`/`keep planning` → refine the plan (user re-states what to revise)
 const PLANNING_RECOVERY_SYNTHESIS_FALLBACK_NO_INTERVIEW: &str = "Plan draft ready (interactive questions are unavailable in this runtime, so the plan was finalized from the research already gathered). Review the plan above, then choose one of:\n  • type `yes` (or `implement`) to start implementation\n  • type `no` to abandon this plan\n  • type `edit` (or `keep planning`) to refine — describe what to revise";
-/// Plan-mode fallback when the session budget is exhausted. Unlike the
-/// transient-error variant, this tells the agent to finalize the plan NOW
-/// from the evidence already gathered — the budget is spent and no further
-/// LLM calls are possible this session.
-const PLANNING_BUDGET_EXHAUSTED_FINALIZE: &str = "Budget exhausted. Finalize the plan NOW from the evidence already gathered in this conversation. Do NOT attempt any more tool calls or LLM requests — synthesize your final answer immediately.";
 /// User-facing final answer for the budget-exhausted plan-mode dead end. The
-/// `*_FINALIZE` constant above is a directive addressed to the MODEL (injected
-/// as system messages before a synthesis pass); they must never be shown as the
-/// user-visible final answer — no LLM call follows them in the recovery path,
-/// so the user would see a bare instruction and the turn would silently stop
-/// (observed in checkpoint turn_655). These notices tell the USER how to
-/// continue: the plan draft and research live in the session plan file, and the
-/// planning session stays alive so `implement` / `keep planning` still work.
+/// the planning session stays alive so `implement` / `keep planning` still
+/// work.
 const PLANNING_BUDGET_EXHAUSTED_USER_NOTICE: &str = "Budget exhausted before the plan synthesis could complete. The research gathered and the current plan draft are preserved in the session plan file (.vtcode/plans/).";
 /// User-facing final answer for the recovery-exhausted plan-mode dead end.
 /// See [`PLANNING_BUDGET_EXHAUSTED_USER_NOTICE`].
@@ -374,12 +364,15 @@ impl<'a> TurnLoopContext<'a> {
             self.harness_state,
             self.harness_emitter,
             auto_permission,
+            self.skip_confirmations,
+            self.full_auto,
         );
         ctx.active_agent_permissions = self
             .vt_cfg
             .and_then(|cfg| cfg.runtime_agent_permissions.as_ref())
             .or(Some(&self.active_primary_agent.active().permissions));
         ctx.agent_name = Some(self.active_primary_agent.active().identity.name.clone());
+        ctx.default_primary_agent = self.vt_cfg.map(|cfg| cfg.default_primary_agent.clone());
         // The primary agent loop is always for the primary agent, not a subagent
         ctx.is_subagent = false;
         ctx
@@ -552,6 +545,20 @@ pub(crate) async fn run_turn_loop(
             ctx.handle,
             working_history,
             ctx.auto_finish_planning_attempted,
+            crate::agent::runloop::unified::planning_workflow::PlanningExitContext {
+                active_agent_name: ctx.active_primary_agent.active().name(),
+                session: ctx.session,
+                ctrl_c_state: ctx.ctrl_c_state,
+                ctrl_c_notify: ctx.ctrl_c_notify,
+                vt_cfg: ctx.vt_cfg,
+                skip_confirmations: ctx.skip_confirmations,
+                full_auto: ctx.full_auto,
+                telemetry: crate::agent::runloop::unified::planning_workflow::PlanApprovalTelemetryContext {
+                    emitter: ctx.harness_emitter,
+                    thread_id: &ctx.harness_state.run_id.0,
+                    turn_id: &ctx.harness_state.turn_id.0,
+                },
+            },
         )
         .await?;
 
@@ -800,26 +807,26 @@ pub(crate) async fn run_turn_loop(
                         turn_processing_ctx.context_manager.update_token_usage(&response_usage);
                         #[cfg(debug_assertions)]
                         turn_processing_ctx.context_manager.validate_token_tracking(&response_usage);
-                        // In planning mode, finalize the plan from gathered evidence
-                        // rather than returning Blocked (which would re-enter planning
-                        // on the next turn and loop forever).
+                        // In planning mode, preserve the session and use the same
+                        // user-facing recovery fallback as post-tool failures.
+                        // Returning a model-only directive here would leave no
+                        // synthesis call to consume it and would dead-end the turn.
                         if turn_processing_ctx.is_planning_active() {
                             turn_processing_ctx.plan_session.mark_budget_exhausted();
-                            // Deactivate planning workflow so mutating tools are
-                            // available on the next turn if the user continues.
-                            turn_processing_ctx.tool_registry.disable_planning();
-                            turn_processing_ctx.plan_session.exit();
-                            let finalize_msg = format!(
-                                "{PLANNING_BUDGET_EXHAUSTED_FINALIZE}\n\n\
-                                 Budget: ${:.4}, spent: ${:.4}.",
-                                max, estimate.raw_usd
-                            );
-                            turn_processing_ctx.working_history.push(uni::Message::system(finalize_msg));
+                            let plan_state = turn_processing_ctx.tool_registry.planning_workflow_state();
+                            result = post_tool_recovery::complete_turn_after_failed_tool_free_recovery(
+                                turn_processing_ctx.working_history,
+                                "turn_loop.budget_limit_planning",
+                                None,
+                                None,
+                                Some(turn_processing_ctx.plan_session),
+                                Some(&plan_state),
+                            )
+                            .await;
                             let _ = turn_processing_ctx.renderer.line(
                                 MessageStyle::Warning,
-                                "Budget exhausted during planning workflow. Finalizing plan from gathered evidence.",
+                                "Budget exhausted during planning workflow. The plan draft is preserved for approval or revision.",
                             );
-                            result = TurnLoopResult::Completed { plan_approved_execution_pending: false };
                         } else {
                             result = TurnLoopResult::Blocked {
                                 reason: Some(format!(
@@ -1136,11 +1143,13 @@ pub(crate) async fn run_turn_loop(
 
     // Final outcome with the correct result status
     ctx.session_stats.record_turn_completed();
+    let plan_approved_execution_pending =
+        matches!(&result, TurnLoopResult::Completed { plan_approved_execution_pending: true });
     Ok(TurnLoopOutcome {
         result,
         turn_modified_files,
         pending_primary_agent,
-        plan_approved_execution_pending: false,
+        plan_approved_execution_pending,
     })
 }
 

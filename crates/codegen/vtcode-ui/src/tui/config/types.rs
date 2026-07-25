@@ -17,9 +17,9 @@ pub use vtcode_config::types::{SystemPromptMode, ToolDocumentationMode, Verbosit
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum UiSurfacePreference {
-    #[default]
     Auto,
     Alternate,
+    #[default]
     Inline,
 }
 

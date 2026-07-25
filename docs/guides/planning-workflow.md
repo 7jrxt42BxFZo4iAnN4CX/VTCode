@@ -50,8 +50,8 @@ While a turn is actively processing, `/plan` is dropped with a notice (mode swit
 ### Enter From an Agent Suggestion
 
 The agent can also propose entering the planning workflow on its own when it
-judges edits should be planned first. In that case a HITL confirmation prompt
-appears:
+judges edits should be planned first. Under an interactive policy a HITL
+confirmation prompt appears:
 
 ```text
 Enter Planning workflow?
@@ -66,7 +66,17 @@ Enter Planning workflow?
   (mutating tools remain enabled).
 
 This gate prevents the agent from silently switching into plan mode; you decide
-whether to plan before any edits begin.
+whether to plan before any edits begin. Full-auto and skip-confirmations
+policies accept the suggestion directly, including in an interactive UI.
+
+Execution agents such as `build`, `auto`, and `duck` can invoke the
+`start_planning` tool when a request is demanding, ambiguous, or has multiple
+phases. The tool only presents the entry prompt; it does not silently change
+mode. Straightforward requests continue directly in the active execution
+agent. In a headless session without an automatic execution policy, the
+suggestion is reported as pending and the turn stops safely; use `/plan` on the
+next turn to confirm entry. Full-auto or skip-confirmations policies may accept
+the suggestion automatically.
 
 ### Intent Phrases
 
@@ -80,6 +90,10 @@ You can steer the workflow with short phrases instead of the review-gate UI:
   plan mode.
 - To **stay in planning**, type `stay in planning` (or revise the
   `<proposed_plan>` block). This overrides any exit phrase.
+- To **cancel planning without implementation**, type `no`, `cancel`, or
+  `abandon plan`, use `/plan off`, or switch away from the `plan` agent. VT
+  Code emits a terminal `cancel` approval event and removes the active plan
+  draft when the workflow is explicitly abandoned.
 
 ### Typical Workflow
 
@@ -88,6 +102,28 @@ You can steer the workflow with short phrases instead of the review-gate UI:
 3. Iterate on repository facts, risks, and open decisions.
 4. Review the emitted `<proposed_plan>` block.
 5. Switch to a build-oriented primary agent such as `build` or `auto` when you are ready to implement.
+
+When planning was entered from another primary agent, approving the plan
+restores that agent automatically when it is write-capable. `build` resumes
+with reviewable edits and `auto` resumes its configured automation policy.
+Read-only agents such as `duck` and `plan` are never selected to execute an
+approved plan; the handoff resolves to the configured write-capable agent or
+the built-in `build` agent. If the dedicated `plan` agent was already active
+when planning began, approval uses the configured default execution agent
+only when that agent can mutate the workspace.
+
+### Clarification Interviews
+
+When the planning agent reaches a material ambiguity, or identifies an open
+decision before presenting a plan, it asks through `request_user_input`. In an
+interactive session this opens an inline wizard with a selectable option list
+(and an optional free-form note). The selected answer is returned to the same
+planning turn, recorded as the completed interview, and supplied to the next
+model request so planning can continue with the user's choice.
+
+Pressing `Esc` or `Ctrl-C` cancels the interview without submitting an answer;
+the planning agent may ask again when the ambiguity still matters. A plan
+approval popup is not shown until any required clarification has completed.
 
 ## Plan Output Format
 
@@ -170,13 +206,33 @@ Handoff options perform a true primary-agent switch: the chosen agent becomes ac
 executes the approved plan. The planning workflow is disabled and mutating tools are enabled
 once the user approves the plan.
 
+The approved execution turn ends with a concise summary of the outcome, changed
+files, verification performed, and remaining blockers. In interactive sessions
+this appears alongside the final response. In headless sessions, a plan that
+requires confirmation remains pending and the run stops safely after emitting
+the plan; send `approve` or `implement` on a later turn to continue. Existing
+full-auto or skip-confirmation policies may continue automatically without an
+interactive prompt.
+
+### Runtime Events
+
+All clients can reconstruct the approval lifecycle from the authoritative
+`ThreadEvent` stream. A plan turn emits `plan.delta` and the completed plan item,
+then `plan.approval.requested` with the producing turn and plan file. The
+terminal decision is emitted as `plan.approval.resolved` with one of
+`execute`, `auto_accept`, `revise`, `cancel`, `switch_build`, or `switch_auto`,
+plus an `automatic` flag. Interactive and headless clients therefore observe
+the same pending, revision, and implementation handoff states. The Open
+Responses bridge forwards these as `vtcode.plan_approval_requested` and
+`vtcode.plan_approval_resolved` custom events.
+
 ## Budget Exhaustion
 
 If the session budget or wall-clock limit is reached while planning, the
 runloop does **not** force another interview or loop (no further LLM calls are
-possible). Instead it finalizes the current plan draft and presents it via the
-review gate, so you can approve or revise what was produced rather than the
-turn hanging.
+possible). Instead it preserves the current plan draft, reports the limit, and
+leaves the planning session available for a text approval or revision command
+on the next turn.
 
 ## Plan File Persistence
 

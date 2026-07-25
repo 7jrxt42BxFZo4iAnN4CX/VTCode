@@ -8,12 +8,12 @@
 
 ## ThreadEvent Variants
 
-`thread.started` | `thread.completed` | `thread.compact_boundary` | `turn.started` | `turn.completed` | `turn.failed` | `item.started` | `item.updated` | `item.completed` | `plan.delta` | `error`
+`thread.started` | `thread.completed` | `thread.compact_boundary` | `turn.started` | `turn.completed` | `turn.failed` | `item.started` | `item.updated` | `item.completed` | `plan.delta` | `plan.approval.requested` | `plan.approval.resolved` | `error`
 
 ## Rules
 
 - **Do not invent parallel event types.** Extend `ThreadEvent` and `ThreadItemDetails` enums.
-- `EVENT_SCHEMA_VERSION` must be bumped on breaking schema changes.
+- `EVENT_SCHEMA_VERSION` must be bumped when the serialized contract changes.
 - `EventEmitter` trait has a blanket `FnMut(&ThreadEvent)` impl.
 - Feature-gated emitters: `telemetry-log` (LogEmitter), `telemetry-tracing` (TracingEmitter), `schema-export` (JSON Schema), `serde-json` (JSON helpers).
 - `atif/` module exports ATIF (Agent Trace Interchange Format).
@@ -22,4 +22,7 @@
 ## Gotchas
 
 - `vtcode-core::exec::events` re-exports these types — consumers should use that path, not depend on this crate directly.
+- Plan approval state is represented by `PlanApprovalRequestedEvent` and
+  `PlanApprovalResolvedEvent`; keep `PlanApprovalDecision` stable because it is
+  consumed by headless clients and Open Responses adapters.
 - `HarnessEventItem` uses `HarnessEventKind` enum — adding variants requires schema version bump.
