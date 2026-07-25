@@ -357,6 +357,10 @@ pub(crate) struct HarnessTurnState {
     /// all recovery retries are exhausted, instead of the canned fallback
     /// string, so gathered context is not discarded entirely.
     recovery_rejected_synthesis: Option<String>,
+    /// Set when the planning interview tool is permanently unavailable. The
+    /// tool batch consumes this flag after all tool responses have been
+    /// appended so the recovery directive is not interleaved with a batch.
+    interview_denial_recovery_pending: bool,
     pub max_tool_calls: usize,
     pub max_tool_wall_clock: Duration,
     pub max_tool_retries: u32,
@@ -408,6 +412,7 @@ impl HarnessTurnState {
             recovery_retry_count: 0,
             post_tool_recovery_cycles: 0,
             recovery_rejected_synthesis: None,
+            interview_denial_recovery_pending: false,
             max_tool_calls,
             max_tool_wall_clock: Duration::from_secs(max_tool_wall_clock_secs),
             max_tool_retries,
@@ -607,6 +612,22 @@ impl HarnessTurnState {
             }
         }
         changed
+    }
+
+    /// Arm the bounded tool-free plan synthesis fallback used when
+    /// `request_user_input` is permanently unavailable in the current
+    /// runtime. The directive is flushed after the current tool batch so
+    /// provider message ordering remains valid.
+    pub(crate) fn arm_interview_denial_recovery(&mut self) {
+        self.interview_denial_recovery_pending = true;
+    }
+
+    pub(crate) fn take_interview_denial_recovery(&mut self) -> bool {
+        std::mem::take(&mut self.interview_denial_recovery_pending)
+    }
+
+    pub(crate) fn interview_denial_recovery_pending(&self) -> bool {
+        self.interview_denial_recovery_pending
     }
 
     pub(crate) fn recovery_is_tool_free(&self) -> bool {

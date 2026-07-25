@@ -56,6 +56,7 @@ pub(crate) async fn handle_tool_calls<'a, 'b>(
         )
         .await?;
         if let Some(o) = outcome {
+            super::handlers::flush_interview_denial_recovery(t_ctx.ctx);
             return Ok(Some(o));
         }
     } else {
@@ -72,10 +73,13 @@ pub(crate) async fn handle_tool_calls<'a, 'b>(
 
             let outcome = handle_prepared_tool_call_dispatch(t_ctx, tool_call).await?;
             if let Some(o) = outcome {
+                super::handlers::flush_interview_denial_recovery(t_ctx.ctx);
                 return Ok(Some(o));
             }
         }
     }
+
+    super::handlers::flush_interview_denial_recovery(t_ctx.ctx);
 
     Ok(None)
 }

@@ -774,6 +774,46 @@ async fn planning_mode_allows_request_user_input_blocked_through_to_failure() {
 }
 
 #[tokio::test]
+async fn permanent_interview_denial_switches_to_tool_free_plan_recovery() {
+    let mut backing = TestContextBacking::new(4).await;
+    backing.tool_registry.enable_planning();
+    backing
+        .tool_registry
+        .set_tool_policy(tool_names::REQUEST_USER_INPUT, ToolPolicy::Deny)
+        .await
+        .expect("deny interview tool");
+
+    let mut ctx = backing.turn_processing_context();
+    let call = PreparedAssistantToolCall::new(uni::ToolCall::function(
+        "interview_denied".to_string(),
+        tool_names::REQUEST_USER_INPUT.to_string(),
+        json!({"questions": [{"id": "q1", "header": "Q1", "question": "Test?"}]}).to_string(),
+    ));
+    let mut repeated_tool_attempts = LoopTracker::new();
+    let mut turn_modified_files = BTreeSet::new();
+    let mut outcome_ctx = ToolOutcomeContext {
+        ctx: &mut ctx,
+        repeated_tool_attempts: &mut repeated_tool_attempts,
+        turn_modified_files: &mut turn_modified_files,
+    };
+
+    let outcome = handle_tool_calls(&mut outcome_ctx, &[call])
+        .await
+        .expect("denied interview should be handled as a tool response");
+
+    assert!(outcome.is_none());
+    assert!(outcome_ctx.ctx.plan_session.is_interview_denied());
+    assert!(outcome_ctx.ctx.harness_state.is_recovery_active());
+    assert!(outcome_ctx.ctx.harness_state.recovery_is_tool_free());
+    assert!(outcome_ctx.ctx.working_history.iter().any(|message| {
+        message
+            .content
+            .as_text()
+            .contains("Synthesize exactly one completed `<proposed_plan>`")
+    }));
+}
+
+#[tokio::test]
 async fn planning_mode_allows_non_planning_tool_blocked_calls() {
     let mut backing = TestContextBacking::new(4).await;
     backing.tool_registry.enable_planning();

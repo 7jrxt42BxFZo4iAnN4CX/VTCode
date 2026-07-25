@@ -277,6 +277,9 @@ async fn handle_failure<'a>(
     if tool_name == vtcode_core::config::constants::tools::REQUEST_USER_INPUT && is_permanent_request_user_input_denial
     {
         t_ctx.ctx.plan_session.mark_interview_denied();
+        if t_ctx.ctx.is_planning_active() {
+            t_ctx.ctx.harness_state.arm_interview_denial_recovery();
+        }
     }
 
     if is_planning_active_denial {
@@ -300,7 +303,13 @@ async fn handle_failure<'a>(
     if blocked_or_denied_failure {
         let streak = t_ctx.ctx.record_blocked_tool_call();
         let max_streak = super::handlers::max_consecutive_blocked_tool_calls_per_turn(t_ctx.ctx);
-        if streak > max_streak {
+        // The interview denial has already armed the bounded tool-free
+        // synthesis fallback. Do not let the generic blocked-call fuse turn
+        // that recoverable transition into a terminal `Blocked` outcome.
+        let interview_denial_recovery = t_ctx.ctx.is_planning_active()
+            && tool_name == vtcode_core::config::constants::tools::REQUEST_USER_INPUT
+            && is_permanent_request_user_input_denial;
+        if streak > max_streak && !interview_denial_recovery {
             emit_turn_metric_log(t_ctx.ctx, "blocked_streak_break", tool_name, streak, max_streak);
             let display_tool = tool_action_label(tool_name, args_val);
             let block_reason = format!(

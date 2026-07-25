@@ -514,6 +514,16 @@ pub(crate) async fn run_turn_loop(
             break;
         }
 
+        // A permanent interview denial can happen after this turn's initial
+        // config snapshot (for example when the model's plan response
+        // triggers the inline interview). Keep the parser and request builder
+        // on the same capability set immediately; otherwise this turn can
+        // still inject another `request_user_input` call even though the
+        // catalog has already removed it.
+        if ctx.plan_session.is_interview_denied() {
+            turn_config.request_user_input_enabled = false;
+        }
+
         step_count += 1;
         ctx.telemetry.record_turn();
 

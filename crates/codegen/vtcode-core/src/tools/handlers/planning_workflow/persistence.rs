@@ -4,7 +4,7 @@
 //! Depends on `artifacts` for pure content shaping and on `state` for the
 //! plan-file location. Tool wiring lives in `start.rs` / `finish.rs`.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -54,10 +54,31 @@ pub async fn sync_tracker_into_plan_file(plan_file: &Path, tracker_markdown: &st
 }
 
 pub async fn persist_plan_draft(state: &PlanningWorkflowState, plan_markdown: &str) -> Result<PersistedPlanDraft> {
-    let plan_file = state
-        .get_plan_file()
-        .await
-        .context("No active plan file. Call start_planning first.")?;
+    let plan_file = match state.get_plan_file().await {
+        Some(path) => path,
+        None if state.is_active() => {
+            // The dedicated plan agent can enter planning without invoking the
+            // `start_planning` tool first. Plan synthesis must still have a
+            // durable artifact before approval, so lazily allocate the same
+            // workspace-local plan location used by `start_planning`.
+            let plan_file = state
+                .plans_dir()
+                .join(format!("{}.md", vtcode_commons::slug::create_timestamped()));
+            if let Some(parent) = plan_file.parent() {
+                ensure_dir_exists(parent)
+                    .await
+                    .with_context(|| format!("Failed to create plans directory: {}", parent.display()))?;
+            }
+            state.set_plan_file(Some(plan_file.clone())).await;
+            state.set_plan_baseline(Some(SystemTime::now())).await;
+            tracing::info!(
+                plan_file = %plan_file.display(),
+                "Initialized missing plan file during active plan synthesis"
+            );
+            plan_file
+        }
+        None => bail!("No active plan file. Call start_planning first."),
+    };
     let existing_plan = read_file_with_context(&plan_file, "plan file").await.ok();
     let tracker_file = tracker_file_for_plan_file(&plan_file);
     let (existing_tracker, tracker_from_sidecar) = if let Some(path) = tracker_file.as_ref() {

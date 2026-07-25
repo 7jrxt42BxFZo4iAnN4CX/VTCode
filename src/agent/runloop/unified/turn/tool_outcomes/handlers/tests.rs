@@ -41,6 +41,7 @@ use vtcode_core::core::decision_tracker::DecisionTracker;
 use vtcode_core::core::trajectory::TrajectoryLogger;
 use vtcode_core::llm::provider as uni;
 use vtcode_core::primary_agent::ActivePrimaryAgentState;
+use vtcode_core::tool_policy::ToolPolicy;
 use vtcode_core::tools::adaptive_rate_limiter::AdaptiveRateLimiter;
 use vtcode_core::tools::circuit_breaker::CircuitBreaker;
 use vtcode_core::tools::health::ToolHealthTracker;

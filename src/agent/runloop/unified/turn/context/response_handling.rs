@@ -4,6 +4,19 @@ use crate::agent::runloop::unified::ui_interaction_stream_helpers::render_compac
 const DENIED_INTERVIEW_PLAN_SYNTHESIS_RETRY_DIRECTIVE: &str = "Planning recovery: the interactive interview is unavailable, and the previous response did not contain a completed plan. Do not ask another question or offer approval yet. Emit exactly one compact `<proposed_plan>` now from the repository evidence already in this conversation; include Summary, numbered `Action -> files/symbols -> verify:` steps, Validation, and short Assumptions. Do not emit tool calls.";
 
 impl<'a> TurnProcessingContext<'a> {
+    /// Schedule the one bounded plan-only retry allowed after a permanent
+    /// interview denial. Keeping the transition here prevents callers from
+    /// duplicating the denial/recovery state machine.
+    pub(crate) fn retry_denied_interview_plan_synthesis(&mut self) -> bool {
+        if !self.is_planning_active() || !self.plan_session.plan_synthesis_retry_allowed() {
+            return false;
+        }
+
+        self.plan_session.mark_plan_synthesis_retry_used();
+        self.push_system_message(DENIED_INTERVIEW_PLAN_SYNTHESIS_RETRY_DIRECTIVE);
+        self.harness_state.retry_recovery_pass()
+    }
+
     pub(crate) fn handle_assistant_response(
         &mut self,
         text: String,
@@ -151,6 +164,10 @@ impl<'a> TurnProcessingContext<'a> {
             && proposed_plan.is_none()
             && !text.trim().is_empty()
             && self.plan_session.plan_synthesis_retry_allowed();
+        let denied_interview_recovery_retry = self.is_planning_active()
+            && tool_free_recovery_pass
+            && proposed_plan.is_none()
+            && self.plan_session.plan_synthesis_retry_allowed();
         let consecutive_relaxed = self.harness_state.consecutive_relaxed_continuations;
         let continuation_decision = if tool_free_recovery_pass {
             // Tool-free recovery is terminal: the text produced during recovery
@@ -215,6 +232,22 @@ impl<'a> TurnProcessingContext<'a> {
 
         if recovery_pass_response {
             self.finish_recovery_pass();
+        }
+
+        // A tool-free pass is normally terminal, but a permanently denied
+        // interview has one additional bounded contract: it must produce a
+        // real draft before the user can approve anything. If the provider
+        // ignored the recovery directive and returned prose without a plan,
+        // retry once while tools remain disabled instead of ending mid-turn
+        // with no approval-ready draft.
+        if denied_interview_recovery_retry {
+            if self.retry_denied_interview_plan_synthesis() {
+                tracing::info!(
+                    target: "vtcode.planning_workflow",
+                    "retrying tool-free synthesis after denied interview returned no plan"
+                );
+                return Ok(TurnHandlerOutcome::Continue);
+            }
         }
 
         // A permanent interview denial is different from a cancelled

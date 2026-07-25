@@ -267,6 +267,20 @@ pub(crate) async fn handle_turn_processing_result<'a>(
                 } else {
                     RecoveryMode::ToolEnabledRetry
                 };
+
+                // A permanent interview denial still requires one real plan
+                // draft before approval. If the first tool-free synthesis is
+                // empty, spend the single bounded retry while tools remain
+                // disabled instead of ending the turn silently.
+                if matches!(recovery_mode, RecoveryMode::ToolFreeSynthesis)
+                    && params.ctx.is_planning_active()
+                    && params.ctx.plan_session.plan_synthesis_retry_allowed()
+                {
+                    params.ctx.finish_recovery_pass();
+                    if params.ctx.retry_denied_interview_plan_synthesis() {
+                        return Ok(TurnHandlerOutcome::Continue);
+                    }
+                }
                 let recovery_reason = if params.ctx.recovery_is_tool_free() {
                     "Recovery mode requested a final synthesis pass, but the model returned no answer."
                 } else {

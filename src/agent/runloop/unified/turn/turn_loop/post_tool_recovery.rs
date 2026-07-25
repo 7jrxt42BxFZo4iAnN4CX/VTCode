@@ -218,13 +218,11 @@ pub(super) async fn complete_turn_after_failed_tool_free_recovery(
     // write failure is logged and must never dead-end the turn.
     if let (Some(state), Some(salvaged)) = (plan_state, salvaged_text.as_ref()) {
         if let Some(plan_text) = extract_any_plan(salvaged).plan_text {
-            if state.get_plan_file().await.is_some() {
-                if let Err(e) = persist_plan_draft(state, &plan_text).await {
-                    tracing::warn!(
-                        error = %e,
-                        "plan-mode recovery: failed to persist salvaged plan to session plan file"
-                    );
-                }
+            if let Err(e) = persist_plan_draft(state, &plan_text).await {
+                tracing::warn!(
+                    error = %e,
+                    "plan-mode recovery: failed to persist salvaged plan to session plan file"
+                );
             }
         }
     }

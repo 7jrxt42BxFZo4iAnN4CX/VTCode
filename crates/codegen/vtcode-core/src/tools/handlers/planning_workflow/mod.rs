@@ -263,6 +263,25 @@ Persist a concrete draft and seed tracker state.
         assert!(global_task.contains("- [ ] Persist the plan"));
     }
 
+    #[tokio::test]
+    async fn persist_plan_draft_initializes_missing_file_for_active_workflow() {
+        let temp_dir = TempDir::new().unwrap();
+        let state = PlanningWorkflowState::new(temp_dir.path().to_path_buf());
+        state.enable();
+
+        let persisted = persist_plan_draft(
+            &state,
+            "# Lazy Plan\n\n## Summary\nPersist a plan emitted by the dedicated plan agent.\n\n## Implementation Steps\n1. Persist the draft -> files: [planning_workflow/persistence.rs] -> verify: [cargo check --locked]\n\n## Validation\nRun the planning workflow regression tests.\n\n## Assumptions\nThe plan agent may enter planning without start_planning.\n",
+        )
+        .await
+        .unwrap();
+
+        assert!(persisted.plan_file.starts_with(temp_dir.path().join(".vtcode/plans")));
+        assert_eq!(state.get_plan_file().await, Some(persisted.plan_file.clone()));
+        let content = tokio::fs::read_to_string(&persisted.plan_file).await.unwrap();
+        assert!(content.contains("Persist a plan emitted by the dedicated plan agent."));
+    }
+
     #[test]
     fn merge_plan_content_uses_canonical_marker_form() {
         let plan = "# Test Plan\n\n## Summary\nConcrete summary.\n\n## Implementation Steps\n1. Step one -> files: [src/a.rs] -> verify: [cargo test]\n\n## Test Cases and Validation\n1. Build and lint: cargo check\n\n## Assumptions and Defaults\n1. Assume nothing.\n";

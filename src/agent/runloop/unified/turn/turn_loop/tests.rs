@@ -1119,7 +1119,6 @@ async fn approval_input_without_plan_synthesizes_before_approval() {
     let calls = Arc::new(AtomicUsize::new(0));
     let mut backing = TestTurnProcessingBacking::new(4).await;
     backing.activate_planning_for_test();
-    backing.initialize_plan_file_for_test().await;
     backing.set_provider(Box::new(PlanProvider { calls: calls.clone() }));
 
     let mut history = vec![uni::Message::user("yes".to_string())];

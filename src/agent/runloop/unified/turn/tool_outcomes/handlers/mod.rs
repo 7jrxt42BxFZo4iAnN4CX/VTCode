@@ -54,6 +54,28 @@ fn build_failure_error_content(error: String, failure_kind: &'static str) -> Str
     super::execution_result::build_error_content(error, None, None, failure_kind).to_string()
 }
 
+const INTERVIEW_DENIAL_RECOVERY_DIRECTIVE: &str = "Planning recovery: the interactive interview is unavailable in this runtime. Tools are disabled for the next pass. Synthesize exactly one completed `<proposed_plan>` from the research already gathered; do not ask another question, emit tool calls, or request approval until the plan is present.";
+
+/// Convert a permanent interview denial into a bounded, tool-free planning
+/// pass. This is flushed after the current tool batch so the directive follows
+/// every tool response and remains valid for providers that require strict
+/// assistant/tool ordering.
+pub(crate) fn flush_interview_denial_recovery(ctx: &mut TurnProcessingContext<'_>) {
+    if !ctx.harness_state.take_interview_denial_recovery() {
+        return;
+    }
+
+    ctx.push_system_message(INTERVIEW_DENIAL_RECOVERY_DIRECTIVE);
+    if ctx.harness_state.recovery_reason.is_none() {
+        ctx.harness_state.recovery_reason = Some("planning interview unavailable".to_string());
+    }
+    ctx.harness_state.switch_to_tool_free_recovery();
+    tracing::info!(
+        target: "vtcode.planning_workflow",
+        "interactive interview denied; scheduling bounded tool-free plan synthesis"
+    );
+}
+
 /// Push the one-time budget-exhaustion synthesis directive (wall-clock or
 /// tool-call budget) if a rejection armed it during validation. Called after
 /// the tool batch (single or grouped) completes so the system message lands
@@ -154,7 +176,14 @@ pub(super) fn finalize_validation_result(
         }
         ValidationResult::Blocked => {
             let outcome = enforce_blocked_tool_call_guard(ctx, tool_call_id, tool_name, args_val);
-            ValidationTransition::Return(outcome)
+            // A permanent interview denial arms a tool-free planning pass.
+            // Keep the generic blocked-call fuse from converting that
+            // recovery transition into a terminal turn outcome.
+            if outcome.is_some() && ctx.harness_state.interview_denial_recovery_pending() {
+                ValidationTransition::Return(None)
+            } else {
+                ValidationTransition::Return(outcome)
+            }
         }
         ValidationResult::Proceed(prepared) => {
             ctx.reset_blocked_tool_call_streak();
@@ -556,6 +585,9 @@ pub(crate) async fn validate_tool_call<'a>(
             // Failure), so we must call `mark_interview_denied()` here too.
             if canonical_tool_name == tool_names::REQUEST_USER_INPUT {
                 ctx.plan_session.mark_interview_denied();
+                if ctx.is_planning_active() {
+                    ctx.harness_state.arm_interview_denial_recovery();
+                }
             }
             let denial = if let Some(denial) = ctx.session_stats.last_auto_permission_denial() {
                 serde_json::json!({
