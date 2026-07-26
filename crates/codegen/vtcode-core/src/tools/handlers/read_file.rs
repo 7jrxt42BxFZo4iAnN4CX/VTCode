@@ -198,7 +198,7 @@ impl ReadFileHandler {
         let offset = range.offset.max(1);
         let limit = range.limit.max(1);
 
-        let mut collected = match range.mode {
+        let collected = match range.mode {
             ReadMode::Slice => slice::read(path, offset, limit).await?.lines,
             ReadMode::Indentation => {
                 let indentation = range.indentation.clone().unwrap_or_default();
@@ -206,26 +206,7 @@ impl ReadFileHandler {
             }
         };
 
-        let original_len = collected.len();
-        // Skip condensation for paginated reads (caller advanced past line 1).
-        // When the caller passes an explicit offset > 1, they are following an
-        // omit-hint to retrieve a specific slice. Re-condensing that slice
-        // would produce *another* omit-hint pointing at a new offset, trapping
-        // the agent in an infinite pagination regress (checkpoint turn_613).
-        let is_paginated = offset > 1;
-        let (condensed, omitted) = if is_paginated {
-            (false, 0)
-        } else {
-            condense_for_batch(&mut collected)
-        };
-
-        Ok(RangeResult {
-            offset,
-            lines_read: original_len,
-            condensed,
-            omitted_lines: (omitted > 0).then_some(omitted),
-            content: collected.join("\n"),
-        })
+        Ok(range_result_from_lines(offset, collected))
     }
 
     /// Clamp a requested line count to the absolute per-call ceiling.
@@ -510,6 +491,11 @@ mod slice {
         pub has_more: bool,
     }
 
+    pub(super) struct SliceReadRanges {
+        pub results: Vec<Option<Result<SliceReadResult>>>,
+        pub error: Option<anyhow::Error>,
+    }
+
     pub async fn read(path: &Path, offset: usize, limit: usize) -> Result<SliceReadResult> {
         let file = File::open(path)
             .await
@@ -522,23 +508,12 @@ mod slice {
         let mut reached_eof = false;
 
         loop {
-            buffer.clear();
-            let bytes_read = reader.read_until(b'\n', &mut buffer).await.context("failed to read file")?;
-
-            if bytes_read == 0 {
+            let Some(line) = read_formatted_line(&mut reader, &mut buffer).await? else {
                 reached_eof = true;
                 break;
-            }
+            };
 
-            // Strip newline characters
-            if buffer.last() == Some(&b'\n') {
-                buffer.pop();
-                if buffer.last() == Some(&b'\r') {
-                    buffer.pop();
-                }
-            }
-
-            seen += 1;
+            seen = seen.saturating_add(1);
 
             if seen < offset {
                 continue;
@@ -548,8 +523,7 @@ mod slice {
                 break;
             }
 
-            let formatted = format_line(&buffer);
-            collected.push(formatted);
+            collected.push(line);
         }
 
         if seen < offset {
@@ -557,6 +531,109 @@ mod slice {
         }
 
         Ok(SliceReadResult { lines: collected, has_more: !reached_eof })
+    }
+
+    pub(super) async fn read_ranges(path: &Path, ranges: &[ReadRange]) -> Result<SliceReadRanges> {
+        let file = File::open(path)
+            .await
+            .context(format!("failed to open file: {}", path.display()))?;
+
+        let normalized_ranges: Vec<(usize, usize)> = ranges
+            .iter()
+            .map(|range| {
+                let offset = range.offset.max(1);
+                let limit = range.limit.max(1);
+                (offset, offset.saturating_add(limit.saturating_sub(1)))
+            })
+            .collect();
+        let max_line = normalized_ranges.iter().map(|(_, end)| *end).max().unwrap_or(0);
+        let mut collected: Vec<Vec<String>> = normalized_ranges.iter().map(|_| Vec::new()).collect();
+        let mut reader = BufReader::new(file);
+        let mut buffer = Vec::new();
+        let mut line_number = 0usize;
+        let mut has_lookahead = false;
+        let mut scan_error = None;
+
+        while line_number < max_line {
+            match read_formatted_line(&mut reader, &mut buffer).await {
+                Ok(Some(line)) => {
+                    line_number += 1;
+                    for (index, (offset, end)) in normalized_ranges.iter().enumerate() {
+                        if (*offset..=*end).contains(&line_number) {
+                            collected[index].push(line.clone());
+                        }
+                    }
+                }
+                Ok(None) => break,
+                Err(error) => {
+                    scan_error = Some(error);
+                    break;
+                }
+            }
+        }
+
+        if scan_error.is_none() && line_number == max_line {
+            match read_formatted_line(&mut reader, &mut buffer).await {
+                Ok(Some(_)) => has_lookahead = true,
+                Ok(None) => {}
+                Err(error) => scan_error = Some(error),
+            }
+        }
+
+        let results = normalized_ranges
+            .into_iter()
+            .zip(collected)
+            .map(|((offset, end), lines)| {
+                if line_number < offset {
+                    scan_error
+                        .is_none()
+                        .then_some(Err(anyhow::anyhow!("offset exceeds file length")))
+                } else if scan_error.is_some() && line_number < end {
+                    None
+                } else {
+                    Some(Ok(SliceReadResult {
+                        lines,
+                        has_more: line_number > end || (line_number == end && has_lookahead),
+                    }))
+                }
+            })
+            .collect();
+
+        Ok(SliceReadRanges { results, error: scan_error })
+    }
+    async fn read_formatted_line(reader: &mut BufReader<File>, buffer: &mut Vec<u8>) -> Result<Option<String>> {
+        buffer.clear();
+        let bytes_read = reader.read_until(b'\n', buffer).await.context("failed to read file")?;
+        if bytes_read == 0 {
+            return Ok(None);
+        }
+
+        if buffer.last() == Some(&b'\n') {
+            buffer.pop();
+            if buffer.last() == Some(&b'\r') {
+                buffer.pop();
+            }
+        }
+
+        Ok(Some(format_line(buffer)))
+    }
+}
+
+fn range_result_from_lines(offset: usize, mut collected: Vec<String>) -> RangeResult {
+    let original_len = collected.len();
+    let is_paginated = offset > 1;
+    let (condensed, omitted) = if is_paginated {
+        (false, 0)
+    } else {
+        condense_for_batch(&mut collected)
+    };
+
+    RangeResult {
+        offset,
+        lines_read: original_len,
+        condensed,
+        omitted_lines: (omitted > 0).then_some(omitted),
+        content: collected.join("\n"),
     }
 }
 
@@ -1319,6 +1396,46 @@ mod tests {
         assert_eq!(ranges.len(), 2);
         assert_eq!(ranges[0]["offset"], 1);
         assert_eq!(ranges[1]["offset"], 10);
+        assert_eq!(ranges[0]["content"], "line1\nline2\nline3");
+        assert_eq!(ranges[1]["content"], "line10\nline11\nline12");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn batch_preserves_completed_ranges_before_a_later_error() -> Result<()> {
+        let mut temp = NamedTempFile::new()?;
+        writeln!(temp, "line1")?;
+        writeln!(temp, "line2")?;
+
+        let handler = ReadFileHandler;
+        let args = BatchReadArgs {
+            reads: vec![BatchReadRequest {
+                file_path: temp.path().to_string_lossy().to_string(),
+                range: None,
+                ranges: Some(vec![
+                    ReadRange {
+                        offset: 1,
+                        limit: 1,
+                        mode: ReadMode::Slice,
+                        indentation: None,
+                    },
+                    ReadRange {
+                        offset: 10,
+                        limit: 1,
+                        mode: ReadMode::Slice,
+                        indentation: None,
+                    },
+                ]),
+            }],
+            max_concurrency: 1,
+            ui_progress: false,
+        };
+
+        let result = handler.handle_batch(args).await?;
+        assert_eq!(result["success"], false);
+        assert_eq!(result["items"][0]["ranges"].as_array().map(Vec::len), Some(1));
+        assert_eq!(result["items"][0]["ranges"][0]["content"], "line1");
+        assert!(result["items"][0]["error"].as_str().is_some());
         Ok(())
     }
 

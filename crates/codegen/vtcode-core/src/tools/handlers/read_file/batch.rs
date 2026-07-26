@@ -1,8 +1,9 @@
 //! Batch read orchestration and progress state.
 //!
 //! This module owns only batch admission, bounded fan-out, result ordering, and
-//! response assembly. Single-file range semantics remain behind the
-//! `ReadFileHandler::read_range` interface in the parent module.
+//! response assembly. Indentation-aware range semantics remain behind the
+//! `ReadFileHandler::read_range` interface in the parent module; compatible
+//! slice ranges share one bounded read context.
 
 use std::fmt::Write;
 use std::path::PathBuf;
@@ -194,6 +195,49 @@ async fn read_single_request(handler: &ReadFileHandler, request: &BatchReadReque
         .or_else(|| request.range.clone().map(|range| vec![range]))
         .unwrap_or_else(|| vec![ReadRange::default()]);
 
+    if ranges.is_empty() {
+        return BatchReadResult {
+            file_path: request.file_path.clone(),
+            ranges: vec![],
+            error: None,
+        };
+    }
+
+    if ranges.iter().all(|range| matches!(&range.mode, super::ReadMode::Slice)) {
+        return match super::slice::read_ranges(&path, &ranges).await {
+            Ok(slice_results) => {
+                let super::slice::SliceReadRanges { results, error } = slice_results;
+                let mut range_results = Vec::with_capacity(results.len());
+                for (result, range) in results.into_iter().zip(ranges.iter()) {
+                    match result {
+                        Some(Ok(result)) => {
+                            range_results.push(super::range_result_from_lines(range.offset.max(1), result.lines));
+                        }
+                        Some(Err(error)) => {
+                            return BatchReadResult {
+                                file_path: request.file_path.clone(),
+                                ranges: range_results,
+                                error: Some(error.to_string()),
+                            };
+                        }
+                        None => {}
+                    }
+                }
+
+                BatchReadResult {
+                    file_path: request.file_path.clone(),
+                    ranges: range_results,
+                    error: error.map(|error| error.to_string()),
+                }
+            }
+            Err(error) => BatchReadResult {
+                file_path: request.file_path.clone(),
+                ranges: vec![],
+                error: Some(error.to_string()),
+            },
+        };
+    }
+
     let mut range_results = Vec::with_capacity(ranges.len());
     for range in ranges {
         match handler.read_range(&path, &range).await {
@@ -216,22 +260,26 @@ async fn read_single_request(handler: &ReadFileHandler, request: &BatchReadReque
 }
 
 fn assemble_content(results: &[BatchReadResult]) -> String {
-    let mut content_parts = Vec::new();
-    let mut buffer = String::new();
+    let mut content = String::new();
+    let mut is_first = true;
     for result in results {
         if let Some(error) = &result.error {
-            buffer.clear();
-            let _ = write!(buffer, "== {} (ERROR)\n{}", result.file_path, error);
-            content_parts.push(std::mem::take(&mut buffer));
+            if !is_first {
+                content.push_str("\n\n");
+            }
+            is_first = false;
+            let _ = write!(content, "== {} (ERROR)\n{}", result.file_path, error);
             continue;
         }
 
         for range in &result.ranges {
-            let end_line = range.offset + range.lines_read.saturating_sub(1);
-            buffer.clear();
-            let _ = write!(buffer, "== {} (L{}..L{})\n{}", result.file_path, range.offset, end_line, range.content);
-            content_parts.push(std::mem::take(&mut buffer));
+            if !is_first {
+                content.push_str("\n\n");
+            }
+            is_first = false;
+            let end_line = range.offset.saturating_add(range.lines_read.saturating_sub(1));
+            let _ = write!(content, "== {} (L{}..L{})\n{}", result.file_path, range.offset, end_line, range.content);
         }
     }
-    content_parts.join("\n\n")
+    content
 }

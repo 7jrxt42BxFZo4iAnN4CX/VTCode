@@ -62,39 +62,74 @@ impl ProjectOverview {
 
 /// Build a minimal project overview from Cargo.toml and README.md
 pub async fn build_project_overview(root: &Path) -> Option<ProjectOverview> {
-    let mut overview = ProjectOverview {
-        name: None,
-        version: None,
-        description: None,
-        readme_excerpt: None,
+    let cargo_toml_path = root.join("Cargo.toml");
+    let readme_path = root.join("README.md");
+    let (cargo_toml, readme) = tokio::join!(fs::read_to_string(cargo_toml_path), fs::read_to_string(readme_path));
+
+    let metadata = cargo_toml.ok().map(|contents| ProjectMetadata::from_cargo_toml(&contents));
+    let readme_excerpt = match readme {
+        Ok(contents) => Some(extract_readme_excerpt(&contents, 1200)),
+        Err(_) => read_readme_fallback(root).await,
+    };
+
+    let overview = ProjectOverview {
+        name: metadata.as_ref().and_then(|metadata| metadata.name.clone()),
+        version: metadata.as_ref().and_then(|metadata| metadata.version.clone()),
+        description: metadata.and_then(|metadata| metadata.description),
+        readme_excerpt,
         root: root.to_path_buf(),
     };
 
-    // Parse Cargo.toml (best-effort, no extra deps)
-    let cargo_toml_path = root.join("Cargo.toml");
-    if let Ok(cargo_toml) = fs::read_to_string(&cargo_toml_path).await {
-        overview.name = extract_toml_str(&cargo_toml, "name");
-        overview.version = extract_toml_str(&cargo_toml, "version");
-        overview.description = extract_toml_str(&cargo_toml, "description");
-    }
+    (overview.name.is_some()
+        || overview.version.is_some()
+        || overview.description.is_some()
+        || overview.readme_excerpt.is_some())
+    .then_some(overview)
+}
 
-    // Read README.md excerpt
-    let readme_path = root.join("README.md");
-    if let Ok(readme) = fs::read_to_string(&readme_path).await {
-        overview.readme_excerpt = Some(extract_readme_excerpt(&readme, 1200));
-    } else {
-        // Fallback to alternatives
-        for alt in ["QUICKSTART.md", "user-context.md"] {
-            let path = root.join(alt);
-            if let Ok(txt) = fs::read_to_string(&path).await {
-                overview.readme_excerpt = Some(extract_readme_excerpt(&txt, 800));
-                break;
-            }
+struct ProjectMetadata {
+    name: Option<String>,
+    version: Option<String>,
+    description: Option<String>,
+}
+
+impl ProjectMetadata {
+    fn from_cargo_toml(contents: &str) -> Self {
+        Self {
+            name: extract_toml_str(contents, "name"),
+            version: extract_toml_str(contents, "version"),
+            description: extract_toml_str(contents, "description"),
         }
     }
+}
 
-    if overview.name.is_none() && overview.readme_excerpt.is_none() {
-        return None;
+async fn read_readme_fallback(root: &Path) -> Option<String> {
+    for alt in ["QUICKSTART.md", "user-context.md"] {
+        let path = root.join(alt);
+        if let Ok(contents) = fs::read_to_string(path).await {
+            return Some(extract_readme_excerpt(&contents, 800));
+        }
     }
-    Some(overview)
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn overview_keeps_metadata_only_projects() {
+        let root = tempdir().expect("temporary project directory");
+        fs::write(root.path().join("Cargo.toml"), "version = \"1.2.3\"\ndescription = \"metadata\"\n")
+            .expect("write Cargo.toml");
+
+        let overview = build_project_overview(root.path())
+            .await
+            .expect("metadata should produce an overview");
+
+        assert_eq!(overview.version.as_deref(), Some("1.2.3"));
+        assert_eq!(overview.description.as_deref(), Some("metadata"));
+    }
 }

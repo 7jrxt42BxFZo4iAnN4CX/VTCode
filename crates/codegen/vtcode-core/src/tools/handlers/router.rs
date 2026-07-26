@@ -136,10 +136,14 @@ impl DispatchRegistry {
     }
 
     fn resolve_entry(&self, requested_name: &str) -> Result<&DispatchEntry, ToolCallError> {
+        if let Some(entry) = self.handlers.get(requested_name) {
+            return Ok(entry);
+        }
+
         let normalized_name = normalize_router_tool_name(requested_name);
-        self.handlers
-            .get(requested_name)
-            .or_else(|| normalized_name.as_deref().and_then(|candidate| self.handlers.get(candidate)))
+        normalized_name
+            .as_deref()
+            .and_then(|candidate| self.handlers.get(candidate))
             .ok_or_else(|| {
                 let suggested = suggest_similar_tool_names(requested_name, &self.handlers);
                 let normalized_hint = normalized_name

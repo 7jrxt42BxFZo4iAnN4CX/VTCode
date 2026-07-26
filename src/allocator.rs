@@ -6,11 +6,15 @@
 //! `background_thread` is supported. On macOS `background_thread` is unsupported,
 //! so jemalloc pins like mimalloc; mimalloc is kept as the default there.
 
-#[cfg(all(feature = "allocator-jemalloc", unix))]
+// `hotpath::main` installs its own allocator when profiling is enabled. Keep
+// this module's allocator definitions mutually exclusive with that feature so
+// `--all-features` remains a valid build configuration; profiling takes
+// precedence over the selectable production allocators.
+#[cfg(all(feature = "allocator-jemalloc", not(feature = "profiling"), unix))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-#[cfg(all(feature = "allocator-jemalloc", unix))]
+#[cfg(all(feature = "allocator-jemalloc", not(feature = "profiling"), unix))]
 #[allow(unsafe_code)]
 mod jemalloc_malloc_conf {
     /// jemalloc looks up `extern const char *malloc_conf` — a thin pointer,
@@ -37,6 +41,6 @@ mod jemalloc_malloc_conf {
     static MALLOC_CONF: MallocConfPtr = MallocConfPtr(CONF.as_ptr());
 }
 
-#[cfg(not(feature = "allocator-jemalloc"))]
+#[cfg(all(not(feature = "allocator-jemalloc"), not(feature = "profiling")))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;

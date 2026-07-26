@@ -245,23 +245,19 @@ impl ShellSnapshotManager {
     pub async fn get_or_capture(&self) -> Result<Arc<ShellSnapshot>> {
         let shell_path = resolve_fallback_shell();
 
-        {
-            let snapshot = self.snapshot.read();
-            if let Some(ref snap) = *snapshot
-                && snap.is_valid(&shell_path, self.ttl)
-            {
-                return Ok(Arc::clone(snap));
+        let snapshot = self.snapshot.read().as_ref().map(Arc::clone);
+        if let Some(snap) = snapshot {
+            if snapshot_is_valid(Arc::clone(&snap), shell_path.clone(), self.ttl).await? {
+                return Ok(snap);
             }
         }
 
         let _guard = self.capture_lock.lock().await;
 
-        {
-            let snapshot = self.snapshot.read();
-            if let Some(ref snap) = *snapshot
-                && snap.is_valid(&shell_path, self.ttl)
-            {
-                return Ok(Arc::clone(snap));
+        let snapshot = self.snapshot.read().as_ref().map(Arc::clone);
+        if let Some(snap) = snapshot {
+            if snapshot_is_valid(Arc::clone(&snap), shell_path.clone(), self.ttl).await? {
+                return Ok(snap);
             }
         }
 
@@ -334,6 +330,12 @@ impl ShellSnapshotManager {
             },
         }
     }
+}
+
+async fn snapshot_is_valid(snapshot: Arc<ShellSnapshot>, shell_path: String, ttl: Duration) -> Result<bool> {
+    tokio::task::spawn_blocking(move || snapshot.is_valid(&shell_path, ttl))
+        .await
+        .context("shell snapshot validation task failed")
 }
 
 /// Statistics about the current snapshot state.
