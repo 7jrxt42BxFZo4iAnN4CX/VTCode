@@ -3,7 +3,9 @@
 use std::fs;
 
 use tempfile::TempDir;
-use vtcode_exec_events::{ThreadEvent, TurnCompletedEvent, TurnStartedEvent, Usage, VersionedThreadEvent};
+use vtcode_exec_events::{
+    ThreadEvent, ThreadStartedEvent, TurnCompletedEvent, TurnStartedEvent, Usage, VersionedThreadEvent,
+};
 
 use crate::event_log::{DEFAULT_MAX_EVENTS, SessionEventLog};
 use crate::migration::migrate_legacy;
@@ -31,6 +33,63 @@ fn append_and_reconstruct_roundtrip() {
     assert_eq!(rebuilt.len(), 2);
     assert!(matches!(rebuilt[0], ThreadEvent::TurnStarted(_)));
     assert!(matches!(rebuilt[1], ThreadEvent::TurnCompleted(_)));
+}
+
+#[test]
+fn event_log_batches_appends_until_turn_boundary() {
+    let dir = TempDir::new().expect("tempdir");
+    let log = open(dir.path(), "sess-buffered", DEFAULT_MAX_EVENTS).expect("open");
+    let events_path = sessions_root(dir.path()).join("sess-buffered").join("events.jsonl");
+
+    log.append(&ThreadEvent::ThreadStarted(ThreadStartedEvent { thread_id: "thread".to_string() }))
+        .expect("append thread event");
+    assert_eq!(fs::metadata(&events_path).expect("metadata").len(), 0);
+
+    log.append(&ThreadEvent::TurnStarted(TurnStartedEvent::default()))
+        .expect("append turn start");
+    assert_eq!(fs::metadata(&events_path).expect("metadata").len(), 0);
+
+    log.append(&ThreadEvent::TurnCompleted(TurnCompletedEvent { usage: Usage::default() }))
+        .expect("append turn completion");
+    assert!(fs::metadata(&events_path).expect("metadata").len() > 0);
+    assert_eq!(log.reconstruct_turn(1).expect("reconstruct").len(), 2);
+}
+
+#[test]
+fn large_buffer_flush_persists_manifest_progress() {
+    let dir = TempDir::new().expect("tempdir");
+    let log = open(dir.path(), "sess-large-buffer", DEFAULT_MAX_EVENTS).expect("open");
+
+    for index in 0..1_000 {
+        log.append(&ThreadEvent::ThreadStarted(ThreadStartedEvent {
+            thread_id: format!("thread-{index:04}-buffer-boundary"),
+        }))
+        .expect("append event");
+    }
+
+    let manifest_path = sessions_root(dir.path()).join("sess-large-buffer").join("manifest.json");
+    let manifest: crate::SessionManifest =
+        serde_json::from_str(&fs::read_to_string(manifest_path).expect("read manifest")).expect("parse manifest");
+    assert!(manifest.event_count > 0);
+    assert!(manifest.event_count < 1_000);
+}
+
+#[test]
+fn flushing_mid_turn_persists_buffered_metadata_for_reopen() {
+    let dir = TempDir::new().expect("tempdir");
+    {
+        let log = open(dir.path(), "sess-mid-turn", DEFAULT_MAX_EVENTS).expect("open");
+        log.append(&ThreadEvent::ThreadStarted(ThreadStartedEvent { thread_id: "thread".to_string() }))
+            .expect("append thread event");
+        log.append(&ThreadEvent::TurnStarted(TurnStartedEvent::default()))
+            .expect("append turn start");
+        log.flush().expect("flush mid-turn event log");
+    }
+
+    let reopened = open(dir.path(), "sess-mid-turn", DEFAULT_MAX_EVENTS).expect("reopen");
+    assert_eq!(reopened.event_count(), 2);
+    assert_eq!(reopened.turn_count(), 0);
+    assert_eq!(reopened.reconstruct_turn(1).expect("reconstruct open turn").len(), 1);
 }
 
 #[test]
@@ -180,9 +239,7 @@ fn scan_fallback_when_manifest_missing() {
     let events_path = session_dir.join("events.jsonl");
     fs::create_dir_all(&session_dir).expect("mkdir");
     let events = [
-        VersionedThreadEvent::new(ThreadEvent::ThreadStarted(vtcode_exec_events::ThreadStartedEvent {
-            thread_id: "t-1".to_string(),
-        })),
+        VersionedThreadEvent::new(ThreadEvent::ThreadStarted(ThreadStartedEvent { thread_id: "t-1".to_string() })),
         VersionedThreadEvent::new(ThreadEvent::TurnStarted(TurnStartedEvent::default())),
         VersionedThreadEvent::new(ThreadEvent::TurnCompleted(TurnCompletedEvent { usage: Usage::default() })),
     ];

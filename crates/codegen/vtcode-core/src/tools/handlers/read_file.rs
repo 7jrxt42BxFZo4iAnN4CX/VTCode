@@ -1,12 +1,8 @@
 use std::collections::VecDeque;
-use std::fmt::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Value, json};
 use tokio::fs::File;
@@ -18,6 +14,10 @@ use crate::tools::file_ops::read_byte_range;
 use crate::tools::error_helpers::deserialize_tool_args;
 use crate::tools::traits::Tool;
 use crate::utils::serde_helpers::{deserialize_maybe_quoted, deserialize_opt_maybe_quoted};
+
+mod batch;
+
+pub use batch::{BatchProgress, BatchReadArgs, BatchReadRequest, BatchReadResult, RangeResult};
 
 pub struct ReadFileHandler;
 
@@ -72,32 +72,6 @@ pub struct ReadFileArgs {
     pub page_size_bytes: Option<usize>,
 }
 
-/// Batch read request for reading multiple files or ranges in parallel.
-#[derive(Deserialize, Serialize, Clone, Debug)]
-pub struct BatchReadArgs {
-    /// List of read requests to execute in parallel.
-    pub reads: Vec<BatchReadRequest>,
-    /// Maximum concurrent file reads (default: 8).
-    #[serde(default = "defaults::max_concurrency")]
-    pub max_concurrency: usize,
-    /// Whether to show progress in UI (default: true).
-    #[serde(default = "defaults::ui_progress")]
-    pub ui_progress: bool,
-}
-
-/// A single file read request within a batch.
-#[derive(Deserialize, Serialize, Clone, Debug)]
-pub struct BatchReadRequest {
-    /// Absolute path to the file to read.
-    pub file_path: String,
-    /// Single range to read (mutually exclusive with `ranges`).
-    #[serde(flatten)]
-    pub range: Option<ReadRange>,
-    /// Multiple ranges to read from the same file.
-    #[serde(default)]
-    pub ranges: Option<Vec<ReadRange>>,
-}
-
 /// A range specification for reading.
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
 pub struct ReadRange {
@@ -113,98 +87,6 @@ pub struct ReadRange {
     /// Indentation options when mode is indentation.
     #[serde(default, deserialize_with = "deserialize_indentation")]
     pub indentation: Option<IndentationArgs>,
-}
-
-/// Result for a single file read in batch mode.
-#[derive(Serialize, Clone, Debug)]
-pub struct BatchReadResult {
-    /// The file path that was read.
-    pub file_path: String,
-    /// Results for each range read.
-    pub ranges: Vec<RangeResult>,
-    /// Error if the entire file read failed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-/// Result for a single range read.
-#[derive(Serialize, Clone, Debug)]
-pub struct RangeResult {
-    /// Starting line offset.
-    pub offset: usize,
-    /// Lines actually read.
-    pub lines_read: usize,
-    /// Whether content was condensed.
-    pub condensed: bool,
-    /// Number of lines omitted if condensed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub omitted_lines: Option<usize>,
-    /// The content read.
-    pub content: String,
-}
-
-/// Progress tracking for batch reads.
-#[derive(Clone)]
-pub struct BatchProgress {
-    /// Total number of files to read.
-    pub total_files: Arc<AtomicUsize>,
-    /// Number of files completed.
-    pub completed_files: Arc<AtomicUsize>,
-    /// Current file being read.
-    pub current_file: Arc<tokio::sync::RwLock<String>>,
-    /// Total bytes to read (estimated).
-    pub total_bytes: Arc<AtomicU64>,
-    /// Bytes read so far.
-    pub bytes_read: Arc<AtomicU64>,
-}
-
-impl BatchProgress {
-    pub fn new(total_files: usize) -> Self {
-        Self {
-            total_files: Arc::new(AtomicUsize::new(total_files)),
-            completed_files: Arc::new(AtomicUsize::new(0)),
-            current_file: Arc::new(tokio::sync::RwLock::new(String::new())),
-            total_bytes: Arc::new(AtomicU64::new(0)),
-            bytes_read: Arc::new(AtomicU64::new(0)),
-        }
-    }
-
-    pub async fn file_started(&self, file_path: &str) {
-        let mut current = self.current_file.write().await;
-        *current = file_path.to_string();
-    }
-
-    pub fn file_completed(&self) {
-        self.completed_files.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub fn add_bytes(&self, bytes: u64) {
-        self.bytes_read.fetch_add(bytes, Ordering::Relaxed);
-    }
-
-    pub fn progress_percent(&self) -> f64 {
-        let completed = self.completed_files.load(Ordering::Relaxed);
-        let total = self.total_files.load(Ordering::Relaxed);
-        if total == 0 {
-            100.0
-        } else {
-            (completed as f64 / total as f64) * 100.0
-        }
-    }
-
-    pub async fn status_line(&self) -> (String, String) {
-        let completed = self.completed_files.load(Ordering::Relaxed);
-        let total = self.total_files.load(Ordering::Relaxed);
-        let current = self.current_file.read().await;
-        let file_name = PathBuf::from(current.as_str())
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| current.clone());
-
-        let left = format!("Reading {}/{}: {}", completed + 1, total, file_name);
-        let right = format!("{:.0}%", self.progress_percent());
-        (left, right)
-    }
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
@@ -308,104 +190,11 @@ impl LineRecord {
 impl ReadFileHandler {
     /// Execute a batch read of multiple files/ranges in parallel.
     pub async fn handle_batch(&self, args: BatchReadArgs) -> Result<Value> {
-        if args.reads.is_empty() {
-            return Ok(json!({
-                "success": false,
-                "error": "No read requests provided"
-            }));
-        }
-
-        let progress = BatchProgress::new(args.reads.len());
-
-        let results: Vec<BatchReadResult> = stream::iter(args.reads)
-            .map(|req| {
-                let prog = progress.clone();
-                async move {
-                    prog.file_started(&req.file_path).await;
-                    let result = self.read_single_batch_request(&req).await;
-                    prog.file_completed();
-                    result
-                }
-            })
-            .buffer_unordered(args.max_concurrency)
-            .collect()
-            .await;
-
-        // Build concatenated content for token-efficient response
-        let mut content_parts = Vec::new();
-        let mut buf = String::new();
-        for result in &results {
-            if let Some(ref error) = result.error {
-                buf.clear();
-                let _ = write!(buf, "== {} (ERROR)\n{}", result.file_path, error);
-                content_parts.push(std::mem::take(&mut buf));
-            } else {
-                for range in &result.ranges {
-                    let end_line = range.offset + range.lines_read.saturating_sub(1);
-                    buf.clear();
-                    let _ =
-                        write!(buf, "== {} (L{}..L{})\n{}", result.file_path, range.offset, end_line, range.content);
-                    content_parts.push(std::mem::take(&mut buf));
-                }
-            }
-        }
-
-        let all_success = results.iter().all(|r| r.error.is_none());
-        Ok(json!({
-            "success": all_success,
-            "content": content_parts.join("\n\n"),
-            "items": results,
-            "files_read": results.len(),
-            "files_succeeded": results.iter().filter(|r| r.error.is_none()).count(),
-            "no_spool": true
-        }))
-    }
-
-    /// Read a single batch request (one file, possibly multiple ranges).
-    async fn read_single_batch_request(&self, req: &BatchReadRequest) -> BatchReadResult {
-        let path = PathBuf::from(&req.file_path);
-
-        // Validate path
-        if !path.is_absolute() {
-            return BatchReadResult {
-                file_path: req.file_path.clone(),
-                ranges: vec![],
-                error: Some("file_path must be an absolute path".to_string()),
-            };
-        }
-
-        // Determine ranges to read
-        let ranges_to_read: Vec<ReadRange> = if let Some(ref ranges) = req.ranges {
-            ranges.clone()
-        } else if let Some(ref range) = req.range {
-            vec![range.clone()]
-        } else {
-            vec![ReadRange::default()]
-        };
-
-        let mut range_results = Vec::new();
-        for range in ranges_to_read {
-            match self.read_range(&path, &range).await {
-                Ok(result) => range_results.push(result),
-                Err(e) => {
-                    return BatchReadResult {
-                        file_path: req.file_path.clone(),
-                        ranges: range_results,
-                        error: Some(e.to_string()),
-                    };
-                }
-            }
-        }
-
-        BatchReadResult {
-            file_path: req.file_path.clone(),
-            ranges: range_results,
-            error: None,
-        }
+        batch::execute(self, args).await
     }
 
     /// Read a single range from a file.
-    async fn read_range(&self, path: &Path, range: &ReadRange) -> Result<RangeResult> {
+    pub(super) async fn read_range(&self, path: &Path, range: &ReadRange) -> Result<RangeResult> {
         let offset = range.offset.max(1);
         let limit = range.limit.max(1);
 
@@ -1407,6 +1196,85 @@ mod tests {
         let content = result["content"].as_str().unwrap();
         assert!(content.contains("file1_line1"));
         assert!(content.contains("file2_line1"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn batch_rejects_zero_max_concurrency() -> Result<()> {
+        let handler = ReadFileHandler;
+        let args = BatchReadArgs {
+            reads: vec![BatchReadRequest {
+                file_path: "/tmp/example.txt".to_string(),
+                range: None,
+                ranges: None,
+            }],
+            max_concurrency: 0,
+            ui_progress: false,
+        };
+
+        let error = handler.handle_batch(args).await.expect_err("zero must be rejected");
+        assert!(error.to_string().contains("max_concurrency must be greater than zero"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn batch_caps_excessive_max_concurrency() -> Result<()> {
+        let mut temp = NamedTempFile::new()?;
+        writeln!(temp, "line")?;
+
+        let handler = ReadFileHandler;
+        let args = BatchReadArgs {
+            reads: vec![BatchReadRequest {
+                file_path: temp.path().to_string_lossy().to_string(),
+                range: None,
+                ranges: None,
+            }],
+            max_concurrency: usize::MAX,
+            ui_progress: false,
+        };
+
+        let result = handler.handle_batch(args).await?;
+        assert_eq!(result["success"], true);
+        assert_eq!(result["files_succeeded"], 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn batch_preserves_input_order_with_duplicate_requests() -> Result<()> {
+        let mut first = NamedTempFile::new()?;
+        writeln!(first, "first")?;
+        let mut second = NamedTempFile::new()?;
+        writeln!(second, "second")?;
+
+        let first_path = first.path().to_string_lossy().to_string();
+        let second_path = second.path().to_string_lossy().to_string();
+        let handler = ReadFileHandler;
+        let args = BatchReadArgs {
+            reads: vec![
+                BatchReadRequest {
+                    file_path: second_path.clone(),
+                    range: None,
+                    ranges: None,
+                },
+                BatchReadRequest {
+                    file_path: first_path.clone(),
+                    range: None,
+                    ranges: None,
+                },
+                BatchReadRequest { file_path: second_path, range: None, ranges: None },
+            ],
+            max_concurrency: usize::MAX,
+            ui_progress: false,
+        };
+
+        let result = handler.handle_batch(args).await?;
+        let items = result["items"].as_array().context("batch items must be an array")?;
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0]["ranges"][0]["content"], "second");
+        assert_eq!(items[1]["ranges"][0]["content"], "first");
+        assert_eq!(items[2]["ranges"][0]["content"], "second");
+        let content = result["content"].as_str().context("batch content must be a string")?;
+        assert!(content.find("second") < content.find("first"));
         Ok(())
     }
 

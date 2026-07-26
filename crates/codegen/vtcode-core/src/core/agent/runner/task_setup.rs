@@ -7,7 +7,7 @@
 use anyhow::Result;
 use std::time::Instant;
 
-use crate::core::agent::events::ExecEventRecorder;
+use crate::core::agent::events::{ExecEventRecorder, SessionStoreSinkHandle};
 use crate::core::agent::harness_artifacts;
 use crate::core::agent::progress_monitor::ProgressMonitor;
 use crate::core::agent::runner::continuation::ContinuationController;
@@ -23,6 +23,7 @@ use super::AgentRunner;
 pub struct TaskSetup {
     pub agent_prefix: String,
     pub event_recorder: ExecEventRecorder,
+    pub session_store_handle: Option<SessionStoreSinkHandle>,
     pub run_started_at: Instant,
     pub is_simple_task: bool,
     pub prompt_bundle: super::execute::RuntimePromptBundle,
@@ -51,7 +52,9 @@ impl AgentRunner {
         let agent_prefix = format!("[{}]", self.agent_type);
         // Persist every recorded event to the unified per-session store so it
         // becomes the single source of truth for session state/history.
-        let session_sink = crate::core::agent::events::session_store_sink(self.workspace(), &self.session_id);
+        let (session_sink, session_store_handle) =
+            crate::core::agent::events::session_store_sink_with_handle(self.workspace(), &self.session_id)
+                .map_or((None, None), |(sink, handle)| (Some(sink), Some(handle)));
         let event_sink = crate::core::agent::events::combine_event_sinks(self.event_sink.clone(), session_sink);
         let mut event_recorder =
             ExecEventRecorder::new(self.session_id.clone(), event_sink, Some(self.thread_handle.clone()));
@@ -149,6 +152,7 @@ impl AgentRunner {
         Ok(TaskSetup {
             agent_prefix,
             event_recorder,
+            session_store_handle,
             run_started_at,
             is_simple_task,
             prompt_bundle,

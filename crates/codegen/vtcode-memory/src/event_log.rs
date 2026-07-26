@@ -18,6 +18,10 @@ use crate::session_dir;
 /// completed turns are evicted.
 pub const DEFAULT_MAX_EVENTS: usize = 10_000;
 
+/// Maximum serialized event bytes retained before an append forces a write.
+/// Turn boundaries and reads still flush immediately.
+const MAX_WRITE_BUFFER_BYTES: usize = 64 * 1024;
+
 /// In-memory state protected by a mutex (cheap; appends are infrequent relative
 /// to model inference).
 struct LogState {
@@ -165,9 +169,14 @@ impl SessionEventLog {
                 }
             }
         }
+        if st.write_buf.len() >= MAX_WRITE_BUFFER_BYTES {
+            // Persist metadata with the bounded byte flush so a reopen after
+            // a mid-turn crash does not trust an index that predates these
+            // already-written events.
+            self.persist_meta_locked(&mut st)?;
+        }
         drop(st);
-        let _ = self.enforce_event_cap();
-        Ok(())
+        self.enforce_event_cap()
     }
 
     /// Enforce the per-session event cap by evicting the oldest completed
@@ -178,10 +187,14 @@ impl SessionEventLog {
             return Ok(());
         }
         let mut st = self.state.lock().map_err(poison)?;
-        self.flush_write_buf_locked(&mut st)?;
         if st.manifest.event_count <= self.max_events as u64 {
             return Ok(());
         }
+
+        // Keep ordinary appends in memory until a turn boundary or an
+        // explicit read. Cap enforcement is the one append-time path that
+        // needs the complete on-disk file before rewriting it.
+        self.flush_write_buf_locked(&mut st)?;
 
         let _excess = st.manifest.event_count as i64 - self.max_events as i64;
         let mut evicted_event_count = 0u64;
@@ -220,6 +233,9 @@ impl SessionEventLog {
         }
         st.next_offset -= truncate_offset;
         st.manifest.event_count = st.manifest.event_count.saturating_sub(evicted_event_count);
+        // The rewrite changed byte offsets and retained counts; persist the
+        // derived metadata before exposing the append as successful.
+        self.persist_meta_locked(&mut st)?;
         Ok(())
     }
 
@@ -271,6 +287,12 @@ impl SessionEventLog {
     #[must_use]
     pub fn event_count(&self) -> u64 {
         self.state.lock().map_err(poison).map_or(0, |s| s.manifest.event_count)
+    }
+
+    /// Flush pending event bytes and metadata to the session store.
+    pub fn flush(&self) -> Result<(), SessionStoreError> {
+        let mut st = self.state.lock().map_err(poison)?;
+        self.persist_meta_locked(&mut st)
     }
 
     /// Snapshot of the session manifest.
@@ -405,13 +427,12 @@ impl SessionEventLog {
 impl Drop for SessionEventLog {
     fn drop(&mut self) {
         if let Ok(mut st) = self.state.lock() {
-            if !st.write_buf.is_empty() {
-                if let Ok(mut file) = self.file.lock() {
-                    let _ = file.write_all(&st.write_buf);
-                    let _ = file.flush();
-                    st.write_buf.clear();
-                }
-            }
+            // The fallible `flush` method is the authoritative shutdown path;
+            // Drop only provides a best-effort byte flush for callers that do
+            // not explicitly close the log. Rewriting metadata here could
+            // overwrite a manifest update made by another owner after the
+            // last append.
+            let _ = self.flush_write_buf_locked(&mut st);
         }
     }
 }

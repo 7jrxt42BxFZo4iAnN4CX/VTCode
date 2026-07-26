@@ -290,8 +290,8 @@ async fn actor_loop(mut rx: mpsc::Receiver<ActorMessage>) {
 
 | Component | File | Pattern |
 |---|---|---|
-| `StdioTransport` | `crates/codegen/vtcode-acp/src/transport.rs` | Handle sends JSON-RPC via `mpsc::UnboundedSender`; background tasks handle stdin write, stdout read, stderr log. Uses `oneshot` for RPC responses. |
-| `AsyncLineWriter` | `crates/codegen/vtcode-core/src/utils/async_line_writer.rs` | Cloneable handle sends `LogMessage` via bounded `mpsc`; background task buffers and flushes via `spawn_blocking`. |
+| `StdioTransport` | `crates/codegen/vtcode-acp/src/transport.rs` | Handle sends JSON-RPC via bounded `mpsc`; background tasks handle stdin write, stdout read, stderr log. Uses `oneshot` for RPC responses. |
+| `AsyncLineWriter` | `crates/codegen/vtcode-core/src/utils/async_line_writer.rs` | Cloneable handle sends `LogMessage` via bounded `mpsc`; the actor bounds queued bytes/lines and periodically flushes through `spawn_blocking`. |
 | `TimeoutDetector` | `crates/codegen/vtcode-core/src/core/timeout_detector.rs` | Global detector with `mpsc::UnboundedSender<String>` cleanup channel; background task processes end-operation requests from dropped `TimeoutHandle`s. |
 | `ProcessHandle` | `crates/codegen/vtcode-bash-runner/src/pipe.rs` | Handle wraps channels for stdin, output broadcast, and exit status; separate writer, reader, and wait tasks. |
 
@@ -304,6 +304,28 @@ async fn actor_loop(mut rx: mpsc::Receiver<ActorMessage>) {
 | Exclusive ownership of a resource | Actor pattern |
 | Multiple producers, single consumer event stream | `mpsc` channel (bounded) |
 | Broadcasting to multiple subscribers | `broadcast` channel |
+
+### Eager pipeline decision criteria
+
+Use eager stages when they isolate blocking work, make ownership explicit, or
+allow independent work to overlap. Do not introduce a generic pipeline merely
+to replace an already-bounded `buffer_unordered`, `join_all`, or Rayon stage;
+benchmark the real workload first.
+
+The channel policy follows the data's correctness contract:
+
+| Data path | Backpressure policy | Shutdown policy |
+|---|---|---|
+| Authoritative session `ThreadEvent` persistence | Bounded synchronous handoff waits when full. Accepted events are ordered and are not silently dropped; a persistence failure marks the sink unavailable and is logged at error level. | The runner closes and awaits the sink after terminal events; queued events drain, and append/flush failures make the task fail rather than being reported as success. |
+| Diagnostic trajectory JSONL | Bounded by channel/line count and bytes. Saturation may drop records and increments diagnostics. | `flush()` remains best-effort for compatibility; the internal result path reports actor or file failures, and actor shutdown performs a final flush. |
+| Tool/read results | Explicit non-zero concurrency, bounded in-flight work, deterministic input-order assembly. | Caller cancellation drops the in-flight futures; no extra worker pool is introduced without measured benefit. |
+
+Every spawned stage must have an observable failure path and a clear owner for
+shutdown. Blocking filesystem work belongs in `spawn_blocking`; periodic
+flushes prevent a healthy producer from allowing an actor's internal buffer to
+grow indefinitely. For lossless paths, a full queue is a signal to slow the
+producer. For best-effort paths, drops are acceptable only when they are
+bounded and visible through diagnostics or tracing.
 
 ## Anti-Patterns to Avoid
 

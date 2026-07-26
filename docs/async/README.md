@@ -8,6 +8,12 @@
 
 The VT Code system has **100% async I/O operations**. All file operations use `tokio::fs`, PTY operations use `tokio::task::spawn_blocking`, and HTTP requests use `reqwest` async.
 
+Authoritative session events use bounded backpressure and stop accepting new
+events when persistence fails; diagnostic trajectory logs use bounded
+best-effort buffering with periodic and shutdown flushes. See the [async
+architecture guide](../guides/async-architecture.md) for the pipeline decision
+rules and capacity policy.
+
 ## Architecture Overview
 
 ```

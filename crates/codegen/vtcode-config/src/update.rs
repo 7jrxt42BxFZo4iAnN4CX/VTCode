@@ -4,7 +4,7 @@
 //! Configuration stored in `~/.vtcode/update.toml`.
 
 use crate::defaults::get_config_dir;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -96,12 +96,18 @@ impl UpdateConfig {
     pub fn load() -> Result<Self> {
         let lock = UPDATE_CONFIG_CACHE.get_or_init(|| RwLock::new(None));
 
-        if let Some(cached) = lock.read().unwrap().as_ref() {
-            return Ok(cached.clone());
+        {
+            let cached = lock.read().map_err(|_error| anyhow!("update config cache is poisoned"))?;
+            if let Some(cached) = cached.as_ref() {
+                return Ok(cached.clone());
+            }
         }
 
         let config = Self::load_inner()?;
-        let _ = lock.write().unwrap().insert(config.clone());
+        let _ = lock
+            .write()
+            .map_err(|_error| anyhow!("update config cache is poisoned"))?
+            .insert(config.clone());
         Ok(config)
     }
 
@@ -139,7 +145,9 @@ impl UpdateConfig {
 
         // Invalidate the in-process cache so the next load() observes the new file.
         if let Some(lock) = UPDATE_CONFIG_CACHE.get() {
-            let _ = lock.write().unwrap().take();
+            lock.write()
+                .map_err(|_error| anyhow!("update config cache is poisoned"))?
+                .take();
         }
 
         Ok(())

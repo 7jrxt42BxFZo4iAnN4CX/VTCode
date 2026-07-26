@@ -32,7 +32,7 @@ use crate::prompts::{
     append_runtime_tool_prompt_sections_for_profile, upsert_harness_limits_section,
 };
 use crate::utils::colors::style;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde_json::json;
 use std::sync::Arc;
 use tracing::{debug, warn};
@@ -424,6 +424,7 @@ impl AgentRunner {
         let setup = self.prepare_task_execution(task, contexts).await?;
 
         let agent_prefix = setup.agent_prefix;
+        let session_store_handle = setup.session_store_handle;
         let mut event_recorder = setup.event_recorder;
         let run_started_at = setup.run_started_at;
         let is_simple_task = setup.is_simple_task;
@@ -1261,7 +1262,17 @@ impl AgentRunner {
             }
         };
 
+        let persistence_result = if let Some(session_store_handle) = session_store_handle {
+            session_store_handle
+                .close()
+                .await
+                .context("authoritative session event persistence failed")
+        } else {
+            Ok(())
+        };
+
         self.tool_registry.set_harness_task(None);
+        persistence_result?;
         result
     }
 }

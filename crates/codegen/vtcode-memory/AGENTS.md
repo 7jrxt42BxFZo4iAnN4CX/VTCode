@@ -1,26 +1,23 @@
 # vtcode-memory
 
-Unified per-session state store: append-only `ThreadEvent` log plus derived
-views, retention, and cross-session query. The single source of truth for an
-agent session's state, context, and history.
+[Root AGENTS.md](../../../AGENTS.md) | Per-session event log and derived state.
 
 ## Conventions
 
-- `events.jsonl` is canonical; `derived/` and `index/` are regenerated views —
-  never persist session history anywhere else. `progress` (`ProgressLedger`,
-  `derived/progress.json`) is the compaction-safe goal-progress view.
-- `progress.rs` also hosts the `GoalTracker` state machine (ported from grok-build)
-  with 8 goal states and forward-compat deserialization.
+- `events.jsonl` is canonical; `derived/` and `index/` are regenerated views — never persist session history elsewhere.
+- `progress.rs` hosts the `GoalTracker` state machine and compaction-safe `ProgressLedger` view.
 - Append-only: do not mutate historical events; new facts go through `append`.
-- Off the hot path: never read the log back into agent context; use derived
-  queries (`reconstruct_turn`, `query_facts`) only for revert/compaction/analytics.
-- Public API must stay `anyhow::Result<T>` + `.context()`; no `unwrap`/`expect`
-  in non-test code (CI uses `-D warnings`).
+- Off the hot path: never read the log back into agent context; use derived queries for revert/compaction/analytics.
+- Public API uses `anyhow::Result<T>` + `.context()`; no `unwrap`/`expect` in non-test code.
+- Keep ordinary appends buffered; flush at turn boundaries, reads, cap rewrites, and close.
+- Return persistence errors to callers; do not silently discard cap-enforcement failures.
 
 ## Dependencies
 
-- `vtcode-exec-events` — `ThreadEvent` / `VersionedThreadEvent` contract (do not
-  reinvent event types here).
-- `walkdir` — directory size / GC walks.
-- `chrono`, `serde`, `serde_json` — metadata + persistence.
-- `uuid` — verifier id generation for goal tracker.
+- `vtcode-exec-events` owns the `ThreadEvent` / `VersionedThreadEvent` contract; never reinvent event types.
+- `walkdir` handles directory-size and GC walks; `chrono`, `serde`, and `serde_json` handle persistence metadata.
+- `uuid` supports verifier-id generation for the goal tracker.
+
+## Testing
+
+- Use `cargo nextest run -p vtcode-memory` and cover ordering, reopen/index reconstruction, retention, and write boundaries.

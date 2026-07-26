@@ -39,6 +39,12 @@ pub const DEFAULT_SESSION_PROGRESS_MIN_TURN_DELTA: usize = 1;
 /// Async trajectory log channel capacity (lines)
 pub const DEFAULT_TRAJECTORY_LOG_CHANNEL_CAPACITY: usize = 1024;
 
+/// Maximum payload bytes retained by the async trajectory log actor.
+pub const DEFAULT_TRAJECTORY_LOG_BUFFER_BYTES: usize = 4 * 1024 * 1024;
+
+/// Interval between best-effort trajectory log flushes.
+pub const DEFAULT_TRAJECTORY_LOG_FLUSH_INTERVAL_MS: u64 = 250;
+
 /// Maximum number of rotated trajectory log files to keep
 pub const DEFAULT_TRAJECTORY_MAX_FILES: usize = 50;
 
