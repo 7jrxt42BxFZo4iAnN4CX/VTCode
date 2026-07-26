@@ -768,11 +768,18 @@ impl SubagentController {
         }
         // Create a worktree for isolation if requested.
         let worktree_path = if spec.isolation == Some(vtcode_config::IsolationMode::Worktree) {
-            let wm = crate::git::WorktreeManager::new(&self.config.workspace_root);
-            let wt_name = format!("{}-{}", sanitize_component(spec.name.as_str()), Utc::now().format("%Y%m%dT%H%M%S"));
+            let workspace_root = self.config.workspace_root.clone();
+            let worktree_name =
+                format!("{}-{}", sanitize_component(spec.name.as_str()), Utc::now().format("%Y%m%dT%H%M%S"));
+            let worktree_name_for_error = worktree_name.clone();
+            let worktree_result = tokio::task::spawn_blocking(move || {
+                crate::git::WorktreeManager::new(workspace_root).create(&worktree_name)
+            })
+            .await
+            .context("Worktree creation task panicked")?;
             Some(
-                wm.create(&wt_name)
-                    .with_context(|| format!("Failed to create worktree for subagent '{}'", spec.name))?,
+                worktree_result
+                    .with_context(|| format!("Failed to create worktree for subagent '{}'", worktree_name_for_error))?,
             )
         } else {
             None

@@ -17,7 +17,7 @@ impl FileOpsTool {
         let search_path = self.workspace_root.join(&input.path);
 
         // Check if path exists before walking
-        if !search_path.exists() {
+        if !tokio::fs::try_exists(&search_path).await.unwrap_or(false) {
             let suggestion = self.missing_path_suggestion_suffix(&input.path, PathSuggestionKind::Any).await;
             return Err(anyhow!(
                 "Path '{}' does not exist. Workspace root: {}{}",

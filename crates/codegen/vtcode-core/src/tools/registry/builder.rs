@@ -41,36 +41,31 @@ fn spooler_config_from_dynamic_context(config: &DynamicContextConfig) -> Spooler
     }
 }
 
-fn load_workspace_spooler_config(workspace_root: &Path) -> SpoolerConfig {
+#[derive(Debug, Default)]
+struct WorkspaceToolConfig {
+    tool: ToolConfigSnapshot,
+    spooler: SpoolerConfig,
+}
+
+/// Load the config needed by tool registration in one parse. Falls back to
+/// defaults on any load/parse error so a malformed config never blocks tool
+/// registration.
+fn load_workspace_tool_config(workspace_root: &Path) -> WorkspaceToolConfig {
     match ConfigManager::load_from_workspace(workspace_root) {
-        Ok(manager) => spooler_config_from_dynamic_context(&manager.config().context.dynamic),
+        Ok(manager) => WorkspaceToolConfig {
+            tool: ToolConfigSnapshot {
+                web_search: manager.config().tools.web_search.clone(),
+                web_fetch: manager.config().tools.web_fetch.clone(),
+            },
+            spooler: spooler_config_from_dynamic_context(&manager.config().context.dynamic),
+        },
         Err(err) => {
             tracing::warn!(
                 workspace = %workspace_root.display(),
                 error = %err,
-                "Failed to load workspace config for output spooler; using defaults"
+                "Failed to load workspace config for tool registry; using defaults"
             );
-            SpoolerConfig::default()
-        }
-    }
-}
-
-/// Load the per-tool config bits (`[web_search]`, `[web_fetch]`) from the
-/// workspace `vtcode.toml`. Falls back to defaults on any load/parse error
-/// so a malformed config never blocks tool registration.
-fn load_tool_config(workspace_root: &Path) -> ToolConfigSnapshot {
-    match ConfigManager::load_from_workspace(workspace_root) {
-        Ok(manager) => ToolConfigSnapshot {
-            web_search: manager.config().tools.web_search.clone(),
-            web_fetch: manager.config().tools.web_fetch.clone(),
-        },
-        Err(err) => {
-            tracing::debug!(
-                workspace = %workspace_root.display(),
-                error = %err,
-                "No workspace vtcode.toml found; using default web tool config"
-            );
-            ToolConfigSnapshot::default()
+            WorkspaceToolConfig::default()
         }
     }
 }
@@ -111,8 +106,18 @@ impl ToolRegistry {
         // Install the user-config snapshot *before* constructing the
         // inventory so `WebFetchTool`/`WebSearchTool` are built with the
         // user's allow/block lists, cooldown, and session cap rather than
-        // defaulting out.
-        let tool_config = load_tool_config(&workspace_root);
+        // defaulting out. Parse the workspace config once because both the
+        // web tools and output spooler consume it.
+        let config_workspace = workspace_root.clone();
+        let workspace_config =
+            match tokio::task::spawn_blocking(move || load_workspace_tool_config(&config_workspace)).await {
+                Ok(config) => config,
+                Err(error) => {
+                    tracing::warn!(%error, "Workspace tool config task panicked; using defaults");
+                    WorkspaceToolConfig::default()
+                }
+            };
+        let tool_config = workspace_config.tool;
         if let Err(error) = super::distributed::install_tool_config(tool_config) {
             tracing::warn!(error = %error, "tool config reinstall failed; using existing snapshot");
         }
@@ -136,8 +141,7 @@ impl ToolRegistry {
         let metrics = Arc::new(crate::metrics::MetricsCollector::new());
         let hot_cache_size = std::num::NonZeroUsize::new(optimization_config.tool_registry.hot_cache_size)
             .unwrap_or(std::num::NonZeroUsize::MIN);
-        let output_spooler =
-            Arc::new(ToolOutputSpooler::with_config(&workspace_root, load_workspace_spooler_config(&workspace_root)));
+        let output_spooler = Arc::new(ToolOutputSpooler::with_config(&workspace_root, workspace_config.spooler));
 
         // Pre-allocate FxHashMaps with expected capacity for typical MCP tool sets.
         // Most sessions register 10-50 MCP tools; start with room for 32 to

@@ -2,15 +2,16 @@
 
 use crate::memory::{MemoryMonitor, MemoryPressure, MemoryReport};
 use crate::utils::colors::style;
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 /// Handle the memory command - display memory usage and diagnostics
 pub async fn handle_memory_command() -> Result<MemoryReport> {
     let monitor = MemoryMonitor::new();
 
     // Generate the report
-    let report = monitor
-        .get_report()
+    let report = tokio::task::spawn_blocking(move || monitor.get_report())
+        .await
+        .context("Memory report task panicked")?
         .map_err(|e| anyhow::anyhow!("Failed to generate memory report: {e}"))?;
 
     println!("{}", style("Memory Usage Report").cyan().bold());

@@ -205,7 +205,7 @@ impl FileSearchRpcHandler {
             serde_json::from_value(params.clone()).context("Failed to parse search_files parameters")?;
 
         // Validate workspace root
-        if !request.workspace_root.exists() {
+        if !tokio::fs::try_exists(&request.workspace_root).await.unwrap_or(false) {
             return Err(anyhow::anyhow!("Workspace root does not exist: {}", request.workspace_root.display()));
         }
 
@@ -215,7 +215,7 @@ impl FileSearchRpcHandler {
             .respect_gitignore(request.respect_gitignore);
 
         // Perform search
-        let results = file_search_bridge::search_files(config, None)?;
+        let results = file_search_bridge::search_files_async(config, None).await?;
 
         // Convert to RPC response format
         let matches: Vec<FileMatchRpc> = results
@@ -244,7 +244,7 @@ impl FileSearchRpcHandler {
             serde_json::from_value(params.clone()).context("Failed to parse list_files parameters")?;
 
         // Validate workspace root
-        if !request.workspace_root.exists() {
+        if !tokio::fs::try_exists(&request.workspace_root).await.unwrap_or(false) {
             return Err(anyhow::anyhow!("Workspace root does not exist: {}", request.workspace_root.display()));
         }
 
@@ -258,7 +258,7 @@ impl FileSearchRpcHandler {
         }
 
         // Perform search
-        let results = file_search_bridge::search_files(config, None)?;
+        let results = file_search_bridge::search_files_async(config, None).await?;
 
         // Extract file paths
         let files: Vec<String> = file_search_bridge::file_matches_only(results.matches)

@@ -877,7 +877,7 @@ impl EnhancedSkillLoader {
         // Try native plugins - discover plugin directories and load on demand
         // First, find the plugin directory by scanning trusted directories
         for plugin_dir in self.get_plugin_directories() {
-            if !plugin_dir.exists() {
+            if !tokio::fs::try_exists(&plugin_dir).await.unwrap_or(false) {
                 continue;
             }
 

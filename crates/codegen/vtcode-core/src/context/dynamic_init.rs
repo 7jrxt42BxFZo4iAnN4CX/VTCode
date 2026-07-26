@@ -73,7 +73,7 @@ pub async fn initialize_dynamic_context(
 
     // Create README in .vtcode explaining the directory structure
     let readme_path = dirs.vtcode_dir.join("README.md");
-    if !readme_path.exists() {
+    if !fs::try_exists(&readme_path).await.unwrap_or(false) {
         let readme_content = generate_vtcode_readme();
         if let Err(e) = fs::write(&readme_path, &readme_content).await {
             warn!(error = %e, "Failed to create .vtcode/README.md");
@@ -190,7 +190,7 @@ sync_skills = true
 /// Create initial skills INDEX.md
 async fn create_initial_skills_index(skills_dir: &Path) {
     let index_path = skills_dir.join("INDEX.md");
-    if index_path.exists() {
+    if fs::try_exists(&index_path).await.unwrap_or(false) {
         return;
     }
 
@@ -215,7 +215,7 @@ Create skills using the `save_skill` tool.
 /// Create initial terminals INDEX.md
 async fn create_initial_terminals_index(terminals_dir: &Path) {
     let index_path = terminals_dir.join("INDEX.md");
-    if index_path.exists() {
+    if fs::try_exists(&index_path).await.unwrap_or(false) {
         return;
     }
 
@@ -238,7 +238,7 @@ Use `exec_command.cmd` with `sed`, `cat`, or `rg` on individual session files fo
 /// Create initial MCP tools INDEX.md
 async fn create_initial_mcp_index(mcp_tools_dir: &Path) {
     let index_path = mcp_tools_dir.join("INDEX.md");
-    if index_path.exists() {
+    if fs::try_exists(&index_path).await.unwrap_or(false) {
         return;
     }
 

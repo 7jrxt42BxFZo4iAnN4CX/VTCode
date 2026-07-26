@@ -10,7 +10,7 @@ use crate::skills::cli_bridge::{CliToolBridge, CliToolConfig, discover_cli_tools
 use crate::skills::manifest::parse_skill_file;
 use crate::skills::types::{SkillContext, SkillManifest, SkillVariety};
 use crate::tools::error_messages::skill_ops;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use hashbrown::HashMap;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -113,34 +113,29 @@ impl SkillDiscovery {
     /// Discover all available skills and tools
     pub async fn discover_all(&mut self, workspace_root: &Path) -> Result<DiscoveryResult> {
         let start_time = std::time::Instant::now();
-        let mut stats = DiscoveryStats::default();
-
         info!("Starting skill discovery in: {}", workspace_root.display());
 
-        // Discover traditional skills
-        let skills = self.discover_traditional_skills(workspace_root, &mut stats).await?;
+        let config = self.config.clone();
+        let workspace_root = workspace_root.to_path_buf();
+        let (skills, tools, mut stats) = tokio::task::spawn_blocking(move || {
+            let mut worker = Self::with_config(config);
+            let mut stats = DiscoveryStats::default();
+            let skills = worker.discover_traditional_skills(&workspace_root, &mut stats)?;
+            let mut tools = worker.discover_cli_tools(&workspace_root, &mut stats)?;
+            if worker.config.auto_discover_system_tools {
+                tools.extend(worker.discover_system_tools(&mut stats)?);
+            }
+            Ok::<_, anyhow::Error>((skills, tools, stats))
+        })
+        .await
+        .context("skill discovery task panicked")??;
 
-        // Discover CLI tools
-        let tools = self.discover_cli_tools(workspace_root, &mut stats).await?;
-
-        // Auto-discover system tools if enabled
-        if self.config.auto_discover_system_tools {
-            let system_tools = self.discover_system_tools(&mut stats).await?;
-            let mut all_tools = tools;
-            all_tools.extend(system_tools);
-
-            stats.discovery_time_ms = start_time.elapsed().as_millis() as u64;
-
-            Ok(DiscoveryResult { skills, tools: all_tools, stats })
-        } else {
-            stats.discovery_time_ms = start_time.elapsed().as_millis() as u64;
-
-            Ok(DiscoveryResult { skills, tools, stats })
-        }
+        stats.discovery_time_ms = start_time.elapsed().as_millis() as u64;
+        Ok(DiscoveryResult { skills, tools, stats })
     }
 
     /// Discover traditional VT Code skills
-    async fn discover_traditional_skills(
+    fn discover_traditional_skills(
         &mut self,
         workspace_root: &Path,
         stats: &mut DiscoveryStats,
@@ -234,11 +229,7 @@ impl SkillDiscovery {
     }
 
     /// Discover CLI tools in workspace
-    async fn discover_cli_tools(
-        &mut self,
-        workspace_root: &Path,
-        stats: &mut DiscoveryStats,
-    ) -> Result<Vec<CliToolConfig>> {
+    fn discover_cli_tools(&mut self, workspace_root: &Path, stats: &mut DiscoveryStats) -> Result<Vec<CliToolConfig>> {
         let mut tools = vec![];
 
         for tool_path in &self.config.tool_paths {
@@ -251,7 +242,7 @@ impl SkillDiscovery {
 
             stats.directories_scanned += 1;
 
-            match self.scan_for_tools(&full_path, stats).await {
+            match self.scan_for_tools(&full_path, stats) {
                 Ok(found_tools) => {
                     info!("Found {} tools in {}", found_tools.len(), full_path.display());
                     tools.extend(found_tools);
@@ -267,7 +258,7 @@ impl SkillDiscovery {
     }
 
     /// Scan directory for CLI tools
-    async fn scan_for_tools(&self, dir: &Path, stats: &mut DiscoveryStats) -> Result<Vec<CliToolConfig>> {
+    fn scan_for_tools(&self, dir: &Path, stats: &mut DiscoveryStats) -> Result<Vec<CliToolConfig>> {
         let mut tools = vec![];
 
         for entry in std::fs::read_dir(dir)? {
@@ -308,7 +299,7 @@ impl SkillDiscovery {
     }
 
     /// Discover system-wide CLI tools
-    async fn discover_system_tools(&self, stats: &mut DiscoveryStats) -> Result<Vec<CliToolConfig>> {
+    fn discover_system_tools(&self, stats: &mut DiscoveryStats) -> Result<Vec<CliToolConfig>> {
         info!("Auto-discovering system CLI tools");
 
         match discover_cli_tools() {

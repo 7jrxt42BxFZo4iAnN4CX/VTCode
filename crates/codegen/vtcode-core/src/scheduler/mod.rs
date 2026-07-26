@@ -710,6 +710,20 @@ impl DurableTaskStore {
         self.write_runtime(&record.definition.id, &record.runtime)
     }
 
+    async fn load_records_async(&self) -> Result<Vec<ScheduledTaskRecord>> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.load_records())
+            .await
+            .context("Scheduled task loading task panicked")?
+    }
+
+    async fn update_runtime_async(&self, record: ScheduledTaskRecord) -> Result<()> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.update_runtime(&record))
+            .await
+            .context("Scheduled task runtime update task panicked")?
+    }
+
     fn load_records(&self) -> Result<Vec<ScheduledTaskRecord>> {
         self.paths.ensure_dirs()?;
         let mut records = Vec::new();
@@ -781,7 +795,7 @@ impl SchedulerDaemon {
 
     pub async fn run_due_tasks_once(&self) -> Result<usize> {
         let now = Utc::now();
-        let mut records = self.store.load_records()?;
+        let mut records = self.store.load_records_async().await?;
         let mut executed = 0usize;
 
         records.sort_by_key(|record| record.runtime.next_run_at);
@@ -792,17 +806,17 @@ impl SchedulerDaemon {
             if now < next_run_at {
                 continue;
             }
-            if !try_acquire_claim(self.store.paths(), &record.definition.id)? {
+            if !try_acquire_claim_async(self.store.paths().clone(), record.definition.id.clone()).await? {
                 continue;
             }
 
             let result = self.execute_record(&record, now).await;
-            let release_result = release_claim(self.store.paths(), &record.definition.id);
+            let release_result = release_claim_async(self.store.paths().clone(), record.definition.id.clone()).await;
             let run_outcome = result?;
             release_result?;
 
             apply_run_outcome(&mut record, run_outcome)?;
-            self.store.update_runtime(&record)?;
+            self.store.update_runtime_async(record).await?;
             executed = executed.saturating_add(1);
         }
 
@@ -1285,6 +1299,12 @@ fn try_acquire_claim(paths: &SchedulerPaths, id: &str) -> Result<bool> {
     }
 }
 
+async fn try_acquire_claim_async(paths: SchedulerPaths, id: String) -> Result<bool> {
+    tokio::task::spawn_blocking(move || try_acquire_claim(&paths, &id))
+        .await
+        .context("Scheduled task claim acquisition task panicked")?
+}
+
 fn claim_is_stale(path: &Path) -> Result<bool> {
     let metadata = fs::metadata(path).with_context(|| format!("Failed to stat {}", path.display()))?;
     let modified = metadata
@@ -1300,6 +1320,12 @@ fn release_claim(paths: &SchedulerPaths, id: &str) -> Result<()> {
         fs::remove_file(&path).with_context(|| format!("Failed to remove {}", path.display()))?;
     }
     Ok(())
+}
+
+async fn release_claim_async(paths: SchedulerPaths, id: String) -> Result<()> {
+    tokio::task::spawn_blocking(move || release_claim(&paths, &id))
+        .await
+        .context("Scheduled task claim release task panicked")?
 }
 
 fn summarize_task_name(summary: &str) -> String {

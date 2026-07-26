@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::tools::plugins::PluginRuntime;
 use crate::utils::file_utils::{ensure_dir_exists, write_file_with_context, write_json_file};
-use crate::utils::validation::{validate_all_non_empty, validate_non_empty, validate_path_exists};
+use crate::utils::validation::{validate_all_non_empty, validate_non_empty};
 use anyhow::{Context, Result, bail};
 use tokio::fs;
 
@@ -74,7 +74,10 @@ impl PluginInstaller {
             self.download_from_http(manifest, plugin_dir).await?;
         } else if manifest.source.starts_with("file://") {
             self.download_from_file(manifest, plugin_dir).await?;
-        } else if Path::new(&manifest.source).exists() {
+        } else if fs::try_exists(&manifest.source)
+            .await
+            .with_context(|| format!("Failed to check plugin source {}", manifest.source))?
+        {
             // Local path
             self.download_from_local(manifest, plugin_dir).await?;
         } else {
@@ -104,7 +107,12 @@ impl PluginInstaller {
     /// Download plugin from local file
     async fn download_from_file(&self, manifest: &PluginManifest, plugin_dir: &Path) -> Result<()> {
         let source_path = PathBuf::from(&manifest.source.replace("file://", ""));
-        validate_path_exists(&source_path, "Local source file")?;
+        if !fs::try_exists(&source_path)
+            .await
+            .with_context(|| format!("Failed to check local source file {}", source_path.display()))?
+        {
+            bail!("Local source file path does not exist: {}", source_path.display());
+        }
 
         let dest_path = plugin_dir.join(&manifest.entrypoint);
         if let Some(parent) = dest_path.parent() {
@@ -123,7 +131,12 @@ impl PluginInstaller {
     /// Download plugin from local path
     async fn download_from_local(&self, manifest: &PluginManifest, plugin_dir: &Path) -> Result<()> {
         let source_path = PathBuf::from(&manifest.source);
-        validate_path_exists(&source_path, "Local source path")?;
+        if !fs::try_exists(&source_path)
+            .await
+            .with_context(|| format!("Failed to check local source path {}", source_path.display()))?
+        {
+            bail!("Local source path path does not exist: {}", source_path.display());
+        }
 
         let dest_path = plugin_dir.join(&manifest.entrypoint);
         if let Some(parent) = dest_path.parent() {
@@ -187,7 +200,12 @@ impl PluginInstaller {
     /// Uninstall a plugin by ID
     pub async fn uninstall_plugin(&self, plugin_id: &str) -> Result<()> {
         let plugin_dir = self.plugins_dir.join(plugin_id);
-        validate_path_exists(&plugin_dir, "Installed plugin")?;
+        if !fs::try_exists(&plugin_dir)
+            .await
+            .with_context(|| format!("Failed to check installed plugin {}", plugin_dir.display()))?
+        {
+            bail!("Installed plugin path does not exist: {}", plugin_dir.display());
+        }
 
         // Remove from VT Code's plugin system before filesystem removal
         self.remove_from_core_plugin_system(plugin_id).await?;
@@ -219,6 +237,6 @@ impl PluginInstaller {
     /// Check if a plugin is installed
     pub async fn is_installed(&self, plugin_id: &str) -> bool {
         let plugin_dir = self.plugins_dir.join(plugin_id);
-        plugin_dir.exists()
+        fs::try_exists(plugin_dir).await.unwrap_or(false)
     }
 }

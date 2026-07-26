@@ -11,6 +11,7 @@
 
 use std::path::Path;
 
+use anyhow::Context;
 use tracing::warn;
 
 use crate::compaction::memory_envelope::SessionMemoryEnvelope;
@@ -113,5 +114,17 @@ pub fn write_compaction_checkpoint(workspace_root: &Path, envelope: &SessionMemo
     );
     if let Err(e) = std::fs::write(&summary_path, summary_content) {
         warn!(path = %summary_path.display(), error = %e, "failed to write compaction summary");
+    }
+}
+
+/// Async adapter for compaction callers running on Tokio workers.
+pub async fn write_compaction_checkpoint_async(workspace_root: &Path, envelope: &SessionMemoryEnvelope) {
+    let workspace_root = workspace_root.to_path_buf();
+    let envelope = envelope.clone();
+    if let Err(error) = tokio::task::spawn_blocking(move || write_compaction_checkpoint(&workspace_root, &envelope))
+        .await
+        .context("Compaction checkpoint task panicked")
+    {
+        warn!(error = %error, "failed to persist compaction checkpoint");
     }
 }

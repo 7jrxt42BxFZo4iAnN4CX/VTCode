@@ -1,11 +1,12 @@
 use super::AgentRunner;
 use crate::compaction::auto::{AutoCompactionInput, auto_compact_messages};
 use crate::compaction::memory_envelope::{MemoryEnvelopePlacement, local_compaction_config};
-use crate::core::agent::compaction_checkpoint::write_compaction_checkpoint;
+use crate::core::agent::compaction_checkpoint::write_compaction_checkpoint_async;
 use crate::core::agent::context_reset::maybe_write_reset_after_compaction;
 use crate::core::agent::conversation::conversation_from_messages;
 use crate::core::agent::session::AgentSessionState;
 use crate::exec::events::CompactionTrigger;
+use std::sync::Arc;
 use tracing::{info, warn};
 
 impl AgentRunner {
@@ -44,7 +45,7 @@ impl AgentRunner {
                 prefire: None,
                 auto_compact_suppressed: &mut session_state.auto_compact_suppressed,
             },
-            &mut session_state.messages,
+            Arc::make_mut(&mut session_state.messages),
         )
         .await
         {
@@ -70,7 +71,7 @@ impl AgentRunner {
         // written into a persistent artifact, such as progress.md, so that later
         // sessions can read it."
         if let Some(ref envelope) = outcome.envelope {
-            write_compaction_checkpoint(self._workspace.as_path(), envelope);
+            write_compaction_checkpoint_async(self._workspace.as_path(), envelope).await;
         }
 
         // If context reset is configured for on_compaction, write a reset

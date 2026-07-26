@@ -415,7 +415,7 @@ impl ToolOutputSpooler {
 
     /// Clean up old spooled files and sync the in-memory tracking list.
     pub async fn cleanup_old_files(&self) -> Result<usize> {
-        if !self.output_dir.exists() {
+        if !fs::try_exists(&self.output_dir).await.unwrap_or(false) {
             return Ok(0);
         }
 

@@ -56,7 +56,7 @@ impl PluginRuntime {
     /// Load a plugin from the specified path
     pub async fn load_plugin(&self, plugin_path: &Path) -> PluginResult<PluginHandle> {
         // Validate plugin path
-        if !plugin_path.exists() {
+        if !tokio::fs::try_exists(plugin_path).await.unwrap_or(false) {
             return Err(PluginError::NotFound(plugin_path.display().to_string().into()));
         }
 
@@ -88,7 +88,7 @@ impl PluginRuntime {
     async fn load_manifest(&self, plugin_path: &Path) -> PluginResult<PluginManifest> {
         let manifest_path = plugin_path.join(".vtcode-plugin/plugin.json");
 
-        if !manifest_path.exists() {
+        if !tokio::fs::try_exists(&manifest_path).await.unwrap_or(false) {
             return Err(PluginError::ManifestValidationError(format!(
                 "Plugin manifest not found at: {}",
                 manifest_path.display()

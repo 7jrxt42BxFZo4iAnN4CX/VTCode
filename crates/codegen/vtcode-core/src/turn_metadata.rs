@@ -105,10 +105,6 @@ pub fn build_turn_metadata_value(cwd: &Path) -> Result<Value> {
 ///
 /// Returns `Ok(None)` when metadata is unavailable or times out.
 pub async fn build_turn_metadata_value_with_timeout(cwd: &Path, timeout: Duration) -> Result<Option<Value>> {
-    if !git_info::is_git_repo(cwd) {
-        return Ok(None);
-    }
-
     let cwd = cwd.to_path_buf();
     let handle = tokio::task::spawn_blocking(move || build_turn_metadata_value(&cwd));
     match tokio::time::timeout(timeout, handle).await {

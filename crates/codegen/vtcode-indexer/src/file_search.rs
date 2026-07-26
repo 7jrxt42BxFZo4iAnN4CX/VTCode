@@ -252,6 +252,9 @@ fn merge_top_k(
 /// A cached file index that can be shared across searches.
 pub struct FileIndexCache {
     cache: Arc<RwLock<Option<Arc<FileIndex>>>>,
+    /// Serializes full index builds so concurrent cache misses do not launch
+    /// duplicate workspace traversals and Rayon jobs.
+    build_gate: Arc<tokio::sync::Semaphore>,
     search_directory: std::path::PathBuf,
     exclude: Vec<String>,
     respect_gitignore: bool,
@@ -267,6 +270,7 @@ impl FileIndexCache {
     ) -> Self {
         Self {
             cache: Arc::new(RwLock::new(None)),
+            build_gate: Arc::new(tokio::sync::Semaphore::new(1)),
             search_directory,
             exclude: exclude.into_iter().collect(),
             respect_gitignore,
@@ -287,13 +291,31 @@ impl FileIndexCache {
             }
         }
 
-        // Build a new index
-        let index = Arc::new(FileIndex::build_from_directory(
-            &self.search_directory,
-            &self.exclude,
-            self.respect_gitignore,
-            self.threads,
-        )?);
+        // Re-check after waiting for another caller's build. This avoids a
+        // cache-stampede when several searches arrive on an empty/stale cache.
+        let _build_permit = self.build_gate.acquire().await?;
+        {
+            let guard = self.cache.read().await;
+            if let Some(index) = guard.as_ref()
+                && index.last_built.elapsed() < std::time::Duration::from_secs(300)
+            {
+                return Ok(Arc::clone(index));
+            }
+        }
+
+        // Directory traversal and index construction are synchronous and can
+        // touch a large workspace. Keep that work off the Tokio worker so a
+        // cache miss cannot delay unrelated async tasks.
+        let search_directory = self.search_directory.clone();
+        let exclude = self.exclude.clone();
+        let respect_gitignore = self.respect_gitignore;
+        let threads = self.threads;
+        let index = Arc::new(
+            tokio::task::spawn_blocking(move || {
+                FileIndex::build_from_directory(&search_directory, &exclude, respect_gitignore, threads)
+            })
+            .await??,
+        );
 
         // Cache and return
         {
@@ -312,15 +334,31 @@ impl FileIndexCache {
         let respect_gitignore = self.respect_gitignore;
         let threads = self.threads;
         let cache = self.cache.clone();
+        let build_gate = Arc::clone(&self.build_gate);
 
         tokio::spawn(async move {
-            match FileIndex::build_from_directory(&search_directory, &exclude, respect_gitignore, threads) {
-                Ok(new_index) => {
+            let _build_permit = match build_gate.acquire_owned().await {
+                Ok(permit) => permit,
+                Err(error) => {
+                    tracing::error!(%error, "file index build gate closed");
+                    return;
+                }
+            };
+
+            match tokio::task::spawn_blocking(move || {
+                FileIndex::build_from_directory(&search_directory, &exclude, respect_gitignore, threads)
+            })
+            .await
+            {
+                Ok(Ok(new_index)) => {
                     let mut guard = cache.write().await;
                     *guard = Some(Arc::new(new_index));
                 }
-                Err(e) => {
-                    tracing::error!("failed to rebuild file index: {e}");
+                Ok(Err(error)) => {
+                    tracing::error!(%error, "failed to rebuild file index");
+                }
+                Err(error) => {
+                    tracing::error!(%error, "file index rebuild task failed");
                 }
             }
         });
@@ -779,11 +817,24 @@ fn run_with_policy(
 
 #[cfg(test)]
 mod tests {
-    use super::{FileSearchConfig, run_bounded_no_follow, run_bounded_no_follow_with_visit};
+    use super::{FileIndexCache, FileSearchConfig, run_bounded_no_follow, run_bounded_no_follow_with_visit};
     use std::num::NonZero;
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
     use tempfile::TempDir;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn concurrent_index_builds_share_async_cache_entry() {
+        let workspace = TempDir::new().expect("workspace");
+        std::fs::write(workspace.path().join("widget.rs"), "fn widget() {}\n").expect("fixture source");
+
+        let cache = FileIndexCache::new(workspace.path().to_path_buf(), Vec::new(), true, 1);
+        let (first, second) = tokio::join!(cache.get_or_build(), cache.get_or_build());
+        let first = first.expect("build file index");
+        let second = second.expect("reuse file index");
+
+        assert!(Arc::ptr_eq(&first, &second));
+    }
 
     fn bounded_paths(workspace: &std::path::Path) -> Vec<String> {
         run_bounded_no_follow(FileSearchConfig {

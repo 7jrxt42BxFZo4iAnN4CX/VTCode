@@ -8,7 +8,7 @@
 //! - Converting between vtcode-core and vtcode-indexer::file_search APIs
 //! - Integrating file search results with existing grep workflows
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::num::NonZero;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -109,6 +109,16 @@ pub fn search_files(config: FileSearchConfig, cancel_flag: Option<Arc<AtomicBool
         compute_indices: config.compute_indices,
         respect_gitignore: config.respect_gitignore,
     })
+}
+
+/// Search for files without blocking the Tokio worker running the caller.
+pub async fn search_files_async(
+    config: FileSearchConfig,
+    cancel_flag: Option<Arc<AtomicBool>>,
+) -> Result<FileSearchResults> {
+    tokio::task::spawn_blocking(move || search_files(config, cancel_flag))
+        .await
+        .context("file search task panicked")?
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

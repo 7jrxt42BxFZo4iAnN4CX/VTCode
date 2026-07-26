@@ -161,7 +161,7 @@ impl EntityResolver {
     /// Load index from cache file
     pub async fn load_cache(&mut self) -> Result<()> {
         if let Some(cache_path) = &self.cache_path
-            && cache_path.exists()
+            && tokio::fs::try_exists(cache_path).await.unwrap_or(false)
         {
             let content = read_file_with_context(cache_path, "entity cache")
                 .await

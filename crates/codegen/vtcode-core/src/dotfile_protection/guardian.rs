@@ -342,7 +342,7 @@ impl DotfileGuardian {
     pub async fn confirm_modification(&self, context: &AccessContext, is_whitelisted: bool) -> Result<()> {
         // Create backup before modification
         if let Some(ref backup_manager) = self.backup_manager
-            && context.file_path.exists()
+            && tokio::fs::try_exists(&context.file_path).await.unwrap_or(false)
         {
             backup_manager
                 .create_backup(

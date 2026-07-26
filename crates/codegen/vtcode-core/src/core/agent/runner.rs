@@ -323,7 +323,7 @@ impl AgentRunner {
             .map(|tool| tool.function_name().to_string())
             .collect::<Vec<_>>();
         let mut prompt_context = PromptContext::from_workspace_tools(&workspace, available_tools);
-        prompt_context.load_available_skills();
+        prompt_context.load_available_skills_async().await;
         let (system_prompt, system_prompt_report) = helpers::compose_system_prompt_with_appendix(
             workspace.as_path(),
             session_config.effective(),

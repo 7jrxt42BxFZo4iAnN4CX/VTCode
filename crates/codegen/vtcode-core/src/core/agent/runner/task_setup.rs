@@ -5,6 +5,7 @@
 //! creation, and orchestration planning.
 
 use anyhow::Result;
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::core::agent::events::{ExecEventRecorder, SessionStoreSinkHandle};
@@ -87,7 +88,7 @@ impl AgentRunner {
         let mut session_state =
             AgentSessionState::new(self.session_id.clone(), self.max_turns, max_tool_loops, max_context_tokens);
         session_state.conversation = conversation;
-        session_state.messages = conversation_messages;
+        session_state.messages = Arc::new(conversation_messages);
         session_state.reconcile_token_count();
         session_state.last_processed_message_idx = session_state.conversation.len();
 
@@ -96,7 +97,7 @@ impl AgentRunner {
         // `maybe_write_reset_on_stall`), clear the conversation history so
         // this session starts fresh from external artifacts only. The orient
         // context in the system prompt already includes the reset banner.
-        self.apply_context_reset_if_pending(&mut session_state);
+        self.apply_context_reset_if_pending(&mut session_state).await;
 
         let mut runtime = AgentRuntime::new(session_state, None, steering_receiver);
 
@@ -139,11 +140,14 @@ impl AgentRunner {
             self.config().agent.harness.context_reset_mode.clone(),
             self.config().agent.harness.context_reset_stall_threshold,
         )
-        .with_progress_monitor(ProgressMonitor::with_persistence(
-            self.workspace().to_path_buf(),
-            &self.session_id,
-            &effective_task.id,
-        ));
+        .with_progress_monitor(
+            ProgressMonitor::with_persistence_async(
+                self.workspace().to_path_buf(),
+                &self.session_id,
+                &effective_task.id,
+            )
+            .await,
+        );
         continuation_controller.prepare(&effective_task).await?;
 
         let max_budget_usd = self.config().agent.harness.max_budget_usd;
@@ -177,10 +181,10 @@ impl AgentRunner {
     /// acts on it by clearing the conversation history so the agent starts
     /// fresh from external artifacts only. The manifest is consumed (deleted)
     /// so it only triggers once.
-    fn apply_context_reset_if_pending(&self, session_state: &mut AgentSessionState) {
+    async fn apply_context_reset_if_pending(&self, session_state: &mut AgentSessionState) {
         let manifest_path = harness_artifacts::current_context_reset_path(&self._workspace);
 
-        if !manifest_path.exists() {
+        if !tokio::fs::try_exists(&manifest_path).await.unwrap_or(false) {
             return;
         }
 
@@ -188,7 +192,7 @@ impl AgentRunner {
         session_state.clear_conversation_history();
 
         // Consume the manifest so it only triggers once.
-        if let Err(e) = std::fs::remove_file(&manifest_path) {
+        if let Err(e) = tokio::fs::remove_file(&manifest_path).await {
             tracing::warn!(
                 error = %e,
                 path = %manifest_path.display(),

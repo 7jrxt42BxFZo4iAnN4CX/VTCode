@@ -26,7 +26,11 @@ impl CommandsHandler {
         if let Some(manifest_paths) = manifest_commands {
             for path in manifest_paths {
                 let full_path = plugin_path.join(&path);
-                if full_path.exists() && full_path.is_file() {
+                if fs::metadata(&full_path)
+                    .await
+                    .map(|metadata| metadata.is_file())
+                    .unwrap_or(false)
+                {
                     command_files.push(full_path);
                 }
             }
@@ -34,11 +38,17 @@ impl CommandsHandler {
 
         // Also look for commands in the default commands/ directory
         let default_commands_dir = plugin_path.join("commands");
-        if default_commands_dir.exists() && default_commands_dir.is_dir() {
+        if fs::metadata(&default_commands_dir)
+            .await
+            .map(|metadata| metadata.is_dir())
+            .unwrap_or(false)
+        {
             let mut entries = fs::read_dir(&default_commands_dir).await?;
             while let Some(entry) = entries.next_entry().await? {
                 let path = entry.path();
-                if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+                if fs::metadata(&path).await.map(|metadata| metadata.is_file()).unwrap_or(false)
+                    && path.extension().is_some_and(|ext| ext == "md")
+                {
                     command_files.push(path);
                 }
             }
@@ -60,7 +70,11 @@ impl AgentsHandler {
         if let Some(manifest_paths) = manifest_agents {
             for path in manifest_paths {
                 let full_path = plugin_path.join(&path);
-                if full_path.exists() && full_path.is_file() {
+                if fs::metadata(&full_path)
+                    .await
+                    .map(|metadata| metadata.is_file())
+                    .unwrap_or(false)
+                {
                     agent_files.push(full_path);
                 }
             }
@@ -68,11 +82,17 @@ impl AgentsHandler {
 
         // Also look for agents in the default agents/ directory
         let default_agents_dir = plugin_path.join("agents");
-        if default_agents_dir.exists() && default_agents_dir.is_dir() {
+        if fs::metadata(&default_agents_dir)
+            .await
+            .map(|metadata| metadata.is_dir())
+            .unwrap_or(false)
+        {
             let mut entries = fs::read_dir(&default_agents_dir).await?;
             while let Some(entry) = entries.next_entry().await? {
                 let path = entry.path();
-                if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+                if fs::metadata(&path).await.map(|metadata| metadata.is_file()).unwrap_or(false)
+                    && path.extension().is_some_and(|ext| ext == "md")
+                {
                     agent_files.push(path);
                 }
             }
@@ -94,7 +114,11 @@ impl SkillsHandler {
         if let Some(manifest_paths) = manifest_skills {
             for path in manifest_paths {
                 let full_path = plugin_path.join(&path);
-                if full_path.exists() && full_path.is_dir() {
+                if fs::metadata(&full_path)
+                    .await
+                    .map(|metadata| metadata.is_dir())
+                    .unwrap_or(false)
+                {
                     skill_dirs.push(full_path);
                 }
             }
@@ -102,14 +126,22 @@ impl SkillsHandler {
 
         // Also look for skills in the default skills/ directory
         let default_skills_dir = plugin_path.join("skills");
-        if default_skills_dir.exists() && default_skills_dir.is_dir() {
+        if fs::metadata(&default_skills_dir)
+            .await
+            .map(|metadata| metadata.is_dir())
+            .unwrap_or(false)
+        {
             let mut entries = fs::read_dir(&default_skills_dir).await?;
             while let Some(entry) = entries.next_entry().await? {
                 let path = entry.path();
-                if path.is_dir() {
+                if fs::metadata(&path).await.map(|metadata| metadata.is_dir()).unwrap_or(false) {
                     // Check if it contains a SKILL.md file
                     let skill_md = path.join("SKILL.md");
-                    if skill_md.exists() && skill_md.is_file() {
+                    if fs::metadata(&skill_md)
+                        .await
+                        .map(|metadata| metadata.is_file())
+                        .unwrap_or(false)
+                    {
                         skill_dirs.push(path);
                     }
                 }
@@ -134,7 +166,11 @@ impl HooksHandler {
             // If hooks config is a string, treat it as a path
             if let Some(path_str) = hooks_config.as_str() {
                 let hooks_path = plugin_path.join(path_str);
-                if hooks_path.exists() && hooks_path.is_file() {
+                if fs::metadata(&hooks_path)
+                    .await
+                    .map(|metadata| metadata.is_file())
+                    .unwrap_or(false)
+                {
                     return Ok(Some(hooks_path));
                 }
             }
@@ -142,7 +178,11 @@ impl HooksHandler {
 
         // Look for hooks in the default hooks/ directory
         let default_hooks_path = plugin_path.join("hooks/hooks.json");
-        if default_hooks_path.exists() && default_hooks_path.is_file() {
+        if fs::metadata(&default_hooks_path)
+            .await
+            .map(|metadata| metadata.is_file())
+            .unwrap_or(false)
+        {
             return Ok(Some(default_hooks_path));
         }
 
@@ -164,7 +204,11 @@ impl McpServersHandler {
             // If MCP config is a string, treat it as a path
             if let Some(path_str) = mcp_config.as_str() {
                 let mcp_path = plugin_path.join(path_str);
-                if mcp_path.exists() && mcp_path.is_file() {
+                if fs::metadata(&mcp_path)
+                    .await
+                    .map(|metadata| metadata.is_file())
+                    .unwrap_or(false)
+                {
                     return Ok(Some(mcp_path));
                 }
             }
@@ -172,7 +216,11 @@ impl McpServersHandler {
 
         // Look for MCP config in the default .mcp.json file
         let default_mcp_path = plugin_path.join(".mcp.json");
-        if default_mcp_path.exists() && default_mcp_path.is_file() {
+        if fs::metadata(&default_mcp_path)
+            .await
+            .map(|metadata| metadata.is_file())
+            .unwrap_or(false)
+        {
             return Ok(Some(default_mcp_path));
         }
 
@@ -194,7 +242,11 @@ impl LspServersHandler {
             // If LSP config is a string, treat it as a path
             if let Some(path_str) = lsp_config.as_str() {
                 let lsp_path = plugin_path.join(path_str);
-                if lsp_path.exists() && lsp_path.is_file() {
+                if fs::metadata(&lsp_path)
+                    .await
+                    .map(|metadata| metadata.is_file())
+                    .unwrap_or(false)
+                {
                     return Ok(Some(lsp_path));
                 }
             }
@@ -202,7 +254,11 @@ impl LspServersHandler {
 
         // Look for LSP config in the default .lsp.json file
         let default_lsp_path = plugin_path.join(".lsp.json");
-        if default_lsp_path.exists() && default_lsp_path.is_file() {
+        if fs::metadata(&default_lsp_path)
+            .await
+            .map(|metadata| metadata.is_file())
+            .unwrap_or(false)
+        {
             return Ok(Some(default_lsp_path));
         }
 

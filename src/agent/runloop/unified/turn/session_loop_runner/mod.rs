@@ -389,7 +389,7 @@ pub(super) async fn run_single_agent_loop_unified_impl(
             None,
             steering_receiver.take(),
         );
-        runtime.state.messages = conversation_history;
+        runtime.state.messages = conversation_history.into();
         if resume_ref.is_some()
             && let Some(pending_prompt) = take_pending_resumed_user_prompt(runtime.state.messages_mut())
         {
@@ -635,7 +635,7 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                             tool_registry: &mut tool_registry,
                             tools: &tools,
                             tool_catalog: &tool_catalog,
-                            conversation_history: &mut session_state.messages,
+                            conversation_history: std::sync::Arc::make_mut(&mut session_state.messages),
                             agent_touched_paths: &mut agent_touched_paths,
                             decision_ledger: &decision_ledger,
                             context_manager: &mut context_manager,
@@ -818,15 +818,15 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                     continue;
                 }
                 let (session_state, runtime_steering) = runtime.split_mut();
-                let mut working_history = std::mem::take(&mut session_state.messages);
+                let working_history = std::sync::Arc::make_mut(&mut session_state.messages);
                 let transient_system_notes = append_transient_turn_notes(
-                    &mut working_history,
+                    working_history,
                     config.workspace.as_path(),
                     &tool_registry,
                     &agent_touched_paths,
                 );
                 let turn_started_at = Instant::now();
-                let history_snapshot_bytes = estimate_history_bytes(&working_history);
+                let history_snapshot_bytes = estimate_history_bytes(working_history);
                 let mut turn_metadata_cache = None;
                 // Cross-turn tracking data extracted from harness_state before
                 // it goes out of scope at the end of the match block.
@@ -893,7 +893,7 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                     );
 
                     let result =
-                        crate::agent::runloop::unified::turn::run_turn_loop(&mut working_history, turn_loop_ctx).await;
+                        crate::agent::runloop::unified::turn::run_turn_loop(working_history, turn_loop_ctx).await;
 
                     match result {
                         Ok(inner) => {
@@ -922,7 +922,7 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                         }
                     }
                 };
-                remove_transient_system_notes(&mut working_history, &transient_system_notes);
+                remove_transient_system_notes(working_history, &transient_system_notes);
 
                 // Cross-turn loop detection: fingerprint this turn's actions and
                 // inject a warning if a loop or stuck pattern is detected.
@@ -943,7 +943,6 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                         .map(|path| normalize_workspace_path(config.workspace.as_path(), path)),
                 );
                 agent_touched_paths.extend(context_manager.tracked_instruction_activity_paths());
-                runtime.state.messages = working_history;
                 let outcome_result = outcome.result.clone();
                 let execution_modified_files = outcome.turn_modified_files.clone();
                 let switch_primary_agent = outcome.pending_primary_agent.clone();
@@ -954,7 +953,7 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                 if let Err(err) = crate::agent::runloop::unified::turn::apply_turn_outcome(
                     outcome,
                     crate::agent::runloop::unified::turn::TurnOutcomeContext {
-                        conversation_history: &mut runtime.state.messages,
+                        conversation_history: std::sync::Arc::make_mut(&mut runtime.state.messages),
                         completed_turn_prompt: Some(next_turn_input.as_str()),
                         completed_turn_prompt_message_index,
                         renderer: &mut renderer,

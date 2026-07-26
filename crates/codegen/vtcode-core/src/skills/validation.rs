@@ -365,7 +365,7 @@ impl SkillValidator {
     async fn check_directory_exists(&self, path: &Path) -> CheckResult {
         let start_time = Instant::now();
 
-        let status = if path.exists() && path.is_dir() {
+        let status = if tokio::fs::metadata(path).await.is_ok_and(|metadata| metadata.is_dir()) {
             CheckStatus::Passed
         } else {
             CheckStatus::Failed
@@ -504,7 +504,7 @@ impl SkillValidator {
                 }
             };
             let path = entry.path();
-            if path.is_file() {
+            if entry.file_type().await.is_ok_and(|file_type| file_type.is_file()) {
                 // Check file size
                 if let Some(metadata) = entry
                     .metadata()
@@ -607,7 +607,7 @@ impl SkillValidator {
                 }
             };
             let path = entry.path();
-            if path.is_file() {
+            if entry.file_type().await.is_ok_and(|file_type| file_type.is_file()) {
                 // Check file size
                 if let Some(metadata) = entry.metadata().await.ok().filter(|m| m.len() > 10 * 1024 * 1024) {
                     // 10MB limit for resources
@@ -641,7 +641,7 @@ impl SkillValidator {
     async fn check_executable_exists(&self, path: &Path) -> CheckResult {
         let start_time = Instant::now();
 
-        let status = if path.exists() {
+        let status = if tokio::fs::try_exists(path).await.unwrap_or(false) {
             CheckStatus::Passed
         } else {
             CheckStatus::Failed

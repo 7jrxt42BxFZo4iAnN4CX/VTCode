@@ -28,7 +28,7 @@ async fn persist_global_tracker_if_missing(workspace_root: &Path, tracker_markdo
         return Ok(());
     }
     let task_file = workspace_root.join(".vtcode").join("tasks").join("current_task.md");
-    if task_file.exists() {
+    if tokio::fs::try_exists(&task_file).await.unwrap_or(false) {
         return Ok(());
     }
     if let Some(parent) = task_file.parent() {
@@ -82,7 +82,7 @@ pub async fn persist_plan_draft(state: &PlanningWorkflowState, plan_markdown: &s
     let existing_plan = read_file_with_context(&plan_file, "plan file").await.ok();
     let tracker_file = tracker_file_for_plan_file(&plan_file);
     let (existing_tracker, tracker_from_sidecar) = if let Some(path) = tracker_file.as_ref() {
-        if path.exists() {
+        if tokio::fs::try_exists(path).await.unwrap_or(false) {
             (read_file_with_context(path, "plan tracker file").await.ok(), true)
         } else {
             (

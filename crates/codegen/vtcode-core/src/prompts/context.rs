@@ -122,6 +122,26 @@ impl PromptContext {
         self.load_available_skills_with_home_dir(home_dir.as_deref());
     }
 
+    /// Load skill metadata without blocking the Tokio worker running prompt setup.
+    ///
+    /// The synchronous API remains available for callers outside an async
+    /// runtime; active agent setup should use this method because lightweight
+    /// discovery still traverses workspace and home-directory files.
+    pub async fn load_available_skills_async(&mut self) {
+        let Some(workspace) = self.workspace.clone() else {
+            return;
+        };
+        let Some(home_dir) = default_codex_home_dir() else {
+            return;
+        };
+
+        let result = tokio::task::spawn_blocking(move || collect_available_skill_metadata(&workspace, &home_dir)).await;
+        match result {
+            Ok(skills) => self.add_skill_metadata_entries(skills),
+            Err(error) => tracing::warn!(%error, "skill metadata discovery task failed"),
+        }
+    }
+
     pub fn replace_available_skills_with_named(&mut self, names: &[String]) {
         let home_dir = default_codex_home_dir();
         self.replace_available_skills_with_named_and_home_dir(names, home_dir.as_deref());
@@ -135,12 +155,7 @@ impl PromptContext {
             return;
         };
 
-        let bundled_skills_enabled = ConfigManager::load_from_workspace(workspace)
-            .map(|manager| manager.config().skills.bundled.enabled)
-            .unwrap_or(true);
-        let manager = SkillsManager::new_with_bundled_skills_enabled(home_dir.to_path_buf(), bundled_skills_enabled);
-        let outcome = manager.skills_metadata_lightweight(workspace);
-        self.add_skill_metadata_entries(outcome.skills.into_iter().filter(is_model_catalog_eligible).collect());
+        self.add_skill_metadata_entries(collect_available_skill_metadata(workspace, home_dir));
     }
 
     fn replace_available_skills_with_named_and_home_dir(&mut self, names: &[String], home_dir: Option<&Path>) {
@@ -214,6 +229,19 @@ impl PromptContext {
 
         context
     }
+}
+
+fn collect_available_skill_metadata(workspace: &Path, home_dir: &Path) -> Vec<SkillMetadata> {
+    let bundled_skills_enabled = ConfigManager::load_from_workspace(workspace)
+        .map(|manager| manager.config().skills.bundled.enabled)
+        .unwrap_or(true);
+    let manager = SkillsManager::new_with_bundled_skills_enabled(home_dir.to_path_buf(), bundled_skills_enabled);
+    manager
+        .skills_metadata_lightweight(workspace)
+        .skills
+        .into_iter()
+        .filter(is_model_catalog_eligible)
+        .collect()
 }
 
 fn default_codex_home_dir() -> Option<PathBuf> {

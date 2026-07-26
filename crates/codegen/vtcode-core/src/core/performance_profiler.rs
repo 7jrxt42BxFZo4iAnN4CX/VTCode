@@ -356,7 +356,7 @@ impl ResourceMonitor {
         // In a real system, you'd use system APIs or libraries like `sysinfo`
 
         ResourceMetrics {
-            memory_used_mb: Self::get_memory_usage_mb(),
+            memory_used_mb: Self::get_memory_usage_mb().await,
             cpu_percent: Self::get_cpu_usage_percent(),
             network_bytes_sent: 0,
             network_bytes_received: 0,
@@ -366,24 +366,35 @@ impl ResourceMonitor {
     }
 
     /// Get current memory usage in MB
-    fn get_memory_usage_mb() -> f64 {
+    async fn get_memory_usage_mb() -> f64 {
         // Simplified implementation - would use actual system APIs
-        #[cfg(target_os = "linux")]
-        {
-            if let Ok(contents) = std::fs::read_to_string("/proc/self/status") {
-                for line in contents.lines() {
-                    if line.starts_with("VmRSS:")
-                        && let Some(kb_str) = line.split_whitespace().nth(1)
-                        && let Ok(kb) = kb_str.parse::<f64>()
-                    {
-                        return kb / 1024.0; // Convert KB to MB
-                    }
-                }
+        let contents: Option<String> = {
+            #[cfg(target_os = "linux")]
+            {
+                tokio::fs::read_to_string("/proc/self/status").await.ok()
             }
+            #[cfg(not(target_os = "linux"))]
+            {
+                None
+            }
+        };
+        if let Some(contents) = contents
+            && let Some(memory_used_mb) = Self::parse_memory_usage_mb(&contents)
+        {
+            return memory_used_mb;
         }
 
         // Fallback estimation
         100.0
+    }
+
+    fn parse_memory_usage_mb(contents: &str) -> Option<f64> {
+        contents.lines().find_map(|line| {
+            line.strip_prefix("VmRSS:")
+                .and_then(|value| value.split_whitespace().next())
+                .and_then(|kb| kb.parse::<f64>().ok())
+                .map(|kb| kb / 1024.0)
+        })
     }
 
     /// Get current CPU usage percentage
@@ -522,6 +533,12 @@ mod tests {
         assert!(results.avg_duration_ns > 0);
 
         Ok(())
+    }
+
+    #[test]
+    fn parses_linux_memory_usage() {
+        let contents = "Name:\tvtcode\nVmRSS:\t2048 kB\n";
+        assert_eq!(ResourceMonitor::parse_memory_usage_mb(contents), Some(2.0));
     }
 
     #[tokio::test]

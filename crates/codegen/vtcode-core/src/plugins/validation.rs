@@ -198,13 +198,13 @@ impl PluginDebugger {
 /// Plugin validation CLI command handler
 pub async fn handle_plugin_validate(path: &Path) -> Result<()> {
     // Check if path exists
-    if !path.exists() {
+    if !tokio::fs::try_exists(path).await.unwrap_or(false) {
         anyhow::bail!("Plugin path does not exist: {}", path.display());
     }
 
     // Try to load the manifest
     let manifest_path = path.join(".vtcode-plugin/plugin.json");
-    if !manifest_path.exists() {
+    if !tokio::fs::try_exists(&manifest_path).await.unwrap_or(false) {
         anyhow::bail!("Plugin manifest not found at: {}", manifest_path.display());
     }
 

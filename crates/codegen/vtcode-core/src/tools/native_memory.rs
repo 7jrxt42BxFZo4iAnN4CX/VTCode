@@ -235,7 +235,7 @@ async fn execute_request(
 
 async fn view(root: &Path, path: &str) -> Result<String> {
     let resolved = resolve_virtual_path(root, path)?;
-    if !resolved.absolute.exists() {
+    if !tokio::fs::try_exists(&resolved.absolute).await.unwrap_or(false) {
         if path == MEMORIES_ROOT {
             return Ok("Directory /memories is empty.".to_string());
         }

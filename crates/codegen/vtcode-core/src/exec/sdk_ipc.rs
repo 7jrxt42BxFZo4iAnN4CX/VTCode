@@ -93,7 +93,7 @@ impl ToolIpcHandler {
     pub async fn read_request(&self) -> Result<Option<ToolRequest>> {
         let request_file = self.ipc_dir.join("request.json");
 
-        if !request_file.exists() {
+        if !fs::try_exists(&request_file).await.unwrap_or(false) {
             return Ok(None);
         }
 

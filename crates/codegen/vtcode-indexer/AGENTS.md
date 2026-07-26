@@ -20,6 +20,7 @@
 
 ## Gotchas
 
+- `FileIndexCache` builds traverse the workspace and use synchronous/Rayon work; keep them in `spawn_blocking` and preserve the single-build gate so Tokio workers remain responsive and concurrent misses do not stampede the filesystem.
 - `index_directory()` respects `.gitignore` via `ignore` crate's `WalkBuilder`.
 - `path_cache` is not used here — that's `vtcode-bash-runner`. Indexer uses `index_cache: HashMap`.
 - Binary/unreadable files are silently skipped (`ErrorKind::InvalidData`).

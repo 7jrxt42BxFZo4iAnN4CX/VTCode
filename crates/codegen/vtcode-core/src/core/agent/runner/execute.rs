@@ -86,7 +86,7 @@ impl AgentRunner {
             self._workspace.as_path(),
             prompt_tools.iter().map(|tool| tool.function_name().to_string()),
         );
-        prompt_context.load_available_skills();
+        prompt_context.load_available_skills_async().await;
 
         let (prompt, report) =
             super::helpers::compose_system_prompt_with_appendix(self._workspace.as_path(), &config, &prompt_context)
@@ -613,7 +613,7 @@ impl AgentRunner {
                     &runtime.state.messages,
                 );
                 let request_messages = match request_messages {
-                    std::borrow::Cow::Borrowed(_) => Arc::new(runtime.state.messages.clone()),
+                    std::borrow::Cow::Borrowed(_) => Arc::clone(&runtime.state.messages),
                     std::borrow::Cow::Owned(messages) => Arc::new(messages),
                 };
                 let request = build_harness_request_plan(HarnessRequestPlanInput {
@@ -713,11 +713,11 @@ impl AgentRunner {
                     &provider_name,
                     self.provider_client.supports_responses_compaction(&turn_model),
                 ) {
-                    runtime.state.set_previous_response_chain(
+                    runtime.state.set_previous_response_chain_shared(
                         &provider_name,
                         &turn_model,
                         response.request_id.as_deref(),
-                        (*sent_messages).clone(),
+                        Arc::clone(&sent_messages),
                     );
                 }
                 match crate::llm::usage_cost::estimate_session_costs(
@@ -1164,7 +1164,7 @@ impl AgentRunner {
             };
 
             let outcome = runtime.state.outcome.clone();
-            self.thread_handle.replace_messages(runtime.state.messages.clone());
+            self.thread_handle.replace_messages((*runtime.state.messages).clone());
             let summary = self.generate_task_summary(
                 &effective_task,
                 &runtime.state.modified_files,

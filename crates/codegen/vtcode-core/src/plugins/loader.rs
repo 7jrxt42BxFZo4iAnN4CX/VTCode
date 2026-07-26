@@ -50,13 +50,13 @@ impl PluginLoader {
 
     /// Install plugin from local directory
     async fn install_from_local(&self, source_path: PathBuf) -> PluginResult<PathBuf> {
-        if !source_path.exists() {
+        if !fs::try_exists(&source_path).await.unwrap_or(false) {
             return Err(PluginError::LoadingError(format!("Source path does not exist: {}", source_path.display())));
         }
 
         // Validate that it contains a plugin manifest
         let manifest_path = source_path.join(".vtcode-plugin/plugin.json");
-        if !manifest_path.exists() {
+        if !fs::try_exists(&manifest_path).await.unwrap_or(false) {
             return Err(PluginError::ManifestValidationError(format!(
                 "Plugin manifest not found in source: {}",
                 manifest_path.display()
@@ -123,7 +123,7 @@ impl PluginLoader {
 
         // Verify that the plugin manifest exists in the installed directory
         let manifest_path = install_dir.join(".vtcode-plugin/plugin.json");
-        if !manifest_path.exists() {
+        if !fs::try_exists(&manifest_path).await.unwrap_or(false) {
             return Err(PluginError::ManifestValidationError(
                 "Plugin manifest not found in cloned repository".to_string(),
             ));
@@ -200,7 +200,7 @@ impl PluginLoader {
     pub async fn uninstall_plugin(&self, plugin_name: &str) -> PluginResult<()> {
         let plugin_dir = self.plugins_dir.join(plugin_name);
 
-        if !plugin_dir.exists() {
+        if !fs::try_exists(&plugin_dir).await.unwrap_or(false) {
             return Err(PluginError::NotFound(plugin_name.to_string().into()));
         }
 
@@ -219,7 +219,7 @@ impl PluginLoader {
     pub async fn list_installed_plugins(&self) -> PluginResult<Vec<String>> {
         let mut plugins = Vec::new();
 
-        if !self.plugins_dir.exists() {
+        if !fs::try_exists(&self.plugins_dir).await.unwrap_or(false) {
             return Ok(plugins);
         }
 
@@ -233,10 +233,10 @@ impl PluginLoader {
             .map_err(|e| PluginError::LoadingError(format!("Failed to read directory entry: {e}")))?
         {
             let path = entry.path();
-            if path.is_dir() {
+            if fs::metadata(&path).await.map(|metadata| metadata.is_dir()).unwrap_or(false) {
                 // Check if it contains a plugin manifest
                 let manifest_path = path.join(".vtcode-plugin/plugin.json");
-                if manifest_path.exists()
+                if fs::try_exists(&manifest_path).await.unwrap_or(false)
                     && let Some(name) = path.file_name()
                 {
                     plugins.push(name.to_string_lossy().to_string());
@@ -250,7 +250,7 @@ impl PluginLoader {
     /// Copy directory recursively
     async fn copy_directory(&self, src: &Path, dst: &Path) -> PluginResult<()> {
         Box::pin(async {
-            if !src.is_dir() {
+            if !fs::metadata(src).await.map(|metadata| metadata.is_dir()).unwrap_or(false) {
                 return Err(PluginError::LoadingError(format!("Source is not a directory: {}", src.display())));
             }
 
@@ -270,7 +270,7 @@ impl PluginLoader {
                 let src_path = entry.path();
                 let dst_path = dst.join(entry.file_name());
 
-                if src_path.is_dir() {
+                if fs::metadata(&src_path).await.map(|metadata| metadata.is_dir()).unwrap_or(false) {
                     self.copy_directory(&src_path, &dst_path).await?;
                 } else {
                     fs::copy(&src_path, &dst_path)

@@ -483,7 +483,7 @@ impl TaskTrackerTool {
             .await
             .with_context(|| format!("Failed to write plan task tracker file: {}", tracker_file.display()))?;
         if let Some(plan_file) = plan_file_for_tracker_file(tracker_file)
-            && plan_file.exists()
+            && tokio::fs::try_exists(&plan_file).await.unwrap_or(false)
         {
             sync_tracker_into_plan_file(&plan_file, &checklist.to_plan_markdown()).await?;
         }
@@ -500,7 +500,7 @@ impl TaskTrackerTool {
 
     async fn load_global_checklist(&self) -> Result<Option<TaskChecklist>> {
         let file = self.task_file();
-        if !file.exists() {
+        if !tokio::fs::try_exists(&file).await.unwrap_or(false) {
             return Ok(None);
         }
         let content = read_file_with_context(&file, "task checklist").await?;
@@ -561,7 +561,7 @@ impl TaskTrackerTool {
     }
 
     async fn load_plan_checklist_from(&self, tracker_file: &Path) -> Result<Option<TaskChecklist>> {
-        if !tracker_file.exists() {
+        if !tokio::fs::try_exists(tracker_file).await.unwrap_or(false) {
             return Ok(None);
         }
         let content = read_file_with_context(tracker_file, "plan task tracker file").await?;
@@ -572,8 +572,11 @@ impl TaskTrackerTool {
         let task_file = self.task_file();
         let plan_file = self.plan_task_file().await;
 
-        let global_exists = task_file.exists();
-        let plan_exists = plan_file.as_ref().is_some_and(|path| path.exists());
+        let global_exists = tokio::fs::try_exists(&task_file).await.unwrap_or(false);
+        let plan_exists = match plan_file.as_ref() {
+            Some(path) => tokio::fs::try_exists(path).await.unwrap_or(false),
+            None => false,
+        };
 
         if !global_exists && !plan_exists {
             return Ok(None);

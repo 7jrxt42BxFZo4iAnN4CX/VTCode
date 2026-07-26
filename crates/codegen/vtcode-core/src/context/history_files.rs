@@ -344,7 +344,7 @@ impl HistoryFileManager {
 
     /// Cleanup old history files beyond the limit (async)
     async fn cleanup_old_files(&self) -> Result<()> {
-        if !self.history_dir.exists() {
+        if !async_fs::try_exists(&self.history_dir).await.unwrap_or(false) {
             return Ok(());
         }
 

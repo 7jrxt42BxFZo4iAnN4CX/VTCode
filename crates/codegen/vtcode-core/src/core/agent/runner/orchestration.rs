@@ -599,7 +599,7 @@ async fn load_changed_file_snapshots(workspace_root: &std::path::Path, files: &[
     let mut remaining = MAX_TOTAL_CHARS;
     for file in files.iter().take(MAX_FILES) {
         let path = workspace_root.join(file);
-        if !path.exists() {
+        if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
             continue;
         }
         let Ok(content) = tokio::fs::read_to_string(&path).await else {

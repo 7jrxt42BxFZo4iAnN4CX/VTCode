@@ -549,7 +549,7 @@ impl PlanningTaskTrackerTool {
 
     async fn load_document(&self) -> Result<Option<PlanTaskDocument>> {
         let tracker_file = self.tracker_file().await?;
-        if !tracker_file.exists() {
+        if !tokio::fs::try_exists(&tracker_file).await.unwrap_or(false) {
             return Ok(None);
         }
         let content = read_file_with_context(&tracker_file, "plan task tracker file").await?;
@@ -621,7 +621,7 @@ impl PlanningTaskTrackerTool {
         let tracker_file = self.save_document(document).await?;
         self.mirror_global_task_file(document).await?;
         if let Some(plan_file) = self.state.get_plan_file().await
-            && plan_file.exists()
+            && tokio::fs::try_exists(&plan_file).await.unwrap_or(false)
         {
             sync_tracker_into_plan_file(&plan_file, &document.to_markdown()).await?;
         }

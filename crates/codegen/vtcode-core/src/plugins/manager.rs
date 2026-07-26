@@ -173,7 +173,7 @@ impl PluginManager {
         let mut errors: MultiErrors<String> = MultiErrors::new();
 
         for root in roots {
-            if !root.exists() {
+            if !tokio::fs::try_exists(root).await.unwrap_or(false) {
                 debug!("workspace root does not exist, skipping: {}", root.display());
                 continue;
             }
@@ -183,7 +183,7 @@ impl PluginManager {
                     for plugin_info in &plugins {
                         // Use version from plugin.json to determine if update is needed
                         if let Some(existing) = self.get_cached_plugin(&plugin_info.name).await
-                            && existing.exists()
+                            && tokio::fs::try_exists(&existing).await.unwrap_or(false)
                             && plugin_info.version_matches_existing(&existing).await
                         {
                             debug!("plugin '{}' version unchanged, skipping cache update", plugin_info.name);
@@ -215,7 +215,7 @@ impl PluginManager {
         let plugin_roots = vec![root.join(".vtcode").join("plugins"), root.join("plugins")];
 
         for plugin_root in plugin_roots {
-            if !plugin_root.exists() {
+            if !tokio::fs::try_exists(&plugin_root).await.unwrap_or(false) {
                 continue;
             }
 
@@ -240,7 +240,7 @@ impl PluginManager {
             for plugin_dir in dirs {
                 let manifest_path = plugin_dir.join(".vtcode-plugin").join("plugin.json");
 
-                if !manifest_path.exists() {
+                if !tokio::fs::try_exists(&manifest_path).await.unwrap_or(false) {
                     continue;
                 }
 
@@ -312,7 +312,7 @@ impl DiscoveredPluginInfo {
 
         // Try to read the cached manifest and compare versions
         let cached_manifest_path = existing_path.join(".vtcode-plugin").join("plugin.json");
-        if !cached_manifest_path.exists() {
+        if !tokio::fs::try_exists(&cached_manifest_path).await.unwrap_or(false) {
             return false;
         }
 

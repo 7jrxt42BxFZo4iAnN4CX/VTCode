@@ -118,13 +118,20 @@ impl Tool for StartPlanningTool {
         });
 
         let workspace_root = self.state.workspace_root().unwrap_or_else(|| PathBuf::from("."));
-        let validation_hints = detect_validation_command_hints(&workspace_root);
+        let validation_workspace = workspace_root.clone();
+        let validation_hints =
+            tokio::task::spawn_blocking(move || detect_validation_command_hints(&validation_workspace))
+                .await
+                .context("Validation command discovery task panicked")?;
 
         // Check if already in planning workflow
         if self.state.is_active() {
             let fallback_plan_name = self.generate_plan_name(args.plan_name.as_deref());
             let existing_plan_file = self.state.get_plan_file().await;
-            let existing_plan_file_exists = existing_plan_file.as_ref().is_some_and(|path| path.exists());
+            let existing_plan_file_exists = match existing_plan_file.as_ref() {
+                Some(path) => tokio::fs::try_exists(path).await.unwrap_or(false),
+                None => false,
+            };
 
             if existing_plan_file_exists {
                 return Ok(json!({
@@ -150,7 +157,7 @@ impl Tool for StartPlanningTool {
             }
 
             let mut created_plan_file = false;
-            if !plan_file.exists() {
+            if !tokio::fs::try_exists(&plan_file).await.unwrap_or(false) {
                 created_plan_file = true;
                 initialize_plan_file(&plan_file, &plan_title, args.description.as_deref(), &validation_hints).await?;
             }

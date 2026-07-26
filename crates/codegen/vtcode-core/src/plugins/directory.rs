@@ -84,9 +84,9 @@ impl PluginTemplate {
     async fn create_example_files(plugin_dir: &Path, manifest: &PluginManifest) -> PluginResult<()> {
         // Create an example command if commands directory exists
         let commands_dir = plugin_dir.join("commands");
-        if commands_dir.exists() {
+        if fs::try_exists(&commands_dir).await.unwrap_or(false) {
             let example_command = commands_dir.join("example.md");
-            if !example_command.exists() {
+            if !fs::try_exists(&example_command).await.unwrap_or(false) {
                 let example_content = format!(
                     r#"---
 name: {plugin_name}-example
@@ -119,9 +119,9 @@ This command demonstrates how to create a plugin command for VT Code.
 
         // Create an example agent if agents directory exists
         let agents_dir = plugin_dir.join("agents");
-        if agents_dir.exists() {
+        if fs::try_exists(&agents_dir).await.unwrap_or(false) {
             let example_agent = agents_dir.join("example.md");
-            if !example_agent.exists() {
+            if !fs::try_exists(&example_agent).await.unwrap_or(false) {
                 let example_content = format!(
                     r#"---
 description: Example agent for {plugin_name} plugin
@@ -149,14 +149,14 @@ This agent can be used to demonstrate how agents work in VT Code plugins.
 
         // Create an example skill if skills directory exists
         let skills_dir = plugin_dir.join("skills");
-        if skills_dir.exists() {
+        if fs::try_exists(&skills_dir).await.unwrap_or(false) {
             let example_skill_dir = skills_dir.join("example-skill");
             fs::create_dir_all(&example_skill_dir)
                 .await
                 .map_err(|e| PluginError::LoadingError(format!("Failed to create example skill directory: {e}")))?;
 
             let skill_md = example_skill_dir.join("SKILL.md");
-            if !skill_md.exists() {
+            if !fs::try_exists(&skill_md).await.unwrap_or(false) {
                 let example_content = format!(
                     r#"---
 name: {plugin_name}-example-skill
@@ -185,9 +185,9 @@ This skill demonstrates how to create a model-invoked capability in VT Code.
 
         // Create an example hooks config if hooks directory exists
         let hooks_dir = plugin_dir.join("hooks");
-        if hooks_dir.exists() {
+        if fs::try_exists(&hooks_dir).await.unwrap_or(false) {
             let hooks_config = hooks_dir.join("hooks.json");
-            if !hooks_config.exists() {
+            if !fs::try_exists(&hooks_config).await.unwrap_or(false) {
                 let example_content = r#"{
   "hooks": {
     "PostToolUse": [
@@ -212,7 +212,7 @@ This skill demonstrates how to create a model-invoked capability in VT Code.
         // Create an example MCP config if MCP servers are specified
         if manifest.mcp_servers.is_some() {
             let mcp_config = plugin_dir.join(".mcp.json");
-            if !mcp_config.exists() {
+            if !fs::try_exists(&mcp_config).await.unwrap_or(false) {
                 let example_content = r#"{
   "example-server": {
     "command": "node",
@@ -231,7 +231,7 @@ This skill demonstrates how to create a model-invoked capability in VT Code.
         // Create an example LSP config if LSP servers are specified
         if manifest.lsp_servers.is_some() {
             let lsp_config = plugin_dir.join(".lsp.json");
-            if !lsp_config.exists() {
+            if !fs::try_exists(&lsp_config).await.unwrap_or(false) {
                 let example_content = r#"{
   "example-lsp": {
     "command": "example-lsp-server",
@@ -274,7 +274,7 @@ This skill demonstrates how to create a model-invoked capability in VT Code.
     /// Validate plugin directory structure
     pub async fn validate_plugin_structure(plugin_dir: &Path) -> PluginResult<()> {
         // Check if plugin directory exists
-        if !plugin_dir.exists() {
+        if !fs::try_exists(plugin_dir).await.unwrap_or(false) {
             return Err(PluginError::LoadingError(format!(
                 "Plugin directory does not exist: {}",
                 plugin_dir.display()
@@ -283,7 +283,7 @@ This skill demonstrates how to create a model-invoked capability in VT Code.
 
         // Check if manifest exists
         let manifest_path = plugin_dir.join(".vtcode-plugin/plugin.json");
-        if !manifest_path.exists() {
+        if !fs::try_exists(&manifest_path).await.unwrap_or(false) {
             return Err(PluginError::ManifestValidationError(format!(
                 "Plugin manifest not found at: {}",
                 manifest_path.display()

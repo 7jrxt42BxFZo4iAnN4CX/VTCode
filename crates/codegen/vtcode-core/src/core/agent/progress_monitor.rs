@@ -115,6 +115,21 @@ impl ProgressMonitor {
         Self::with_sink(ledger, Box::new(SessionProgressSink::new(workspace)))
     }
 
+    /// Create a persistent monitor without performing the initial ledger read
+    /// on the Tokio worker running task setup.
+    pub async fn with_persistence_async(workspace: PathBuf, session_id: &str, goal: &str) -> Self {
+        let load_workspace = workspace.clone();
+        let load_session_id = session_id.to_string();
+        let fallback_goal = goal.to_string();
+        let ledger = tokio::task::spawn_blocking(move || load_progress(&load_workspace, &load_session_id))
+            .await
+            .ok()
+            .and_then(|result| result.ok())
+            .flatten()
+            .unwrap_or_else(|| ProgressLedger::new(session_id, &fallback_goal));
+        Self::with_sink(ledger, Box::new(SessionProgressSink::new(workspace)))
+    }
+
     /// Borrow the current ledger snapshot.
     #[must_use]
     pub fn ledger(&self) -> &ProgressLedger {

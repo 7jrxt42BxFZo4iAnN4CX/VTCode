@@ -248,7 +248,7 @@ impl MemoryTopic {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct PersistentMemoryFiles {
     directory: PathBuf,
     summary_file: PathBuf,
@@ -355,7 +355,7 @@ pub async fn read_persistent_memory_excerpt(
     let status = tokio::task::spawn_blocking(move || persistent_memory_status(&config_clone, &workspace_root))
         .await
         .context("Persistent memory status task panicked")??;
-    if !status.summary_file.exists() {
+    if !tokio::fs::try_exists(&status.summary_file).await.unwrap_or(false) {
         return Ok(None);
     }
 
@@ -496,7 +496,7 @@ async fn write_classified_memory(
     let notes = read_note_summaries(&files.notes_dir).await?;
     let mut created_files = Vec::new();
     async fn write_if_missing(path: &Path, contents: String, created_files: &mut Vec<PathBuf>) -> Result<()> {
-        if !path.exists() {
+        if !tokio::fs::try_exists(path).await.unwrap_or(false) {
             created_files.push(path.to_path_buf());
         }
         tokio::fs::write(path, contents)
@@ -555,7 +555,7 @@ pub async fn cleanup_persistent_memory(
     let mut created_files = Vec::new();
     ensure_memory_layout(&files, &mut created_files).await?;
 
-    let status = detect_memory_cleanup_status(&files)?;
+    let status = detect_memory_cleanup_status_async(&files).await?;
     if !status.needed && !include_summary_only_signals {
         return Ok(Some(PersistentMemoryCleanupReport {
             directory: files.directory,
@@ -605,7 +605,7 @@ pub async fn list_persistent_memory_candidates(
         .await
         .context("Persistent memory directory resolution task panicked")??
         .context("persistent memory directory should resolve when enabled")?;
-    if !directory.exists() {
+    if !tokio::fs::try_exists(&directory).await.unwrap_or(false) {
         return Ok(Some(Vec::new()));
     }
 
@@ -630,7 +630,7 @@ pub async fn find_persistent_memory_matches(
         .await
         .context("Persistent memory directory resolution task panicked")??
         .context("persistent memory directory should resolve when enabled")?;
-    if !directory.exists() {
+    if !tokio::fs::try_exists(&directory).await.unwrap_or(false) {
         return Ok(Some(Vec::new()));
     }
 
@@ -728,7 +728,7 @@ pub async fn forget_planned_persistent_memory_matches(
         .context("Persistent memory directory resolution task panicked")??
         .context("persistent memory directory should resolve when enabled")?;
     let files = PersistentMemoryFiles::new(directory);
-    if !files.directory.exists() {
+    if !tokio::fs::try_exists(&files.directory).await.unwrap_or(false) {
         return Ok(Some(PersistentMemoryForgetReport {
             directory: files.directory,
             summary_file: files.summary_file,
@@ -745,7 +745,7 @@ pub async fn forget_planned_persistent_memory_matches(
     removed_facts +=
         rewrite_topic_without_selected(&files.repository_facts_file, MemoryTopic::RepositoryFacts, &selected).await?;
 
-    let rollout_files = list_rollout_markdown_files(&files.rollout_summaries_dir)?;
+    let rollout_files = list_rollout_markdown_files_async(&files.rollout_summaries_dir).await?;
     for path in rollout_files {
         removed_facts += scrub_rollout_file_by_selection(&path, &selected).await?;
     }
@@ -764,7 +764,7 @@ pub async fn forget_planned_persistent_memory_matches(
         summary_file: files.summary_file,
         memory_file: files.memory_file,
         removed_facts,
-        pending_rollout_summaries: count_pending_rollout_summaries(&files.rollout_summaries_dir)?,
+        pending_rollout_summaries: count_pending_rollout_summaries_async(&files.rollout_summaries_dir).await?,
     }))
 }
 
@@ -805,7 +805,7 @@ async fn persist_memory_internal(
     ensure_memory_layout(&files, &mut created_files).await?;
 
     let facts_slice = facts_input.as_slice();
-    if detect_memory_cleanup_status(&files)?.needed && (write_rollout || !facts_slice.is_empty()) {
+    if detect_memory_cleanup_status_async(&files).await?.needed && (write_rollout || !facts_slice.is_empty()) {
         bail!("persistent memory cleanup is required before mutating memory");
     }
 
@@ -840,12 +840,11 @@ async fn persist_memory_internal(
         None
     };
 
-    let pending_before = list_pending_rollout_files(&files.rollout_summaries_dir)?;
-    let should_consolidate = force_rebuild
-        || staged_rollout.is_some()
-        || !pending_before.is_empty()
-        || !files.summary_file.exists()
-        || !files.memory_file.exists();
+    let pending_before = list_pending_rollout_files_async(&files.rollout_summaries_dir).await?;
+    let (summary_exists, memory_exists) =
+        tokio::try_join!(tokio::fs::try_exists(&files.summary_file), tokio::fs::try_exists(&files.memory_file),)?;
+    let should_consolidate =
+        force_rebuild || staged_rollout.is_some() || !pending_before.is_empty() || !summary_exists || !memory_exists;
     if !should_consolidate {
         return Ok(None);
     }
@@ -862,7 +861,7 @@ async fn persist_memory_internal(
         rollout_summary_file: staged_rollout.map(finalize_rollout_summary_path),
         created_files,
         added_facts: consolidated.added_facts,
-        pending_rollout_summaries: count_pending_rollout_summaries(&files.rollout_summaries_dir)?,
+        pending_rollout_summaries: count_pending_rollout_summaries_async(&files.rollout_summaries_dir).await?,
     }))
 }
 
@@ -884,7 +883,7 @@ fn classified_facts_from_records(records: &[GroundedFactRecord]) -> ClassifiedFa
 
 async fn ensure_memory_layout(files: &PersistentMemoryFiles, created_files: &mut Vec<PathBuf>) -> Result<()> {
     async fn ensure_file(path: &Path, contents: String, created_files: &mut Vec<PathBuf>) -> Result<()> {
-        if path.exists() {
+        if tokio::fs::try_exists(path).await.unwrap_or(false) {
             return Ok(());
         }
         tokio::fs::write(path, contents)
@@ -940,7 +939,7 @@ fn truncate_memory_excerpt(contents: &str, line_limit: usize, byte_limit: usize)
 
 async fn read_existing_memory_lines(directory: &Path) -> Result<BTreeSet<String>> {
     let mut lines = BTreeSet::new();
-    if !directory.exists() {
+    if !tokio::fs::try_exists(directory).await.unwrap_or(false) {
         return Ok(lines);
     }
     let mut stack = vec![directory.to_path_buf()];
@@ -1020,6 +1019,13 @@ fn detect_memory_cleanup_status(files: &PersistentMemoryFiles) -> Result<MemoryC
         suspicious_facts,
         suspicious_summary_lines,
     })
+}
+
+async fn detect_memory_cleanup_status_async(files: &PersistentMemoryFiles) -> Result<MemoryCleanupStatus> {
+    let files = files.clone();
+    tokio::task::spawn_blocking(move || detect_memory_cleanup_status(&files))
+        .await
+        .context("Persistent memory cleanup status task panicked")?
 }
 
 fn count_suspicious_facts_in_file(path: &Path) -> Result<usize> {
@@ -1192,21 +1198,46 @@ fn list_pending_rollout_files(rollout_dir: &Path) -> Result<Vec<PathBuf>> {
     list_md_files(rollout_dir, |n| n.ends_with(".pending.md"))
 }
 
+async fn list_pending_rollout_files_async(rollout_dir: &Path) -> Result<Vec<PathBuf>> {
+    let rollout_dir = rollout_dir.to_path_buf();
+    tokio::task::spawn_blocking(move || list_pending_rollout_files(&rollout_dir))
+        .await
+        .context("Pending rollout scan task panicked")?
+}
+
 fn list_rollout_markdown_files(rollout_dir: &Path) -> Result<Vec<PathBuf>> {
     list_md_files(rollout_dir, |_| true)
+}
+
+async fn list_rollout_markdown_files_async(rollout_dir: &Path) -> Result<Vec<PathBuf>> {
+    let rollout_dir = rollout_dir.to_path_buf();
+    tokio::task::spawn_blocking(move || list_rollout_markdown_files(&rollout_dir))
+        .await
+        .context("Rollout markdown scan task panicked")?
 }
 
 fn list_note_markdown_files(notes_dir: &Path) -> Result<Vec<PathBuf>> {
     list_md_files(notes_dir, |_| true)
 }
 
+async fn list_note_markdown_files_async(notes_dir: &Path) -> Result<Vec<PathBuf>> {
+    let notes_dir = notes_dir.to_path_buf();
+    tokio::task::spawn_blocking(move || list_note_markdown_files(&notes_dir))
+        .await
+        .context("Note markdown scan task panicked")?
+}
+
 fn count_pending_rollout_summaries(rollout_dir: &Path) -> Result<usize> {
     Ok(list_md_files(rollout_dir, |n| n.ends_with(".pending.md"))?.len())
 }
 
+async fn count_pending_rollout_summaries_async(rollout_dir: &Path) -> Result<usize> {
+    Ok(list_pending_rollout_files_async(rollout_dir).await?.len())
+}
+
 async fn read_note_summaries(notes_dir: &Path) -> Result<Vec<MemoryNoteSummary>> {
     let mut notes = Vec::new();
-    for path in list_note_markdown_files(notes_dir)? {
+    for path in list_note_markdown_files_async(notes_dir).await? {
         let content = tokio::fs::read_to_string(&path)
             .await
             .with_context(|| format!("Failed to read {}", path.display()))?;
@@ -1240,7 +1271,7 @@ async fn consolidate_memory_files(
     workspace_root: &Path,
     files: &PersistentMemoryFiles,
 ) -> Result<ConsolidationResult> {
-    let pending_files = list_pending_rollout_files(&files.rollout_summaries_dir)?;
+    let pending_files = list_pending_rollout_files_async(&files.rollout_summaries_dir).await?;
     let prefs_existing = read_topic_records(&files.preferences_file, MemoryTopic::Preferences).await?;
     let repo_existing = read_topic_records(&files.repository_facts_file, MemoryTopic::RepositoryFacts).await?;
     let rollout = read_rollout_records(&files.rollout_summaries_dir).await?;
@@ -1257,7 +1288,7 @@ async fn consolidate_memory_files(
     }
     for pending in &pending_files {
         let finalized = finalize_rollout_summary_path(pending.clone());
-        if !finalized.exists() {
+        if !tokio::fs::try_exists(&finalized).await.unwrap_or(false) {
             tokio::fs::rename(pending, &finalized)
                 .await
                 .with_context(|| format!("Failed to finalize rollout summary {}", pending.display()))?;
@@ -1271,7 +1302,7 @@ async fn consolidate_memory_files(
 }
 
 async fn read_topic_records(path: &Path, topic: MemoryTopic) -> Result<Vec<GroundedFactRecord>> {
-    if !path.exists() {
+    if !tokio::fs::try_exists(path).await.unwrap_or(false) {
         return Ok(Vec::new());
     }
     let contents = tokio::fs::read_to_string(path)
@@ -1287,7 +1318,7 @@ async fn read_topic_records(path: &Path, topic: MemoryTopic) -> Result<Vec<Groun
 }
 
 async fn read_rollout_records(rollout_dir: &Path) -> Result<(Vec<GroundedFactRecord>, Vec<GroundedFactRecord>)> {
-    if !rollout_dir.exists() {
+    if !tokio::fs::try_exists(rollout_dir).await.unwrap_or(false) {
         return Ok((Vec::new(), Vec::new()));
     }
     let mut prefs = Vec::new();
@@ -1350,7 +1381,7 @@ async fn rewrite_topic_without_selected(
     topic: MemoryTopic,
     selected: &[MemoryOpCandidate],
 ) -> Result<usize> {
-    if !path.exists() {
+    if !tokio::fs::try_exists(path).await.unwrap_or(false) {
         return Ok(0);
     }
     let keys = selection_keys(selected);

@@ -29,7 +29,7 @@ impl PluginCache {
     /// Cache a plugin from its source path
     pub async fn cache_plugin(&mut self, plugin_id: &str, source_path: &Path) -> PluginResult<PathBuf> {
         // Validate source path exists
-        if !source_path.exists() {
+        if !fs::try_exists(source_path).await.unwrap_or(false) {
             return Err(PluginError::LoadingError(format!("Source path does not exist: {}", source_path.display())));
         }
 
@@ -42,7 +42,7 @@ impl PluginCache {
         let cache_path = self.cache_dir.join(plugin_id);
 
         // Remove existing cache if it exists
-        if cache_path.exists() {
+        if fs::try_exists(&cache_path).await.unwrap_or(false) {
             fs::remove_dir_all(&cache_path)
                 .await
                 .map_err(|e| PluginError::LoadingError(format!("Failed to remove existing cache: {e}")))?;
@@ -76,7 +76,7 @@ impl PluginCache {
                 let src_path = entry.path();
                 let dst_path = destination.join(entry.file_name());
 
-                if src_path.is_dir() {
+                if fs::metadata(&src_path).await.map(|metadata| metadata.is_dir()).unwrap_or(false) {
                     // Skip directories that are outside the plugin root (for security)
                     if self.is_valid_plugin_subdirectory(&src_path) {
                         self.copy_plugin_to_cache(&src_path, &dst_path).await?;
@@ -109,7 +109,7 @@ impl PluginCache {
     /// Remove cached plugin
     pub async fn remove_cached_plugin(&mut self, plugin_id: &str) -> PluginResult<()> {
         if let Some(cache_path) = self.cached_plugins.get(plugin_id) {
-            if cache_path.exists() {
+            if fs::try_exists(cache_path).await.unwrap_or(false) {
                 fs::remove_dir_all(cache_path)
                     .await
                     .map_err(|e| PluginError::LoadingError(format!("Failed to remove cached plugin: {e}")))?;
@@ -121,7 +121,7 @@ impl PluginCache {
 
     /// Clear entire cache
     pub async fn clear_cache(&mut self) -> PluginResult<()> {
-        if self.cache_dir.exists() {
+        if fs::try_exists(&self.cache_dir).await.unwrap_or(false) {
             fs::remove_dir_all(&self.cache_dir)
                 .await
                 .map_err(|e| PluginError::LoadingError(format!("Failed to clear cache: {e}")))?;

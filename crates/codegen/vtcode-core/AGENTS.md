@@ -26,4 +26,7 @@
 - `RetryPolicyCoreExt` must be imported for domain retry methods.
 - Budget decisions belong to `llm/usage_cost.rs` and `BudgetStatus::classify`; do not re-derive them at call sites.
 - Compaction preserves conversation; `context_reset.rs` intentionally discards it.
+- `AgentSessionState.messages` is `Arc<Vec<Message>>`; use `messages_mut()`/`Arc::make_mut` for mutations so request and continuation histories stay shared without deep copies.
+- Async plugin, skill, file-tool, planning, and persistent-memory paths must use Tokio filesystem APIs or `spawn_blocking` for recursive/synchronous scans; never put blocking discovery or Git work on Tokio workers.
+- The durable scheduler's one-second loop must keep record loading, claim files, and runtime persistence on `spawn_blocking`.
 - Token/catalog deferral thresholds are correct behavior; warn only when deferral is disabled but beneficial.

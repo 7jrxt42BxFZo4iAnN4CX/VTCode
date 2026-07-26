@@ -65,6 +65,10 @@ impl FileOpsTool {
             return Err(anyhow!("Path '{}' is excluded by .vtcodegitignore", input.path));
         }
 
+        let base_metadata = tokio::fs::metadata(&base).await.ok();
+        let base_is_dir = base_metadata.as_ref().is_some_and(std::fs::Metadata::is_dir);
+        let base_is_file = base_metadata.as_ref().is_some_and(std::fs::Metadata::is_file);
+
         // Try to get result from cache first for directories
         let cache_key = format!(
             "dir_list:{}:hidden={}:glob={}",
@@ -72,15 +76,13 @@ impl FileOpsTool {
             input.include_hidden,
             input.glob_pattern.as_deref().unwrap_or("")
         );
-        if base.is_dir()
-            && let Some(cached_result) = FILE_CACHE.get_directory(&cache_key).await
-        {
+        if base_is_dir && let Some(cached_result) = FILE_CACHE.get_directory(&cache_key).await {
             return Ok(cached_result);
         }
 
         // Pre-allocate with reasonable estimate for directory entries
         let mut all_items = Vec::with_capacity(32);
-        if base.is_file() {
+        if base_is_file {
             let file_name = base
                 .file_name()
                 .ok_or_else(|| anyhow!("Invalid file name for path: {}", input.path))?;
@@ -150,9 +152,9 @@ impl FileOpsTool {
         } else {
             warn!(
                 path = %input.path,
-                exists = base.exists(),
-                is_file = base.is_file(),
-                is_dir = base.is_dir(),
+                exists = base_metadata.is_some(),
+                is_file = base_is_file,
+                is_dir = base_is_dir,
                 "Path does not exist or is neither file nor directory"
             );
             let suggestion = self.missing_path_suggestion_suffix(&input.path, PathSuggestionKind::Any).await;

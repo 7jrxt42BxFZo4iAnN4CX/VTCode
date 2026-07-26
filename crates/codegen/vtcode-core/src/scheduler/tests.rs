@@ -249,6 +249,7 @@ async fn scheduler_daemon_records_prompt_spawn_failures() {
     assert!(record.runtime.last_run_at.is_some());
     assert!(record.runtime.next_run_at.is_none());
     assert!(matches!(record.runtime.last_status, Some(TaskRunStatus::Failed { .. })));
+    assert!(!store.paths().claim_path(&summary.id).exists());
 }
 
 #[test]

@@ -30,11 +30,10 @@ pub struct AgentSessionState {
 
     /// Standardized conversation messages (OpenAI/Anthropic style).
     ///
-    /// Stored as a plain `Vec` so mutations (push tool result, add user
-    /// message) are O(1) — no `Arc::make_mut` clone storm on long histories.
-    /// The single-threaded agent loop holds `&mut self` for the duration of
-    /// a turn, so no interior mutability is needed.
-    pub messages: Vec<Message>,
+    /// Stored in an `Arc` so request construction can share the history with
+    /// the provider without cloning the full conversation every turn.
+    /// Mutations use copy-on-write; the common unique-owner path remains O(1).
+    pub messages: Arc<Vec<Message>>,
 
     /// Schema version for durable state persistence.
     pub schema_version: SchemaVersion,
@@ -150,7 +149,7 @@ impl AgentSessionState {
             session_id,
             schema_version: SchemaVersion::CURRENT,
             conversation: Vec::new(),
-            messages: Vec::new(),
+            messages: Arc::new(Vec::new()),
             stats: SessionStats::default(),
             auto_compact_suppressed: crate::compaction::SUPPRESS_NONE,
             constraints: SessionConstraints { max_turns, max_tool_loops, max_context_tokens },
@@ -278,6 +277,20 @@ impl AgentSessionState {
         response_id: Option<&str>,
         messages: Vec<Message>,
     ) {
+        self.set_previous_response_chain_shared(provider, model, response_id, Arc::new(messages));
+    }
+
+    /// Store a continuation history that is already reference-counted.
+    ///
+    /// The runtime keeps the exact sent request history alive for provider
+    /// continuation without cloning every message a second time.
+    pub(crate) fn set_previous_response_chain_shared(
+        &mut self,
+        provider: &str,
+        model: &str,
+        response_id: Option<&str>,
+        messages: Arc<Vec<Message>>,
+    ) {
         let Some(key) = responses_continuation_key(provider, model) else {
             return;
         };
@@ -286,13 +299,8 @@ impl AgentSessionState {
             return;
         };
 
-        self.previous_response_chains.insert(
-            key,
-            ResponsesContinuationState {
-                response_id: response_id.to_string(),
-                messages: Arc::new(messages),
-            },
-        );
+        self.previous_response_chains
+            .insert(key, ResponsesContinuationState { response_id: response_id.to_string(), messages });
     }
 
     pub fn clear_previous_response_chain_for(&mut self, provider: &str, model: &str) {
@@ -316,10 +324,10 @@ impl AgentSessionState {
 
     /// Mutable access to the conversation history.
     ///
-    /// O(1) direct mutable borrow — no clone-on-write.
+    /// Returns mutable history with copy-on-write when a request still shares it.
     #[inline]
     pub fn messages_mut(&mut self) -> &mut Vec<Message> {
-        &mut self.messages
+        Arc::make_mut(&mut self.messages)
     }
 
     /// Add a user message to the history with metadata.
@@ -565,6 +573,7 @@ mod tests {
     use crate::config::types::ReasoningEffortLevel;
     use crate::llm::provider::Message;
     use crate::llm::providers::gemini::wire::Part;
+    use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
 
@@ -632,6 +641,20 @@ mod tests {
         state.clear_previous_response_chain();
         assert_eq!(state.previous_response_id_for("openai", "gpt-5.4"), None);
         assert_eq!(state.previous_response_chain_for("openai", "gpt-5.4"), None);
+    }
+
+    #[test]
+    fn shared_previous_response_chain_reuses_history_arc() {
+        let mut state = AgentSessionState::new("session".to_string(), 4, 4, 16_000);
+        let messages = Arc::new(vec![Message::user("hello".to_string())]);
+
+        state.set_previous_response_chain_shared("openai", "gpt-5.4", Some("resp_123"), Arc::clone(&messages));
+
+        let stored = &state
+            .previous_response_chain_for("openai", "gpt-5.4")
+            .expect("continuation state")
+            .messages;
+        assert!(Arc::ptr_eq(&messages, stored));
     }
 
     #[test]

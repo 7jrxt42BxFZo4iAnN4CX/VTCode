@@ -126,7 +126,7 @@ fn default_update_interval() -> u32 {
 impl MarketplaceSettings {
     /// Load marketplace settings from a configuration file
     pub async fn load_from_file(config_path: &Path) -> Result<Self> {
-        if !config_path.exists() {
+        if !tokio::fs::try_exists(config_path).await.unwrap_or(false) {
             // Return default settings if file doesn't exist
             return Ok(Self::default());
         }
