@@ -4,11 +4,11 @@
 //!
 //! | Submodule | Responsibility |
 //! |---|---|
-//! | [`mode`] | Backend selection enum (`Keyring` / `File` / `Auto`) |
-//! | [`keyring`] | OS keyring creation, liveness, disable detection |
-//! | [`encryption`] | AES-256-GCM encrypt/decrypt (pure, no IO) |
-//! | [`storage`] | `CredentialStorage` — orchestrates backends |
-//! | [`legacy`] | Legacy `auth.json` migration |
+//! | mode | Backend selection enum (`Keyring` / `File` / `Auto`) |
+//! | keyring | OS keyring creation, liveness, disable detection |
+//! | encryption | AES-256-GCM encrypt/decrypt (pure, no IO) |
+//! | storage | `CredentialStorage` — orchestrates backends |
+//! | legacy | Legacy `auth.json` migration |
 
 pub(crate) mod encryption;
 pub(crate) mod keyring;
