@@ -2,6 +2,43 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.140.1 - 2026-07-26
+
+### Highlights
+#### Bug Fixes
+
+- Allow stderr merge and cd-prefixed commands in read-only checks (675efcbf) 
+- Allow apply_patch in plan mode for plan file writes (821accd4) 
+- Remove redundant safety gateway planning block and update tests (ba48d9a1) 
+- Improve cache invalidation, reentrancy error handling, and path security (3dc9283f) 
+- Persist plan draft lazily when file missing (b8d5dd54) 
+- Use configured credential storage mode for API key resolution (801bd98a) 
+- Propagate legacy errors, trim provider, add keyring test (01faeef3) 
+- Improve tool header dim modifier handling for pty body consistency (bd2903db) 
+- Replace blocking file system calls with async equivalents (bf20b7d3) 
+#### Documentation
+
+- Update TODO to focus on plan mode improvements (619c583d) 
+- Add DeepWiki research on Codex plan mode to TODO (037f3d2b) 
+- Add subagent guidance and reformat crate table (05755253) 
+- Rename session-store to memory crate and add trajectory log config (ab6d90d6) 
+#### Features
+
+- Add Docker support with bollard and related dependencies (a211e519) 
+- Handle sparse summary sections and truncate plan preview (bd5483e9) 
+- Add task tracker rendering and recovery support for approved plan execution (dc71750b) 
+- Add /log command for viewing session event logs (1c7d347f) 
+### Other Changes
+#### Other
+
+- [Fixes #704]: pass wheel events outside floating overlay to transcript for scrollability (1af74f70) 
+#### Performance
+
+- Avoid SSE buffer allocs and switch exec mutex to parking_lot (a7bb0b11) 
+- Cache ConfigManager per workspace to avoid redundant loads (85298b50) 
+#### Refactors
+
+- Improve SSE event parsing with drain (6de2a0b9) 
 ## 0.140.0 - 2026-07-24
 
 ### Highlights
