@@ -73,7 +73,11 @@ async fn maybe_run_external_turn_complete_notify(
         TurnLoopResult::Cancelled => "cancelled",
         TurnLoopResult::Exit => return Ok(()),
     };
-    let input_messages = working_history
+    // Take the 4 newest non-empty user messages (rev → take) then restore
+    // chronological order with an in-place `reverse()` — one allocation
+    // instead of two (the prior `collect` → `into_iter().rev().collect()`
+    // allocated a second Vec just to reverse).
+    let mut input_messages: Vec<String> = working_history
         .iter()
         .filter(|message| matches!(message.role, uni::MessageRole::User))
         .filter_map(|message| {
@@ -83,10 +87,8 @@ async fn maybe_run_external_turn_complete_notify(
         })
         .rev()
         .take(4)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<Vec<_>>();
+        .collect();
+    input_messages.reverse();
     let last_assistant_message = working_history
         .iter()
         .rev()

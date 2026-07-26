@@ -181,7 +181,7 @@ fn gather_recent_git_log(workspace_root: &Path) -> Option<String> {
         return None;
     }
 
-    let log = String::from_utf8_lossy(&output.stdout).to_string();
+    let log = String::from_utf8_lossy(&output.stdout).into_owned();
     if log.trim().is_empty() { None } else { Some(log) }
 }
 

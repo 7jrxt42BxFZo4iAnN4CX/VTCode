@@ -56,7 +56,7 @@ pub(crate) async fn read_spool_head_for_error_check(path: &str) -> Option<String
         return None;
     }
     buffer.truncate(read);
-    Some(String::from_utf8_lossy(&buffer).to_string())
+    Some(String::from_utf8_lossy(&buffer).into_owned())
 }
 
 /// Returns `true` if the spool file's first bytes look like a tool error

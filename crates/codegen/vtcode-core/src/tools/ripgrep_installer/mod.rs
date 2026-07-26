@@ -42,7 +42,7 @@ impl RipgrepStatus {
                         RipgrepStatus::Available { version }
                     }
                 } else {
-                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
                     debug_log(&format!("ripgrep check failed: {stderr}"));
                     RipgrepStatus::Error {
                         reason: if stderr.is_empty() {

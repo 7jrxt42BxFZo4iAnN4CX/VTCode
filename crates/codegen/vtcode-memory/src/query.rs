@@ -80,7 +80,7 @@ pub fn recent_sessions(workspace: &Path, n: usize) -> Vec<SessionSummary> {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     for entry in entries.filter_map(Result::ok) {
         let manifest = entry.path().join("manifest.json");
-        let key = manifest.to_string_lossy().to_string();
+        let key = manifest.to_string_lossy().into_owned();
         if let Some(s) = cache.get(&key) {
             out.push(s.clone());
             continue;
@@ -115,7 +115,7 @@ pub fn query_facts(workspace: &Path, limit: usize) -> Result<Vec<FactRecord>, Se
         let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
             continue;
         };
-        let session_id = entry.file_name().to_string_lossy().to_string();
+        let session_id = entry.file_name().to_string_lossy().into_owned();
         if let Some(arr) = value.get("grounded_facts").and_then(|v| v.as_array()) {
             for item in arr {
                 if let Some(fact) = item.get("fact").and_then(|f| f.as_str()) {
@@ -166,7 +166,7 @@ pub fn search_memory(
         let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
             continue;
         };
-        let session_id = entry.file_name().to_string_lossy().to_string();
+        let session_id = entry.file_name().to_string_lossy().into_owned();
         let created_at = value
             .get("created_at")
             .and_then(|v| v.as_i64())
@@ -183,7 +183,7 @@ pub fn search_memory(
                 }
                 results.push(MemorySearchResult {
                     chunk_id: format!("{session_id}:{idx}"),
-                    path: memory.to_string_lossy().to_string(),
+                    path: memory.to_string_lossy().into_owned(),
                     start_line: 0,
                     end_line: 0,
                     score,

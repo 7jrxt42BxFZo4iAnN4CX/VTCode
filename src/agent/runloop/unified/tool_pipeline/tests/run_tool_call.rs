@@ -1051,7 +1051,7 @@ async fn test_run_tool_call_reuses_streamed_invocation_item_without_duplicate_st
     let mut completed_count = 0usize;
 
     for line in payload.lines() {
-        let value: serde_json::Value = serde_json::from_str(line).expect("json line");
+        let value: Value = serde_json::from_str(line).expect("json line");
         let event = value.get("event").expect("event");
         let event_type = event.get("type").and_then(|kind| kind.as_str()).unwrap_or_default();
         let item = event.get("item").expect("item");

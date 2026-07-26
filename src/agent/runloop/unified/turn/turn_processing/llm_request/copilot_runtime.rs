@@ -1349,7 +1349,7 @@ fn terminal_run_args(request: &CopilotTerminalCreateRequest) -> Value {
         "action": "run",
         "command": request.command,
         "args": request.args,
-        "cwd": request.cwd.as_ref().map(|p| p.to_string_lossy().to_string()),
+        "cwd": request.cwd.as_ref().map(|p| p.to_string_lossy().into_owned()),
         "tty": true,
         "yield_time_ms": 100,
         "env": request.env.iter().map(|e| json!({"name": e.name, "value": e.value})).collect::<Vec<_>>(),

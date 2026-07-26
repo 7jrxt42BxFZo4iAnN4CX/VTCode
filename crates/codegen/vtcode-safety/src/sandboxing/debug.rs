@@ -79,8 +79,8 @@ pub async fn debug_sandbox(
     Ok(SandboxDebugResult {
         success: output.status.success(),
         exit_code: output.status.code(),
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         sandbox_type: exec_env.sandbox_type,
         sandbox_active: exec_env.sandbox_active,
     })

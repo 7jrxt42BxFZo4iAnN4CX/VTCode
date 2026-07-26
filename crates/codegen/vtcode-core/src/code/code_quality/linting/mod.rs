@@ -127,7 +127,7 @@ impl LintingOrchestrator {
                         tool_used: config.tool_name.clone(),
                     })
                 } else {
-                    let error_msg = String::from_utf8_lossy(&output.stderr).to_string();
+                    let error_msg = String::from_utf8_lossy(&output.stderr).into_owned();
                     Some(LintResult {
                         success: false,
                         findings: Vec::new(),

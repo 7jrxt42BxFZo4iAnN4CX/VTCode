@@ -67,7 +67,10 @@ pub fn count_diff_changes(hunks: &[DiffHunk]) -> DiffChangeCounts {
 }
 
 pub fn display_lines_from_hunks(hunks: &[DiffHunk]) -> Vec<DiffDisplayLine> {
-    let mut lines = Vec::new();
+    // Each hunk contributes 1 header + its lines; pre-size to avoid reallocations
+    // on large diffs (the count is exact, so no over-allocation).
+    let total = hunks.iter().map(|h| 1 + h.lines.len()).sum();
+    let mut lines = Vec::with_capacity(total);
 
     for hunk in hunks {
         lines.push(DiffDisplayLine {
@@ -85,7 +88,9 @@ pub fn display_lines_from_hunks(hunks: &[DiffHunk]) -> Vec<DiffDisplayLine> {
 }
 
 pub fn display_lines_from_unified_diff(diff_content: &str) -> Vec<DiffDisplayLine> {
-    let mut lines = Vec::new();
+    // Upper-bound the capacity to the line count — the double scan is cheap
+    // (L1-bound byte search) and avoids 10+ reallocations on large diffs.
+    let mut lines = Vec::with_capacity(diff_content.lines().count());
     let mut old_line_no = 0u32;
     let mut new_line_no = 0u32;
     let mut in_hunk = false;

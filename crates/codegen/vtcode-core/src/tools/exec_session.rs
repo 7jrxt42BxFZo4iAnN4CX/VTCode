@@ -149,7 +149,7 @@ impl PipeSessionManager {
     async fn read_session_output(&self, session_id: &str, drain: bool) -> Result<Option<String>> {
         let record = self.session_record(session_id).await?;
         let start = record.pending_offset.load(Ordering::SeqCst);
-        let output = record.output.lock().await;
+        let mut output = record.output.lock().await;
         if start >= output.len() {
             return Ok(None);
         }
@@ -160,7 +160,19 @@ impl PipeSessionManager {
             .ok_or_else(|| anyhow!("pipe session '{session_id}' produced invalid output boundary"))?;
 
         if drain {
-            record.pending_offset.store(output.len(), Ordering::SeqCst);
+            // Trim the consumed prefix to prevent unbounded buffer growth.
+            // Without this, `output` accumulates the full session history for the
+            // entire lifetime of the session — a long-running background process
+            // can grow this to hundreds of MB, and every non-drain peek copies the
+            // full tail (`s.to_string()` above). Clearing on drain bounds memory to
+            // the high-water mark of unconsumed data and reuses the allocation for
+            // future chunks. `pending_offset` resets to 0 since the buffer is empty.
+            //
+            // The remaining O(n) copy on *peek* (drain=false) requires a
+            // zero-copy `Arc<Bytes>` migration to fix — tracked as a structural
+            // follow-up (see `.vtcode/memory/gotchas.md`).
+            output.clear();
+            record.pending_offset.store(0, Ordering::SeqCst);
         }
 
         if pending.is_empty() {
@@ -616,6 +628,95 @@ mod tests {
         assert!(output.contains("hello"));
 
         manager.close_session("run-1").await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn pipe_session_drain_clears_so_old_output_does_not_reappear() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let workspace_root = canonicalize_workspace(temp_dir.path());
+        let pty_sessions = PtySessionManager::new(workspace_root.clone(), PtyConfig::default());
+        let manager = ExecSessionManager::new(workspace_root.clone(), pty_sessions);
+
+        manager
+            .create_pipe_session(
+                "drain-clear".to_string().into(),
+                vec!["/bin/sh".to_string(), "-c".to_string(), "printf hello".to_string()],
+                workspace_root,
+                HashMap::new(),
+            )
+            .await?;
+
+        let mut activity_rx = manager
+            .activity_receiver("drain-clear")
+            .await?
+            .expect("pipe sessions should expose activity receiver");
+
+        // Wait for output to land, then drain it.
+        timeout(Duration::from_secs(2), activity_rx.changed()).await??;
+        let drained = manager
+            .read_session_output("drain-clear", true)
+            .await?
+            .expect("should drain hello");
+        assert!(drained.contains("hello"));
+
+        // Regression guard: after a drain the buffer is cleared and the
+        // pending offset resets to 0, so an immediate re-drain must return
+        // None. Before the fix, `output.clear()` was missing and the offset
+        // merely advanced — the buffer kept the full session history forever,
+        // growing unbounded for long-running processes. This asserts the
+        // clear actually happened (memory is bounded to the high-water mark
+        // of unconsumed data, not the lifetime output).
+        let stale = manager.read_session_output("drain-clear", true).await?;
+        assert!(stale.is_none(), "drained output must not reappear: {stale:?}");
+
+        manager.close_session("drain-clear").await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn pipe_session_returns_new_output_after_drain() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let workspace_root = canonicalize_workspace(temp_dir.path());
+        let pty_sessions = PtySessionManager::new(workspace_root.clone(), PtyConfig::default());
+        let manager = ExecSessionManager::new(workspace_root.clone(), pty_sessions);
+
+        // Emit in two phases separated by a sleep so a drain boundary falls
+        // between them. After `output.clear()` on the first drain, fresh
+        // output appended by the output task must still be returned.
+        manager
+            .create_pipe_session(
+                "drain-resume".to_string().into(),
+                vec![
+                    "/bin/sh".to_string(),
+                    "-c".to_string(),
+                    "printf one; sleep 1; printf two".to_string(),
+                ],
+                workspace_root,
+                HashMap::new(),
+            )
+            .await?;
+
+        let mut activity_rx = manager
+            .activity_receiver("drain-resume")
+            .await?
+            .expect("pipe sessions should expose activity receiver");
+
+        // Phase 1: drain whatever has arrived so far.
+        timeout(Duration::from_secs(2), activity_rx.changed()).await??;
+        let _first = manager.read_session_output("drain-resume", true).await?;
+
+        // Phase 2: new output produced after the drain must be returned.
+        timeout(Duration::from_secs(3), activity_rx.changed()).await??;
+        let second = manager
+            .read_session_output("drain-resume", true)
+            .await?
+            .expect("should drain post-drain output");
+        assert!(second.contains("two"), "output produced after a drain must still be returned: {second:?}");
+
+        manager.close_session("drain-resume").await?;
         Ok(())
     }
 }

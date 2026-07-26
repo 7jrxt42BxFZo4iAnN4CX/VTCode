@@ -207,7 +207,11 @@ fn summarize_subagent_sidebar_preview(snapshot: &SubagentThreadSnapshot) -> Stri
         return live_preview;
     }
 
-    snapshot
+    // Take the 16 newest previewable messages (rev → take) then restore
+    // chronological order with an in-place `reverse()` — one allocation
+    // instead of two (`collect` → `into_iter().rev().collect()` allocated a
+    // second Vec just to reverse).
+    let mut lines: Vec<String> = snapshot
         .snapshot
         .messages
         .iter()
@@ -218,11 +222,9 @@ fn summarize_subagent_sidebar_preview(snapshot: &SubagentThreadSnapshot) -> Stri
             Some(format!("{:?}: {}", message.role, preview))
         })
         .take(16)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect();
+    lines.reverse();
+    lines.join("\n")
 }
 
 fn summarize_thread_event_preview(events: &[ThreadEvent]) -> String {
@@ -238,16 +240,12 @@ fn summarize_thread_event_preview(events: &[ThreadEvent]) -> String {
         }
     }
 
-    items
-        .into_iter()
-        .map(|(_, line)| line)
-        .rev()
-        .take(16)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<Vec<_>>()
-        .join("\n")
+    // Take the 16 newest lines (rev → take) then restore chronological order
+    // with an in-place `reverse()` — one allocation instead of two
+    // (`collect` → `into_iter().rev().collect()` allocated a second Vec).
+    let mut lines: Vec<String> = items.into_iter().map(|(_, line)| line).rev().take(16).collect();
+    lines.reverse();
+    lines.join("\n")
 }
 
 fn thread_event_preview_line(event: &ThreadEvent) -> Option<(String, String)> {

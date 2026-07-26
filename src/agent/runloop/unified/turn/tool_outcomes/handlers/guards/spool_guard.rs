@@ -57,7 +57,7 @@ async fn read_spool_preview_for_guard(path: &str) -> Option<String> {
     let mut buffer = vec![0u8; total_cap];
     let bytes_read = file.read(&mut buffer).await.ok()?;
     buffer.truncate(bytes_read);
-    let content = String::from_utf8_lossy(&buffer).to_string();
+    let content = String::from_utf8_lossy(&buffer).into_owned();
     if content.len() <= SPOOL_CHUNK_INLINE_HEAD_BYTES + SPOOL_CHUNK_INLINE_TAIL_BYTES {
         return Some(content);
     }

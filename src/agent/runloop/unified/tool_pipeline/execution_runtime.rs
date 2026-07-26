@@ -387,7 +387,7 @@ fn workspace_scoped_cache_key(
     args_val: &Value,
     cache_target: &str,
 ) -> (String, ToolCacheKey) {
-    let workspace_path = registry.workspace_root().to_string_lossy().to_string();
+    let workspace_path = registry.workspace_root().to_string_lossy().into_owned();
     let cache_key = create_enhanced_cache_key(name, args_val, cache_target, &workspace_path);
     (workspace_path, cache_key)
 }

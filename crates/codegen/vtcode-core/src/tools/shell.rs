@@ -67,8 +67,8 @@ impl CommandExecutor for SystemExecutor {
         let output = cmd.output().await?;
 
         Ok(ShellOutput {
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             exit_code: output.status.code().unwrap_or(-1),
         })
     }
@@ -176,8 +176,8 @@ impl CommandExecutor for SnapshotExecutor {
         let output = cmd.output().await?;
 
         Ok(ShellOutput {
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             exit_code: output.status.code().unwrap_or(-1),
         })
     }

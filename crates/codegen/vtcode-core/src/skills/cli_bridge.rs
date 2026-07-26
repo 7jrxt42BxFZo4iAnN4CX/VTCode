@@ -263,8 +263,8 @@ impl CliToolBridge {
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
 
         // Parse output
-        let stdout = String::from_utf8_lossy(&output_result.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output_result.stderr).to_string();
+        let stdout = String::from_utf8_lossy(&output_result.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&output_result.stderr).into_owned();
 
         // Try to parse JSON output if supported
         let json_output = if self.config.supports_json {

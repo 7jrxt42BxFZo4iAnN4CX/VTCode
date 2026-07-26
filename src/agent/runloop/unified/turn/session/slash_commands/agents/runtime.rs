@@ -619,16 +619,12 @@ pub(super) fn summarize_thread_event_preview(events: &[ThreadEvent]) -> String {
         }
     }
 
-    items
-        .into_iter()
-        .map(|(_, line)| line)
-        .rev()
-        .take(16)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<Vec<_>>()
-        .join("\n")
+    // Take the 16 newest passing lines (rev → take) then restore chronological
+    // order with an in-place `reverse()` — one allocation instead of two
+    // (`collect` → `into_iter().rev().collect()` allocated a second Vec).
+    let mut lines: Vec<String> = items.into_iter().map(|(_, line)| line).rev().take(16).collect();
+    lines.reverse();
+    lines.join("\n")
 }
 
 #[cfg(test)]

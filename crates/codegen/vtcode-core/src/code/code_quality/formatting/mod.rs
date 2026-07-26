@@ -76,7 +76,7 @@ impl FormattingOrchestrator {
                         tool_used: config.tool_name.clone(),
                     }
                 } else {
-                    let error_msg = String::from_utf8_lossy(&output.stderr).to_string();
+                    let error_msg = String::from_utf8_lossy(&output.stderr).into_owned();
                     FormatResult {
                         success: false,
                         formatted_content: None,

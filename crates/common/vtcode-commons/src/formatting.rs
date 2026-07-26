@@ -132,8 +132,9 @@ pub fn truncate_path_middle(path: &str, max_len: usize) -> String {
     let tail_budget = max_len.saturating_sub(head_budget + 1);
 
     // Find the last '/' in the head portion
-    let head_chars: Vec<char> = path.chars().take(head_budget).collect();
-    let head_str: String = head_chars.iter().collect();
+    // Collect chars directly into a String — `String: FromIterator<char>`,
+    // so the intermediate `Vec<char>` of the prior two-step collect is redundant.
+    let head_str: String = path.chars().take(head_budget).collect();
     let head_break = head_str.rfind('/').unwrap_or(head_budget);
 
     // Find the first '/' in the tail portion (from the end)

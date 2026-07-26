@@ -78,7 +78,7 @@ impl WorktreeReconciler {
             return Err(anyhow!("git diff failed: {}", stderr.trim()));
         }
 
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
     /// Run `git diff {base}...{head}` and return the unified diff text.
