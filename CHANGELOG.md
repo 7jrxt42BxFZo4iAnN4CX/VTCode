@@ -2,6 +2,16 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.140.2 - 2026-07-26
+
+### Highlights
+### Other Changes
+#### Refactors
+
+- Make internal functions and modules pub(crate) or pub for broader access (e546c258) (@vinhnx)
+- Replace `to_string()` with `into_owned()` for `from_utf8_lossy()` results (30415991) 
+- Introduce PipeOutputBuffer for output buffering (94665f87) 
+- Extract condensation and line reading helpers (e8b6fc13) 
 ## 0.140.1 - 2026-07-26
 
 ### Highlights
