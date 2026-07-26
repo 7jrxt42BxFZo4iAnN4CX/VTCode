@@ -14,6 +14,19 @@ use super::helpers::{has_summary_prefix, is_tool_summary_line, parse_tool_call_p
 use crate::tui::config::constants::ui;
 
 impl Session {
+    fn opaque_tool_header_text_style(&self, style: Style) -> Style {
+        let mut style = style.remove_modifier(Modifier::DIM);
+        let is_subdued_foreground = [self.theme.pty_body, self.theme.tool_body]
+            .into_iter()
+            .flatten()
+            .map(ratatui_color_from_ansi)
+            .any(|color| style.fg == Some(color));
+        if is_subdued_foreground && let Some(foreground) = self.theme.foreground.map(ratatui_color_from_ansi) {
+            style = style.fg(foreground);
+        }
+        style
+    }
+
     fn tool_header_action_style(&self, action: &str) -> Style {
         if action == "Ran" {
             let style = InlineTextStyle {
@@ -21,12 +34,12 @@ impl Session {
                 ..InlineTextStyle::default()
             }
             .bold();
-            return ratatui_style_from_inline(&style, self.theme.foreground);
+            return ratatui_style_from_inline(&style, self.theme.foreground).remove_modifier(Modifier::DIM);
         }
 
         let tool_style = tool_inline_style_for(action, &self.theme);
         let fallback = self.theme.tool_accent.or(self.theme.primary).or(self.theme.foreground);
-        ratatui_style_from_ansi(tool_style.to_ansi_style(fallback))
+        ratatui_style_from_ansi(tool_style.to_ansi_style(fallback)).remove_modifier(Modifier::DIM)
     }
 
     fn tool_header_body_style(&self) -> Style {
@@ -37,7 +50,7 @@ impl Session {
             color: self.theme.foreground,
             ..InlineTextStyle::default()
         };
-        ratatui_style_from_inline(&style, self.theme.foreground)
+        ratatui_style_from_inline(&style, self.theme.foreground).remove_modifier(Modifier::DIM)
     }
 
     fn wrapped_diff_continuation_prefix(line_text: &str) -> Option<String> {
@@ -271,7 +284,7 @@ impl Session {
                         let text = span.content.clone().into_owned();
                         let style = span.style;
                         if let Some((action, prefix)) = parse_tool_call_prefix(&text) {
-                            let mut bullet_style = style;
+                            let mut bullet_style = style.remove_modifier(Modifier::DIM);
                             if bullet_style.fg.is_none() {
                                 if let Some(c) = self.theme.foreground.map(ratatui_color_from_ansi) {
                                     bullet_style = bullet_style.fg(c);
@@ -290,10 +303,13 @@ impl Session {
                                 styled_spans.push(Span::styled(rest.to_owned(), self.tool_header_body_style()));
                             }
                         } else {
-                            styled_spans.push(Span::styled(text, style));
+                            styled_spans.push(Span::styled(text, style.remove_modifier(Modifier::DIM)));
                         }
                     } else {
-                        styled_spans.push(span);
+                        styled_spans.push(Span::styled(
+                            span.content.into_owned(),
+                            self.opaque_tool_header_text_style(span.style),
+                        ));
                     }
                 }
                 lines.extend(self.wrap_block_lines(
@@ -422,7 +438,10 @@ impl Session {
         // Command header lines ("• Ran ...", "• Read ...", "• Write ...", etc.)
         // use full-brightness tool-colored styling so the tool name and arguments
         // are visually distinct from dimmed PTY body text.
-        let is_command_header = is_start && parse_tool_call_prefix(&combined).is_some();
+        // Every PTY line can begin a new tool command. `is_start` only marks
+        // the beginning of the surrounding PTY block, so using it here would
+        // incorrectly dim commands that follow an earlier command's output.
+        let is_command_header = parse_tool_call_prefix(&combined).is_some();
 
         let mut body_spans = Vec::with_capacity(line.segments.len() + 1);
         for (i, segment) in line.segments.iter().enumerate() {
@@ -433,7 +452,8 @@ impl Session {
                     let fg = self.theme.foreground.map(ratatui_color_from_ansi);
                     let bg = self.theme.background.map(ratatui_color_from_ansi);
 
-                    let mut bullet_style = ratatui_style_from_inline(&segment.style, pty_fallback);
+                    let mut bullet_style =
+                        ratatui_style_from_inline(&segment.style, pty_fallback).remove_modifier(Modifier::DIM);
                     if bullet_style.fg.is_none() {
                         if let Some(c) = fg {
                             bullet_style = bullet_style.fg(c);
@@ -463,7 +483,7 @@ impl Session {
             if is_command_header && i == 0 && stripped_text == "• " {
                 body_spans.push(Span::styled(
                     stripped_text.into_owned(),
-                    ratatui_style_from_inline(&segment.style, pty_fallback),
+                    ratatui_style_from_inline(&segment.style, pty_fallback).remove_modifier(Modifier::DIM),
                 ));
                 continue;
             }
@@ -473,7 +493,7 @@ impl Session {
             }
 
             let style = if is_command_header {
-                ratatui_style_from_inline(&segment.style, pty_fallback)
+                self.opaque_tool_header_text_style(ratatui_style_from_inline(&segment.style, pty_fallback))
             } else {
                 ratatui_pty_detail_style_from_inline(&segment.style, pty_fallback, self.theme.background)
             };

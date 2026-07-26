@@ -25,7 +25,9 @@ impl PtyLineStyles {
     pub(super) fn new() -> Self {
         let theme_styles = theme::active_styles();
         let palette = ColorPalette::default();
-        let dimmed = Arc::new(convert_style(theme_styles.tool_detail.dimmed()));
+        // Use the theme's dedicated blended PTY output style for body text.
+        // Header spans remove DIM during reflow and therefore remain opaque.
+        let output = Arc::new(convert_style(theme_styles.pty_output));
         let magenta_bold = Arc::new(convert_style(
             AnsiStyle::new()
                 .fg_color(Some(AnsiColorEnum::Ansi(AnsiColor::Magenta)))
@@ -37,9 +39,9 @@ impl PtyLineStyles {
         let yellow = Arc::new(convert_style(AnsiStyle::new().fg_color(Some(AnsiColorEnum::Ansi(AnsiColor::Yellow)))));
 
         Self {
-            output: Arc::clone(&dimmed),
+            output: Arc::clone(&output),
             bullet: Arc::new(convert_style(AnsiStyle::new().fg_color(Some(palette.success)))),
-            glyph: dimmed,
+            glyph: Arc::clone(&output),
             verb: accent_bold,
             command: Arc::new(convert_style(AnsiStyle::new().fg_color(Some(palette.success)).effects(Effects::BOLD))),
             args: Arc::new(convert_style(

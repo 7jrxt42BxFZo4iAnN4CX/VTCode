@@ -554,6 +554,85 @@ fn pty_command_header_verb_uses_primary_color_bullet_uses_theme_foreground() {
 }
 
 #[test]
+fn pty_command_header_removes_dim_from_all_header_spans() {
+    let foreground = AnsiColorEnum::Rgb(RgbColor(0xCC, 0xCC, 0xCC));
+    let subdued = AnsiColorEnum::Rgb(RgbColor(0x66, 0x66, 0x66));
+    let dimmed = Arc::new(InlineTextStyle {
+        color: Some(subdued),
+        effects: anstyle::Effects::DIMMED,
+        ..InlineTextStyle::default()
+    });
+    let mut session = Session::new(
+        InlineTheme {
+            foreground: Some(foreground),
+            pty_body: Some(subdued),
+            tool_body: Some(subdued),
+            ..Default::default()
+        },
+        None,
+        VIEW_ROWS,
+    );
+    session.push_line(
+        InlineMessageKind::Pty,
+        vec![
+            InlineSegment {
+                text: "• ".to_string(), style: Arc::clone(&dimmed)
+            },
+            InlineSegment {
+                text: "Ran".to_string(),
+                style: Arc::clone(&dimmed),
+            },
+            InlineSegment { text: " sed -n 1,260p".to_string(), style: dimmed },
+        ],
+    );
+
+    let rendered = session.reflow_pty_lines(0, 80);
+    let command_span = rendered
+        .iter()
+        .flat_map(|line| line.line.spans.iter())
+        .find(|span| span.content.contains("sed"))
+        .expect("expected command header span");
+
+    assert!(!command_span.style.add_modifier.contains(Modifier::DIM));
+    assert_eq!(command_span.style.fg, Some(Color::Rgb(0xCC, 0xCC, 0xCC)));
+}
+
+#[test]
+fn pty_command_headers_remain_opaque_after_prior_output() {
+    let mut session = Session::new(InlineTheme::default(), None, VIEW_ROWS);
+    session.push_line(
+        InlineMessageKind::Pty,
+        vec![InlineSegment {
+            text: "• Ran first-command".to_string(),
+            style: Arc::new(InlineTextStyle::default()),
+        }],
+    );
+    session.push_line(
+        InlineMessageKind::Pty,
+        vec![InlineSegment {
+            text: "    first output".to_string(),
+            style: Arc::new(InlineTextStyle::default()),
+        }],
+    );
+    session.push_line(
+        InlineMessageKind::Pty,
+        vec![InlineSegment {
+            text: "• Ran second-command".to_string(),
+            style: Arc::new(InlineTextStyle::default()),
+        }],
+    );
+
+    let rendered = session.reflow_pty_lines(2, 80);
+    let second_header = rendered
+        .iter()
+        .flat_map(|line| line.line.spans.iter())
+        .find(|span| span.content.contains("second-command"))
+        .expect("expected second command header");
+
+    assert!(!second_header.style.add_modifier.contains(Modifier::DIM));
+}
+
+#[test]
 fn pty_command_header_preserves_status_color_on_bullet() {
     let foreground = AnsiColorEnum::Rgb(RgbColor(0xCC, 0xCC, 0xCC));
     let mut session = Session::new(
@@ -629,6 +708,35 @@ fn tool_command_header_does_not_use_accent_tool_body_as_fallback() {
 
     assert_eq!(verb_span.style.fg, Some(Color::Rgb(0xCC, 0xCC, 0xCC)));
     assert_eq!(command_span.style.fg, Some(Color::Rgb(0xCC, 0xCC, 0xCC)));
+    assert!(!verb_span.style.add_modifier.contains(Modifier::DIM));
+    assert!(!command_span.style.add_modifier.contains(Modifier::DIM));
+}
+
+#[test]
+fn tool_output_is_dimmed_but_tool_header_is_opaque() {
+    let mut session = Session::new(InlineTheme::default(), None, VIEW_ROWS);
+    session.push_line(
+        InlineMessageKind::Tool,
+        vec![InlineSegment {
+            text: "• Ran sed -n 1,260p\n    output line".to_string(),
+            style: Arc::new(InlineTextStyle::default()),
+        }],
+    );
+
+    let rendered = session.reflow_transcript_lines(80);
+    let header = rendered
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .find(|span| span.content.as_ref() == "Ran")
+        .expect("expected tool header");
+    let output = rendered
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .find(|span| span.content.contains("output line"))
+        .expect("expected tool output");
+
+    assert!(!header.style.add_modifier.contains(Modifier::DIM));
+    assert!(output.style.add_modifier.contains(Modifier::DIM));
 }
 
 #[test]
