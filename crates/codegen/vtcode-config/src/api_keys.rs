@@ -384,7 +384,7 @@ pub fn provider_credential_detail_with_mode(
 /// Thin wrapper over [`provider_credential_detail`] that returns only the
 /// credential source. Kept for backward compatibility with callers that don't
 /// need the env-var detail.
-fn provider_credential_source(provider: Provider) -> Option<CredentialSource> {
+pub fn provider_credential_source(provider: Provider) -> Option<CredentialSource> {
     provider_credential_detail(provider).map(|detail| detail.source)
 }
 

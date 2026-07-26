@@ -129,7 +129,7 @@ fn hash_head(path: &Path) -> u64 {
 
 /// Compute the delta from `old` to `new`.
 #[must_use]
-fn diff(old: &WorkspaceSnapshot, new: &WorkspaceSnapshot) -> SnapshotDelta {
+pub fn diff(old: &WorkspaceSnapshot, new: &WorkspaceSnapshot) -> SnapshotDelta {
     let mut delta = SnapshotDelta::default();
     for (path, new_stat) in &new.files {
         match old.files.get(path) {

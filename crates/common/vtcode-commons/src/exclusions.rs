@@ -24,7 +24,7 @@ pub const DEFAULT_EXCLUDED_DIRS: &[&str] = &[
 /// Sensitive files that must never be exposed in listings, search results,
 /// or the TUI file palette.  These contain secrets, credentials, or
 /// environment-specific configuration.
-const SENSITIVE_FILES: &[&str] = &[
+pub const SENSITIVE_FILES: &[&str] = &[
     ".env",
     ".env.local",
     ".env.production",

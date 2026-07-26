@@ -197,7 +197,7 @@ impl<E> MultiErrors<E> {
     }
 
     /// Convert into `Result<()>` — succeeds if no errors were collected.
-    fn ok(self) -> std::result::Result<(), Self> {
+    pub fn ok(self) -> std::result::Result<(), Self> {
         if self.errors.is_empty() { Ok(()) } else { Err(self) }
     }
 
@@ -225,7 +225,7 @@ impl<E> MultiErrors<E> {
 
     /// Convert into an [`anyhow::Error`] for use with traditional error handling.
     #[must_use]
-    fn to_anyhow(&self) -> Error
+    pub fn to_anyhow(&self) -> Error
     where
         E: fmt::Display,
     {

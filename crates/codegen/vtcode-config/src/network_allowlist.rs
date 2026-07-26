@@ -260,7 +260,7 @@ impl NetworkAllowlist {
     /// Entries that the allowlist itself flags as `verify = true`. The
     /// agent can refuse to use these (or surface a warning) until the
     /// operator confirms.
-    fn unverified_entries(&self) -> Vec<&AllowlistEntry> {
+    pub fn unverified_entries(&self) -> Vec<&AllowlistEntry> {
         self.iter_entries().filter(|e| e.verify).collect()
     }
 

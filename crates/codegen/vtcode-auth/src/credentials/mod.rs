@@ -10,11 +10,11 @@
 //! | [`storage`] | `CredentialStorage` — orchestrates backends |
 //! | [`legacy`] | Legacy `auth.json` migration |
 
-mod encryption;
+pub(crate) mod encryption;
 pub(crate) mod keyring;
-mod legacy;
-mod mode;
-mod storage;
+pub(crate) mod legacy;
+pub(crate) mod mode;
+pub(crate) mod storage;
 
 pub use mode::AuthCredentialsStoreMode;
 pub use storage::CredentialStorage;

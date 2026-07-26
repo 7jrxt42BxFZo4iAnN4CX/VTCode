@@ -362,7 +362,7 @@ impl AtifTrajectoryBuilder {
     }
 
     /// Process a thread event with an explicit timestamp (for deterministic tests).
-    fn process_event_at(&mut self, event: &ThreadEvent, ts: DateTime<Utc>) {
+    pub fn process_event_at(&mut self, event: &ThreadEvent, ts: DateTime<Utc>) {
         let ts_str = ts.to_rfc3339();
         match event {
             ThreadEvent::ThreadStarted(e) => {

@@ -1037,7 +1037,7 @@ impl GoalTracker {
     }
 
     /// Atomically evaluate the strategist trigger and claim a fire.
-    fn claim_strategist_fire(&mut self, should_fire: impl Fn(u32, u32) -> bool) -> Option<u32> {
+    pub fn claim_strategist_fire(&mut self, should_fire: impl Fn(u32, u32) -> bool) -> Option<u32> {
         let o = self.orchestration.as_mut()?;
         if should_fire(o.consecutive_not_achieved, o.last_strategist_fired_at) {
             o.last_strategist_fired_at = o.consecutive_not_achieved;
