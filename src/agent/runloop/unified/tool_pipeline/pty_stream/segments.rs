@@ -2,12 +2,14 @@ use std::sync::Arc;
 
 use anstyle::{Ansi256Color, AnsiColor, Color as AnsiColorEnum, Effects, RgbColor, Style as AnsiStyle};
 use vtcode_core::ui::theme;
+use vtcode_core::utils::style_helpers::ColorPalette;
 use vtcode_ui::tui::app::{InlineLinkRange, InlineLinkTarget, InlineSegment, InlineTextStyle};
 use vtcode_ui::tui::core::convert_style;
 use vtcode_ui::tui::ui::syntax_highlight;
 
 pub(super) struct PtyLineStyles {
     pub(super) output: Arc<InlineTextStyle>,
+    pub(super) bullet: Arc<InlineTextStyle>,
     pub(super) glyph: Arc<InlineTextStyle>,
     pub(super) verb: Arc<InlineTextStyle>,
     pub(super) command: Arc<InlineTextStyle>,
@@ -22,6 +24,7 @@ pub(super) struct PtyLineStyles {
 impl PtyLineStyles {
     pub(super) fn new() -> Self {
         let theme_styles = theme::active_styles();
+        let palette = ColorPalette::default();
         let dimmed = Arc::new(convert_style(theme_styles.tool_detail.dimmed()));
         let magenta_bold = Arc::new(convert_style(
             AnsiStyle::new()
@@ -35,13 +38,10 @@ impl PtyLineStyles {
 
         Self {
             output: Arc::clone(&dimmed),
+            bullet: Arc::new(convert_style(AnsiStyle::new().fg_color(Some(palette.success)))),
             glyph: dimmed,
             verb: accent_bold,
-            command: Arc::new(convert_style(
-                AnsiStyle::new()
-                    .fg_color(Some(AnsiColorEnum::Ansi(AnsiColor::Green)))
-                    .effects(Effects::BOLD),
-            )),
+            command: Arc::new(convert_style(AnsiStyle::new().fg_color(Some(palette.success)).effects(Effects::BOLD))),
             args: Arc::new(convert_style(
                 AnsiStyle::new()
                     .fg_color(Some(AnsiColorEnum::Ansi(AnsiColor::White)))
@@ -224,20 +224,21 @@ fn shell_syntax_segments(text: &str, styles: &PtyLineStyles, expect_command: boo
 
     let non_ws_count = semantic.iter().filter(|segment| !segment.text.trim().is_empty()).count();
     if non_ws_count > 1 {
-        let mut first: Option<&InlineTextStyle> = None;
+        let mut first_colors: Option<(Option<AnsiColorEnum>, Option<AnsiColorEnum>)> = None;
         let mut has_distinct = false;
         for style in converted
             .iter()
             .filter(|segment| !segment.text.trim().is_empty())
             .map(|segment| segment.style.as_ref())
         {
-            if let Some(seed) = first {
-                if style != seed {
+            let colors = (style.color, style.bg_color);
+            if let Some(seed) = first_colors {
+                if colors != seed {
                     has_distinct = true;
                     break;
                 }
             } else {
-                first = Some(style);
+                first_colors = Some(colors);
             }
         }
         if !has_distinct {
@@ -463,7 +464,11 @@ pub(super) fn line_to_segments(line: &str, styles: &PtyLineStyles) -> (Vec<Inlin
     if let Some(command_text) = line.strip_prefix("• Ran ") {
         let mut segments = vec![
             InlineSegment {
-                text: "• Ran".to_string(),
+                text: "• ".to_string(),
+                style: Arc::clone(&styles.bullet),
+            },
+            InlineSegment {
+                text: "Ran".to_string(),
                 style: Arc::clone(&styles.verb),
             },
             InlineSegment {
@@ -548,5 +553,24 @@ mod tests {
             &link_ranges[0].target,
             InlineLinkTarget::Url(url) if url == "https://example.com/docs"
         ));
+    }
+
+    #[test]
+    fn command_header_preserves_distinct_semantic_token_colors() {
+        let styles = PtyLineStyles::new();
+        let (segments, _) =
+            line_to_segments("• Ran find src/agent/runloop -maxdepth 3 -type f -name *.rs | sort", &styles);
+
+        let option = segments
+            .iter()
+            .find(|segment| segment.text.contains("maxdepth"))
+            .unwrap_or_else(|| {
+                panic!("expected option token in segments: {segments:?}");
+            });
+        let command = segments
+            .iter()
+            .find(|segment| segment.text.contains("find"))
+            .unwrap_or_else(|| panic!("expected command token in segments: {segments:?}"));
+        assert_ne!(option.style.color, command.style.color);
     }
 }

@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use crate::provider::Usage;
 use vtcode_config::api_keys::api_key_env_var;
-use vtcode_config::auth::{AuthCredentialsStoreMode, CustomApiKeyStorage};
+use vtcode_config::auth::AuthCredentialsStoreMode;
 use vtcode_config::models::{
     ModelCatalogEntry, ModelId, ModelPricing, Provider, ProviderModelSupport, catalog_provider_keys,
     model_catalog_entry,
@@ -126,17 +126,38 @@ impl ModelResolver {
         dynamic_models: &[DynamicModelRef<'_>],
         dynamic_meta: Option<DynamicModelMeta>,
     ) -> Option<ResolvedModel> {
+        Self::resolve_with_mode(
+            provider_override,
+            model,
+            dynamic_models,
+            dynamic_meta,
+            AuthCredentialsStoreMode::default(),
+        )
+    }
+
+    /// Resolve a model using the caller's configured credential backend.
+    ///
+    /// Keeping the storage mode explicit at this boundary prevents model
+    /// availability from disagreeing with runtime authentication when a
+    /// workspace overrides the platform default.
+    pub fn resolve_with_mode(
+        provider_override: Option<&str>,
+        model: &str,
+        dynamic_models: &[DynamicModelRef<'_>],
+        dynamic_meta: Option<DynamicModelMeta>,
+        storage_mode: AuthCredentialsStoreMode,
+    ) -> Option<ResolvedModel> {
         let model = model.trim();
         if model.is_empty() {
             return None;
         }
 
         if let Some(provider) = provider_override.and_then(parse_provider_override) {
-            return Some(Self::resolve_for_provider(provider, model, dynamic_models, dynamic_meta));
+            return Some(Self::resolve_for_provider(provider, model, dynamic_models, dynamic_meta, storage_mode));
         }
 
         if let Ok(model_id) = ModelId::from_str(model) {
-            return Some(Self::resolve_for_model_id(model, model_id, dynamic_models, dynamic_meta));
+            return Some(Self::resolve_for_model_id(model, model_id, dynamic_models, dynamic_meta, storage_mode));
         }
 
         if let Some((provider, entry)) = find_catalog_provider(model) {
@@ -145,16 +166,16 @@ impl ModelResolver {
                 model_id: model.to_string(),
                 catalog: Some(entry),
                 dynamic: dynamic_meta,
-                availability: Self::availability(provider, model),
+                availability: Self::availability_with_mode(provider, model, storage_mode),
             });
         }
 
         if let Some(provider) = find_dynamic_provider(model, dynamic_models) {
-            return Some(Self::resolve_for_provider(provider, model, dynamic_models, dynamic_meta));
+            return Some(Self::resolve_for_provider(provider, model, dynamic_models, dynamic_meta, storage_mode));
         }
 
         let provider = heuristic_provider_from_model(model)?;
-        Some(Self::resolve_for_provider(provider, model, dynamic_models, dynamic_meta))
+        Some(Self::resolve_for_provider(provider, model, dynamic_models, dynamic_meta, storage_mode))
     }
 
     pub fn resolve_provider(
@@ -166,6 +187,15 @@ impl ModelResolver {
     }
 
     pub fn availability(provider: Provider, model: &str) -> ModelAvailability {
+        Self::availability_with_mode(provider, model, AuthCredentialsStoreMode::default())
+    }
+
+    /// Determine model availability using an explicit credential backend.
+    pub fn availability_with_mode(
+        provider: Provider,
+        model: &str,
+        storage_mode: AuthCredentialsStoreMode,
+    ) -> ModelAvailability {
         if provider.is_local() && !local_model_requires_remote_auth(provider, model) {
             return ModelAvailability::LocalOnly;
         }
@@ -174,11 +204,21 @@ impl ModelResolver {
             return ModelAvailability::ManagedAuthAvailable;
         }
 
-        if provider == Provider::OpenAI && vtcode_config::auth::load_openai_chatgpt_session().ok().flatten().is_some() {
+        if provider == Provider::OpenAI
+            && vtcode_config::auth::load_openai_chatgpt_session_with_mode(storage_mode)
+                .ok()
+                .flatten()
+                .is_some()
+        {
             return ModelAvailability::ManagedAuthAvailable;
         }
 
-        if provider == Provider::OpenRouter && vtcode_config::auth::load_oauth_token().ok().flatten().is_some() {
+        if provider == Provider::OpenRouter
+            && vtcode_config::auth::load_oauth_token_with_mode(storage_mode)
+                .ok()
+                .flatten()
+                .is_some()
+        {
             return ModelAvailability::ManagedAuthAvailable;
         }
 
@@ -187,7 +227,7 @@ impl ModelResolver {
             return ModelAvailability::ManagedAuthAvailable;
         }
 
-        if has_env_value(&env_key) || has_stored_key(provider) {
+        if has_env_value(&env_key) || has_stored_key(provider, storage_mode) {
             return ModelAvailability::Available;
         }
 
@@ -220,6 +260,7 @@ impl ModelResolver {
         model: &str,
         dynamic_models: &[DynamicModelRef<'_>],
         dynamic_meta: Option<DynamicModelMeta>,
+        storage_mode: AuthCredentialsStoreMode,
     ) -> ResolvedModel {
         let catalog = model_catalog_entry(provider.as_ref(), model);
         let dynamic = if catalog.is_some() || !has_dynamic_model(provider, model, dynamic_models) {
@@ -239,7 +280,7 @@ impl ModelResolver {
             model_id: model.to_string(),
             catalog,
             dynamic,
-            availability: Self::availability(provider, model),
+            availability: Self::availability_with_mode(provider, model, storage_mode),
         }
     }
 
@@ -248,6 +289,7 @@ impl ModelResolver {
         model_id: ModelId,
         dynamic_models: &[DynamicModelRef<'_>],
         dynamic_meta: Option<DynamicModelMeta>,
+        storage_mode: AuthCredentialsStoreMode,
     ) -> ResolvedModel {
         let provider = model_id.provider();
         let catalog = model_catalog_entry(provider.as_ref(), &model_id.as_str());
@@ -268,7 +310,7 @@ impl ModelResolver {
             model_id: requested_model.to_string(),
             catalog,
             dynamic,
-            availability: Self::availability(provider, requested_model),
+            availability: Self::availability_with_mode(provider, requested_model, storage_mode),
         }
     }
 }
@@ -350,9 +392,8 @@ fn has_env_value(env_key: &str) -> bool {
     matches!(std::env::var(env_key), Ok(value) if !value.trim().is_empty())
 }
 
-fn has_stored_key(provider: Provider) -> bool {
-    CustomApiKeyStorage::new(provider.as_ref())
-        .load(AuthCredentialsStoreMode::default())
+fn has_stored_key(provider: Provider, storage_mode: AuthCredentialsStoreMode) -> bool {
+    vtcode_config::api_keys::load_stored_api_key_with_mode(provider.as_ref(), storage_mode)
         .ok()
         .flatten()
         .is_some()

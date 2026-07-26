@@ -10,11 +10,14 @@ use vtcode_core::config::loader::VTCodeConfig;
 use vtcode_core::tools::tool_intent;
 use vtcode_core::utils::ansi::AnsiRenderer;
 use vtcode_core::utils::ansi::MessageStyle;
+use vtcode_core::utils::style_helpers::ColorPalette;
 use vtcode_core::utils::transcript;
 use vtcode_ui::tui::app::{InlineHandle, InlineMessageKind, InlineSegment, InlineTextStyle};
 
 use crate::agent::runloop::unified::run_loop_context::RunLoopContext;
-use crate::agent::runloop::unified::tool_pipeline::{ToolExecutionStatus, ToolPipelineOutcome};
+use crate::agent::runloop::unified::tool_pipeline::{
+    ToolDisplayStatus, ToolExecutionStatus, ToolPipelineOutcome, renders_pty_command_header, streams_pty_output,
+};
 use vtcode_commons::canonicalize;
 
 fn record_mcp_success_event(mcp_panel_state: &mut McpPanelState, tool_name: &str, args_val: &serde_json::Value) {
@@ -111,25 +114,35 @@ fn push_activity_path(workspace_root: &Path, canonical_workspace: &Path, raw: &s
 }
 
 fn is_run_pty_tool(name: &str, args_val: &serde_json::Value) -> bool {
-    tool_intent::is_command_run_tool_call(name, args_val)
+    renders_pty_command_header(name, args_val)
 }
 
-fn compact_run_completion_line(output: &serde_json::Value, command_success: bool) -> Option<String> {
+fn compact_run_completion_line(output: &serde_json::Value, status: ToolDisplayStatus) -> Option<String> {
     if let Some(exit_code) = output.get("exit_code").and_then(serde_json::Value::as_i64) {
-        if exit_code == 0 {
+        if matches!(status, ToolDisplayStatus::Success) && exit_code == 0 {
             return Some("✓ run completed (exit code: 0)".to_string());
+        }
+        if matches!(status, ToolDisplayStatus::Warning) && exit_code == 0 {
+            return Some("⚠ run completed with warnings (exit code: 0)".to_string());
         }
         return Some(format!("✗ run error, exit code: {exit_code}"));
     }
 
     if output.get("is_exited").and_then(serde_json::Value::as_bool) == Some(true) {
-        if command_success {
+        if matches!(status, ToolDisplayStatus::Success) {
             return Some("✓ done".to_string());
+        }
+        if matches!(status, ToolDisplayStatus::Warning) {
+            return Some("⚠ done with warnings".to_string());
         }
         return Some("✗ failed".to_string());
     }
 
-    None
+    match status {
+        ToolDisplayStatus::Failure => Some("✗ failed".to_string()),
+        ToolDisplayStatus::Warning => Some("⚠ completed with warnings".to_string()),
+        ToolDisplayStatus::Success => None,
+    }
 }
 
 fn is_git_diff_payload(output: &serde_json::Value) -> bool {
@@ -296,7 +309,7 @@ async fn render_tool_output_common(
     vt_config: Option<&VTCodeConfig>,
     workspace_root: Option<&Path>,
 ) -> Result<()> {
-    let inline_run_tool = renderer.supports_inline_ui() && is_run_pty_tool(name, args_val);
+    let inline_run_tool = renderer.supports_inline_ui() && streams_pty_output(name, args_val);
     let git_diff_payload = is_git_diff_payload(output);
 
     // For streamed inline PTY tools: the pre-execution Pty block already
@@ -309,17 +322,20 @@ async fn render_tool_output_common(
         // Record streamed output content to transcript
         record_output_lines(output);
 
-        if !has_renderable_stream_content(output) && command_success {
+        let status = ToolDisplayStatus::from_command_output(output, command_success);
+        if !has_renderable_stream_content(output) && matches!(status, ToolDisplayStatus::Success) {
             renderer.line(MessageStyle::Info, "(no output)")?;
             return Ok(());
         }
 
-        // Send completion as a status line in the theme's accent color so it
-        // stands out from the subdued PTY output body.
-        if let Some(completion) = compact_run_completion_line(output, command_success) {
-            let indented = format!("    {}", completion);
-            renderer.line(MessageStyle::Status, &indented)?;
-            transcript::append(&completion);
+        // Send completion as a status line only when the command needs
+        // attention; on success the colored header bullet is sufficient.
+        if !matches!(status, ToolDisplayStatus::Success) {
+            if let Some(completion) = compact_run_completion_line(output, status) {
+                let indented = format!("    {}", completion);
+                renderer.line(MessageStyle::Status, &indented)?;
+                transcript::append(&completion);
+            }
         }
         return Ok(());
     }
@@ -331,12 +347,15 @@ async fn render_tool_output_common(
         let stream_label =
             crate::agent::runloop::unified::tool_summary::stream_label_from_output(output, command_success);
         let summary_ctx = crate::agent::runloop::unified::tool_summary::ToolSummaryRenderContext { workspace_root };
+        let status = ToolDisplayStatus::from_command_output(output, command_success);
+        let bullet_color = status.color(ColorPalette::default());
         crate::agent::runloop::unified::tool_summary::render_tool_call_summary(
             renderer,
             name,
             args_val,
             stream_label,
             &summary_ctx,
+            bullet_color,
         )?;
     }
 
@@ -421,21 +440,76 @@ async fn handle_success_common(
     Ok(())
 }
 
-fn handle_non_success_common(ctx: &mut OutcomeContext<'_>, name: &str, status: &ToolExecutionStatus) -> Result<()> {
+fn handle_non_success_common(
+    ctx: &mut OutcomeContext<'_>,
+    name: &str,
+    args_val: &serde_json::Value,
+    status: &ToolExecutionStatus,
+) -> Result<()> {
+    // PTY tools already rendered "• Ran ..." in the pre-execution inline block.
+    // Skip duplicating the summary bullet here; the error/cancelled message
+    // below is the only post-execution indicator needed.
+    let is_pty = ctx.renderer.supports_inline_ui() && is_run_pty_tool(name, args_val);
+
     match status {
-        ToolExecutionStatus::Failure { error } => {
-            render_error_common(ctx.renderer, name, &error.user_message(), "failure")?;
-        }
-        ToolExecutionStatus::Timeout { error } => {
-            render_error_common(ctx.renderer, name, &error.user_message(), "timed out")?;
+        ToolExecutionStatus::Failure { error } | ToolExecutionStatus::Timeout { error } => {
+            if !is_pty {
+                render_non_success_summary(
+                    ctx.renderer,
+                    name,
+                    args_val,
+                    Some("error"),
+                    ctx.workspace_root,
+                    ToolDisplayStatus::Failure,
+                )?;
+            }
+            render_error_common(
+                ctx.renderer,
+                name,
+                &error.user_message(),
+                if matches!(status, ToolExecutionStatus::Timeout { .. }) {
+                    "timed out"
+                } else {
+                    "failure"
+                },
+            )?;
         }
         ToolExecutionStatus::Cancelled => {
+            if !is_pty {
+                render_non_success_summary(
+                    ctx.renderer,
+                    name,
+                    args_val,
+                    Some("cancelled"),
+                    ctx.workspace_root,
+                    ToolDisplayStatus::Warning,
+                )?;
+            }
             ctx.renderer.line(MessageStyle::Info, "Tool execution cancelled")?;
         }
         ToolExecutionStatus::Success { .. } => {}
     }
 
     Ok(())
+}
+
+fn render_non_success_summary(
+    renderer: &mut AnsiRenderer,
+    name: &str,
+    args_val: &serde_json::Value,
+    stream_label: Option<&str>,
+    workspace_root: Option<&Path>,
+    status: ToolDisplayStatus,
+) -> Result<()> {
+    let summary_ctx = crate::agent::runloop::unified::tool_summary::ToolSummaryRenderContext { workspace_root };
+    crate::agent::runloop::unified::tool_summary::render_tool_call_summary(
+        renderer,
+        name,
+        args_val,
+        stream_label,
+        &summary_ctx,
+        status.color(ColorPalette::default()),
+    )
 }
 
 async fn process_outcome_common(
@@ -464,7 +538,7 @@ async fn process_outcome_common(
             )
             .await?;
         }
-        _ => handle_non_success_common(ctx, name, &outcome.status)?,
+        _ => handle_non_success_common(ctx, name, args_val, &outcome.status)?,
     }
 
     Ok(state)
@@ -589,6 +663,40 @@ mod tests {
 
         // Confirm the modified files list contains our path
         assert_eq!(mod_files, vec![PathBuf::from("/tmp/foo.txt")]);
+    }
+
+    #[test]
+    fn tool_call_visual_status_colors_success_failure_and_warning() {
+        let palette = ColorPalette::default();
+        assert_eq!(ToolDisplayStatus::Success.color(palette), palette.success);
+        assert_eq!(ToolDisplayStatus::Failure.color(palette), palette.error);
+        assert_eq!(ToolDisplayStatus::Warning.color(palette), palette.warning);
+
+        assert!(matches!(
+            ToolDisplayStatus::from_command_output(&serde_json::json!({}), true),
+            ToolDisplayStatus::Success
+        ));
+        assert!(matches!(
+            ToolDisplayStatus::from_command_output(&serde_json::json!({}), false),
+            ToolDisplayStatus::Failure
+        ));
+        assert!(matches!(
+            ToolDisplayStatus::from_command_output(&serde_json::json!({"warning": "no results"}), true),
+            ToolDisplayStatus::Warning
+        ));
+        assert!(matches!(
+            ToolDisplayStatus::from_command_output(&serde_json::json!({"warning": null}), true),
+            ToolDisplayStatus::Success
+        ));
+
+        assert!(
+            compact_run_completion_line(&serde_json::json!({"exit_code": 0}), ToolDisplayStatus::Success).is_some()
+        );
+        assert!(
+            compact_run_completion_line(&serde_json::json!({"warning": "no results"}), ToolDisplayStatus::Warning)
+                .is_some()
+        );
+        assert!(compact_run_completion_line(&serde_json::json!({}), ToolDisplayStatus::Success).is_none());
     }
 
     #[tokio::test]

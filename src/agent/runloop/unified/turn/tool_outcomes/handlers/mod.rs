@@ -347,6 +347,7 @@ async fn handle_tool_call_inner<'a, 'b, 'tool>(
         &prepared.canonical_name,
         prepared.effective_args,
         None,
+        None,
     )
     .await?
     {

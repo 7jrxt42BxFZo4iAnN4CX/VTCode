@@ -200,6 +200,11 @@ impl PtyStreamState {
         (replace_count, segments, link_ranges, last_line)
     }
 
+    pub(super) fn set_header_color(&mut self, color: anstyle::Color) {
+        self.line_styles.bullet =
+            std::sync::Arc::new(vtcode_ui::tui::core::convert_style(anstyle::Style::new().fg_color(Some(color))));
+    }
+
     fn reset_output_state(&mut self) {
         self.legacy = LegacyPtyStreamState::new();
         self.preview = PtyPreviewRenderer::from_config(&self.pty_config);

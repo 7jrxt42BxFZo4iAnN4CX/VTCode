@@ -352,15 +352,44 @@ fn pty_block_skips_status_only_sequence() {
 }
 
 #[test]
+fn pty_tool_block_has_top_and_bottom_spacing() {
+    let mut session = Session::new(InlineTheme::default(), None, VIEW_ROWS);
+    push_pty_line(&mut session, "first output");
+    push_pty_line(&mut session, "second output");
+
+    let first = session.reflow_pty_lines(0, 80);
+    let last = session.reflow_pty_lines(1, 80);
+
+    assert!(first.first().is_some_and(|line| line.line.spans.is_empty()));
+    assert!(last.last().is_some_and(|line| line.line.spans.is_empty()));
+}
+
+#[test]
+fn tool_block_has_top_and_bottom_spacing() {
+    let mut session = Session::new(InlineTheme::default(), None, VIEW_ROWS);
+    session.push_line(InlineMessageKind::Tool, vec![make_segment("tool output")]);
+
+    let rendered = session.reflow_message_lines(0, 80, false);
+
+    assert!(rendered.first().is_some_and(|line| line.line.spans.is_empty()));
+    assert!(rendered.last().is_some_and(|line| line.line.spans.is_empty()));
+}
+
+#[test]
 fn pty_wrapped_lines_keep_hanging_left_padding() {
     let mut session = Session::new(InlineTheme::default(), None, VIEW_ROWS);
     push_pty_line(&mut session, "  └ this PTY output line wraps on narrow widths");
 
     let rendered = session.reflow_pty_lines(0, 18);
-    assert!(rendered.len() >= 2, "expected wrapped PTY output, got {} line(s)", rendered.len());
+    let content_lines: Vec<String> = rendered
+        .iter()
+        .map(|line| line_text(&line.line))
+        .filter(|text| !text.is_empty())
+        .collect();
+    assert!(content_lines.len() >= 2, "expected wrapped PTY output, got {} content line(s)", content_lines.len());
 
-    let first = line_text(&rendered[0].line);
-    let second = line_text(&rendered[1].line);
+    let first = &content_lines[0];
+    let second = &content_lines[1];
 
     assert!(first.starts_with("    └ "), "first line was: {first:?}");
     assert!(second.starts_with("      "), "wrapped line should keep hanging indent, got: {second:?}");
@@ -391,10 +420,15 @@ fn tool_diff_numbered_lines_keep_hanging_indent_when_wrapped() {
     );
 
     let rendered = session.reflow_transcript_lines(40);
-    assert!(rendered.len() >= 2, "expected wrapped tool diff output, got {} line(s)", rendered.len());
+    let content_lines: Vec<String> = rendered.iter().map(line_text).filter(|text| !text.is_empty()).collect();
+    assert!(
+        content_lines.len() >= 2,
+        "expected wrapped tool diff output, got {} content line(s)",
+        content_lines.len()
+    );
 
-    let first = line_text(&rendered[0]);
-    let second = line_text(&rendered[1]);
+    let first = &content_lines[0];
+    let second = &content_lines[1];
 
     assert!(first.contains("459 + "), "first line should include diff gutter: {first:?}");
     assert!(
@@ -475,7 +509,7 @@ fn agent_omitted_code_lines_keep_hanging_indent_when_wrapped() {
 }
 
 #[test]
-fn pty_command_header_verb_uses_tool_color_bullet_uses_theme_foreground() {
+fn pty_command_header_verb_uses_primary_color_bullet_uses_theme_foreground() {
     let mut session = Session::new(InlineTheme::default(), None, VIEW_ROWS);
     session.push_line(
         InlineMessageKind::Pty,
@@ -505,19 +539,96 @@ fn pty_command_header_verb_uses_tool_color_bullet_uses_theme_foreground() {
     let theme_fg = InlineTheme::default().foreground.map(ratatui_color_from_ansi);
     assert_eq!(bullet_span.style.fg, theme_fg, "bullet fg should be theme foreground");
 
-    // Verb "Ran" → tool color (Red for "run" normalized) + bold
+    // Verb "Ran" → primary/neutral header color + bold
     let verb_span = spans.iter().find(|s| s.content.as_ref() == "Ran").expect("expected verb span");
     assert!(
         verb_span.style.add_modifier.contains(Modifier::BOLD),
         "verb should be bold, got modifiers: {:?}",
         verb_span.style.add_modifier,
     );
-    assert_eq!(
-        verb_span.style.fg,
-        Some(Color::Red),
-        "Ran verb should be Red (tool color), got {:?}",
-        verb_span.style.fg,
+    let theme_primary = InlineTheme::default()
+        .primary
+        .or(InlineTheme::default().foreground)
+        .map(ratatui_color_from_ansi);
+    assert_eq!(verb_span.style.fg, theme_primary, "Ran verb should use the header primary color");
+}
+
+#[test]
+fn pty_command_header_preserves_status_color_on_bullet() {
+    let foreground = AnsiColorEnum::Rgb(RgbColor(0xCC, 0xCC, 0xCC));
+    let mut session = Session::new(
+        InlineTheme {
+            foreground: Some(foreground),
+            tool_body: Some(AnsiColorEnum::Ansi(anstyle::AnsiColor::Green)),
+            ..Default::default()
+        },
+        None,
+        VIEW_ROWS,
     );
+    session.push_line(
+        InlineMessageKind::Pty,
+        vec![InlineSegment {
+            text: "• Ran find src/agent -type f".to_string(),
+            style: Arc::new(InlineTextStyle {
+                color: Some(AnsiColorEnum::Ansi(anstyle::AnsiColor::Red)),
+                ..InlineTextStyle::default()
+            }),
+        }],
+    );
+
+    let rendered = session.reflow_pty_lines(0, 80);
+    let bullet_span = rendered
+        .iter()
+        .flat_map(|line| line.line.spans.iter())
+        .find(|span| span.content.as_ref() == "• ")
+        .expect("expected • span");
+    let command_span = rendered
+        .iter()
+        .flat_map(|line| line.line.spans.iter())
+        .find(|span| span.content.contains("find"))
+        .expect("expected command span");
+
+    assert_eq!(bullet_span.style.fg, Some(Color::Red));
+    assert_eq!(command_span.style.fg, Some(Color::Rgb(0xCC, 0xCC, 0xCC)));
+}
+
+#[test]
+fn tool_command_header_does_not_use_accent_tool_body_as_fallback() {
+    let foreground = AnsiColorEnum::Rgb(RgbColor(0xCC, 0xCC, 0xCC));
+    let mut session = Session::new(
+        InlineTheme {
+            foreground: Some(foreground),
+            tool_body: Some(AnsiColorEnum::Ansi(anstyle::AnsiColor::Green)),
+            ..Default::default()
+        },
+        None,
+        VIEW_ROWS,
+    );
+    session.push_line(
+        InlineMessageKind::Tool,
+        vec![InlineSegment {
+            text: "• Ran find src/agent -type f".to_string(),
+            style: Arc::new(InlineTextStyle {
+                color: Some(AnsiColorEnum::Ansi(anstyle::AnsiColor::Green)),
+                ..InlineTextStyle::default()
+            }),
+        }],
+    );
+
+    let rendered = session.reflow_transcript_lines(80);
+    let verb_span = rendered
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .find(|span| span.content.as_ref() == "Ran")
+        .expect("expected Ran span");
+    let command_span = rendered
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .find(|span| span.content.contains("find"))
+        .expect("expected command span");
+
+    assert_eq!(verb_span.style.fg, Some(Color::Rgb(0xCC, 0xCC, 0xCC)));
+    assert_eq!(command_span.style.fg, Some(Color::Rgb(0xCC, 0xCC, 0xCC)));
 }
 
 #[test]
@@ -579,6 +690,39 @@ fn assistant_text_is_brighter_than_pty_output() {
     assert_eq!(pty_body.style.fg, Some(pty_fg));
     assert!(pty_body.style.add_modifier.contains(Modifier::DIM));
     assert_ne!(agent_body.style.fg, pty_body.style.fg);
+}
+
+#[test]
+fn pty_ansi_detail_colors_are_attenuated_toward_background() {
+    let mut session = Session::new(
+        InlineTheme {
+            background: Some(AnsiColorEnum::Ansi(anstyle::AnsiColor::Black)),
+            pty_body: Some(AnsiColorEnum::Rgb(RgbColor(0x7A, 0x7A, 0x7A))),
+            ..Default::default()
+        },
+        None,
+        VIEW_ROWS,
+    );
+    session.push_line(
+        InlineMessageKind::Pty,
+        vec![InlineSegment {
+            text: "SUCCESS: Code formatting is correct!".to_string(),
+            style: Arc::new(InlineTextStyle {
+                color: Some(AnsiColorEnum::Ansi(anstyle::AnsiColor::BrightGreen)),
+                ..InlineTextStyle::default()
+            }),
+        }],
+    );
+
+    let rendered = session.reflow_pty_lines(0, 80);
+    let body_span = rendered
+        .iter()
+        .flat_map(|line| line.line.spans.iter())
+        .find(|span| span.content.contains("SUCCESS"))
+        .expect("expected ANSI-colored PTY detail span");
+
+    assert_eq!(body_span.style.fg, Some(Color::Rgb(55, 165, 55)));
+    assert!(body_span.style.add_modifier.contains(Modifier::DIM));
 }
 
 #[test]

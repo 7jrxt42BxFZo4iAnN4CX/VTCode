@@ -12,6 +12,7 @@ use reqwest::StatusCode;
 use serde::Deserialize;
 use tracing::warn;
 use vtcode_config::VTCodeConfig;
+use vtcode_config::auth::AuthCredentialsStoreMode;
 use vtcode_core::config::api_keys::{ApiKeySources, get_api_key_with_mode};
 use vtcode_core::config::models::Provider;
 use vtcode_core::copilot::{CopilotAuthStatusKind, list_available_models, probe_auth_status};
@@ -23,7 +24,7 @@ use self::cache::CachedDynamicModelStore;
 use self::endpoints::ProviderEndpointConfig;
 
 use super::options::ModelOption;
-use super::selection::{SelectionDetail, selection_from_dynamic};
+use super::selection::{SelectionDetail, selection_from_dynamic_with_mode};
 
 type StaticModelIndex = HashMap<Provider, HashSet<String>>;
 
@@ -106,25 +107,38 @@ impl DynamicModelRegistry {
         }
 
         if let Some((openai_result, openai_warning)) = openai_fetch {
-            registry.process_fetch(Provider::OpenAI, openai_result, openai_base_url, &static_index);
+            registry.process_fetch(
+                Provider::OpenAI,
+                openai_result,
+                openai_base_url,
+                &static_index,
+                vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default(),
+            );
             if let Some(warning) = openai_warning {
                 registry.record_warning(Provider::OpenAI, warning);
             }
         }
-        registry.process_fetch(Provider::Ollama, ollama_result, ollama_base_url, &static_index);
+        let storage_mode = vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default();
+        registry.process_fetch(Provider::Ollama, ollama_result, ollama_base_url, &static_index, storage_mode);
         if let Some(warning) = ollama_warning {
             registry.record_warning(Provider::Ollama, warning);
         }
-        registry.process_fetch(Provider::LlamaCpp, llamacpp_result, llamacpp_base_url, &static_index);
+        registry.process_fetch(Provider::LlamaCpp, llamacpp_result, llamacpp_base_url, &static_index, storage_mode);
         if let Some(warning) = llamacpp_warning {
             registry.record_warning(Provider::LlamaCpp, warning);
         }
-        registry.process_fetch(Provider::LmStudio, lmstudio_result, lmstudio_base_url, &static_index);
+        registry.process_fetch(Provider::LmStudio, lmstudio_result, lmstudio_base_url, &static_index, storage_mode);
         if let Some(warning) = lmstudio_warning {
             registry.record_warning(Provider::LmStudio, warning);
         }
         if let Some((copilot_result, copilot_warning)) = copilot_fetch {
-            registry.process_fetch(Provider::Copilot, copilot_result, "copilot-cli".to_string(), &static_index);
+            registry.process_fetch(
+                Provider::Copilot,
+                copilot_result,
+                "copilot-cli".to_string(),
+                &static_index,
+                storage_mode,
+            );
             if let Some(warning) = copilot_warning {
                 registry.record_warning(Provider::Copilot, warning);
             }
@@ -178,16 +192,23 @@ impl DynamicModelRegistry {
         result: Result<Vec<String>>,
         base_url: String,
         static_index: &StaticModelIndex,
+        storage_mode: AuthCredentialsStoreMode,
     ) {
         match result {
-            Ok(models) => self.register_provider_models(provider, models, static_index),
+            Ok(models) => self.register_provider_models(provider, models, static_index, storage_mode),
             Err(err) => {
                 self.record_error(provider, format!("Failed to query {} at {} ({})", provider.label(), base_url, err));
             }
         }
     }
 
-    fn register_provider_models(&mut self, provider: Provider, models: Vec<String>, static_index: &StaticModelIndex) {
+    fn register_provider_models(
+        &mut self,
+        provider: Provider,
+        models: Vec<String>,
+        static_index: &StaticModelIndex,
+        storage_mode: AuthCredentialsStoreMode,
+    ) {
         if !models.is_empty() {
             self.provider_errors.remove(&provider);
             self.provider_warnings.remove(&provider);
@@ -210,7 +231,10 @@ impl DynamicModelRegistry {
                 continue;
             }
 
-            self.register_model(provider, selection_from_dynamic(provider, trimmed, trimmed, None, None));
+            self.register_model(
+                provider,
+                selection_from_dynamic_with_mode(provider, trimmed, trimmed, None, None, storage_mode),
+            );
         }
     }
 
@@ -322,7 +346,12 @@ mod tests {
         let static_index = build_static_model_index(MODEL_OPTIONS.as_slice());
         let mut registry = DynamicModelRegistry::default();
 
-        registry.register_provider_models(Provider::Ollama, vec!["custom-local-model".to_string()], &static_index);
+        registry.register_provider_models(
+            Provider::Ollama,
+            vec!["custom-local-model".to_string()],
+            &static_index,
+            AuthCredentialsStoreMode::default(),
+        );
 
         let indexes = registry.indexes_for(Provider::Ollama);
         assert_eq!(indexes.len(), 1);
@@ -351,6 +380,7 @@ mod tests {
                 "custom-local-model".to_string(),
             ],
             &static_index,
+            AuthCredentialsStoreMode::default(),
         );
 
         let indexes = registry.indexes_for(Provider::Ollama);
@@ -369,6 +399,7 @@ mod tests {
             Err(anyhow::anyhow!("boom")),
             "http://localhost:11434/api".to_string(),
             &static_index,
+            AuthCredentialsStoreMode::default(),
         );
 
         assert!(

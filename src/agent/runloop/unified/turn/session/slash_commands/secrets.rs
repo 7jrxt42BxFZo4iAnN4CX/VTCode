@@ -12,6 +12,9 @@ use vtcode_ui::tui::app::{InlineEvent, InlineListItem, InlineListSelection, Tran
 use super::{SlashCommandContext, SlashCommandControl};
 use crate::agent::runloop::slash_commands::SecretCommandAction;
 
+mod storage;
+use storage::SecretStorage;
+
 pub(crate) async fn handle_manage_secrets(
     mut ctx: SlashCommandContext<'_>,
     action: SecretCommandAction,
@@ -184,15 +187,8 @@ enum SecretEntryOutcome {
 }
 
 async fn handle_add_secret(ctx: &mut SlashCommandContext<'_>, provider: Provider) -> Result<SecretEntryOutcome> {
-    if provider.uses_managed_auth() {
-        ctx.renderer.line(
-            MessageStyle::Info,
-            &format!(
-                "{} uses managed auth (GitHub Copilot CLI). Run `/login {}` instead.",
-                provider.label(),
-                provider.as_ref()
-            ),
-        )?;
+    if let Err(err) = SecretStorage::validate_provider(provider) {
+        ctx.renderer.line(MessageStyle::Info, &err.to_string())?;
         return Ok(SecretEntryOutcome::Continue);
     }
     let label = provider.label();
@@ -226,8 +222,8 @@ async fn handle_add_secret(ctx: &mut SlashCommandContext<'_>, provider: Provider
         return Ok(SecretEntryOutcome::Continue);
     }
 
-    let storage = vtcode_auth::CustomApiKeyStorage::new(provider.as_ref());
-    match storage.store(trimmed, storage_mode(ctx)) {
+    let storage = SecretStorage::new(storage_mode(ctx));
+    match storage.store(provider, trimmed) {
         Ok(()) => {
             ctx.renderer
                 .line(MessageStyle::Info, &format!("API key for {label} stored in secure storage."))?;
@@ -316,21 +312,14 @@ async fn handle_migrate_secrets(
 }
 
 async fn handle_delete_secret(ctx: &mut SlashCommandContext<'_>, provider: Provider) -> Result<SlashCommandControl> {
-    if provider.uses_managed_auth() {
-        ctx.renderer.line(
-            MessageStyle::Info,
-            &format!(
-                "{} uses managed auth (GitHub Copilot CLI). Run `/login {}` instead.",
-                provider.label(),
-                provider.as_ref()
-            ),
-        )?;
+    if let Err(err) = SecretStorage::validate_provider(provider) {
+        ctx.renderer.line(MessageStyle::Info, &err.to_string())?;
         return Ok(SlashCommandControl::Continue);
     }
     let label = provider.label();
 
-    let storage = vtcode_auth::CustomApiKeyStorage::new(provider.as_ref());
-    match storage.load(storage_mode(ctx)) {
+    let storage = SecretStorage::new(storage_mode(ctx));
+    match storage.load(provider) {
         Ok(None) => {
             ctx.renderer
                 .line(MessageStyle::Info, &format!("No stored API key found for {label}."))?;
@@ -338,8 +327,11 @@ async fn handle_delete_secret(ctx: &mut SlashCommandContext<'_>, provider: Provi
         }
         Ok(Some(_)) => {}
         Err(err) => {
-            ctx.renderer
-                .line(MessageStyle::Warning, &format!("Could not inspect stored key for {label}: {err}"))?;
+            ctx.renderer.line(
+                MessageStyle::Error,
+                &format!("Could not inspect stored key for {label}; refusing to delete it: {err}"),
+            )?;
+            return Ok(SlashCommandControl::Continue);
         }
     }
 
@@ -358,7 +350,7 @@ async fn handle_delete_secret(ctx: &mut SlashCommandContext<'_>, provider: Provi
         return Ok(SlashCommandControl::Continue);
     }
 
-    match storage.clear(storage_mode(ctx)) {
+    match storage.clear(provider) {
         Ok(()) => {
             ctx.renderer
                 .line(MessageStyle::Info, &format!("API key for {label} deleted from secure storage."))?;
@@ -385,9 +377,8 @@ fn reload_provider_client_if_matching(ctx: &mut SlashCommandContext<'_>, provide
         return Ok(());
     }
 
-    let storage = vtcode_auth::CustomApiKeyStorage::new(provider.as_ref());
-    let mode = storage_mode(ctx);
-    let new_api_key = match storage.load(mode) {
+    let storage = SecretStorage::new(storage_mode(ctx));
+    let new_api_key = match storage.load(provider) {
         Ok(Some(key)) => key,
         Ok(None) => {
             return Err(format!(

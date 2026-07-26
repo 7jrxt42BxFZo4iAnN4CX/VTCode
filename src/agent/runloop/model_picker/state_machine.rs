@@ -1,5 +1,3 @@
-use vtcode_core::config::api_keys::{ApiKeySources, get_api_key_with_mode};
-
 use super::selection::supports_gpt5_none_reasoning;
 use super::*;
 use crate::agent::runloop::unified::external_url_guard::{
@@ -279,7 +277,13 @@ impl ModelPickerState {
         };
 
         self.selected_reasoning = Some(ReasoningEffortLevel::None);
-        let mut new_selection = selection_from_option(option);
+        let mut new_selection = selection::selection_from_option_with_mode(
+            option,
+            self.vt_cfg
+                .as_ref()
+                .map(|cfg| cfg.agent.credential_storage_mode)
+                .unwrap_or_default(),
+        );
         if new_selection.provider_label != current_selection.provider_label {
             new_selection.provider_label = current_selection.provider_label.clone();
         }
@@ -360,12 +364,7 @@ impl ModelPickerState {
                     renderer.line(MessageStyle::Info, &existing_api_key_message(&selection, &existing))?;
                 }
                 Ok(None) => {}
-                Err(err) => {
-                    renderer.line(
-                        MessageStyle::Error,
-                        &format!("Failed to inspect stored credentials for {}: {}", selection.provider_label, err),
-                    )?;
-                }
+                Err(err) => return Err(err),
             }
         }
 
@@ -550,27 +549,24 @@ impl ModelPickerState {
                 prompt_api_key_plain(renderer, &selection, self.workspace.as_deref())?;
                 Ok(ModelPickerProgress::InProgress)
             }
-            Err(err) => {
-                renderer.line(
-                    MessageStyle::Error,
-                    &format!("Failed to inspect stored credentials for {}: {}", selection.provider_label, err),
-                )?;
-                prompt_api_key_plain(renderer, &selection, self.workspace.as_deref())?;
-                Ok(ModelPickerProgress::InProgress)
-            }
+            Err(err) => Err(err),
         }
     }
 
     fn find_existing_api_key(&self, provider: &str, env_key: &str) -> Result<Option<ExistingKey>> {
         // For OpenRouter, check OAuth token first
-        if env_key == "OPENROUTER_API_KEY"
-            && let Ok(Some(_token)) = vtcode_config::auth::load_oauth_token()
-        {
+        let storage_mode = self
+            .vt_cfg
+            .as_ref()
+            .map(|cfg| cfg.agent.credential_storage_mode)
+            .unwrap_or_default();
+
+        if env_key == "OPENROUTER_API_KEY" && vtcode_config::auth::load_oauth_token_with_mode(storage_mode)?.is_some() {
             return Ok(Some(ExistingKey::OAuthToken));
         }
 
         if env_key == "OPENAI_API_KEY"
-            && let Ok(Some(_session)) = vtcode_config::auth::load_openai_chatgpt_session()
+            && vtcode_config::auth::load_openai_chatgpt_session_with_mode(storage_mode)?.is_some()
         {
             return Ok(Some(ExistingKey::OAuthToken));
         }
@@ -588,16 +584,8 @@ impl ModelPickerState {
             return Ok(Some(ExistingKey::WorkspaceDotenv));
         }
 
-        let storage_mode = self
-            .vt_cfg
-            .as_ref()
-            .map(|cfg| cfg.agent.credential_storage_mode)
-            .unwrap_or_default();
-        if get_api_key_with_mode(provider, &ApiKeySources::default(), storage_mode).is_ok() {
-            return Ok(Some(ExistingKey::StoredCredential));
-        }
-
-        Ok(None)
+        vtcode_config::api_keys::load_stored_api_key_with_mode(provider, storage_mode)
+            .map(|stored| stored.map(|_| ExistingKey::StoredCredential))
     }
 }
 

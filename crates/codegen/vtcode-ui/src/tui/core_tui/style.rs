@@ -58,11 +58,30 @@ pub(crate) fn ratatui_style_from_inline(style: &InlineTextStyle, fallback: Optio
     crate::design::style::inline_text_style_to_ratatui(style.color, style.bg_color, style.effects, fallback)
 }
 
-/// PTY output style helper: keep configured color, suppress bold, enforce dimmed output.
+/// PTY output style helper: keep configured colors, suppress bold, and enforce dimmed output.
 pub(crate) fn ratatui_pty_style_from_inline(style: &InlineTextStyle, fallback: Option<AnsiColorEnum>) -> Style {
     ratatui_style_from_inline(style, fallback)
         .remove_modifier(Modifier::BOLD)
         .add_modifier(Modifier::DIM)
+}
+
+const PTY_DETAIL_COLOR_BACKGROUND_MIX: f32 = 0.35;
+
+/// PTY detail style helper: attenuate explicit ANSI colors toward the background
+/// before applying the standard subdued PTY output treatment.
+pub(crate) fn ratatui_pty_detail_style_from_inline(
+    style: &InlineTextStyle,
+    fallback: Option<AnsiColorEnum>,
+    background: Option<AnsiColorEnum>,
+) -> Style {
+    let mut detail_style = style.clone();
+    if let (Some(color), Some(background)) = (detail_style.color, background)
+        && let Some(dimmed) = vtcode_commons::colors::blend_colors(&color, &background, PTY_DETAIL_COLOR_BACKGROUND_MIX)
+    {
+        detail_style.color = Some(dimmed);
+    }
+
+    ratatui_pty_style_from_inline(&detail_style, fallback)
 }
 
 /// Convert an `anstyle::Style` directly to a `ratatui::style::Style`.

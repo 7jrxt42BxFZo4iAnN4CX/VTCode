@@ -179,7 +179,8 @@ pub struct AgentConfig {
 
     /// Provider-specific API keys captured from interactive configuration flows
     ///
-    /// Note: Actual API keys are stored securely in the OS keyring.
+    /// Note: Actual API keys are stored securely in the configured credential
+    /// backend (OS keyring when available, otherwise encrypted file storage).
     /// This field only tracks which providers have keys stored (for UI/migration purposes).
     /// The keys themselves are NOT serialized to the config file for security.
     #[serde(default, skip_serializing)]
@@ -188,7 +189,7 @@ pub struct AgentConfig {
     /// Preferred storage backend for credentials (OAuth tokens, API keys, etc.)
     ///
     /// - `keyring`: Use OS-specific secure storage (macOS Keychain, Windows Credential
-    ///   Manager, Linux Secret Service). This is the default as it's the most secure.
+    ///   Manager, Linux Secret Service), with encrypted-file fallback when unavailable.
     /// - `file`: Use AES-256-GCM encrypted file with machine-derived key
     /// - `auto`: Try keyring first, fall back to file if unavailable
     #[serde(default)]
@@ -411,7 +412,8 @@ impl<'de> Deserialize<'de> for HarnessOrchestrationMode {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentHarnessConfig {
-    /// Maximum number of tool calls allowed per turn. Set to `0` to disable the cap.
+    /// Maximum number of tool calls allowed per turn. Defaults to `120`.
+    /// Set to `0` to disable the cap.
     #[serde(default = "default_harness_max_tool_calls_per_turn")]
     pub max_tool_calls_per_turn: usize,
     /// Maximum wall clock time (seconds) for tool execution in a turn
@@ -1879,6 +1881,14 @@ mod tests {
         let fallback: AgentHarnessConfig =
             toml::from_str("continuation_policy = \"unexpected\"").expect("fallback config");
         assert_eq!(fallback.continuation_policy, ContinuationPolicy::All);
+    }
+
+    #[test]
+    fn test_harness_config_tool_call_budget_defaults_to_120() {
+        assert_eq!(AgentHarnessConfig::default().max_tool_calls_per_turn, 120);
+
+        let parsed: AgentHarnessConfig = toml::from_str("").expect("default harness config");
+        assert_eq!(parsed.max_tool_calls_per_turn, 120);
     }
 
     #[test]

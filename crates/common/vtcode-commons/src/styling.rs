@@ -8,8 +8,8 @@ use anstyle::{AnsiColor, Color, Effects, Style};
 #[derive(Debug, Clone, Copy)]
 pub struct ColorPalette {
     pub success: Color, // Green
-    error: Color,       // Red
-    pub warning: Color, // Red
+    pub error: Color,   // Red
+    pub warning: Color, // Yellow
     pub info: Color,    // Cyan
     pub accent: Color,  // Magenta
     primary: Color,     // Cyan
@@ -21,7 +21,7 @@ impl Default for ColorPalette {
         Self {
             success: Color::Ansi(AnsiColor::Green),
             error: Color::Ansi(AnsiColor::Red),
-            warning: Color::Ansi(AnsiColor::Red),
+            warning: Color::Ansi(AnsiColor::Yellow),
             info: Color::Ansi(AnsiColor::Cyan),
             accent: Color::Ansi(AnsiColor::Magenta),
             primary: Color::Ansi(AnsiColor::Cyan),
@@ -161,9 +161,9 @@ impl Styles {
         Style::new().fg_color(Some(Color::Ansi(AnsiColor::Red)))
     }
 
-    /// Warning message style (red)
+    /// Warning message style (yellow)
     pub fn warning() -> Style {
-        Style::new().fg_color(Some(Color::Ansi(AnsiColor::Red)))
+        Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow)))
     }
 
     /// Success message style (green)

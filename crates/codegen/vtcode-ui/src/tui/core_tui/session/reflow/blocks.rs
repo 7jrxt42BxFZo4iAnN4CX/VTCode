@@ -3,9 +3,10 @@ use unicode_width::UnicodeWidthStr;
 use vtcode_commons::diff_paths::{is_diff_addition_line, is_diff_deletion_line};
 
 use super::super::super::style::{
-    ratatui_color_from_ansi, ratatui_pty_style_from_inline, ratatui_style_from_ansi, ratatui_style_from_inline,
+    ratatui_color_from_ansi, ratatui_pty_detail_style_from_inline, ratatui_pty_style_from_inline,
+    ratatui_style_from_ansi, ratatui_style_from_inline,
 };
-use super::super::super::types::{InlineLinkRange, InlineMessageKind};
+use super::super::super::types::{InlineLinkRange, InlineMessageKind, InlineTextStyle};
 use super::super::message::RenderedTranscriptLink;
 use super::super::styling::tool_inline_style_for;
 use super::super::{Session, TranscriptLine, render, text_utils};
@@ -13,6 +14,32 @@ use super::helpers::{has_summary_prefix, is_tool_summary_line, parse_tool_call_p
 use crate::tui::config::constants::ui;
 
 impl Session {
+    fn tool_header_action_style(&self, action: &str) -> Style {
+        if action == "Ran" {
+            let style = InlineTextStyle {
+                color: self.theme.primary.or(self.theme.foreground),
+                ..InlineTextStyle::default()
+            }
+            .bold();
+            return ratatui_style_from_inline(&style, self.theme.foreground);
+        }
+
+        let tool_style = tool_inline_style_for(action, &self.theme);
+        let fallback = self.theme.tool_accent.or(self.theme.primary).or(self.theme.foreground);
+        ratatui_style_from_ansi(tool_style.to_ansi_style(fallback))
+    }
+
+    fn tool_header_body_style(&self) -> Style {
+        let style = InlineTextStyle {
+            // `tool_body` is an accent color in several themes. It must not be
+            // used as the fallback here because a whole status-colored header
+            // would still appear colored after the status span is split off.
+            color: self.theme.foreground,
+            ..InlineTextStyle::default()
+        };
+        ratatui_style_from_inline(&style, self.theme.foreground)
+    }
+
     fn wrapped_diff_continuation_prefix(line_text: &str) -> Option<String> {
         let trimmed = line_text.trim_start();
         if is_diff_deletion_line(trimmed) || is_diff_addition_line(trimmed) {
@@ -135,7 +162,16 @@ impl Session {
             Self::wrapped_diff_continuation_prefix(text)
         });
 
-        let mut wrapped = self.wrap_line(Line::from(content), content_width);
+        let content_line = Line::from(content);
+        // URL-aware wrapping historically reused the first span's style for
+        // every fragment. That makes a path-bearing command header inherit
+        // the status-colored bullet. Preserve header spans through the normal
+        // style-aware wrapper; URL-aware wrapping remains useful for output.
+        let mut wrapped = if line_is_tool_command_header(&content_line) {
+            text_utils::wrap_line(content_line, content_width)
+        } else {
+            self.wrap_line(content_line, content_width)
+        };
         if wrapped.is_empty() {
             wrapped.push(Line::default());
         }
@@ -211,17 +247,10 @@ impl Session {
         let mut lines = Vec::new();
 
         // Add visual separator at start of tool block
-        if is_start {
-            let spacing = self.appearance.message_block_spacing.min(2) as usize;
-            let skip_spacing = index > 0
-                && self
-                    .lines
-                    .get(index - 1)
-                    .is_some_and(|prev| prev.kind == InlineMessageKind::Info && is_tool_summary_line(prev));
-            if index > 0 && !skip_spacing {
-                for _ in 0..spacing {
-                    lines.push(Line::default());
-                }
+        if is_start && self.should_add_tool_block_top_spacing(index) {
+            let spacing = self.tool_block_spacing();
+            for _ in 0..spacing {
+                lines.push(Line::default());
             }
         }
 
@@ -234,7 +263,6 @@ impl Session {
         for line_spans in split_lines {
             let line_text: String = line_spans.iter().map(|span| span.content.as_ref()).collect();
             let is_summary = has_summary_prefix(&line_text);
-
             if is_summary {
                 // Style the tool call prefix ("• <Action>") with tool-specific ANSI color + bold.
                 let mut styled_spans = Vec::with_capacity(line_spans.len() + 1);
@@ -243,13 +271,23 @@ impl Session {
                         let text = span.content.clone().into_owned();
                         let style = span.style;
                         if let Some((action, prefix)) = parse_tool_call_prefix(&text) {
-                            let tool_style = tool_inline_style_for(action, &self.theme);
-                            let tool_fallback = self.theme.tool_accent.or(self.theme.primary).or(self.theme.foreground);
-                            let ansi_style = tool_style.to_ansi_style(tool_fallback);
-                            styled_spans.push(Span::styled(prefix.to_owned(), ratatui_style_from_ansi(ansi_style)));
+                            let mut bullet_style = style;
+                            if bullet_style.fg.is_none() {
+                                if let Some(c) = self.theme.foreground.map(ratatui_color_from_ansi) {
+                                    bullet_style = bullet_style.fg(c);
+                                }
+                            }
+                            if bullet_style.bg.is_none() {
+                                if let Some(c) = self.theme.background.map(ratatui_color_from_ansi) {
+                                    bullet_style = bullet_style.bg(c);
+                                }
+                            }
+                            let action_start = prefix.len() - action.len();
+                            styled_spans.push(Span::styled(prefix[..action_start].to_owned(), bullet_style));
+                            styled_spans.push(Span::styled(action.to_owned(), self.tool_header_action_style(action)));
                             let rest = &text[prefix.len()..];
                             if !rest.is_empty() {
-                                styled_spans.push(Span::styled(rest.to_owned(), style));
+                                styled_spans.push(Span::styled(rest.to_owned(), self.tool_header_body_style()));
                             }
                         } else {
                             styled_spans.push(Span::styled(text, style));
@@ -283,7 +321,7 @@ impl Session {
 
         // Add optional spacing after tool block for clean separation
         if is_end {
-            let spacing = self.appearance.message_block_spacing.min(2) as usize;
+            let spacing = self.tool_block_spacing();
             for _ in 0..spacing {
                 lines.push(Line::default());
             }
@@ -361,6 +399,10 @@ impl Session {
             .unwrap_or(false);
 
         let is_start = !prev_is_pty;
+        let is_end = !self
+            .lines
+            .get(index + 1)
+            .is_some_and(|next| next.kind == InlineMessageKind::Pty);
 
         let mut lines = Vec::with_capacity(line.segments.len());
 
@@ -391,36 +433,49 @@ impl Session {
                     let fg = self.theme.foreground.map(ratatui_color_from_ansi);
                     let bg = self.theme.background.map(ratatui_color_from_ansi);
 
-                    let mut bullet_style = Style::default();
-                    if let Some(c) = fg {
-                        bullet_style = bullet_style.fg(c);
+                    let mut bullet_style = ratatui_style_from_inline(&segment.style, pty_fallback);
+                    if bullet_style.fg.is_none() {
+                        if let Some(c) = fg {
+                            bullet_style = bullet_style.fg(c);
+                        }
                     }
-                    if let Some(c) = bg {
-                        bullet_style = bullet_style.bg(c);
+                    if bullet_style.bg.is_none() {
+                        if let Some(c) = bg {
+                            bullet_style = bullet_style.bg(c);
+                        }
                     }
                     let bullet = &prefix[..prefix.len() - action.len()];
                     body_spans.push(Span::styled(bullet.to_owned(), bullet_style));
 
-                    let verb_style = tool_inline_style_for(action, &self.theme);
-                    let verb_fallback = self.theme.tool_accent.or(self.theme.primary).or(self.theme.foreground);
-                    body_spans
-                        .push(Span::styled(action.to_owned(), ratatui_style_from_inline(&verb_style, verb_fallback)));
+                    body_spans.push(Span::styled(action.to_owned(), self.tool_header_action_style(action)));
 
                     let rest = &stripped_text[prefix.len()..];
                     if !rest.is_empty() {
-                        body_spans.push(Span::styled(
-                            rest.to_owned(),
-                            ratatui_style_from_inline(&segment.style, pty_fallback),
-                        ));
+                        // A streamed header can arrive as one status-colored
+                        // segment. Keep that status color on the bullet only;
+                        // never let it leak into the command and arguments.
+                        body_spans.push(Span::styled(rest.to_owned(), self.tool_header_body_style()));
                     }
                     continue;
                 }
             }
 
+            if is_command_header && i == 0 && stripped_text == "• " {
+                body_spans.push(Span::styled(
+                    stripped_text.into_owned(),
+                    ratatui_style_from_inline(&segment.style, pty_fallback),
+                ));
+                continue;
+            }
+            if is_command_header && i == 1 && stripped_text == "Ran" {
+                body_spans.push(Span::styled(stripped_text.into_owned(), self.tool_header_action_style("Ran")));
+                continue;
+            }
+
             let style = if is_command_header {
                 ratatui_style_from_inline(&segment.style, pty_fallback)
             } else {
-                ratatui_pty_style_from_inline(&segment.style, pty_fallback)
+                ratatui_pty_detail_style_from_inline(&segment.style, pty_fallback, self.theme.background)
             };
             body_spans.push(Span::styled(stripped_text.into_owned(), style));
         }
@@ -439,7 +494,20 @@ impl Session {
             lines.push(Line::default());
         }
 
-        build_pty_transcript_lines(lines, &line.link_ranges, body_prefix, continuation_prefix.as_str())
+        if is_end {
+            lines.extend(std::iter::repeat_n(Line::default(), self.tool_block_spacing()));
+        }
+
+        let mut transcript_lines =
+            build_pty_transcript_lines(lines, &line.link_ranges, body_prefix, continuation_prefix.as_str());
+        if is_start && self.should_add_tool_block_top_spacing(index) {
+            let spacing = self.tool_block_spacing();
+            let mut spaced = Vec::with_capacity(transcript_lines.len() + spacing);
+            spaced.extend(std::iter::repeat_n(TranscriptLine::default(), spacing));
+            spaced.append(&mut transcript_lines);
+            transcript_lines = spaced;
+        }
+        transcript_lines
     }
 }
 
@@ -488,4 +556,10 @@ fn build_pty_transcript_lines(
     }
 
     transcript_lines
+}
+
+fn line_is_tool_command_header(line: &Line<'_>) -> bool {
+    let text: String = line.spans.iter().map(|span| span.content.as_ref()).collect();
+    let stripped = text_utils::strip_ansi_codes(&text);
+    parse_tool_call_prefix(stripped.trim_start()).is_some()
 }

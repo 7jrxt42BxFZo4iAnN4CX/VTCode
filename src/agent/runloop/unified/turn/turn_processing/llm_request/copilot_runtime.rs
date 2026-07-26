@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+use anstyle::Color;
 use anyhow::{Context, Result, anyhow};
 use async_stream::stream;
 use async_trait::async_trait;
@@ -25,6 +26,7 @@ use vtcode_core::llm::provider::{self as uni, LLMStreamEvent, LLMStreamEvent::Co
 use vtcode_core::llm::provider::{LLMResponse, ToolDefinition};
 use vtcode_core::tools::registry::{ToolProgressCallback, ToolRegistry};
 use vtcode_core::utils::ansi::AnsiRenderer;
+use vtcode_core::utils::style_helpers::ColorPalette;
 use vtcode_ui::tui::app::{InlineHandle, InlineSession};
 
 use crate::agent::runloop::mcp_events::McpPanelState;
@@ -852,7 +854,7 @@ fn process_observed_tool_state(
         && matches!(update.status, CopilotObservedToolCallStatus::Completed | CopilotObservedToolCallStatus::Failed);
     if finished {
         state.finished = true;
-        let _ = state.pty_stream.take().map(|s| s.finish());
+        let _ = state.pty_stream.take().map(|s| s.finish(update.status));
     }
 
     ObservedToolUpdate { started, output_delta, finished }
@@ -897,19 +899,15 @@ impl ObservedToolPtyStream {
         (self.callback)("exec_command", chunk);
     }
 
-    fn finish(self) {
+    fn finish(self, status: CopilotObservedToolCallStatus) {
         self._spinner.finish();
         let progress_reporter = self._progress_reporter.clone();
-        let mut runtime = self._runtime;
+        let runtime = self._runtime;
         drop(self.callback);
 
         tokio::spawn(async move {
             progress_reporter.complete().await;
-            let _ = runtime.sender.take();
-            if let Some(task) = runtime.task.take() {
-                let _ = task.await;
-            }
-            runtime.active.store(false, Ordering::Relaxed);
+            runtime.shutdown(copilot_observed_status_color(status)).await;
         });
     }
 }
@@ -1197,6 +1195,7 @@ async fn run_local_terminal_session(task: LocalTerminalTaskContext) {
     } = task;
 
     let (pty_stream, _elapsed_guard) = setup_terminal_stream(&handle, tail_limit, &command_display, pty_config).await;
+    let mut final_status = None;
 
     if let Some(output) = initial_output.as_deref() {
         pty_stream.progress_callback("exec_command", output);
@@ -1234,6 +1233,7 @@ async fn run_local_terminal_session(task: LocalTerminalTaskContext) {
         match tool_registry.harness_exec_session_completed(&exec_session_id).await {
             Ok(Some(code)) => {
                 let exit_status = terminal_exit_status_from_code(i64::from(code));
+                final_status = exit_status.as_ref().map(tool_status_from_exit);
                 if let Some((tool_call_id, tool_name, arguments, output, status)) =
                     finalize_local_terminal_exit(&state, exit_status)
                 {
@@ -1264,7 +1264,7 @@ async fn run_local_terminal_session(task: LocalTerminalTaskContext) {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
-    pty_stream.finalize().await;
+    pty_stream.finalize(final_status).await;
 }
 
 struct TerminalStream {
@@ -1279,19 +1279,19 @@ impl TerminalStream {
         (self.callback)(tool, output);
     }
 
-    async fn finalize(self) {
+    async fn finalize(self, status: Option<ToolCallStatus>) {
         self._spinner.finish();
         let progress_reporter = self._progress_reporter.clone();
-        let mut runtime = self._runtime;
+        let runtime = self._runtime;
         drop(self.callback);
 
         tokio::spawn(async move {
             progress_reporter.complete().await;
-            let _ = runtime.sender.take();
-            if let Some(task) = runtime.task.take() {
-                let _ = task.await;
-            }
-            runtime.active.store(false, Ordering::Relaxed);
+            // An incomplete local terminal session is not a success. Keep the
+            // header yellow when cancellation or a monitor error prevents an
+            // exit code from being observed.
+            let status = status.unwrap_or(ToolCallStatus::InProgress);
+            runtime.shutdown(tool_call_status_color(&status)).await;
         });
     }
 }
@@ -1393,6 +1393,24 @@ fn tool_status_from_exit(exit_status: &CopilotTerminalExitStatus) -> ToolCallSta
     match exit_status.exit_code {
         Some(0) => ToolCallStatus::Completed,
         Some(_) | None => ToolCallStatus::Failed,
+    }
+}
+
+fn copilot_observed_status_color(status: CopilotObservedToolCallStatus) -> Color {
+    let palette = ColorPalette::default();
+    match status {
+        CopilotObservedToolCallStatus::Completed => palette.success,
+        CopilotObservedToolCallStatus::Failed => palette.error,
+        CopilotObservedToolCallStatus::Pending | CopilotObservedToolCallStatus::InProgress => palette.warning,
+    }
+}
+
+fn tool_call_status_color(status: &ToolCallStatus) -> Color {
+    let palette = ColorPalette::default();
+    match status {
+        ToolCallStatus::Completed => palette.success,
+        ToolCallStatus::Failed => palette.error,
+        ToolCallStatus::InProgress => palette.warning,
     }
 }
 

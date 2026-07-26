@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 
 use vtcode_config::OpenAIServiceTier;
+use vtcode_config::auth::AuthCredentialsStoreMode;
 use vtcode_core::config::models::Provider;
 use vtcode_core::config::types::ReasoningEffortLevel;
 use vtcode_ui::tui::ui::interactive_list::{SelectionEntry, run_interactive_selection};
@@ -13,7 +14,7 @@ use super::rendering::{
 };
 use super::selection::{
     ReasoningChoice, SelectionDetail, ServiceTierChoice, reasoning_level_description, reasoning_level_label,
-    selection_from_option, service_tier_label, supports_gpt5_none_reasoning, supports_max_reasoning,
+    selection_from_option_with_mode, service_tier_label, supports_gpt5_none_reasoning, supports_max_reasoning,
     supports_xhigh_reasoning,
 };
 
@@ -45,6 +46,7 @@ pub(super) fn select_model_with_ratatui_list(
     dynamic_models: &DynamicModelRegistry,
     custom_providers: &[SelectionDetail],
     provider_order: &[Provider],
+    storage_mode: AuthCredentialsStoreMode,
 ) -> Result<ModelSelectionListOutcome> {
     if options.is_empty() {
         return Err(anyhow!("No models available for selection"));
@@ -63,7 +65,7 @@ pub(super) fn select_model_with_ratatui_list(
                     option.display.to_string(),
                     Some(format!("{description}\n{}", option.description)),
                 ),
-                outcome: ModelSelectionChoiceOutcome::Predefined(selection_from_option(option)),
+                outcome: ModelSelectionChoiceOutcome::Predefined(selection_from_option_with_mode(option, storage_mode)),
             });
         }
         if provider.is_dynamic() {

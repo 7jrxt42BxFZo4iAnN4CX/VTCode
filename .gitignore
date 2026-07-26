@@ -127,6 +127,11 @@ settings.local.*
 
 # Secrets and Sensitive Data
 secrets/
+# The slash-command secret manager has source code under a directory named
+# `secrets`; keep its implementation trackable while retaining the generic
+# ignore rule for actual secret directories elsewhere.
+!src/agent/runloop/unified/turn/session/slash_commands/secrets/
+!src/agent/runloop/unified/turn/session/slash_commands/secrets/storage.rs
 *.secret
 *.p12
 *.pfx

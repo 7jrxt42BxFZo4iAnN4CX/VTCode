@@ -5,7 +5,7 @@
 //! prioritizing security by checking environment variables first, then .env files, and finally
 //! falling back to configuration file values.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::str::FromStr;
 
 use crate::auth::CustomApiKeyStorage;
@@ -119,7 +119,7 @@ pub fn get_api_key_with_mode(
     _sources: &ApiKeySources,
     storage_mode: crate::auth::AuthCredentialsStoreMode,
 ) -> Result<String> {
-    let normalized_provider = provider.to_lowercase();
+    let normalized_provider = provider.trim().to_lowercase();
     let inferred_env = api_key_env_var(&normalized_provider);
 
     // Generic path: read the inferred env var for any provider.
@@ -142,9 +142,15 @@ pub fn get_api_key_with_mode(
         }
         // OpenRouter tries OAuth token from encrypted storage first
         "openrouter" => {
-            if let Ok(Some(token)) = crate::auth::load_oauth_token_with_mode(storage_mode) {
-                tracing::debug!("Using OAuth token for OpenRouter authentication");
-                return Ok(token.api_key);
+            match crate::auth::load_oauth_token_with_mode(storage_mode) {
+                Ok(Some(token)) => {
+                    tracing::debug!("Using OAuth token for OpenRouter authentication");
+                    return Ok(token.api_key);
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    return Err(err).with_context(|| "failed to read OpenRouter OAuth credential".to_string());
+                }
             }
             Err(anyhow::anyhow!("OPENROUTER_API_KEY not set"))
         }
@@ -168,7 +174,7 @@ pub fn get_api_key_with_mode(
         )),
         // All other providers: env var was already checked above, nothing more to do
         _ => Err(anyhow::anyhow!(
-            "{normalized_provider} API key not found. Export {inferred_env} in your shell, or store it with `/secret add {normalized_provider}` (it is kept in your OS keyring, not a workspace .env).",
+            "{normalized_provider} API key not found. Export {inferred_env} in your shell, or store it with `/secret add {normalized_provider}` (it is kept in secure storage, not a workspace .env).",
         )),
     };
 
@@ -176,28 +182,49 @@ pub fn get_api_key_with_mode(
         return provider_result;
     }
 
-    // Try secure storage (keyring) only after env/config lookup fails.
-    if let Ok(Some(key)) = get_custom_api_key_from_secure_storage(&normalized_provider, storage_mode) {
-        return Ok(key);
+    // Try secure storage only after env/config lookup fails. Preserve storage
+    // errors: callers must not turn an unreadable encrypted credential into a
+    // misleading "paste a new key" prompt.
+    match load_stored_api_key_with_mode(&normalized_provider, storage_mode) {
+        Ok(Some(key)) => Ok(key),
+        Ok(None) => provider_result,
+        Err(err) => {
+            Err(err).with_context(|| format!("failed to read secure credential for provider '{normalized_provider}'"))
+        }
     }
-
-    provider_result
 }
 
-/// Get a custom API key from secure storage.
+/// Resolve the API-key input for OpenAI account authentication.
+///
+/// ChatGPT authentication does not require an API key. When the caller allows
+/// that fallback and a persisted ChatGPT session exists, a missing API key is
+/// represented as `Ok(None)`. All other lookup and secure-storage failures are
+/// preserved so runtime model switching cannot turn them into a paste prompt.
+pub fn resolve_openai_api_key_for_auth(
+    storage_mode: crate::auth::AuthCredentialsStoreMode,
+    allow_chatgpt_fallback: bool,
+) -> Result<Option<String>> {
+    match get_api_key_with_mode("openai", &ApiKeySources::default(), storage_mode) {
+        Ok(api_key) => Ok(Some(api_key)),
+        Err(_err)
+            if allow_chatgpt_fallback
+                && crate::auth::load_openai_chatgpt_session_with_mode(storage_mode)?.is_some() =>
+        {
+            Ok(None)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+/// Load a custom API key from secure storage.
 ///
 /// This function retrieves API keys that were stored securely via the model picker
 /// or interactive configuration flows. When the OS keyring is unavailable, the
 /// auth layer falls back to encrypted file storage automatically.
 ///
-/// # Arguments
-/// * `provider` - The provider name
-///
-/// # Returns
-/// * `Ok(Some(String))` - The API key if found in secure storage
-/// * `Ok(None)` - If no key is stored for this provider
-/// * `Err` - If there was an error accessing secure storage
-fn get_custom_api_key_from_secure_storage(
+/// Returns `Ok(None)` when no key exists and preserves backend/decryption
+/// failures as errors.
+pub fn load_stored_api_key_with_mode(
     provider: &str,
     storage_mode: crate::auth::AuthCredentialsStoreMode,
 ) -> Result<Option<String>> {
@@ -233,7 +260,7 @@ impl CredentialSource {
     pub fn describe(self, provider: Provider) -> &'static str {
         match self {
             CredentialSource::Env => "found in environment",
-            CredentialSource::SecureStorage => "stored in OS keyring",
+            CredentialSource::SecureStorage => "stored in secure storage",
             CredentialSource::OAuth => "OAuth session active",
             CredentialSource::ManagedAuth => "managed by external CLI",
             CredentialSource::Local => {
@@ -414,7 +441,7 @@ fn alternate_env_var(provider: Provider) -> Option<&'static str> {
 }
 
 fn has_stored_credential(provider: Provider, storage_mode: crate::auth::AuthCredentialsStoreMode) -> bool {
-    get_custom_api_key_from_secure_storage(provider.as_ref(), storage_mode)
+    load_stored_api_key_with_mode(provider.as_ref(), storage_mode)
         .ok()
         .flatten()
         .is_some()

@@ -1,9 +1,10 @@
 use anyhow::{Context, Result, anyhow};
 use std::path::Path;
-use vtcode_config::auth::CustomApiKeyStorage;
-use vtcode_config::{read_workspace_env_value, resolve_openai_auth, write_workspace_env_value};
+use vtcode_config::{read_workspace_env_value, resolve_openai_auth};
 
-use vtcode_core::config::api_keys::{ApiKeySources, get_api_key_with_mode};
+use vtcode_core::config::api_keys::{
+    ApiKeySources, get_api_key_with_mode, load_stored_api_key_with_mode, resolve_openai_api_key_for_auth,
+};
 use vtcode_core::config::loader::VTCodeConfig;
 use vtcode_core::config::models::Provider;
 use vtcode_core::config::types::AgentConfig as CoreAgentConfig;
@@ -244,8 +245,8 @@ pub(crate) async fn finalize_model_selection(
         renderer.line(
             MessageStyle::Info,
             &format!(
-                "API key saved to secure storage (keyring) and environment variable {}. The key will NOT appear in vtcode.toml.",
-                selection.env_key
+                "API key saved to secure storage. The key will not be written to {} or vtcode.toml.",
+                selection.env_key,
             ),
         )?;
     } else if selection.requires_api_key {
@@ -300,24 +301,16 @@ async fn resolve_runtime_api_key(
     selection: &ModelSelectionResult,
 ) -> Result<(String, Option<vtcode_config::auth::OpenAIChatGptAuthHandle>)> {
     if let Some(key) = selection.api_key.as_ref() {
-        write_workspace_env_value(workspace, &selection.env_key, key)?;
-        vtcode_commons::env_lock::set_var(&selection.env_key, key);
         return Ok((key.clone(), None));
     }
 
     if selection.provider_enum == Some(Provider::OpenAI)
         && let Some(cfg) = vt_cfg
     {
-        let api_key =
-            get_api_key_with_mode(&selection.provider, &ApiKeySources::default(), cfg.agent.credential_storage_mode)
-                .inspect_err(|err| {
-                    tracing::debug!(
-                        error = %err,
-                        provider = %selection.provider,
-                        "Failed to read API key from keychain; falling back to configured auth"
-                    );
-                })
-                .ok();
+        let api_key = resolve_openai_api_key_for_auth(
+            cfg.agent.credential_storage_mode,
+            !matches!(cfg.auth.openai.preferred_method, vtcode_config::OpenAIPreferredMethod::ApiKey),
+        )?;
         let resolved = resolve_openai_auth(&cfg.auth.openai, cfg.agent.credential_storage_mode, api_key)?;
         return Ok((resolved.api_key().to_string(), resolved.handle()));
     }
@@ -356,7 +349,7 @@ async fn resolve_runtime_api_key(
         }
 
         let storage_mode = vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default();
-        if let Ok(Some(key)) = CustomApiKeyStorage::new(&selection.provider).load(storage_mode) {
+        if let Some(key) = load_stored_api_key_with_mode(&selection.provider, storage_mode)? {
             return Ok((key, None));
         }
 
@@ -473,7 +466,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_runtime_api_key_writes_user_supplied_key_to_workspace_env() {
+    fn resolve_runtime_api_key_does_not_write_user_supplied_key_to_workspace_env() {
         let dir = tempdir().expect("temp dir");
         let selection = selection("openai", Some(Provider::OpenAI), "OPENAI_API_KEY", Some("user-key"), true);
 
@@ -484,7 +477,7 @@ mod tests {
         let written = read_workspace_api_key(dir.path(), "OPENAI_API_KEY").expect("workspace env read");
 
         assert_eq!(resolved.0, "user-key");
-        assert_eq!(written.as_deref(), Some("user-key"));
+        assert_eq!(written, None);
     }
 
     #[test]

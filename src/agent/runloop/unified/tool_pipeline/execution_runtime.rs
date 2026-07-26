@@ -1,12 +1,13 @@
+use anstyle::Color;
 use serde_json::Value;
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Notify;
 use tracing::warn;
-use vtcode_core::config::constants::tools;
 use vtcode_core::config::loader::VTCodeConfig;
 use vtcode_core::tools::registry::{ExecSettlementMode, ToolProgressCallback, ToolRegistry};
 use vtcode_core::tools::result_cache::{ToolCacheKey, ToolResultCache};
 use vtcode_core::tools::tool_intent;
+use vtcode_core::utils::style_helpers::ColorPalette;
 
 use crate::agent::runloop::tool_output::resolve_stdout_tail_limit;
 use crate::agent::runloop::unified::inline_events::harness::{
@@ -18,7 +19,7 @@ use crate::agent::runloop::unified::tool_reads::spool_chunk_read_path;
 
 use crate::agent::runloop::unified::ui_interaction::PlaceholderSpinner;
 
-use super::CancellationTokens;
+use super::{CancellationTokens, streams_pty_output};
 
 use super::cache::{cache_target_path, create_enhanced_cache_key, is_tool_cacheable, stream_command_parts};
 use super::execution_attempts::execute_tool_with_timeout_ref_prevalidated;
@@ -246,10 +247,7 @@ async fn execute_with_cache_and_streaming_inner(
         None
     };
 
-    let should_stream_pty = matches!(
-        name,
-        tools::RUN_PTY_CMD | tools::UNIFIED_EXEC | tools::SEND_PTY_INPUT | tools::EXEC_COMMAND | tools::EXEC_PTY_CMD
-    );
+    let should_stream_pty = streams_pty_output(name, args_val);
     debug_assert!(
         show_loading_ui || !should_stream_pty,
         "loading-ui suppression should only apply to non-PTY tool calls"
@@ -291,7 +289,7 @@ async fn execute_with_cache_and_streaming_inner(
     .await;
 
     if let Some(runtime) = pty_stream_runtime {
-        runtime.shutdown().await;
+        runtime.shutdown(pty_header_color(&outcome)).await;
     }
     if let Some(coalescer) = output_coalescer.as_ref() {
         coalescer.flush();
@@ -340,6 +338,10 @@ async fn execute_with_cache_and_streaming_inner(
     }
 
     runtime_execution
+}
+
+fn pty_header_color(status: &ToolExecutionStatus) -> Color {
+    status.display_status().color(ColorPalette::default())
 }
 
 fn should_cache_success_output(name: &str, output: &Value, command_success: bool) -> bool {

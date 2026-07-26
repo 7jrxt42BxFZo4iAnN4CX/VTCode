@@ -261,11 +261,7 @@ mod tests {
             std::future::pending::<()>().await;
         });
         let active = Arc::new(std::sync::atomic::AtomicBool::new(true));
-        let runtime = PtyStreamRuntime {
-            sender: None,
-            task: Some(task),
-            active: Arc::clone(&active),
-        };
+        let runtime = PtyStreamRuntime::for_test(task, Arc::clone(&active));
 
         drop(runtime);
 

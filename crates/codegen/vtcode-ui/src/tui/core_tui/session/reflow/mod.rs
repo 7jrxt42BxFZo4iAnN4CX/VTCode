@@ -112,6 +112,13 @@ impl Session {
         let mut wrapped: Vec<TranscriptLine> = Vec::new();
         let max_width = width as usize;
 
+        let is_tool_summary = message.kind == InlineMessageKind::Info && is_tool_summary_line(message);
+        if is_tool_summary && self.should_add_tool_block_top_spacing(index) {
+            for _ in 0..self.tool_block_spacing() {
+                wrapped.push(TranscriptLine::default());
+            }
+        }
+
         // Check if this is the start of a new conversation turn
         let prev_kind = if index > 0 {
             self.lines.get(index - 1).map(|l| l.kind)
@@ -166,6 +173,11 @@ impl Session {
                         _ => false,
                     };
                 if !skip_spacing {
+                    let spacing = if is_tool_summary {
+                        self.tool_block_spacing()
+                    } else {
+                        spacing
+                    };
                     for _ in 0..spacing {
                         wrapped.push(TranscriptLine::default());
                     }
@@ -197,6 +209,22 @@ impl Session {
         }
 
         wrapped
+    }
+
+    fn tool_block_spacing(&self) -> usize {
+        self.appearance.message_block_spacing.clamp(1, 2) as usize
+    }
+
+    fn should_add_tool_block_top_spacing(&self, index: usize) -> bool {
+        let Some(previous) = index.checked_sub(1).and_then(|previous| self.lines.get(previous)) else {
+            return true;
+        };
+
+        match previous.kind {
+            InlineMessageKind::Agent | InlineMessageKind::Tool | InlineMessageKind::Pty => false,
+            InlineMessageKind::Info => !is_tool_summary_line(previous),
+            _ => true,
+        }
     }
 
     pub(crate) fn reflow_message_lines_for_review(&self, index: usize, width: u16) -> Vec<TranscriptLine> {

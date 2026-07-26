@@ -24,3 +24,5 @@
 - The `crossterm` dependency enables `event-stream` and `osc52` features; do not duplicate these in downstream crates.
 - Standalone and core session defaults are inline; callers that need alternate-screen rendering must opt in explicitly.
 - Floating approval/list overlays own mouse input only inside `modal_list_area`; wheel events outside that hitbox must pass through to the transcript so long plan markdown remains scrollable.
+- PTY/tool reflow must preserve explicit status color on the `•` prefix; apply action/tool styling only to the verb so success, failure, and warning remain visually distinct.
+- Tool and PTY blocks reserve at least one blank line above and below; shell syntax highlighting is accepted only when it produces distinct token colors, otherwise semantic token styles are the fallback.

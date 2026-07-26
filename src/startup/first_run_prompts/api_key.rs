@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use vtcode_config::api_keys::CredentialSource;
 use vtcode_config::auth::{AuthCredentialsStoreMode, CustomApiKeyStorage};
 use vtcode_core::config::models::Provider;
@@ -47,6 +47,15 @@ pub(crate) fn prompt_api_key_interactive(
 
     let env_key = provider.default_api_key_env();
     let detail = vtcode_config::api_keys::provider_credential_detail_with_mode(provider, storage_mode);
+
+    // Discovery intentionally returns a compact `Option` for UI summaries. A
+    // launch-time prompt must still distinguish "no key" from an unreadable
+    // persisted key, otherwise a transient backend/decryption failure looks
+    // like a request to paste a replacement secret.
+    if detail.is_none() {
+        vtcode_config::api_keys::load_stored_api_key_with_mode(provider.as_ref(), storage_mode)
+            .with_context(|| format!("failed to read stored {} credential", provider.label()))?;
+    }
 
     // Already have a credential — confirm and skip the paste prompt, unless
     // the user wants to replace a stored keyring key.

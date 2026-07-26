@@ -158,6 +158,7 @@ pub(crate) fn render_tool_call_summary(
     args: &Value,
     stream_label: Option<&str>,
     ctx: &ToolSummaryRenderContext,
+    bullet_color: Color,
 ) -> Result<()> {
     let data = prepare_summary_data(tool_name, args, ctx.workspace_root);
 
@@ -169,12 +170,12 @@ pub(crate) fn render_tool_call_summary(
     let palette = ColorPalette::default();
 
     let mut line = String::with_capacity(128);
-    line.push_str(&render_styled("•", palette.muted, Some("dim".to_string())));
+    line.push_str(&render_styled("•", bullet_color, None));
     line.push(' ');
 
     let wrapped_run_segments = render_bullet_line(&mut line, &data, stream_label, main_color, &palette);
 
-    renderer.line(MessageStyle::Info, &line)?;
+    renderer.line_with_override_style(MessageStyle::Info, AnsiStyle::new(), &line)?;
 
     render_continuation_lines(renderer, &wrapped_run_segments, main_color, &palette)?;
     render_command_line(renderer, &data.command_line, &palette)?;
@@ -358,6 +359,10 @@ fn render_summary_with_highlights(
 /// that have no explicit color. Falls back to a simple command-name / args
 /// two-color scheme when the grammar is unavailable or yields a single color.
 fn render_command_segment(segment: &str, command_color: Color, args_color: Color, expect_command: bool) -> String {
+    if segment.is_empty() {
+        return String::new();
+    }
+
     if !color_policy::color_output_enabled() {
         return segment.to_string();
     }
@@ -653,8 +658,13 @@ mod tests {
     use serde_json::json;
     use vtcode_commons::formatting::wrap_text_words;
     use vtcode_core::config::constants::tools as tool_names;
+    use vtcode_core::utils::ansi::AnsiRenderer;
+    use vtcode_ui::tui::app::{InlineCommand, InlineHandle};
 
-    use super::{build_tool_summary, describe_tool_action, run_summary_is_placeholder};
+    use super::{
+        ToolSummaryRenderContext, build_tool_summary, describe_tool_action, render_tool_call_summary,
+        run_summary_is_placeholder,
+    };
 
     #[test]
     fn build_tool_summary_formats_run_command_as_ran() {
@@ -854,5 +864,67 @@ mod tests {
         assert!(result.contains('\u{1b}'), "command segment should be syntax-highlighted");
         let stripped = vtcode_commons::ansi::strip_ansi_codes(&result);
         assert_eq!(stripped.as_ref(), "cargo check --locked -p vtcode");
+    }
+
+    #[test]
+    fn inline_tool_summary_keeps_command_tokens_independently_styled() {
+        let _ = vtcode_commons::color_policy::current_color_output_policy();
+        vtcode_commons::color_policy::set_color_output_policy(vtcode_commons::color_policy::ColorOutputPolicy {
+            enabled: true,
+            source: vtcode_commons::color_policy::ColorOutputPolicySource::CliColorAlways,
+        });
+
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let handle = InlineHandle::new_for_tests(sender);
+        let mut renderer = AnsiRenderer::with_inline_ui(handle, Default::default());
+        let context = ToolSummaryRenderContext { workspace_root: None };
+
+        render_tool_call_summary(
+            &mut renderer,
+            tool_names::UNIFIED_EXEC,
+            &json!({"action": "run", "command": "find src/agent/runloop -maxdepth 3 -type f -name *.rs | sort"}),
+            None,
+            &context,
+            anstyle::Color::Ansi(anstyle::AnsiColor::Green),
+        )
+        .expect("summary rendering should succeed");
+
+        let commands: Vec<_> = std::iter::from_fn(|| receiver.try_recv().ok()).collect();
+        let summary_segments = commands
+            .iter()
+            .find_map(|command| match command {
+                InlineCommand::AppendLine { segments, .. }
+                    if segments
+                        .iter()
+                        .map(|segment| segment.text.as_str())
+                        .collect::<String>()
+                        .contains("find") =>
+                {
+                    Some(segments.as_slice())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                let texts: Vec<_> = commands
+                    .iter()
+                    .filter_map(|command| match command {
+                        InlineCommand::AppendLine { segments, .. } => {
+                            Some(segments.iter().map(|segment| segment.text.as_str()).collect::<String>())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                panic!("expected inline command summary, got {texts:?}");
+            });
+        let command_color = summary_segments
+            .iter()
+            .find(|segment| segment.text.contains("find"))
+            .and_then(|segment| segment.style.color);
+        let option_color = summary_segments
+            .iter()
+            .find(|segment| segment.text.contains("maxdepth"))
+            .and_then(|segment| segment.style.color);
+
+        assert_ne!(command_color, option_color);
     }
 }

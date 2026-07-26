@@ -1,6 +1,49 @@
+use anstyle::Color;
 use serde_json::Value;
 use std::fmt::Write;
 use vtcode_core::tools::registry::ToolExecutionError;
+use vtcode_core::utils::style_helpers::ColorPalette;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ToolDisplayStatus {
+    Success,
+    Failure,
+    Warning,
+}
+
+impl ToolDisplayStatus {
+    pub(crate) fn from_command_output(output: &Value, command_success: bool) -> Self {
+        if !command_success {
+            Self::Failure
+        } else if output.get("warning").is_some_and(has_warning_payload) {
+            Self::Warning
+        } else {
+            Self::Success
+        }
+    }
+
+    pub(crate) fn color(self, palette: ColorPalette) -> Color {
+        match self {
+            Self::Success => palette.success,
+            Self::Failure => palette.error,
+            Self::Warning => palette.warning,
+        }
+    }
+}
+
+fn has_warning_payload(warning: &Value) -> bool {
+    match warning {
+        Value::Bool(enabled) => *enabled,
+        Value::String(message) => !message.trim().is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(fields) => !fields.is_empty(),
+        Value::Null => false,
+        // Numeric warning fields are commonly counts. Treat zero like an
+        // empty payload so a harmless `warning: 0` does not turn a successful
+        // tool call yellow.
+        Value::Number(value) => value.as_f64().is_some_and(|number| number != 0.0),
+    }
+}
 
 /// Result of a tool execution
 #[derive(Debug)]
@@ -32,6 +75,16 @@ pub(crate) enum ToolExecutionStatus {
 }
 
 impl ToolExecutionStatus {
+    pub(crate) fn display_status(&self) -> ToolDisplayStatus {
+        match self {
+            Self::Success { output, command_success, .. } => {
+                ToolDisplayStatus::from_command_output(output, *command_success)
+            }
+            Self::Failure { .. } | Self::Timeout { .. } => ToolDisplayStatus::Failure,
+            Self::Cancelled => ToolDisplayStatus::Warning,
+        }
+    }
+
     pub(crate) fn error(&self) -> Option<&ToolExecutionError> {
         match self {
             ToolExecutionStatus::Failure { error } | ToolExecutionStatus::Timeout { error } => Some(error),
@@ -175,7 +228,9 @@ impl ToolBatchOutcome {
     /// Returns `true` when **some** tools succeeded but **some** failed.
     pub(crate) fn is_partial_success(&self) -> bool {
         let s = self.stats();
-        s.succeeded > 0 && (s.failed > 0 || s.timed_out > 0)
+        // Compare against the total so every non-success outcome (including
+        // cancellation and future result variants) is handled consistently.
+        s.succeeded > 0 && s.succeeded < s.total
     }
 
     /// Build a compact one-line summary suitable for structured logging.
@@ -315,5 +370,37 @@ mod tests {
         batch.record(&timeout);
         let s = batch.stats();
         assert_eq!(s.timed_out, 1);
+    }
+
+    #[test]
+    fn cancellation_with_success_is_partial_success() {
+        let mut batch = ToolBatchOutcome::new();
+        let success = ToolExecutionStatus::Success {
+            output: serde_json::json!("ok"),
+            stdout: None,
+            modified_files: vec![],
+            command_success: true,
+        };
+        batch.record(&success);
+        batch.record(&ToolExecutionStatus::Cancelled);
+
+        assert!(batch.is_partial_success());
+        assert!(batch.summary_line().contains("1 cancelled"));
+    }
+
+    #[test]
+    fn warning_status_requires_an_enabled_or_non_empty_payload() {
+        assert_eq!(
+            ToolDisplayStatus::from_command_output(&serde_json::json!({"warning": false}), true),
+            ToolDisplayStatus::Success
+        );
+        assert_eq!(
+            ToolDisplayStatus::from_command_output(&serde_json::json!({"warning": "  "}), true),
+            ToolDisplayStatus::Success
+        );
+        assert_eq!(
+            ToolDisplayStatus::from_command_output(&serde_json::json!({"warning": "no results"}), true),
+            ToolDisplayStatus::Warning
+        );
     }
 }

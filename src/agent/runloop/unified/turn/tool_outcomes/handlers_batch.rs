@@ -330,6 +330,7 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
                         &tool_name,
                         args,
                         None,
+                        Some(&mut batch_tracker),
                     )
                     .await?
                     {
@@ -366,6 +367,7 @@ pub(crate) fn execute_and_handle_tool_call<'a, 'b>(
     tool_name: &'b str,
     args_val: serde_json::Value,
     _batch_progress_reporter: Option<&'b ProgressReporter>,
+    batch_tracker: Option<&'b mut crate::agent::runloop::unified::tool_pipeline::ToolBatchOutcome>,
 ) -> futures::future::BoxFuture<'b, Result<Option<TurnHandlerOutcome>>> {
     Box::pin(execute_and_handle_tool_call_inner(
         ctx,
@@ -374,6 +376,7 @@ pub(crate) fn execute_and_handle_tool_call<'a, 'b>(
         tool_call_id,
         tool_name,
         args_val,
+        batch_tracker,
     ))
 }
 
@@ -384,6 +387,7 @@ async fn execute_and_handle_tool_call_inner<'a>(
     tool_call_id: String,
     tool_name: &str,
     args_val: serde_json::Value,
+    batch_tracker: Option<&mut crate::agent::runloop::unified::tool_pipeline::ToolBatchOutcome>,
 ) -> Result<Option<TurnHandlerOutcome>> {
     // Show pre-execution indicator for file modification operations
     if crate::agent::runloop::unified::tool_summary::is_file_modification_tool(tool_name, &args_val) {
@@ -423,6 +427,9 @@ async fn execute_and_handle_tool_call_inner<'a>(
         )
         .await?
     };
+    if let Some(batch_tracker) = batch_tracker {
+        batch_tracker.record(&pipeline_outcome.status);
+    }
     record_circuit_transition(ctx, tool_name, circuit_before).await;
 
     update_repetition_tracker(repeated_tool_attempts, &pipeline_outcome, tool_name, &args_val);

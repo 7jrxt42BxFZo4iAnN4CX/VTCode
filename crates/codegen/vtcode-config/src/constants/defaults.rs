@@ -22,7 +22,8 @@ pub const DEFAULT_PTY_OUTPUT_MAX_TOKENS: usize = 8_000;
 /// Protects against edge cases where token estimation underestimates size.
 pub const DEFAULT_PTY_OUTPUT_BYTE_FUSE: usize = 40 * 1024; // 40 KiB
 
-pub(crate) const DEFAULT_MAX_TOOL_CALLS_PER_TURN: usize = 0;
+/// Default per-turn tool-call budget for the built-in harness configuration.
+pub(crate) const DEFAULT_MAX_TOOL_CALLS_PER_TURN: usize = 120;
 pub(crate) const DEFAULT_MAX_TOOL_WALL_CLOCK_SECS: u64 = 600;
 pub const DEFAULT_MAX_TOOL_RETRIES: u32 = 2;
 

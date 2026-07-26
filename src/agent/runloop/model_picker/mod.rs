@@ -60,9 +60,11 @@ use rendering::{
 };
 #[cfg(test)]
 use rendering::{dynamic_model_subtitle, model_search_value, static_model_search_terms, static_model_subtitle};
+#[cfg(test)]
+use selection::selection_from_option;
 use selection::{
     ExistingKey, ReasoningChoice, SelectionDetail, ServiceTierChoice, is_cancel_command, parse_model_selection,
-    selection_from_option, selections_from_custom_provider,
+    selections_from_custom_provider,
 };
 #[cfg(test)]
 use selection::{supports_gpt5_none_reasoning, supports_max_reasoning, supports_xhigh_reasoning};
@@ -219,6 +221,11 @@ impl ModelPickerState {
                     &state.dynamic_models,
                     &state.custom_providers,
                     &state.provider_order,
+                    state
+                        .vt_cfg
+                        .as_ref()
+                        .map(|cfg| cfg.agent.credential_storage_mode)
+                        .unwrap_or_default(),
                 ) {
                     Ok(ModelSelectionListOutcome::Predefined(detail)) => {
                         match state.process_model_selection(renderer, detail)? {
@@ -393,7 +400,13 @@ impl ModelPickerState {
                         renderer.line(MessageStyle::Error, "Unable to locate the selected model option.")?;
                         return Ok(ModelPickerProgress::InProgress);
                     };
-                    let detail = selection_from_option(option);
+                    let detail = selection::selection_from_option_with_mode(
+                        option,
+                        self.vt_cfg
+                            .as_ref()
+                            .map(|cfg| cfg.agent.credential_storage_mode)
+                            .unwrap_or_default(),
+                    );
                     self.process_model_selection(renderer, detail)
                 }
                 InlineListSelection::DynamicModel(entry_index) => {

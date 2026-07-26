@@ -4,6 +4,7 @@ use std::str::FromStr;
 use vtcode_config::MiMoAuthMethod;
 use vtcode_config::OpenAIServiceTier;
 use vtcode_config::VTCodeConfig;
+use vtcode_config::auth::AuthCredentialsStoreMode;
 use vtcode_config::core::CustomProviderConfig;
 use vtcode_core::config::constants::reasoning;
 use vtcode_core::config::models::{ModelId, Provider};
@@ -80,11 +81,11 @@ pub(super) fn parse_model_selection(
     let trimmed = input.trim();
     if !trimmed.is_empty() && trimmed.chars().all(|c| c.is_ascii_digit()) {
         if let Some(option) = options.iter().find(|option| option.id.eq_ignore_ascii_case(trimmed)) {
-            return Ok(selection_from_option(option));
+            return Ok(selection_from_option_with_mode(option, storage_mode(vt_cfg)));
         }
         if let Ok(index) = trimmed.parse::<usize>() {
             if let Some(option) = options.get(index) {
-                return Ok(selection_from_option(option));
+                return Ok(selection_from_option_with_mode(option, storage_mode(vt_cfg)));
             }
         }
         return Err(anyhow!("Invalid model selection. Use provider and model name (e.g., 'openai gpt-5')"));
@@ -107,7 +108,7 @@ pub(super) fn parse_model_selection(
         && let Some(option_index) = find_option_index(provider, model_token.trim(), options)
         && let Some(option) = options.get(option_index)
     {
-        return Ok(selection_from_option(option));
+        return Ok(selection_from_option_with_mode(option, storage_mode(vt_cfg)));
     }
 
     let uses_command_auth = custom_provider.is_some_and(|provider| provider.uses_command_auth());
@@ -144,10 +145,16 @@ pub(super) fn parse_model_selection(
         });
     }
     if let Some(provider) = provider_enum {
+        let storage_mode = vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default();
         let resolved =
-            ModelResolver::resolve(Some(provider.as_ref()), model_token.trim(), &[], None).ok_or_else(|| {
-                anyhow::anyhow!("unable to resolve model `{}` for provider `{}`", model_token.trim(), provider.as_ref())
-            })?;
+            ModelResolver::resolve_with_mode(Some(provider.as_ref()), model_token.trim(), &[], None, storage_mode)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "unable to resolve model `{}` for provider `{}`",
+                        model_token.trim(),
+                        provider.as_ref()
+                    )
+                })?;
         return Ok(selection_from_resolved(
             provider_lower,
             provider_label,
@@ -178,18 +185,27 @@ pub(super) fn parse_model_selection(
 }
 
 pub(super) fn selection_from_option(option: &ModelOption) -> SelectionDetail {
-    let resolved = ModelResolver::resolve(Some(option.provider.as_ref()), &option.id, &[], None).unwrap_or_else(|| {
-        // Fallback: create a minimal ResolvedModel for static options.
-        // Use MissingCredential so the picker prompts for an API key instead of
-        // silently skipping credential steps for an unresolved model.
-        ResolvedModel {
-            provider: option.provider,
-            model_id: option.id.clone(),
-            catalog: None,
-            dynamic: None,
-            availability: ModelAvailability::MissingCredential,
-        }
-    });
+    selection_from_option_with_mode(option, AuthCredentialsStoreMode::default())
+}
+
+pub(super) fn selection_from_option_with_mode(
+    option: &ModelOption,
+    storage_mode: AuthCredentialsStoreMode,
+) -> SelectionDetail {
+    let resolved =
+        ModelResolver::resolve_with_mode(Some(option.provider.as_ref()), &option.id, &[], None, storage_mode)
+            .unwrap_or_else(|| {
+                // Fallback: create a minimal ResolvedModel for static options.
+                // Use MissingCredential so the picker prompts for an API key instead of
+                // silently skipping credential steps for an unresolved model.
+                ResolvedModel {
+                    provider: option.provider,
+                    model_id: option.id.clone(),
+                    catalog: None,
+                    dynamic: None,
+                    availability: ModelAvailability::MissingCredential,
+                }
+            });
     selection_from_resolved(
         option.provider.to_string(),
         option.provider.label().to_string(),
@@ -201,6 +217,8 @@ pub(super) fn selection_from_option(option: &ModelOption) -> SelectionDetail {
     )
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 pub(super) fn selection_from_dynamic(
     provider: Provider,
     model_id: &str,
@@ -208,8 +226,26 @@ pub(super) fn selection_from_dynamic(
     description: Option<&str>,
     context_window: Option<usize>,
 ) -> SelectionDetail {
+    selection_from_dynamic_with_mode(
+        provider,
+        model_id,
+        display_name,
+        description,
+        context_window,
+        AuthCredentialsStoreMode::default(),
+    )
+}
+
+pub(super) fn selection_from_dynamic_with_mode(
+    provider: Provider,
+    model_id: &str,
+    display_name: &str,
+    description: Option<&str>,
+    context_window: Option<usize>,
+    storage_mode: AuthCredentialsStoreMode,
+) -> SelectionDetail {
     let env_key = provider.default_api_key_env().to_string();
-    let resolved = ModelResolver::resolve(
+    let resolved = ModelResolver::resolve_with_mode(
         Some(provider.as_ref()),
         model_id,
         &[vtcode_core::llm::DynamicModelRef { provider, model_id }],
@@ -218,6 +254,7 @@ pub(super) fn selection_from_dynamic(
             description: description.map(ToOwned::to_owned),
             context_window,
         }),
+        storage_mode,
     )
     .unwrap_or_else(|| {
         // Fallback: create a minimal ResolvedModel for dynamic models.
@@ -244,6 +281,10 @@ pub(super) fn selection_from_dynamic(
         None,
         env_key,
     )
+}
+
+fn storage_mode(vt_cfg: Option<&VTCodeConfig>) -> AuthCredentialsStoreMode {
+    vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default()
 }
 
 pub(super) fn selections_from_custom_provider(provider: &CustomProviderConfig) -> Vec<SelectionDetail> {

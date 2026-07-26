@@ -35,7 +35,7 @@ pub struct CustomApiKeyStorage {
 impl CustomApiKeyStorage {
     /// Create a new custom API key storage for a specific provider.
     pub fn new(provider: &str) -> Self {
-        let normalized_provider = provider.to_lowercase();
+        let normalized_provider = provider.trim().to_lowercase();
         Self {
             provider: normalized_provider.clone(),
             storage: CredentialStorage::new("vtcode", format!("api_key_{normalized_provider}")),
@@ -56,7 +56,8 @@ impl CustomApiKeyStorage {
         if persisted.as_deref() != Some(api_key) {
             bail!("secure storage did not return the API key after saving");
         }
-        let _ = legacy::clear_for_provider(&self.provider);
+        legacy::clear_for_provider(&self.provider)
+            .context("failed to remove legacy plaintext credential after secure save")?;
         Ok(())
     }
 
@@ -73,7 +74,7 @@ impl CustomApiKeyStorage {
     /// Clear (delete) a stored API key.
     pub fn clear(&self, mode: AuthCredentialsStoreMode) -> Result<()> {
         self.storage.clear_with_mode(mode)?;
-        let _ = legacy::clear_for_provider(&self.provider);
+        legacy::clear_for_provider(&self.provider).context("failed to remove legacy plaintext credential")?;
         Ok(())
     }
 
@@ -93,7 +94,7 @@ impl CustomApiKeyStorage {
 
         let path = crate::storage_paths::legacy_auth_storage_path().ok();
         if let Some(p) = path {
-            let _ = legacy::delete_file(&p);
+            legacy::delete_file(&p).context("failed to remove migrated plaintext auth file")?;
         }
 
         tracing::warn!(
@@ -214,5 +215,23 @@ mod tests {
             .find(|path| path.extension().and_then(|extension| extension.to_str()) == Some("json"))
             .expect("credential file");
         assert_eq!(fs::metadata(credential_file).expect("credential metadata").permissions().mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    #[serial]
+    fn keyring_mode_falls_back_to_encrypted_file_when_keyring_is_unavailable() {
+        let _guard = TestAuthDirGuard::new();
+        let storage = CustomApiKeyStorage::new("stepfun");
+
+        storage
+            .store("test-stepfun-key", AuthCredentialsStoreMode::Keyring)
+            .expect("keyring mode should fall back to encrypted file storage");
+        assert_eq!(
+            storage
+                .load(AuthCredentialsStoreMode::Keyring)
+                .expect("load API key")
+                .as_deref(),
+            Some("test-stepfun-key")
+        );
     }
 }

@@ -6,7 +6,7 @@ use crate::error_display;
 use crate::provider;
 use crate::providers::common::serialize_message_content_openai_for_model;
 use crate::rig_adapter::RigProviderCapabilities;
-use crate::system_prompt::default_system_prompt;
+use crate::system_prompt::{default_system_prompt, openai_gpt55_contract_addendum, openai_gpt56_contract_addendum};
 use hashbrown::HashSet;
 use rig::providers::openai::responses_api::{
     AdditionalParameters as RigResponsesAdditionalParameters, Include as RigResponsesInclude,
@@ -118,6 +118,20 @@ fn is_gpt5_codex_model(model: &str) -> bool {
     model == openai_models::GPT_5_CODEX || (model.starts_with(openai_models::GPT_5) && model.contains("codex"))
 }
 
+fn is_gpt55_model(model: &str) -> bool {
+    model == openai_models::GPT_5_5 || model == openai_models::GPT_5_5_DATED
+}
+
+fn is_gpt56_model(model: &str) -> bool {
+    matches!(
+        model,
+        openai_models::GPT_5_6_SOL
+            | openai_models::GPT_5_6_TERRA
+            | openai_models::GPT_5_6_LUNA
+            | openai_models::GPT_5_6
+    )
+}
+
 fn is_openai_gpt_responses_model(model: &str) -> bool {
     model == openai_models::GPT || model.starts_with(openai_models::GPT_5)
 }
@@ -129,8 +143,32 @@ fn supports_assistant_phase_replay(model: &str) -> bool {
 fn default_replay_instructions(model: &str) -> Option<String> {
     if is_gpt5_codex_model(model) {
         Some(format!("You are Codex, based on GPT-5. {}", default_system_prompt()))
+    } else if is_gpt55_model(model) || is_gpt56_model(model) {
+        Some(default_system_prompt())
     } else {
         None
+    }
+}
+
+fn augment_openai_instructions(model: &str, instructions: String) -> String {
+    let addendum = if is_gpt56_model(model) {
+        Some(openai_gpt56_contract_addendum())
+    } else if is_gpt55_model(model) {
+        Some(openai_gpt55_contract_addendum())
+    } else {
+        None
+    };
+
+    let Some(addendum) = addendum else {
+        return instructions;
+    };
+    let trimmed_addendum = addendum.trim();
+    if instructions.contains(trimmed_addendum) {
+        instructions
+    } else if instructions.trim().is_empty() {
+        addendum
+    } else {
+        format!("{instructions}\n\n{addendum}")
     }
 }
 
@@ -261,6 +299,7 @@ pub(crate) fn build_chat_request(
     let mut active_tool_call_ids: HashSet<String> = HashSet::with_capacity(16);
 
     if let Some(system_prompt) = &request.system_prompt {
+        let system_prompt = augment_openai_instructions(&request.model, system_prompt.to_string());
         messages.push(json!({
             "role": vtcode_config::constants::message_roles::SYSTEM,
             "content": system_prompt
@@ -422,7 +461,10 @@ fn build_responses_item_history(
         responses_payload.instructions = Some(instructions);
     }
 
-    responses_payload.instructions = responses_payload.instructions.take();
+    responses_payload.instructions = responses_payload
+        .instructions
+        .take()
+        .map(|instructions| augment_openai_instructions(&request.model, instructions));
 
     if !(ctx.include_assistant_phase
         || ctx.preserve_assistant_phase_on_replay && supports_assistant_phase_replay(&request.model))
