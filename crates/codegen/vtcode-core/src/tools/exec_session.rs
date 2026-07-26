@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
@@ -16,11 +15,39 @@ use crate::tools::types::VTCodeExecSession;
 use crate::utils::path::{canonicalize_workspace, ensure_path_within_workspace};
 use crate::zsh_exec_bridge::ZshExecBridgeSession;
 
+#[derive(Default)]
+struct PipeOutputBuffer {
+    pending: Mutex<String>,
+}
+
+impl PipeOutputBuffer {
+    async fn append(&self, chunk: &str) {
+        self.pending.lock().await.push_str(chunk);
+    }
+
+    async fn peek_pending(&self) -> Option<String> {
+        let pending = self.pending.lock().await;
+        if pending.is_empty() {
+            None
+        } else {
+            Some(pending.clone())
+        }
+    }
+
+    async fn drain_pending(&self) -> Option<String> {
+        let mut pending = self.pending.lock().await;
+        if pending.is_empty() {
+            None
+        } else {
+            Some(std::mem::take(&mut *pending))
+        }
+    }
+}
+
 struct PipeSessionRecord {
     metadata: VTCodeExecSession,
     handle: Arc<ProcessHandle>,
-    output: Arc<Mutex<String>>,
-    pending_offset: AtomicUsize,
+    output: Arc<PipeOutputBuffer>,
     output_task: Mutex<Option<JoinHandle<()>>>,
     exit_task: Mutex<Option<JoinHandle<()>>>,
     activity_tx: watch::Sender<u64>,
@@ -30,7 +57,7 @@ impl PipeSessionRecord {
     fn new(
         metadata: VTCodeExecSession,
         handle: Arc<ProcessHandle>,
-        output: Arc<Mutex<String>>,
+        output: Arc<PipeOutputBuffer>,
         output_task: JoinHandle<()>,
         exit_task: JoinHandle<()>,
         activity_tx: watch::Sender<u64>,
@@ -39,7 +66,6 @@ impl PipeSessionRecord {
             metadata,
             handle,
             output,
-            pending_offset: AtomicUsize::new(0),
             output_task: Mutex::new(Some(output_task)),
             exit_task: Mutex::new(Some(exit_task)),
             activity_tx,
@@ -107,7 +133,7 @@ impl PipeSessionManager {
         };
 
         let handle = Arc::new(spawned.session);
-        let output = Arc::new(Mutex::new(String::new()));
+        let output = Arc::new(PipeOutputBuffer::default());
         let output_clone = Arc::clone(&output);
         let mut output_rx = spawned.output_rx;
         let output_handle = Arc::clone(&handle);
@@ -118,8 +144,7 @@ impl PipeSessionManager {
                 match tokio::time::timeout(tokio::time::Duration::from_millis(15), output_rx.recv()).await {
                     Ok(Ok(chunk)) => {
                         let text = String::from_utf8_lossy(&chunk);
-                        let mut guard = output_clone.lock().await;
-                        guard.push_str(&text);
+                        output_clone.append(&text).await;
                         output_activity_tx.send_modify(|version| *version += 1);
                     }
                     Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
@@ -148,37 +173,10 @@ impl PipeSessionManager {
 
     async fn read_session_output(&self, session_id: &str, drain: bool) -> Result<Option<String>> {
         let record = self.session_record(session_id).await?;
-        let start = record.pending_offset.load(Ordering::SeqCst);
-        let mut output = record.output.lock().await;
-        if start >= output.len() {
-            return Ok(None);
-        }
-
-        let pending = output
-            .get(start..)
-            .map(|s| s.to_string())
-            .ok_or_else(|| anyhow!("pipe session '{session_id}' produced invalid output boundary"))?;
-
         if drain {
-            // Trim the consumed prefix to prevent unbounded buffer growth.
-            // Without this, `output` accumulates the full session history for the
-            // entire lifetime of the session — a long-running background process
-            // can grow this to hundreds of MB, and every non-drain peek copies the
-            // full tail (`s.to_string()` above). Clearing on drain bounds memory to
-            // the high-water mark of unconsumed data and reuses the allocation for
-            // future chunks. `pending_offset` resets to 0 since the buffer is empty.
-            //
-            // The remaining O(n) copy on *peek* (drain=false) requires a
-            // zero-copy `Arc<Bytes>` migration to fix — tracked as a structural
-            // follow-up (see `.vtcode/memory/gotchas.md`).
-            output.clear();
-            record.pending_offset.store(0, Ordering::SeqCst);
-        }
-
-        if pending.is_empty() {
-            Ok(None)
+            Ok(record.output.drain_pending().await)
         } else {
-            Ok(Some(pending))
+            Ok(record.output.peek_pending().await)
         }
     }
 
@@ -653,7 +651,6 @@ mod tests {
             .await?
             .expect("pipe sessions should expose activity receiver");
 
-        // Wait for output to land, then drain it.
         timeout(Duration::from_secs(2), activity_rx.changed()).await??;
         let drained = manager
             .read_session_output("drain-clear", true)
@@ -661,13 +658,6 @@ mod tests {
             .expect("should drain hello");
         assert!(drained.contains("hello"));
 
-        // Regression guard: after a drain the buffer is cleared and the
-        // pending offset resets to 0, so an immediate re-drain must return
-        // None. Before the fix, `output.clear()` was missing and the offset
-        // merely advanced — the buffer kept the full session history forever,
-        // growing unbounded for long-running processes. This asserts the
-        // clear actually happened (memory is bounded to the high-water mark
-        // of unconsumed data, not the lifetime output).
         let stale = manager.read_session_output("drain-clear", true).await?;
         assert!(stale.is_none(), "drained output must not reappear: {stale:?}");
 
@@ -683,9 +673,6 @@ mod tests {
         let pty_sessions = PtySessionManager::new(workspace_root.clone(), PtyConfig::default());
         let manager = ExecSessionManager::new(workspace_root.clone(), pty_sessions);
 
-        // Emit in two phases separated by a sleep so a drain boundary falls
-        // between them. After `output.clear()` on the first drain, fresh
-        // output appended by the output task must still be returned.
         manager
             .create_pipe_session(
                 "drain-resume".to_string().into(),
@@ -704,11 +691,9 @@ mod tests {
             .await?
             .expect("pipe sessions should expose activity receiver");
 
-        // Phase 1: drain whatever has arrived so far.
         timeout(Duration::from_secs(2), activity_rx.changed()).await??;
         let _first = manager.read_session_output("drain-resume", true).await?;
 
-        // Phase 2: new output produced after the drain must be returned.
         timeout(Duration::from_secs(3), activity_rx.changed()).await??;
         let second = manager
             .read_session_output("drain-resume", true)
@@ -718,5 +703,48 @@ mod tests {
 
         manager.close_session("drain-resume").await?;
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn pipe_output_buffer_peek_is_idempotent_and_non_consuming() {
+        let buffer = super::PipeOutputBuffer::default();
+        buffer.append("hello").await;
+
+        let first = buffer.peek_pending().await;
+        let second = buffer.peek_pending().await;
+        assert_eq!(first, second);
+        assert_eq!(first, Some("hello".to_string()));
+    }
+
+    #[tokio::test]
+    async fn pipe_output_buffer_drain_returns_exactly_once() {
+        let buffer = super::PipeOutputBuffer::default();
+        buffer.append("hello").await;
+
+        let first = buffer.drain_pending().await;
+        let second = buffer.drain_pending().await;
+        assert_eq!(first, Some("hello".to_string()));
+        assert_eq!(second, None);
+    }
+
+    #[tokio::test]
+    async fn pipe_output_buffer_drain_clears_internal_pending_length() {
+        let buffer = super::PipeOutputBuffer::default();
+        buffer.append("hello").await;
+
+        buffer.drain_pending().await;
+        let peek: Option<String> = buffer.peek_pending().await;
+        assert!(peek.is_none(), "buffer must be empty after drain: {peek:?}");
+    }
+
+    #[tokio::test]
+    async fn pipe_output_buffer_append_after_drain_returns_only_fresh_output() {
+        let buffer = super::PipeOutputBuffer::default();
+        buffer.append("first").await;
+        buffer.drain_pending().await;
+
+        buffer.append("second").await;
+        let output = buffer.peek_pending().await;
+        assert_eq!(output, Some("second".to_string()));
     }
 }
