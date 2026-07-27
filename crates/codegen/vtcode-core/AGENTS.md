@@ -6,8 +6,7 @@
 
 - `core/agent/`: runtime, event recording, runner, progress, harness artifacts.
 - `tools/`: handlers, registry, policy, execution; `read_file/batch.rs` owns batch admission, bounded fan-out, and ordered assembly while `read_file.rs` owns single-file semantics.
-- `llm/`: re-export facade; provider implementations live in `vtcode-llm`.
-- `exec/events.rs`: re-exports the canonical `vtcode-exec-events::ThreadEvent`.
+- `llm/`: re-export facade; providers live in `vtcode-llm`. `exec/events.rs` re-exports canonical `vtcode-exec-events::ThreadEvent`.
 
 ## Rules
 
@@ -18,8 +17,7 @@
 - Trajectory logging is best effort: retain line/byte bounds and expose drops/failures through diagnostics.
 
 ## Workflows
-- Add tools under `tools/`, register them, classify them in `ToolPolicy`, then wire them into `core/agent/`.
-- Add providers with `adding-llm-providers`; update model enumeration, presets, and the `llm/providers` facade.
+- Add tools under `tools/`, register/classify them, wire them into `core/agent/`; add providers with `adding-llm-providers` and update model enumeration, presets, and the `llm/providers` facade.
 
 ## Gotchas
 
@@ -27,6 +25,5 @@
 - Budget decisions belong to `llm/usage_cost.rs` and `BudgetStatus::classify`; do not re-derive them at call sites.
 - Compaction preserves conversation; `context_reset.rs` intentionally discards it.
 - `AgentSessionState.messages` is `Arc<Vec<Message>>`; use `messages_mut()`/`Arc::make_mut` for mutations so request and continuation histories stay shared without deep copies.
-- Async plugin, skill, file-tool, planning, and persistent-memory paths must use Tokio filesystem APIs or `spawn_blocking` for recursive/synchronous scans; never put blocking discovery or Git work on Tokio workers.
-- The durable scheduler's one-second loop must keep record loading, claim files, and runtime persistence on `spawn_blocking`.
-- Token/catalog deferral thresholds are correct behavior; warn only when deferral is disabled but beneficial.
+- Async plugin, skill, file-tool, planning, persistent-memory, and durable-scheduler paths must use Tokio filesystem APIs or `spawn_blocking` for recursive/synchronous scans, record loading, claim files, persistence, or Git work.
+- Token/catalog deferral thresholds are correct behavior; warn only when deferral is disabled but beneficial. Shell safety must preserve raw command text when classifying dynamic syntax.

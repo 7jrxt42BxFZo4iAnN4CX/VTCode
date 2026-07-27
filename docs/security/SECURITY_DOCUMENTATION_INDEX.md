@@ -64,6 +64,11 @@ Complete guide to VT Code's security documentation.
 - **Documentation**: [Security Guide - Approval System](../guides/security.md#human-in-the-loop)
 - **Three-tier approval**: Once, Session, Permanent
 
+### Layer 6: Shell Shape Validation and Approval Learning
+- **Location**: `crates/codegen/vtcode-safety/src/command_safety/shell_parser.rs`, `src/agent/runloop/unified/tool_routing/shell_approval.rs`
+- **Documentation**: [Security Model - Shell Shape Validation](./SECURITY_MODEL.md#layer-6-shell-shape-validation-and-approval-learning)
+- **Dynamic `find` syntax**: Rejected at preflight and excluded from learned read-only families
+
 ## Configuration
 
 ### Tool Policy

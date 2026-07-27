@@ -22,3 +22,4 @@
 - `exec_policy/command_validation.rs` imports `vtcode_commons::paths::{canonicalize_workspace, normalize_path}`; its workspace containment delegates to `vtcode_commons::paths::ensure_path_within_workspace_resolved` (symlink-aware walk lives in commons, tests included).
 - `sandboxing/` uses tree-sitter for Bash AST analysis — pinned to specific versions.
 - `command_safety::shell_parser` must extract nested simple commands from loops/conditionals so safety checks and approval caching see loop bodies, not just top-level shell syntax.
+- `command_safety::shell_parser` owns dynamic-shell-syntax detection; `find` expansion must fail closed before preflight or learned approval.

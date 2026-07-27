@@ -247,6 +247,17 @@ pub fn raw_command_text(args: &Value) -> Option<String> {
     Some(shell_words::join(indexed.iter().map(String::as_str)))
 }
 
+/// Returns whether a shell command contains syntax whose meaning depends on
+/// shell expansion rather than the literal argument text.
+///
+/// Read-only classification and approval-family learning must only operate on
+/// static command shapes. Parameter expansion, command substitution, brace
+/// expansion, globbing, and backslash escapes can otherwise turn a harmless
+/// looking token into a different executable argument at runtime.
+pub fn contains_dynamic_shell_syntax(command: &str) -> bool {
+    crate::command_safety::shell_parser::contains_dynamic_shell_syntax(command)
+}
+
 /// Returns true if the raw command string appears to be a safe read-only
 /// inspection command. It checks for shell write operators, process
 /// substitutions, and common destructive subcommands/flags.
@@ -259,6 +270,10 @@ pub fn is_readonly_command_string(args: &Value) -> bool {
     };
     let trimmed = command.trim();
     if trimmed.is_empty() {
+        return false;
+    }
+
+    if contains_dynamic_shell_syntax(trimmed) {
         return false;
     }
 
@@ -480,9 +495,9 @@ pub fn normalize_shell_args(args: &Value) -> Result<Value, &'static str> {
 mod tests {
     use super::{
         WriteStdinDispatch, command_session_missing_required_args, command_session_requires_command_safety,
-        command_text, command_words, has_indexed_command_parts, interactive_input_text, is_readonly_command_string,
-        normalize_indexed_command_args, normalize_shell_args, normalized_command_value, parse_indexed_command_parts,
-        raw_command_text, session_id_text, session_id_text_from_payload, working_dir_text,
+        command_text, command_words, contains_dynamic_shell_syntax, has_indexed_command_parts, interactive_input_text,
+        is_readonly_command_string, normalize_indexed_command_args, normalize_shell_args, normalized_command_value,
+        parse_indexed_command_parts, raw_command_text, session_id_text, session_id_text_from_payload, working_dir_text,
         working_dir_text_from_payload, write_stdin_dispatch,
     };
     use serde_json::{Value, json};
@@ -790,5 +805,20 @@ mod tests {
         ] {
             assert!(!is_readonly_command_string(&json!({"command": cmd})), "expected '{cmd}' to be rejected");
         }
+    }
+
+    #[test]
+    fn is_readonly_command_string_rejects_spliced_find_exec() {
+        assert!(!is_readonly_command_string(&json!({
+            "command": "find src -maxdepth 0 -exe$''c touch /tmp/VT_BYPASS_POC {} +"
+        })));
+    }
+
+    #[test]
+    fn dynamic_shell_syntax_allows_quoted_globs_only() {
+        assert!(!contains_dynamic_shell_syntax("find src -name '*.rs'"));
+        assert!(!contains_dynamic_shell_syntax("find src -name \"*.rs\""));
+        assert!(contains_dynamic_shell_syntax("find src -exe$''c touch {} +"));
+        assert!(contains_dynamic_shell_syntax("find src -ex{e,}c touch {} +"));
     }
 }

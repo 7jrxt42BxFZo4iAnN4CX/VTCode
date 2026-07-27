@@ -94,6 +94,10 @@ pub fn validate_command_safety(command: &str) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    if shell_parser::contains_dynamic_find_syntax(command) {
+        bail!("dynamic shell expansion in find commands is not allowed");
+    }
+
     let segments = shell_parser::split_shell_segments(command)?;
 
     if shell_string_might_be_dangerous(command) {
@@ -122,5 +126,10 @@ mod tests {
     #[test]
     fn shell_string_detects_dangerous_sequence() {
         assert!(shell_string_might_be_dangerous("echo ok && git reset --hard HEAD~1"));
+    }
+
+    #[test]
+    fn validation_rejects_dynamic_find_option_splicing() {
+        assert!(validate_command_safety("find src -maxdepth 0 -exe$''c touch /tmp/VT_BYPASS_POC {} +").is_err());
     }
 }

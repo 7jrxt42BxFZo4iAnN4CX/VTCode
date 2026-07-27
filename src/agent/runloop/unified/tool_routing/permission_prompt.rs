@@ -162,6 +162,11 @@ pub(super) fn extract_shell_command_text(tool_name: &str, tool_args: Option<&Val
     extract_shell_command_text_from_run_args(args)
 }
 
+pub(super) fn extract_shell_raw_command_text(tool_name: &str, tool_args: Option<&Value>) -> Option<String> {
+    let args = shell_run_args(tool_name, tool_args)?;
+    vtcode_core::tools::command_args::raw_command_text(args)
+}
+
 pub(super) fn split_command_words_on_operators(parts: &[String]) -> Option<Vec<Vec<String>>> {
     if parts.is_empty() {
         return None;

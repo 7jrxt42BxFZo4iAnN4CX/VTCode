@@ -6,7 +6,7 @@ use crate::agent::runloop::unified::tool_summary::{describe_tool_action, humaniz
 use super::permission_prompt::{
     extract_shell_approval_command_prefix_words, extract_shell_approval_command_words, extract_shell_command_text,
     extract_shell_permission_scope_signature, extract_shell_persistent_approval_prefix_rule,
-    render_shell_approval_command_words, render_shell_persistent_approval_prefix_entry,
+    extract_shell_raw_command_text, render_shell_approval_command_words, render_shell_persistent_approval_prefix_entry,
     split_command_words_on_operators,
 };
 
@@ -298,7 +298,8 @@ fn learned_shell_pattern(tool_name: &str, tool_args: Option<&Value>) -> Option<L
     // Specific command patterns first: find, sed.
     // These have tighter path-validation rules (e.g. reject absolute paths,
     // directory traversal, and destructive flags).
-    if let Some(pattern) = learned_find_pattern(&command_words, &scope_signature) {
+    let raw_command_text = extract_shell_raw_command_text(tool_name, tool_args);
+    if let Some(pattern) = learned_find_pattern(&command_words, &scope_signature, raw_command_text.as_deref()) {
         return Some(pattern);
     }
     if let Some(pattern) = learned_sed_print_pattern(&command_words, &scope_signature) {
@@ -372,8 +373,20 @@ fn is_probable_readonly_path_arg(word: &str) -> bool {
             .all(|part| !part.is_empty() && *part != "." && *part != ".." && !part.contains('\0'))
 }
 
-fn learned_find_pattern(command_words: &[String], scope_signature: &str) -> Option<LearnedPattern> {
+fn learned_find_pattern(
+    command_words: &[String],
+    scope_signature: &str,
+    raw_command_text: Option<&str>,
+) -> Option<LearnedPattern> {
     if command_words.first().map(String::as_str) != Some("find") {
+        return None;
+    }
+
+    // A family approval is only safe for a static shell command. Expansion
+    // syntax can splice a destructive option together after tokenization
+    // (for example, `-exe$''c` becomes `-exec` in bash).
+    let raw_command_text = raw_command_text?;
+    if vtcode_core::tools::command_args::contains_dynamic_shell_syntax(raw_command_text) {
         return None;
     }
 
@@ -503,6 +516,19 @@ mod tests {
         assert!(pattern_for("find src -delete").is_none());
         assert!(pattern_for("find src -exec rm {} +").is_none());
         assert!(pattern_for("find src -name foo -ok rm {} \\;").is_none());
+    }
+
+    #[test]
+    fn find_with_spliced_destructive_flag_does_not_get_pattern() {
+        for command in [
+            "find src -maxdepth 0 -exe$''c touch /tmp/VT_BYPASS_POC {} +",
+            "find src -maxdepth 0 -exe$@c touch /tmp/VT_BYPASS_POC {} +",
+            "find src -maxdepth 0 -exe$*c touch /tmp/VT_BYPASS_POC {} +",
+            "find src -maxdepth 0 -ex{e,}c touch /tmp/VT_BYPASS_POC {} +",
+            "find src -maxdepth 0 -ex* touch /tmp/VT_BYPASS_POC {} +",
+        ] {
+            assert!(pattern_for(command).is_none(), "dynamic find syntax must not learn: {command}");
+        }
     }
 
     #[test]

@@ -19,6 +19,70 @@ use std::sync::OnceLock;
 /// Lazy-initialized tree-sitter bash parser (wrapped in Mutex for mutation)
 static BASH_PARSER: OnceLock<Result<Mutex<tree_sitter::Parser>, String>> = OnceLock::new();
 
+/// Returns whether a shell command contains syntax whose meaning depends on
+/// shell expansion rather than the literal argument text.
+///
+/// Safety-sensitive classification must only operate on static command
+/// shapes. Parameter expansion, command substitution, brace expansion,
+/// globbing, and backslash escapes can otherwise turn a harmless-looking token
+/// into a different executable argument at runtime.
+pub fn contains_dynamic_shell_syntax(command: &str) -> bool {
+    enum ShellQuote {
+        Single,
+        Double,
+    }
+
+    let mut quote: Option<ShellQuote> = None;
+
+    for character in command.chars() {
+        match quote {
+            Some(ShellQuote::Single) => {
+                if character == '\'' {
+                    quote = None;
+                }
+            }
+            Some(ShellQuote::Double) => match character {
+                '"' => quote = None,
+                '\\' | '$' | '`' => return true,
+                _ => {}
+            },
+            None => match character {
+                '\'' => quote = Some(ShellQuote::Single),
+                '"' => quote = Some(ShellQuote::Double),
+                '\\' | '$' | '`' | '{' | '}' | '*' | '?' | '[' | ']' => return true,
+                _ => {}
+            },
+        }
+    }
+
+    quote.is_some()
+}
+
+/// Returns whether a `find` command contains shell syntax that can change the
+/// literal option tokens after approval-time tokenization.
+pub fn contains_dynamic_find_syntax(script: &str) -> bool {
+    if let Ok(commands) = parse_shell_commands_tree_sitter(script)
+        && commands.iter().any(|command| {
+            command
+                .first()
+                .map(|program| base_command_name(program) == "find")
+                .unwrap_or(false)
+                && command.iter().any(|word| contains_dynamic_shell_syntax(word))
+        })
+    {
+        return true;
+    }
+
+    // Be conservative when the grammar cannot identify the command shape: a
+    // raw script containing a find invocation and dynamic syntax must not pass
+    // preflight just because parsing was incomplete.
+    let has_find_word = script.split_whitespace().any(|word| {
+        let command = word.trim_matches(|character: char| !character.is_ascii_alphanumeric() && character != '/');
+        base_command_name(command) == "find"
+    });
+    has_find_word && contains_dynamic_shell_syntax(script)
+}
+
 /// Gets or initializes the bash parser
 fn get_bash_parser() -> Result<&'static Mutex<tree_sitter::Parser>, String> {
     BASH_PARSER
@@ -393,6 +457,12 @@ mod tests {
     #[test]
     fn prewarm_bash_parser_initializes_successfully() {
         prewarm_bash_parser().expect("bash parser should initialize");
+    }
+
+    #[test]
+    fn dynamic_find_syntax_is_detected_without_rejecting_quoted_globs() {
+        assert!(contains_dynamic_find_syntax("find src -maxdepth 0 -exe$''c touch /tmp/VT_BYPASS_POC {} +"));
+        assert!(!contains_dynamic_find_syntax("find src -type f -name '*.rs'"));
     }
 }
 
