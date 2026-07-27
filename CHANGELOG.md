@@ -2,6 +2,16 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.140.3 - 2026-07-27
+
+### Highlights
+#### Documentation
+
+- Remove backticks from submodule names in documentation table (6a21e53e) (@vinhnx)
+### Other Changes
+#### Other
+
+- Merge commit from fork (3f6e6393) (@vinhnx)
 ## 0.140.2 - 2026-07-26
 
 ### Highlights
