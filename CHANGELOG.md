@@ -2,6 +2,22 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.141.2 - 2026-07-28
+
+### Highlights
+#### Bug Fixes
+
+- Correct documentation references in function_call_output and McpSandboxWrapper doc comments (58ab0a70) 
+- Resolve rustdoc private intra-doc link warnings (336d00bc) 
+- Remove unused testcontainers dependency to resolve GHSA-j5gw-2vrg-8fgx (b9db134a) 
+- Replace vld1q_u32_x2 with explicit load for GCC 5.4 compatibility (53e1a677) 
+#### Documentation
+
+- Add contributing guidelines, contributor avatars, and support section to README (8cdcdd69) 
+### Other Changes
+#### Refactors
+
+- Remove contributor update logic from release script (41aee5fb) 
 ## 0.141.1 - 2026-07-28
 
 ### Highlights
