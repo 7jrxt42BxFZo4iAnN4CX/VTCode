@@ -23101,7 +23101,10 @@ arm_convert_utf32_to_utf16(const char32_t *buf, size_t len,
   // To avoid buffer overflow while writing compressed_v
   const size_t safety_margin = 4;
   while (end - buf >= std::ptrdiff_t(8 + safety_margin)) {
-    uint32x4x2_t in = vld1q_u32_x2(reinterpret_cast<const uint32_t *>(buf));
+    // GCC 5.4 lacks vld1q_u32_x2; load the two vectors explicitly.
+    uint32x4x2_t in = {
+        vld1q_u32(reinterpret_cast<const uint32_t *>(buf)),
+        vld1q_u32(reinterpret_cast<const uint32_t *>(buf) + 4)};
 
     // Check if no bits set above 16th
     uint32_t max_val = vmaxvq_u32(vmaxq_u32(in.val[0], in.val[1]));
@@ -23156,7 +23159,10 @@ arm_convert_utf32_to_utf16_with_errors(const char32_t *buf, size_t len,
   // To avoid buffer overflow while writing compressed_v
   const size_t safety_margin = 4;
   while (end - buf >= std::ptrdiff_t(8 + safety_margin)) {
-    uint32x4x2_t in = vld1q_u32_x2(reinterpret_cast<const uint32_t *>(buf));
+    // GCC 5.4 lacks vld1q_u32_x2; load the two vectors explicitly.
+    uint32x4x2_t in = {
+        vld1q_u32(reinterpret_cast<const uint32_t *>(buf)),
+        vld1q_u32(reinterpret_cast<const uint32_t *>(buf) + 4)};
 
     // Check if no bits set above 16th
     uint32_t max_val = vmaxvq_u32(vmaxq_u32(in.val[0], in.val[1]));

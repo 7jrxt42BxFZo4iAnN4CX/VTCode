@@ -22,18 +22,8 @@ impl PtyScreenState {
         } else {
             scrollback_lines
         };
-        let term = Crosswords::new(
-            grid_size(size),
-            CursorShape::Block,
-            VoidListener,
-            WindowId::from(0),
-            0,
-            scrollback,
-        );
-        Self {
-            term,
-            parser: Processor::default(),
-        }
+        let term = Crosswords::new(grid_size(size), CursorShape::Block, VoidListener, WindowId::from(0), 0, scrollback);
+        Self { term, parser: Processor::default() }
     }
 
     pub(super) fn process(&mut self, chunk: &[u8]) {
@@ -70,12 +60,7 @@ mod tests {
     use super::PtyScreenState;
 
     fn test_size() -> PtySize {
-        PtySize {
-            rows: 4,
-            cols: 10,
-            pixel_width: 0,
-            pixel_height: 0,
-        }
+        PtySize { rows: 4, cols: 10, pixel_width: 0, pixel_height: 0 }
     }
 
     #[test]
@@ -84,11 +69,7 @@ mod tests {
         let mut state = PtyScreenState::new(size, 100);
         state.process(b"hello");
         let snapshot = state.prepare_snapshot();
-        assert!(
-            snapshot.screen_contents.contains("hello"),
-            "screen_contents = {:?}",
-            snapshot.screen_contents
-        );
+        assert!(snapshot.screen_contents.contains("hello"), "screen_contents = {:?}", snapshot.screen_contents);
     }
 
     #[test]
@@ -97,16 +78,8 @@ mod tests {
         let mut state = PtyScreenState::new(size, 100);
         state.process(b"line1\nline2");
         let snapshot = state.prepare_snapshot();
-        assert!(
-            snapshot.screen_contents.contains("line1"),
-            "screen_contents = {:?}",
-            snapshot.screen_contents
-        );
-        assert!(
-            snapshot.screen_contents.contains("line2"),
-            "screen_contents = {:?}",
-            snapshot.screen_contents
-        );
+        assert!(snapshot.screen_contents.contains("line1"), "screen_contents = {:?}", snapshot.screen_contents);
+        assert!(snapshot.screen_contents.contains("line2"), "screen_contents = {:?}", snapshot.screen_contents);
     }
 
     #[test]
@@ -115,10 +88,6 @@ mod tests {
         let mut state = PtyScreenState::new(size, 100);
         state.process(b"\x1B[1;31mcolored\x1B[0m");
         let snapshot = state.prepare_snapshot();
-        assert!(
-            snapshot.screen_contents.contains("colored"),
-            "screen_contents = {:?}",
-            snapshot.screen_contents
-        );
+        assert!(snapshot.screen_contents.contains("colored"), "screen_contents = {:?}", snapshot.screen_contents);
     }
 }
