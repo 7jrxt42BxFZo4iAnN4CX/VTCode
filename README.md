@@ -25,15 +25,15 @@ VT Code is a Rust coding agent built for long-running autonomous workflows. It h
 
 ## Features
 
-- **Agent runtime**, interactive TUI, slash commands, streaming, `ask`/`exec` CLI, and session resume
-- **Coding tools**, safe file ops, [ripgrep](https://github.com/BurntSushi/ripgrep) search, [ast-grep](https://ast-grep.github.io/) outline symbol maps, fuzzy discovery, code intelligence, project indexing, and terminal execution
-- **Extensibility**, [Agent Skills](https://agentskills.io), [Model Context Protocol](https://modelcontextprotocol.io/) MCP client/server, lifecycle hooks, subagents, custom providers, and [Agent Client Protocol](https://agentclientprotocol.com) (ACP)
-- **Model providers**, 21+ LLM providers including Anthropic, OpenAI, Gemini, OpenRouter, **local inference via Ollama, LM Studio, and llama.cpp** (managed with the `/local` command), and more
-- **Safety**, restricted shell sandbox, tool guardrails, subprocess isolation, and full audit logging
-- **Provider governance**, `providers_whitelist` restricts which LLM providers VT Code can access, preventing accidental data leakage to unapproved endpoints
-- **Protocols**, Open Responses, Agent2Agent (A2A), ATIF, and Anthropic Messages API
-- **Loop engineering**, worktree isolation for parallel agents, propose/verify sub-agent separation, durable loop state, and cost guardrails
-- **Planning workflow**, iterate on a build plan with `/plan` and the `plan` primary agent, then hand off to `build`/`auto` via a structured review gate
+- **Agent runtime**: interactive TUI, slash commands, streaming, `ask`/`exec` CLI, and session resume
+- **Coding tools**: safe file ops, [ripgrep](https://github.com/BurntSushi/ripgrep) search, [ast-grep](https://ast-grep.github.io/) outline symbol maps, fuzzy discovery, code intelligence, project indexing, and terminal execution
+- **Extensibility**: [Agent Skills](https://agentskills.io), [Model Context Protocol](https://modelcontextprotocol.io/) MCP client/server, lifecycle hooks, subagents, custom providers, and [Agent Client Protocol](https://agentclientprotocol.com) (ACP)
+- **Model providers**: 21+ LLM providers including Anthropic, OpenAI, Gemini, OpenRouter, **local inference via Ollama, LM Studio, and llama.cpp** (managed with the `/local` command), and more
+- **Safety**: restricted shell sandbox, tool guardrails, subprocess isolation, and full audit logging
+- **Provider governance**: `providers_whitelist` restricts which LLM providers VT Code can access, preventing accidental data leakage to unapproved endpoints
+- **Protocols**: Open Responses, Agent2Agent (A2A), ATIF, and Anthropic Messages API
+- **Loop engineering**: worktree isolation for parallel agents, propose/verify sub-agent separation, durable loop state, and cost guardrails
+- **Planning workflow**: iterate on a build plan with `/plan` and the `plan` primary agent, then hand off to `build`/`auto` via a structured review gate
 
 ## Quick start
 
@@ -74,17 +74,17 @@ vtcode update                  # self-update
 
 ## Documentation
 
-- [**Interactive TUI**](./docs/user-guide/interactive-mode.md), primary agents, slash commands (`/model`, `/review`, `/mcp`, `/skills`, `/theme`, `/compact`)
-- [**Full automation**](./docs/guides/full-automation.md), `--full-auto` CLI, plan-build-evaluate harness, subagents, and scheduled tasks
-- [**Providers**](./docs/providers/PROVIDER_GUIDES.md), setup guides for all 21 providers
-- [**Configuration**](./docs/config/CONFIG_FIELD_REFERENCE.md), `vtcode.toml`, tool config, and lifecycle hooks
-- [**Agent Skills**](./docs/skills/SKILLS_GUIDE.md), creating, loading, and sharing skills
-- [**MCP Integration**](./docs/guides/mcp-integration.md), client and server modes
-- [**Editor guides**](./docs/guides/zed-acp.md), Zed ACP, VS Code, and Claude Code
-- [**Safety**](./docs/security/SECURITY_MODEL.md), shell sandbox, security hardening, and threat model
-- [**Protocols**](./docs/protocols/OPEN_RESPONSES.md), Open Responses, ATIF, A2A, and Anthropic Messages API
-- [**Loop engineering**](./docs/project/PLAN-loop-engineering.md), worktree isolation, propose/verify, loop state, and cost guardrails
-- [**Planning workflow**](./docs/guides/planning-workflow.md), `/plan`, review gate, and plan handoff to build/auto agents
+- [**Interactive TUI**](./docs/user-guide/interactive-mode.md): primary agents, slash commands (`/model`, `/review`, `/mcp`, `/skills`, `/theme`, `/compact`)
+- [**Full automation**](./docs/guides/full-automation.md): `--full-auto` CLI, plan-build-evaluate harness, subagents, and scheduled tasks
+- [**Providers**](./docs/providers/PROVIDER_GUIDES.md): setup guides for all 21 providers
+- [**Configuration**](./docs/config/CONFIG_FIELD_REFERENCE.md): `vtcode.toml`, tool config, and lifecycle hooks
+- [**Agent Skills**](./docs/skills/SKILLS_GUIDE.md): creating, loading, and sharing skills
+- [**MCP Integration**](./docs/guides/mcp-integration.md): client and server modes
+- [**Editor guides**](./docs/guides/zed-acp.md): Zed ACP, VS Code, and Claude Code
+- [**Safety**](./docs/security/SECURITY_MODEL.md): shell sandbox, security hardening, and threat model
+- [**Protocols**](./docs/protocols/OPEN_RESPONSES.md): Open Responses, ATIF, A2A, and Anthropic Messages API
+- [**Loop engineering**](./docs/project/PLAN-loop-engineering.md): worktree isolation, propose/verify, loop state, and cost guardrails
+- [**Planning workflow**](./docs/guides/planning-workflow.md): `/plan`, review gate, and plan handoff to build/auto agents
 
 ## Providers
 
