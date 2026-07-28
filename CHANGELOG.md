@@ -2,6 +2,26 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.141.4 - 2026-07-28
+
+### Highlights
+#### Bug Fixes
+
+- Continue past crates.io API rate-limit during publish wait (07ca6879) (@vinhnx)
+- Enable archive-tar feature for tar.gz extraction (5586f668) 
+#### Documentation
+
+- Add web_fetch URL restriction and code_search request shape examples (713cb9f9) 
+#### Features
+
+- Ship unified turn-loop budgets (6ec378e6) 
+- Record dismissed version on all dismiss actions (b4716296) 
+### Other Changes
+#### Other
+
+- Update TODO (58b7c83a) (@vinhnx)
+- Update TODO (88462117) (@vinhnx)
+- Update TODO (020a985e) 
 ## 0.141.3 - 2026-07-28
 
 ### Highlights
