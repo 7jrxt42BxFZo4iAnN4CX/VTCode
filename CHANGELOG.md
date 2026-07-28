@@ -2,6 +2,31 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.141.0 - 2026-07-28
+
+### Highlights
+#### Bug Fixes
+
+- Handle GitHub ID format in contributor extraction (1433b416) 
+- Improve bot detection in contributor extraction (cd6853ca) 
+#### Documentation
+
+- Add contributor avatars for raphamorim and nnfrog, highlight main contributor (0b6f22c1) 
+- Revise Contributing section to highlight security, patches, and community (e7e030bd) 
+- Soften contributing copy to be more conversational (3b10ce9c) 
+- Replace em dashes with commas throughout README (bd002ef5) 
+- Use colons in feature and documentation lists (f879e443) 
+#### Features
+
+- Add Kimi K3 to Ollama Cloud and HuggingFace providers (ad6fe0a9) 
+- Automate README contributor list updates in release script (4ace0900) 
+### Other Changes
+#### Other
+
+- Migrate PTY screen backend from vt100 to rio-vt  (3c5a5514) (@raphamorim)
+- Update README.md (46745874) (@vinhnx)
+- Update TODO (bb880646) 
+- Remove release workflow (6ac2f3ff) 
 ## 0.140.3 - 2026-07-27
 
 ### Highlights
