@@ -460,7 +460,7 @@ impl AcpClientV2 {
     /// # Errors
     ///
     /// Returns an error if serialization or the network request fails.
-    async fn session_tool_response(&self, session_id: &str, result: ToolExecutionResult) -> AcpResult<()> {
+    pub async fn session_tool_response(&self, session_id: &str, result: ToolExecutionResult) -> AcpResult<()> {
         self.notify(
             "client/response",
             Some(serde_json::json!({

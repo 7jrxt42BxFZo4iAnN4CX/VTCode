@@ -287,8 +287,7 @@ fn policy_to_json(policy: &SandboxPolicy) -> String {
 ///
 /// On macOS the wrapper invokes `/usr/bin/sandbox-exec -p <profile>`; on
 /// Linux it prepends `sandbox-executable --sandbox-policy <json>`; on Windows
-/// the wrapper is a no-op (with a `tracing::warn!` from
-/// `McpSandboxWrapper::for_current_platform`).
+/// the wrapper is a no-op (with a `tracing::warn!`).
 ///
 /// stdio configuration is inherited by default — callers that need to
 /// redirect stdin/stdout/stderr should configure the returned command after

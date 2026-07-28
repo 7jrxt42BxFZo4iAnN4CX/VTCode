@@ -311,7 +311,7 @@ impl OutputItem {
     /// Creates a new completed function call output item.
     ///
     /// Use this when the tool execution has finished and the output is final.
-    fn completed_function_call_output(
+    pub fn completed_function_call_output(
         id: impl Into<OutputItemId>,
         call_id: Option<String>,
         output: impl Into<String>,

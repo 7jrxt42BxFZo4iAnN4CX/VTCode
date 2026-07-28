@@ -65,7 +65,7 @@ impl Default for StdioTransportOptions {
 /// Wraps a child process and provides:
 /// - [`call`](Self::call): send a request and await its response.
 /// - [`notify`](Self::notify): send a fire-and-forget notification.
-/// - [`respond`](Self::respond) / [`respond_error`](Self::respond_error): reply to
+/// - [`respond_value`](Self::respond_value) / [`respond_error_value`](Self::respond_error_value): reply to
 ///   incoming server-initiated requests.
 /// - [`set_notification_handler`](Self::set_notification_handler): register the handler
 ///   that receives all incoming server→client messages.
