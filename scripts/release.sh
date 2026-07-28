@@ -62,7 +62,7 @@ get_github_username() {
 is_bot() {
 	local username=$1
 	case "$username" in
-	*[bB][oO][tT] | dependabot | codemod | renovate | github-actions | syncthing | vtcode-release-bot) return 0 ;;
+	*[bB][oO][tT] | *[bB][oO][tT]* | *\[[bB][oO][tT]\] | dependabot | codemod | renovate | github-actions | syncthing | vtcode-release-bot) return 0 ;;
 	*) return 1 ;;
 	esac
 }
