@@ -2,6 +2,17 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.141.1 - 2026-07-28
+
+### Highlights
+#### Bug Fixes
+
+- Patch simdutf for aarch64 arm_neon.h include order (535c86d1) (@vinhnx)
+### Other Changes
+#### Other
+
+- Update rust toolchain config (5053b860) (@vinhnx)
+- Add VT Code banner (53462e19) (@vinhnx)
 ## 0.141.0 - 2026-07-28
 
 ### Highlights
