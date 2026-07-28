@@ -42,11 +42,28 @@ get_github_username() {
 	case "$email" in
 	vinhnguyen*) echo "vinhnx" ;;
 	noreply@vtcode.com) echo "vtcode-release-bot" ;;
+	*@users.noreply.github.com)
+		local username="${email%%@*}"
+		# Handle GitHub ID format: 123456+username
+		if [[ "$username" == *+* ]]; then
+			username="${username##*+}"
+		fi
+		echo "$username"
+		;;
 	*)
 		# Extract username from email (before @)
 		local username="${email%%@*}"
 		echo "$username"
 		;;
+	esac
+}
+
+# Check if a username is a bot
+is_bot() {
+	local username=$1
+	case "$username" in
+	*[bB][oO][tT] | dependabot | codemod | renovate | github-actions | syncthing | vtcode-release-bot) return 0 ;;
+	*) return 1 ;;
 	esac
 }
 
@@ -631,7 +648,8 @@ update_readme_contributors() {
 		[[ -z "$email" ]] && continue
 		local username
 		username=$(get_github_username "$email")
-		[[ -z "$username" || "$username" == "vtcode-release-bot" ]] && continue
+		[[ -z "$username" ]] && continue
+		is_bot "$username" && continue
 		echo "$username"
 	done | sort | uniq -c | sort -rn >"$temp_contributors"
 
