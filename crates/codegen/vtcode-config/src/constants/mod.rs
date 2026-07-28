@@ -46,6 +46,8 @@ pub mod prompt_cache;
 pub mod prompts;
 /// Reasoning effort configuration constants
 pub mod reasoning;
+/// Shared execution-loop budgets and planning safety bounds.
+pub mod tool_limits;
 /// Tool name constants to avoid hardcoding strings throughout the codebase
 pub mod tools;
 /// UI constants

@@ -6,7 +6,7 @@ use vtcode_config::api_keys::{
 };
 use vtcode_config::auth::AuthCredentialsStoreMode;
 use vtcode_core::cli::args::{Cli, Commands};
-use vtcode_core::config::constants::{defaults, llm_generation};
+use vtcode_core::config::constants::{defaults, llm_generation, tool_limits};
 use vtcode_core::config::loader::{ConfigManager, VTCodeConfig};
 use vtcode_core::config::models::Provider;
 use vtcode_core::config::types::ReasoningEffortLevel;
@@ -220,7 +220,7 @@ fn apply_selection(
     config.features.memories = persistent_memory_enabled;
     config.agent.persistent_memory.enabled = persistent_memory_enabled;
     config.agent.theme = defaults::DEFAULT_THEME.to_owned();
-    config.agent.max_conversation_turns = defaults::DEFAULT_MAX_CONVERSATION_TURNS;
+    config.agent.max_conversation_turns = tool_limits::DEFAULT_MAX_CONVERSATION_TURNS;
     config.agent.temperature = llm_generation::DEFAULT_TEMPERATURE;
 }
 

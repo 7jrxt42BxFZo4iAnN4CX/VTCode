@@ -187,7 +187,7 @@ const SECTION_KEYS: Record<string, Record<string, KeyMetadata>> = {
         max_tool_loops: {
             detail: "Max tool loops",
             documentation: "Upper bound on tool iterations per agent turn.",
-            insertText: "max_tool_loops = ${1:20}",
+            insertText: "max_tool_loops = ${1:40}",
         },
         max_repeated_tool_calls: {
             detail: "Max repeated calls",
@@ -411,7 +411,7 @@ function createSectionCompletions(): vscode.CompletionItem[] {
             {
                 ...SECTION_METADATA.tools,
                 snippet:
-                    '[tools]\ndefault_policy = "prompt"\nmax_tool_loops = 20\n$0',
+                    '[tools]\ndefault_policy = "prompt"\nmax_tool_loops = 40\n$0',
             },
         ],
         [

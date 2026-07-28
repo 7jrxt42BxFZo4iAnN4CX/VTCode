@@ -193,7 +193,10 @@ Only `Next open decision` is used as the explicit reopen marker for follow-up pl
 
 ### Research Scope
 
-Research effort should scale with the request. For a narrow or simple ask,
+Research effort should scale with the request. The runtime gives planning a
+minimum per-turn tool-call budget of 120 and a minimum loop budget of 40 when
+configured nonzero limits are lower; these floors are planning-specific and do
+not change the conversation-turn retention limit. For a narrow or simple ask,
 a handful of targeted reads/searches (roughly 5-10) is usually enough before
 drafting `<proposed_plan>` — exhaustively enumerating the whole repository
 for a simple request wastes the turn's tool-call and wall-clock budget and

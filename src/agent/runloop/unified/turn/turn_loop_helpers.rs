@@ -5,8 +5,13 @@ use crate::agent::runloop::unified::planning_workflow::detect_enter_planning_int
 use crate::agent::runloop::unified::turn::context::TurnLoopResult;
 use crate::agent::runloop::unified::turn::turn_helpers::{display_error, display_status};
 use crate::agent::runloop::unified::turn::turn_loop::TurnLoopContext;
-use vtcode_core::config::constants::defaults::{
-    DEFAULT_MAX_CONVERSATION_TURNS, DEFAULT_MAX_REPEATED_TOOL_CALLS, DEFAULT_MAX_TOOL_LOOPS,
+use vtcode_core::config::constants::defaults::DEFAULT_MAX_REPEATED_TOOL_CALLS;
+use vtcode_core::config::constants::tool_limits::{
+    APPROVED_PLAN_MIN_TOOL_CALLS_PER_TURN, DEFAULT_MAX_CONVERSATION_TURNS, DEFAULT_MAX_TOOL_LOOPS,
+    MAX_TOOL_LOOP_CAP_MULTIPLIER, MAX_TOOL_LOOP_INCREMENT_PER_PROMPT, MAX_TOOL_LOOP_LIMIT_ABSOLUTE_CAP,
+    PLANNING_WORKFLOW_MAX_TOOL_LOOP_INCREMENT_PER_PROMPT, PLANNING_WORKFLOW_MAX_TOOL_LOOP_LIMIT_ABSOLUTE_CAP,
+    PLANNING_WORKFLOW_MIN_TOOL_CALLS_PER_TURN, PLANNING_WORKFLOW_MIN_TOOL_LOOPS,
+    PLANNING_WORKFLOW_TOOL_LOOP_CAP_MULTIPLIER,
 };
 use vtcode_core::config::constants::tools as tool_names;
 use vtcode_core::config::loader::VTCodeConfig;
@@ -80,14 +85,6 @@ pub(super) fn resolve_safety_tool_call_limits(
 /// Plan-mode research legitimately needs far more read-only calls than a
 /// build-mode turn; a lower configured `max_tool_calls_per_turn` must not
 /// starve planning (checkpoint turn_804: research died at the build-mode cap).
-const PLANNING_WORKFLOW_MIN_TOOL_CALLS_PER_TURN: usize = 120;
-
-/// Approved plans need enough room for implementation and verification after
-/// planning research has already consumed a turn. Keep this floor separate
-/// from ordinary build turns so unrelated requests retain their configured
-/// safety budget.
-const APPROVED_PLAN_MIN_TOOL_CALLS_PER_TURN: usize = 120;
-
 /// Planning-aware per-turn tool-call budget. `0` stays `0` (unlimited);
 /// planning raises the configured limit to the planning research floor.
 pub(in crate::agent::runloop::unified::turn) fn effective_max_tool_calls_for_turn(
@@ -103,6 +100,10 @@ pub(in crate::agent::runloop::unified::turn) fn effective_max_tool_calls_for_tur
     }
 }
 
+/// Approved plans need enough room for implementation and verification after
+/// planning research has already consumed a turn. Keep this floor separate
+/// from ordinary build turns so unrelated requests retain their configured
+/// safety budget.
 pub(super) fn effective_max_tool_calls_for_approved_plan_execution(configured_limit: usize) -> usize {
     if configured_limit == 0 {
         0
@@ -138,13 +139,6 @@ pub(super) fn is_stale_approved_plan_pause_response(text: &str) -> bool {
     pause_marker && unavailable_marker
 }
 
-const MAX_TOOL_LOOP_LIMIT_ABSOLUTE_CAP: usize = 120;
-const MAX_TOOL_LOOP_CAP_MULTIPLIER: usize = 3;
-const MAX_TOOL_LOOP_INCREMENT_PER_PROMPT: usize = 50;
-const PLANNING_WORKFLOW_MIN_TOOL_LOOPS: usize = 40;
-const PLANNING_WORKFLOW_MAX_TOOL_LOOP_LIMIT_ABSOLUTE_CAP: usize = 240;
-const PLANNING_WORKFLOW_TOOL_LOOP_CAP_MULTIPLIER: usize = 6;
-const PLANNING_WORKFLOW_MAX_TOOL_LOOP_INCREMENT_PER_PROMPT: usize = 80;
 const PLANNING_WORKFLOW_ENTER_TRIGGER_STATUS: &str =
     "Planning workflow: explicit planning request detected. Entering read-only planning before continuing this turn.";
 

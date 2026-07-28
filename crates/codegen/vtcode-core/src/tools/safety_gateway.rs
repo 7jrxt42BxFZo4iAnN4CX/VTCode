@@ -31,6 +31,9 @@ use crate::tools::tool_intent::{
     action_qualified_policy_name, classify_tool_intent, command_session_action_in, command_session_action_is,
     file_operation_action_is,
 };
+use vtcode_config::constants::tool_limits::{
+    DEFAULT_MAX_TOOL_CALLS_PER_TURN, DEFAULT_SAFETY_MAX_TOOL_CALLS_PER_SESSION,
+};
 use vtcode_config::core::DotfileProtectionConfig;
 
 /// Trust level used by the safety gateway for approval bypass decisions.
@@ -165,8 +168,8 @@ impl Default for SafetyGatewayConfig {
         let rate_limit_per_second = tool_calls_per_second_from_env().unwrap_or(5);
 
         Self {
-            max_per_turn: 50,
-            max_per_session: 100,
+            max_per_turn: DEFAULT_MAX_TOOL_CALLS_PER_TURN,
+            max_per_session: DEFAULT_SAFETY_MAX_TOOL_CALLS_PER_SESSION,
             rate_limit_per_second,
             rate_limit_per_minute: tool_calls_per_minute_from_env(),
             planning_active: false,
@@ -1033,6 +1036,14 @@ mod tests {
 
         assert!(decision.is_denied());
         assert!(decision.reason().unwrap().contains("Rate limit"));
+    }
+
+    #[test]
+    fn safety_gateway_defaults_use_shared_tool_call_budget() {
+        let config = SafetyGatewayConfig::default();
+
+        assert_eq!(config.max_per_turn, DEFAULT_MAX_TOOL_CALLS_PER_TURN);
+        assert_eq!(config.max_per_session, DEFAULT_SAFETY_MAX_TOOL_CALLS_PER_SESSION);
     }
 
     #[tokio::test]

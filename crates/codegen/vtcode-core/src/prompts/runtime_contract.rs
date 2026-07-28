@@ -6,6 +6,7 @@ use super::system::{
     PLANNING_WORKFLOW_READ_ONLY_HEADER, PLANNING_WORKFLOW_READ_ONLY_NOTICE_LINE, PLANNING_WORKFLOW_RESEARCH_SCOPE_LINE,
     PLANNING_WORKFLOW_TASK_TRACKER_LINE,
 };
+use crate::config::constants::tool_limits;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RuntimePromptContract {
@@ -65,6 +66,12 @@ fn append_planning_workflow_notice(prompt: &mut String, _request_user_input_enab
     prompt.push('\n');
     prompt.push_str(PLANNING_WORKFLOW_RESEARCH_SCOPE_LINE);
     prompt.push('\n');
+    let _ = writeln!(
+        prompt,
+        "- Planning raises nonzero per-turn tool-call budgets below {} to {}; this research floor is separate from max_tool_loops and max_conversation_turns.",
+        tool_limits::PLANNING_WORKFLOW_MIN_TOOL_CALLS_PER_TURN,
+        tool_limits::PLANNING_WORKFLOW_MIN_TOOL_CALLS_PER_TURN,
+    );
     prompt.push_str(PLANNING_WORKFLOW_INTERVIEW_POLICY_LINE);
     prompt.push('\n');
     prompt.push_str(PLANNING_WORKFLOW_NO_AUTO_EXIT_LINE);
@@ -136,6 +143,7 @@ mod tests {
                 },
             );
             assert!(prompt.contains(PLANNING_WORKFLOW_RESEARCH_SCOPE_LINE));
+            assert!(prompt.contains("Planning raises nonzero per-turn tool-call budgets below 120 to 120"));
         }
     }
 }

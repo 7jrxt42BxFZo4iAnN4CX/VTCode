@@ -1,4 +1,4 @@
-use crate::constants::{defaults, execution, llm_generation, prompt_budget};
+use crate::constants::{defaults, execution, llm_generation, prompt_budget, tool_limits};
 use crate::types::{
     ReasoningEffortLevel, ShellPromptProfile, SystemPromptMode, ToolDocumentationMode, UiSurfacePreference,
     VerbosityLevel,
@@ -1064,7 +1064,7 @@ const fn default_enable_split_tool_results() -> bool {
 
 #[inline]
 const fn default_max_conversation_turns() -> usize {
-    defaults::DEFAULT_MAX_CONVERSATION_TURNS
+    tool_limits::DEFAULT_MAX_CONVERSATION_TURNS
 }
 
 #[inline]
@@ -1144,7 +1144,7 @@ const fn default_max_task_retries() -> u32 {
 
 #[inline]
 const fn default_harness_max_tool_calls_per_turn() -> usize {
-    defaults::DEFAULT_MAX_TOOL_CALLS_PER_TURN
+    tool_limits::DEFAULT_MAX_TOOL_CALLS_PER_TURN
 }
 
 #[inline]
@@ -1885,10 +1885,10 @@ mod tests {
 
     #[test]
     fn test_harness_config_tool_call_budget_defaults_to_120() {
-        assert_eq!(AgentHarnessConfig::default().max_tool_calls_per_turn, 120);
+        assert_eq!(AgentHarnessConfig::default().max_tool_calls_per_turn, tool_limits::DEFAULT_MAX_TOOL_CALLS_PER_TURN);
 
         let parsed: AgentHarnessConfig = toml::from_str("").expect("default harness config");
-        assert_eq!(parsed.max_tool_calls_per_turn, 120);
+        assert_eq!(parsed.max_tool_calls_per_turn, tool_limits::DEFAULT_MAX_TOOL_CALLS_PER_TURN);
     }
 
     #[test]

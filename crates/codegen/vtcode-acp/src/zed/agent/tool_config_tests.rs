@@ -9,6 +9,7 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 use vtcode_config::auth::AuthCredentialsStoreMode;
+use vtcode_config::constants::tool_limits;
 use vtcode_config::{SubagentDiscoveryInput, discover_subagents};
 use vtcode_core::config::constants::tools;
 use vtcode_core::config::core::PromptCachingConfig;
@@ -68,6 +69,11 @@ async fn build_agent_with_tools_config(workspace: &Path, tools_config: ToolsConf
         primary_agents,
     )
     .await
+}
+
+#[test]
+fn default_zed_tool_config_uses_shared_tool_loop_budget() {
+    assert_eq!(ToolsConfig::default().max_tool_loops, tool_limits::DEFAULT_MAX_TOOL_LOOPS);
 }
 
 #[test]

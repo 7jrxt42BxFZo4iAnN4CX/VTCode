@@ -2,7 +2,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::constants::{defaults, tools};
+use crate::constants::{defaults, tool_limits, tools};
 use crate::core::plugins::PluginRuntimeConfig;
 
 /// Model-facing tool profile for a session.
@@ -349,7 +349,7 @@ const fn default_tool_policy() -> ToolPolicy {
 
 #[inline]
 const fn default_max_tool_loops() -> usize {
-    defaults::DEFAULT_MAX_TOOL_LOOPS
+    tool_limits::DEFAULT_MAX_TOOL_LOOPS
 }
 
 #[inline]
@@ -439,6 +439,11 @@ mod tests {
     #[test]
     fn tools_config_defaults_to_vt_code_profile() {
         assert_eq!(ToolsConfig::default().profile, ToolProfile::VtCode);
+    }
+
+    #[test]
+    fn tools_config_defaults_to_shared_tool_loop_budget() {
+        assert_eq!(ToolsConfig::default().max_tool_loops, tool_limits::DEFAULT_MAX_TOOL_LOOPS);
     }
 
     #[test]

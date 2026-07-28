@@ -744,6 +744,10 @@ max_snapshots = 50
 # Maximum age of checkpoints to keep (in days)
 max_age_days = 30
 
+# Per-turn tool-call budget for the built-in agent harness
+[agent.harness]
+max_tool_calls_per_turn = 120
+
 # Tool security configuration
 [tools]
 # Default policy when no specific policy is defined ("allow", "prompt", "deny")
@@ -754,7 +758,7 @@ default_policy = "prompt"
 
 # Maximum number of tool loops allowed per turn
 # Set to 0 to disable the limit and let other turn safeguards govern termination.
-max_tool_loops = 0
+max_tool_loops = 40
 
 # Maximum number of repeated identical tool calls (prevents stuck loops)
 max_repeated_tool_calls = 2
@@ -1024,7 +1028,7 @@ highlight_timeout_ms = 1000
 enabled = false
 
 # Maximum number of turns before asking for human input
-max_turns = 30
+max_turns = 100
 
 # Tools allowed in full automation mode
 allowed_tools = [
@@ -1241,7 +1245,20 @@ fn default_primary_agent() -> String {
 #[cfg(test)]
 mod tests {
     use super::VTCodeConfig;
+    use crate::constants::tool_limits;
     use tempfile::tempdir;
+
+    #[cfg(feature = "bootstrap")]
+    #[test]
+    fn sample_config_template_contains_release_loop_budgets() {
+        let template = VTCodeConfig::default_vtcode_toml_template();
+        let config: VTCodeConfig = toml::from_str(&template).expect("sample config template should parse");
+
+        assert_eq!(config.agent.harness.max_tool_calls_per_turn, tool_limits::DEFAULT_MAX_TOOL_CALLS_PER_TURN);
+        assert_eq!(config.tools.max_tool_loops, tool_limits::DEFAULT_MAX_TOOL_LOOPS);
+        assert_eq!(config.automation.full_auto.max_turns, tool_limits::DEFAULT_FULL_AUTO_MAX_TURNS);
+        assert_eq!(config.agent.max_conversation_turns, tool_limits::DEFAULT_MAX_CONVERSATION_TURNS);
+    }
 
     #[cfg(feature = "bootstrap")]
     #[test]

@@ -1,4 +1,4 @@
-use crate::constants::{defaults, tools};
+use crate::constants::{defaults, tool_limits, tools};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -99,7 +99,7 @@ fn default_require_profile_ack() -> bool {
 }
 
 fn default_full_auto_max_turns() -> usize {
-    defaults::DEFAULT_FULL_AUTO_MAX_TURNS
+    tool_limits::DEFAULT_FULL_AUTO_MAX_TURNS
 }
 
 /// Controls for loop engineering — running vtcode from an external scheduler.
@@ -149,4 +149,14 @@ pub fn loop_engine_enabled(config: &AutomationConfig) -> bool {
         return false;
     }
     config.loop_engine.enabled
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_auto_defaults_to_shared_turn_budget() {
+        assert_eq!(FullAutoConfig::default().max_turns, tool_limits::DEFAULT_FULL_AUTO_MAX_TURNS);
+    }
 }

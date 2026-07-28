@@ -373,8 +373,7 @@ pub(super) async fn run_single_agent_loop_unified_impl(
         let max_tool_loops = vt_cfg
             .as_ref()
             .map(|cfg| cfg.tools.max_tool_loops)
-            .filter(|limit| *limit > 0)
-            .unwrap_or(vtcode_core::config::constants::defaults::DEFAULT_MAX_TOOL_LOOPS);
+            .unwrap_or(vtcode_config::constants::tool_limits::DEFAULT_MAX_TOOL_LOOPS);
         let max_context_tokens = vt_cfg
             .as_ref()
             .map(|cfg| cfg.context.max_context_tokens)

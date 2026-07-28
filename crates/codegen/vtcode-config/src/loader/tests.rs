@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::constants::tool_limits;
 use crate::core::CustomProviderConfig;
 use crate::core::prompt_cache::PromptCacheRetention;
 use crate::defaults::{self, SyntaxHighlightingDefaults, WorkspacePathsDefaults};
@@ -16,6 +17,16 @@ use vtcode_commons::reference::StaticWorkspacePaths;
 #[test]
 fn default_config_selects_build_primary_agent() {
     assert_eq!(VTCodeConfig::default().default_primary_agent, "build");
+}
+
+#[test]
+fn compiled_default_config_contains_release_loop_budgets() {
+    let config = VTCodeConfig::default();
+
+    assert_eq!(config.agent.harness.max_tool_calls_per_turn, tool_limits::DEFAULT_MAX_TOOL_CALLS_PER_TURN);
+    assert_eq!(config.tools.max_tool_loops, tool_limits::DEFAULT_MAX_TOOL_LOOPS);
+    assert_eq!(config.automation.full_auto.max_turns, tool_limits::DEFAULT_FULL_AUTO_MAX_TURNS);
+    assert_eq!(config.agent.max_conversation_turns, tool_limits::DEFAULT_MAX_CONVERSATION_TURNS);
 }
 
 #[test]
