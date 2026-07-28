@@ -9,6 +9,7 @@ async fn create_file_succeeds_for_new_path() {
     let temp_dir = TempDir::new().unwrap();
     let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
     registry.initialize_async().await.unwrap();
+    registry.allow_all_tools().await.unwrap();
 
     let args = json!({
         "input": "*** Begin Patch\n*** Add File: src/lib.rs\n+fn main() {}\n*** End Patch"
@@ -40,6 +41,7 @@ async fn create_file_fails_when_file_exists() {
 
     let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
     registry.initialize_async().await.unwrap();
+    registry.allow_all_tools().await.unwrap();
 
     let args = json!({
         "input": "*** Begin Patch\n*** Add File: main.rs\n+replaced\n*** End Patch"

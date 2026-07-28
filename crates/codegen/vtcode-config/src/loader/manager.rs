@@ -96,12 +96,14 @@ impl ConfigManager {
     /// `load_from_workspace` call should perform a fresh read instead of
     /// returning a previously cached result.
     pub fn invalidate_workspace_cache(workspace: impl AsRef<Path>) {
-        let _ = workspace;
+        let workspace = workspace.as_ref();
         #[cfg(not(test))]
         {
-            let workspace = workspace.as_ref();
-            cache_remove(workspace);
+            let canonical_workspace = canonicalize_workspace_root(workspace);
+            cache_remove(&canonical_workspace);
         }
+        #[cfg(test)]
+        let _ = workspace;
     }
 
     /// Load configuration from a specific workspace

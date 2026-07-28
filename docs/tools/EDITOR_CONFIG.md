@@ -77,7 +77,9 @@ This opens your default editor with a temporary file. The file contents are retu
 
 Opens `src/main.rs` in your preferred editor.
 
-For real file opens, VT Code launches GUI editors immediately and returns without waiting. If your selected editor is terminal-based (for example `vim`/`nvim`) and `suspend_tui = true`, VT Code pauses the TUI and waits for the editor to close. Temporary-file `/edit` flows still wait because VT Code has to read the edited content back into the composer.
+For real file opens, VT Code launches GUI editors immediately and returns without waiting, even while an agent turn is active. Single-click transcript and modal links use a bounded out-of-band request queue, so they do not become `/edit` prompts. VS Code opens use `--reuse-window` and preserve supported line/column targets. Duplicate clicks for the same target are coalesced while a launch is pending.
+
+If your selected editor is terminal-based (for example `vim`/`nvim`) and `suspend_tui = true`, VT Code uses the serialized suspend-and-wait path and resumes the TUI after the editor closes. Temporary-file `/edit` flows still wait because VT Code has to read edited content back into the composer.
 
 Single-clicking a file path in the transcript or a modal uses the same editor workflow and respects configured line and column targets when the selected editor supports them.
 

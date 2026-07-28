@@ -349,6 +349,8 @@ pub(super) async fn run_single_agent_loop_unified_impl(
         let _file_palette_task_guard = ui_setup.file_palette_task_guard;
         let _background_subprocess_task_guard = ui_setup.background_subprocess_task_guard;
         let _startup_update_task_guard = ui_setup.startup_update_task_guard;
+        let _editor_open_coordinator_task_guard = ui_setup.editor_open_coordinator_task_guard;
+        let editor_open_sender = ui_setup.editor_open_sender;
         let startup_update_cached_notice = ui_setup.startup_update_cached_notice;
         let mut startup_update_notice_rx = ui_setup.startup_update_notice_rx;
         let SessionState {
@@ -668,6 +670,7 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                             harness_config: harness_config.clone(),
                             runtime_steering,
                             startup_update_notice_rx: &mut startup_update_notice_rx,
+                            editor_open_sender: &editor_open_sender,
                         };
 
                     let mut interaction_state =

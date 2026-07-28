@@ -1,6 +1,8 @@
 use anyhow::Result;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Notify;
+use tokio::sync::mpsc::error::TrySendError;
 
 use vtcode_core::config::loader::VTCodeConfig;
 use vtcode_core::config::types::AgentConfig as CoreAgentConfig;
@@ -17,6 +19,7 @@ use crate::agent::runloop::unified::context_manager::ContextManager;
 use crate::agent::runloop::unified::inline_events::harness::HarnessEventEmitter;
 use crate::agent::runloop::unified::model_selection::ModelSwitchCompactionTargets;
 use crate::agent::runloop::unified::palettes::ActivePalette;
+use crate::agent::runloop::unified::session_setup::{EditorOpenRequest, EditorOpenRequestSender};
 use crate::agent::runloop::unified::state::SessionStats;
 use crate::agent::runloop::welcome::SessionBootstrap;
 
@@ -33,6 +36,8 @@ pub(crate) struct InlineEventContext<'a> {
     modal: InlineModalProcessor<'a>,
     ctrl_c_state: &'a Arc<crate::agent::runloop::unified::state::CtrlCState>,
     ctrl_c_notify: &'a Arc<Notify>,
+    editor_workspace: PathBuf,
+    editor_open_sender: Option<EditorOpenRequestSender>,
 }
 
 impl<'a> InlineEventContext<'a> {
@@ -60,6 +65,7 @@ impl<'a> InlineEventContext<'a> {
         lifecycle_hooks: Option<&'a LifecycleHookEngine>,
         harness_emitter: Option<&'a HarnessEventEmitter>,
     ) -> Self {
+        let editor_workspace = config.workspace.clone();
         let state = InlineEventState::new(renderer, interrupts, ctrl_c_notice_displayed);
         let modal = InlineModalProcessor::new(
             handle,
@@ -84,7 +90,18 @@ impl<'a> InlineEventContext<'a> {
             },
         );
 
-        Self { state, modal, ctrl_c_state, ctrl_c_notify }
+        Self {
+            state,
+            modal,
+            ctrl_c_state,
+            ctrl_c_notify,
+            editor_workspace,
+            editor_open_sender: None,
+        }
+    }
+
+    pub(crate) fn set_editor_open_sender(&mut self, sender: EditorOpenRequestSender) {
+        self.editor_open_sender = Some(sender);
     }
 
     pub(crate) async fn process_event(
@@ -209,7 +226,23 @@ impl<'a> InlineEventContext<'a> {
                 self.state.reset_interrupt_state();
                 InlineLoopAction::OpenTranscriptReviewScrollback(text)
             }
-            InlineEvent::OpenFileInEditor(path) => self.input_processor().submit(format!("/edit {path}").into()),
+            InlineEvent::OpenFileInEditor(path) => {
+                self.state.reset_interrupt_state();
+                if let Some(sender) = self.editor_open_sender.as_ref()
+                    && let Some(request) = EditorOpenRequest::from_raw_target(&path, &self.editor_workspace)
+                {
+                    match sender.try_send(request) {
+                        Ok(()) => {}
+                        Err(TrySendError::Full(_)) => {
+                            tracing::debug!("dropping file-open request from TUI because coordinator queue is full");
+                        }
+                        Err(TrySendError::Closed(_)) => {
+                            tracing::debug!("dropping file-open request from TUI because coordinator is unavailable");
+                        }
+                    }
+                }
+                InlineLoopAction::Continue
+            }
             InlineEvent::OpenUrl(url) => {
                 self.state.reset_interrupt_state();
                 self.modal.request_url_guard(self.state.renderer(), url)?

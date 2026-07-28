@@ -84,6 +84,7 @@ pub(crate) struct InteractionLoopContext<'a> {
     pub harness_config: vtcode_config::core::agent::AgentHarnessConfig,
     pub runtime_steering: &'a mut RuntimeSteering,
     pub startup_update_notice_rx: &'a mut Option<tokio::sync::mpsc::UnboundedReceiver<StartupUpdateNotice>>,
+    pub editor_open_sender: &'a crate::agent::runloop::unified::session_setup::EditorOpenRequestSender,
 }
 
 impl<'a> InteractionLoopContext<'a> {

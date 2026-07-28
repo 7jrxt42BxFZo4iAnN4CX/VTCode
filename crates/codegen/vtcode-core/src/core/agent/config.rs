@@ -185,7 +185,7 @@ mod tests {
         ]);
         let selection = resolve_runtime_model_selection(&args, &config);
 
-        assert_eq!(selection.provider, "ollama");
+        assert_eq!(selection.provider, "ollama-cloud");
         assert_eq!(selection.model_source, ModelSelectionSource::CliOverride);
     }
 

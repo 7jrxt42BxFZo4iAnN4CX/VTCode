@@ -19,6 +19,7 @@ async fn test_execute_tool_ref_uses_optimizations() {
 
     // Create registry with optimizations enabled
     let mut registry = ToolRegistry::new(workspace_root.clone()).await;
+    registry.allow_all_tools().await.unwrap();
     let mut config = OptimizationConfig::default();
     config.tool_registry.use_optimized_registry = true;
     config.tool_registry.hot_cache_size = 8;
@@ -72,6 +73,7 @@ async fn test_execute_tool_ref_memory_pool_integration() {
 
     // Create registry with memory pool enabled
     let mut registry = ToolRegistry::new(workspace_root.clone()).await;
+    registry.allow_all_tools().await.unwrap();
     let mut config = OptimizationConfig::default();
     config.memory_pool.enabled = true;
     config.memory_pool.max_string_pool_size = 32;
@@ -98,6 +100,7 @@ async fn test_execute_tool_ref_without_optimizations() {
 
     // Create registry with ALL optimizations explicitly disabled
     let mut registry = ToolRegistry::new(workspace_root.clone()).await;
+    registry.allow_all_tools().await.unwrap();
     let mut config = OptimizationConfig::default();
     config.tool_registry.use_optimized_registry = false;
     config.memory_pool.enabled = false; // Explicitly disable memory pool too
@@ -127,6 +130,7 @@ async fn test_execute_tool_ref_hot_cache_effectiveness() {
 
     // Create registry with small cache for testing
     let mut registry = ToolRegistry::new(workspace_root.clone()).await;
+    registry.allow_all_tools().await.unwrap();
     let mut config = OptimizationConfig::default();
     config.tool_registry.use_optimized_registry = true;
     config.tool_registry.hot_cache_size = 2; // Very small cache
@@ -157,9 +161,11 @@ async fn test_execute_tool_ref_performance_comparison() {
 
     // Test with optimizations disabled
     let registry_unoptimized = ToolRegistry::new(workspace_root.clone()).await;
+    registry_unoptimized.allow_all_tools().await.unwrap();
 
     // Test with optimizations enabled
     let mut registry_optimized = ToolRegistry::new(workspace_root.clone()).await;
+    registry_optimized.allow_all_tools().await.unwrap();
     let config = OptimizationConfig::production(); // Use production config
     registry_optimized.configure_optimizations(config);
 

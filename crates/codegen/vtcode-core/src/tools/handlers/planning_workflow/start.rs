@@ -238,7 +238,7 @@ impl Tool for StartPlanningTool {
     }
 
     fn description(&self) -> &str {
-        "Suggest Planning workflow for demanding, ambiguous, or multi-phase tasks. The user must confirm entry; after confirmation, use exec_command for read-only inspection and search while mutating tools such as apply_patch remain blocked, then emit one compact <proposed_plan> for review. Do NOT call this for straightforward changes or when the implementation is already clear."
+        "Use this to suggest Planning workflow for demanding, ambiguous, or multi-phase tasks. The user must confirm entry; after confirmation, use exec_command for read-only inspection and search while mutating tools such as apply_patch remain blocked, then emit one compact <proposed_plan> for review. Do NOT call this for straightforward changes or when the implementation is already clear."
     }
 
     fn parameter_schema(&self) -> Option<Value> {

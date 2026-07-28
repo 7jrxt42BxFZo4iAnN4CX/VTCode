@@ -1,3 +1,4 @@
+mod editor;
 mod ide_context;
 mod init;
 mod session_mode;
@@ -6,6 +7,9 @@ mod skill_setup;
 mod types;
 mod ui;
 
+#[cfg(test)]
+pub(crate) use editor::bounded_editor_open_requests;
+pub(crate) use editor::{EditorOpenRequest, EditorOpenRequestSender, spawn_editor_open_coordinator};
 pub(crate) use ide_context::{IdeContextBridge, preferred_display_language_for_workspace};
 pub(crate) use init::active_deferred_tool_policy;
 pub(crate) use init::create_provider_client;

@@ -131,6 +131,18 @@ where
     handlers::run_with_event_loop_suspended(handle, suspend_tui, launch)
 }
 
+pub(crate) async fn run_with_event_loop_suspended_async<T, F, Fut>(
+    handle: &InlineHandle,
+    suspend_tui: bool,
+    launch: F,
+) -> Result<T>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    handlers::run_with_event_loop_suspended_async(handle, suspend_tui, launch).await
+}
+
 pub(crate) async fn handle_outcome(
     outcome: SlashCommandOutcome,
     ctx: SlashCommandContext<'_>,

@@ -10,6 +10,7 @@ async fn apply_patch_supports_patch_alias() {
     let temp_dir = TempDir::new().unwrap();
     let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
     registry.initialize_async().await.unwrap();
+    registry.allow_all_tools().await.unwrap();
 
     let result = registry
         .execute_tool("apply_patch", json!({ "patch": SAMPLE_PATCH }))

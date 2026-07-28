@@ -17,6 +17,7 @@ use super::types::{BackgroundTaskGuard, SessionState, SessionUISetup};
 use crate::agent::runloop::ResumeSession;
 use crate::agent::runloop::unified::reasoning::{model_supports_reasoning, resolve_reasoning_visibility};
 use crate::agent::runloop::unified::session_setup::ide_context::IdeContextBridge;
+use crate::agent::runloop::unified::session_setup::spawn_editor_open_coordinator;
 use crate::agent::runloop::unified::stop_requests::request_local_stop;
 use crate::agent::runloop::unified::turn::utils::{append_additional_context, render_hook_messages};
 use crate::agent::runloop::unified::{context_manager, state};
@@ -250,6 +251,9 @@ pub(crate) async fn initialize_session_ui(
     }
 
     let handle = session.clone_inline_handle();
+    let editor_config = vt_cfg.as_ref().map(|config| config.tools.editor.clone()).unwrap_or_default();
+    let (editor_open_sender, editor_open_coordinator_task_guard) =
+        spawn_editor_open_coordinator(config.workspace.clone(), editor_config, &handle);
     let highlight_config = vt_cfg.as_ref().map(|cfg| cfg.syntax_highlighting.clone()).unwrap_or_default();
 
     transcript::set_inline_handle(Arc::new(handle.clone()));
@@ -487,6 +491,8 @@ pub(crate) async fn initialize_session_ui(
         startup_update_cached_notice: session_state.startup_update_check.cached_notice.clone(),
         startup_update_notice_rx,
         startup_update_task_guard,
+        editor_open_sender,
+        editor_open_coordinator_task_guard,
     })
 }
 

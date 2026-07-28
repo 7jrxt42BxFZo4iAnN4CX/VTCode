@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::path::Path;
 use std::time::Duration;
 
@@ -324,6 +325,32 @@ where
     result
 }
 
+pub(crate) async fn run_with_event_loop_suspended_async<T, F, Fut>(
+    handle: &InlineHandle,
+    suspend_tui: bool,
+    launch: F,
+) -> Result<T>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    if suspend_tui {
+        handle.stop_event_stream();
+        tokio::time::sleep(EVENT_STREAM_STOP_DELAY).await;
+        handle.clear_input_queue();
+    }
+
+    let result = launch().await;
+
+    if suspend_tui {
+        handle.clear_input_queue();
+        handle.resume_event_loop();
+        handle.start_event_stream();
+    }
+
+    result
+}
+
 fn should_wait_for_editor(opening_existing_file: bool, editor_config: &EditorToolConfig) -> bool {
     if !opening_existing_file {
         return true;
@@ -351,16 +378,7 @@ fn editor_command_from_settings(editor_config: &EditorToolConfig) -> Option<Stri
 }
 
 fn editor_command_requires_terminal(command: &str) -> bool {
-    let Some(program) = shell_words::split(command).ok().and_then(|tokens| tokens.first().cloned()) else {
-        return false;
-    };
-    let normalized = Path::new(&program)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(&program)
-        .to_ascii_lowercase();
-
-    matches!(normalized.as_str(), "vi" | "vim" | "nvim" | "nano" | "emacs" | "pico" | "hx" | "helix")
+    TerminalAppLauncher::editor_command_requires_terminal(Some(command))
 }
 
 fn launch_config_from_settings(editor_config: &EditorToolConfig, wait_for_editor: bool) -> EditorLaunchConfig {

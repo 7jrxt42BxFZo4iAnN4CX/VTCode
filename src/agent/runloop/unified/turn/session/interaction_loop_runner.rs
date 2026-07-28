@@ -270,6 +270,7 @@ pub(super) async fn run_interaction_loop_impl(
             thread_id: ctx.thread_id,
             lifecycle_hooks: ctx.lifecycle_hooks.as_ref(),
             harness_emitter: ctx.harness_emitter,
+            editor_open_sender: ctx.editor_open_sender,
             idle_wake_delay,
         };
 

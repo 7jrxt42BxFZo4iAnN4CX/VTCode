@@ -17,6 +17,7 @@
   allocator memory pinning; use it before changing the default allocator (see Gotchas).
 - `vtcode_ui::tui::panic_hook` installs custom panic handler — must run before any output.
 - `agent/runloop/` contains the single-agent runloop. Multi-agent is in `vtcode-core::subagents`.
+- TUI transcript/modal file links use the bounded runtime editor-open coordinator; keep them out of queued `/edit` submissions so GUI opens can dispatch during active turns.
 - Interactive `/secret` storage is isolated behind `turn/session/slash_commands/secrets/storage.rs`; keep provider validation and configured storage-mode selection in that boundary.
 - Batched tool metrics must record every executed status, including sequential groups; route new batch paths through the shared execution helper.
 - PTY command headers are initially rendered live and receive their final success/failure/warning bullet color during stream shutdown; keep that status handoff separate from output rendering.

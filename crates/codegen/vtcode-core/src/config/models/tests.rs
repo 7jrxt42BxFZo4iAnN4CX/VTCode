@@ -200,8 +200,10 @@ fn test_models_for_provider() {
 
     let ollama_models = ModelId::models_for_provider(Provider::Ollama);
     assert!(ollama_models.contains(&ModelId::OllamaGptOss20b));
-    assert!(ollama_models.contains(&ModelId::OllamaGptOss20bCloud));
-    assert!(ollama_models.contains(&ModelId::OllamaGptOss120bCloud));
+
+    let ollama_cloud_models = ModelId::models_for_provider(Provider::OllamaCloud);
+    assert!(ollama_cloud_models.contains(&ModelId::OllamaGptOss20bCloud));
+    assert!(ollama_cloud_models.contains(&ModelId::OllamaGptOss120bCloud));
 }
 
 #[test]

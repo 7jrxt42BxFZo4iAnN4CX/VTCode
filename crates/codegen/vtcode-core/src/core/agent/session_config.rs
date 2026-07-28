@@ -72,6 +72,7 @@ impl ResolvedSessionConfig {
 #[cfg(test)]
 mod tests {
     use super::ResolvedSessionConfig;
+    use crate::config::loader::ConfigManager;
     use anyhow::Result;
     use std::fs;
     use tempfile::TempDir;
@@ -100,6 +101,7 @@ mod tests {
 
         assert_eq!(snapshot.effective().agent.provider, "openai");
 
+        ConfigManager::invalidate_workspace_cache(temp.path());
         let refreshed = ResolvedSessionConfig::load_from_workspace(temp.path())?;
         assert_eq!(refreshed.effective().agent.provider, "anthropic");
 

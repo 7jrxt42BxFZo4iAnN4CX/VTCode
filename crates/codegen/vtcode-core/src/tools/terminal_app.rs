@@ -94,6 +94,32 @@ impl TerminalAppLauncher {
         target: Option<EditorTarget>,
         config: EditorLaunchConfig,
     ) -> Result<Option<String>> {
+        self.launch_editor_target_with_config_and_reuse(target, config, false)
+    }
+
+    /// Launch an existing file without waiting for a GUI editor process.
+    ///
+    /// Recognized GUI editor adapters receive their focus/reuse-window flags,
+    /// while terminal editors retain the synchronous suspend-and-wait behavior.
+    pub fn launch_editor_target_non_waiting(
+        &self,
+        target: EditorTarget,
+        preferred_editor: Option<String>,
+    ) -> Result<()> {
+        self.launch_editor_target_with_config_and_reuse(
+            Some(target),
+            EditorLaunchConfig { preferred_editor, wait_for_editor: false },
+            true,
+        )
+        .map(|_| ())
+    }
+
+    fn launch_editor_target_with_config_and_reuse(
+        &self,
+        target: Option<EditorTarget>,
+        config: EditorLaunchConfig,
+        reuse_existing_window: bool,
+    ) -> Result<Option<String>> {
         let (target, is_temp) = if let Some(target) = target {
             (target, false)
         } else {
@@ -120,16 +146,26 @@ impl TerminalAppLauncher {
 
         let mut cmd = if let Some(preferred) = preferred_editor.as_deref() {
             debug!("using configured preferred editor command: {}", preferred);
-            Self::build_editor_command_from_string(preferred, &target, wait_for_editor)
-                .with_context(|| format!("failed to parse tools.editor.preferred_editor '{preferred}'"))?
+            Self::build_editor_command_from_string_with_reuse(
+                preferred,
+                &target,
+                wait_for_editor,
+                reuse_existing_window,
+            )
+            .with_context(|| format!("failed to parse tools.editor.preferred_editor '{preferred}'"))?
         } else if let Some(env_command) = Self::editor_command_from_env() {
             debug!("using editor command from environment: {}", env_command);
-            Self::build_editor_command_from_string(&env_command, &target, wait_for_editor)
-                .with_context(|| format!("failed to parse editor command '{env_command}'"))?
+            Self::build_editor_command_from_string_with_reuse(
+                &env_command,
+                &target,
+                wait_for_editor,
+                reuse_existing_window,
+            )
+            .with_context(|| format!("failed to parse editor command '{env_command}'"))?
         } else {
             // If EDITOR/VISUAL not set, search for available editors in PATH
             debug!("EDITOR/VISUAL not set, searching for available editors");
-            Self::try_common_editors(&target, wait_for_editor).context(
+            Self::try_common_editors(&target, wait_for_editor, reuse_existing_window).context(
                 "failed to detect editor: set tools.editor.preferred_editor, \
                  or set EDITOR/VISUAL, or install an editor in PATH",
             )?
@@ -181,22 +217,42 @@ impl TerminalAppLauncher {
         Ok(content)
     }
 
+    #[cfg(test)]
     fn build_editor_command_from_string(
         command: &str,
         target: &EditorTarget,
         wait_for_editor: bool,
+    ) -> Result<Command> {
+        Self::build_editor_command_from_string_with_reuse(command, target, wait_for_editor, false)
+    }
+
+    fn build_editor_command_from_string_with_reuse(
+        command: &str,
+        target: &EditorTarget,
+        wait_for_editor: bool,
+        reuse_existing_window: bool,
     ) -> Result<Command> {
         let tokens = shell_words::split(command).with_context(|| format!("invalid editor command: {command}"))?;
         let (program, args) = tokens.split_first().ok_or_else(|| anyhow!("editor command cannot be empty"))?;
         let adapter = EditorAdapter::from_program(program);
         let mut cmd = Command::new(program);
         cmd.args(filtered_editor_args(adapter, args, wait_for_editor));
+        if reuse_existing_window
+            && matches!(adapter, EditorAdapter::Vscode)
+            && !args.iter().any(|arg| arg == "--reuse-window")
+        {
+            cmd.arg("--reuse-window");
+        }
         Self::append_editor_target_args(&mut cmd, program, target);
         Ok(cmd)
     }
 
     /// Try common editors in priority order as fallback when EDITOR/VISUAL not set
-    fn try_common_editors(target: &EditorTarget, wait_for_editor: bool) -> Result<Command> {
+    fn try_common_editors(
+        target: &EditorTarget,
+        wait_for_editor: bool,
+        reuse_existing_window: bool,
+    ) -> Result<Command> {
         let candidates = if cfg!(target_os = "windows") {
             vec![
                 "code --wait",
@@ -253,7 +309,12 @@ impl TerminalAppLauncher {
             };
             if which::which(program).is_ok() {
                 debug!("found fallback editor: {}", candidate);
-                return Self::build_editor_command_from_string(candidate, target, wait_for_editor);
+                return Self::build_editor_command_from_string_with_reuse(
+                    candidate,
+                    target,
+                    wait_for_editor,
+                    reuse_existing_window,
+                );
             }
         }
 
@@ -269,6 +330,21 @@ impl TerminalAppLauncher {
             .find_map(|key| std::env::var(key).ok())
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
+    }
+
+    /// Return whether a configured editor command names a terminal editor.
+    pub fn editor_command_requires_terminal(command: Option<&str>) -> bool {
+        let command = command
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_owned)
+            .or_else(Self::editor_command_from_env);
+        let Some(command) = command else {
+            return false;
+        };
+        let Some(program) = shell_words::split(&command).ok().and_then(|tokens| tokens.first().cloned()) else {
+            return false;
+        };
+        Self::program_requires_terminal(&program)
     }
 
     fn program_requires_terminal(program: &str) -> bool {
@@ -628,6 +704,41 @@ mod tests {
         let args: Vec<String> = command.get_args().map(|value| value.to_string_lossy().to_string()).collect();
 
         assert_eq!(args, vec!["-g".to_string(), "/tmp/test.rs:12:4".to_string()]);
+    }
+
+    #[test]
+    fn test_build_editor_command_reuses_vscode_window_for_non_waiting_opens() {
+        let command = TerminalAppLauncher::build_editor_command_from_string_with_reuse(
+            "code --wait",
+            &EditorTarget::new(PathBuf::from("/tmp/test.rs"), Some(":12:4".to_string())),
+            false,
+            true,
+        )
+        .expect("command should parse");
+        let args: Vec<String> = command.get_args().map(|value| value.to_string_lossy().to_string()).collect();
+
+        assert_eq!(
+            args,
+            vec![
+                "--reuse-window".to_string(),
+                "-g".to_string(),
+                "/tmp/test.rs:12:4".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_build_editor_command_does_not_add_reuse_flags_to_custom_editors() {
+        let command = TerminalAppLauncher::build_editor_command_from_string_with_reuse(
+            "custom-editor --focus",
+            &EditorTarget::new(PathBuf::from("/tmp/test.rs"), Some(":12:4".to_string())),
+            false,
+            true,
+        )
+        .expect("command should parse");
+        let args: Vec<String> = command.get_args().map(|value| value.to_string_lossy().to_string()).collect();
+
+        assert_eq!(args, vec!["--focus".to_string(), "/tmp/test.rs".to_string()]);
     }
 
     #[test]

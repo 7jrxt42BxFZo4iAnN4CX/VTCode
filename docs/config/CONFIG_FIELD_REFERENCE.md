@@ -694,7 +694,7 @@ python3 scripts/generate_config_field_reference.py
 | `timeouts.warning_threshold_percent` | `integer` | no | `80` | Percentage (0-100) of the ceiling after which the UI should warn. |
 | `tools.client_tool_search` | `boolean` | no | `true` | Enables client-local deferred tool loading for providers without a hosted tool search (e.g. Gemini). When enabled, tools flagged `defer_loading: true` are omitted from the request payload instead of being sent eagerly, and a compact summary of what is discoverable is appended to the system prompt; the model loads them via the local MCP discovery tools. Enabled by default because eager MCP schemas are the dominant source of token inflation. |
 | `tools.default_policy` | `string` | no | `"prompt"` | Default policy for tools not explicitly listed |
-| `tools.editor.enabled` | `boolean` | no | `true` | Enable external editor support for `/edit` and keyboard shortcuts |
+| `tools.editor.enabled` | `boolean` | no | `true` | Enable external editor support for `/edit`, keyboard shortcuts, and TUI file links |
 | `tools.editor.preferred_editor` | `string` | no | `""` | Preferred editor command override (supports arguments, e.g. "code --wait") |
 | `tools.editor.suspend_tui` | `boolean` | no | `true` | Suspend the TUI event loop while editor is running |
 | `tools.loop_thresholds` | `object` | no | `{}` | Tool-specific loop thresholds (Adaptive Loop Detection) Allows setting higher loop limits for read-only tools (e.g., ls, grep) and lower limits for mutating tools. |

@@ -7,6 +7,7 @@ use vtcode_core::tools::ToolRegistry;
 async fn setup_registry(root: &std::path::Path) -> ToolRegistry {
     let registry = ToolRegistry::new(root.to_path_buf()).await;
     registry.initialize_async().await.unwrap();
+    registry.allow_all_tools().await.unwrap();
     registry
 }
 

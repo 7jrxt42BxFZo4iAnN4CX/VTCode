@@ -10,6 +10,7 @@ use vtcode_core::tools::editing::patch::set_ast_grep_binary_override_for_tests;
 async fn setup_registry(root: &Path) -> ToolRegistry {
     let registry = ToolRegistry::new(root.to_path_buf()).await;
     registry.initialize_async().await.unwrap();
+    registry.allow_all_tools().await.unwrap();
     registry
 }
 

@@ -8,6 +8,7 @@ use crate::agent::runloop::unified::inline_events::{
     InlineEventContext, InlineInterruptCoordinator, InlineLoopAction, InlineQueueState, QueuedInput,
 };
 use crate::agent::runloop::unified::palettes::{ActivePalette, MODE_ACTION_PREFIX};
+use crate::agent::runloop::unified::session_setup::{EditorOpenRequest, bounded_editor_open_requests};
 use crate::agent::runloop::unified::settings_interactive::{ACTION_CONFIGURE_EDITOR, SettingsPaletteState};
 use crate::agent::runloop::unified::state::CtrlCState;
 use crate::agent::runloop::unified::state::SessionStats;
@@ -213,7 +214,7 @@ async fn launch_editor_event_with_draft_returns_editor_with_draft_action() {
 }
 
 #[tokio::test]
-async fn open_file_in_editor_event_submits_edit_command_with_path() {
+async fn open_file_in_editor_event_emits_out_of_band_request_with_path() {
     let (handle, mut renderer) = renderer_with_handle();
     let (ctrl_c_state, ctrl_c_notify) = ctrl_c_handles();
     let interrupts = InlineInterruptCoordinator::new(ctrl_c_state.as_ref());
@@ -251,6 +252,8 @@ async fn open_file_in_editor_event_submits_edit_command_with_path() {
         None,
         None,
     );
+    let (editor_sender, mut editor_requests) = bounded_editor_open_requests();
+    context.set_editor_open_sender(editor_sender);
     let mut queued_inputs = VecDeque::new();
     let mut prefer_latest_once = false;
     let mut queue = InlineQueueState::new(&handle, &mut queued_inputs, &mut prefer_latest_once);
@@ -260,10 +263,12 @@ async fn open_file_in_editor_event_submits_edit_command_with_path() {
         .process_event(InlineEvent::OpenFileInEditor(path.clone()), &mut queue)
         .await
         .expect("process open file in editor");
-    assert!(matches!(
-        action,
-        InlineLoopAction::Submit(ref command) if command.text == format!("/edit {path}")
-    ));
+    assert!(matches!(action, InlineLoopAction::Continue));
+    assert_eq!(
+        editor_requests.recv().await,
+        Some(EditorOpenRequest::from_raw_target(&path, &config.workspace).expect("valid editor target"))
+    );
+    assert!(queued_inputs.is_empty());
 }
 
 #[tokio::test]

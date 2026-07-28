@@ -17,6 +17,7 @@ use crate::agent::runloop::model_picker::ModelPickerState;
 use crate::agent::runloop::unified::context_manager::ContextManager;
 use crate::agent::runloop::unified::inline_events::harness::HarnessEventEmitter;
 use crate::agent::runloop::unified::palettes::ActivePalette;
+use crate::agent::runloop::unified::session_setup::EditorOpenRequestSender;
 use crate::agent::runloop::unified::state::{CtrlCState, SessionStats};
 use crate::agent::runloop::welcome::SessionBootstrap;
 use crate::updater::{StartupUpdateNotice, display_update_notice};
@@ -49,6 +50,7 @@ struct InlineEventLoop<'a> {
     thread_id: &'a str,
     lifecycle_hooks: Option<&'a LifecycleHookEngine>,
     harness_emitter: Option<&'a HarnessEventEmitter>,
+    editor_open_sender: &'a EditorOpenRequestSender,
     idle_wake_delay: Duration,
 }
 
@@ -86,6 +88,7 @@ impl<'a> InlineEventLoop<'a> {
             thread_id,
             lifecycle_hooks,
             harness_emitter,
+            editor_open_sender,
             idle_wake_delay,
         } = resources;
 
@@ -115,6 +118,7 @@ impl<'a> InlineEventLoop<'a> {
             thread_id,
             lifecycle_hooks,
             harness_emitter,
+            editor_open_sender,
             idle_wake_delay,
         }
     }
@@ -212,6 +216,7 @@ impl<'a> InlineEventLoop<'a> {
             harness_emitter,
         );
 
+        context.set_editor_open_sender(self.editor_open_sender.clone());
         context.process_event(event, &mut self.queue).await
     }
 
@@ -301,6 +306,7 @@ pub(crate) struct InlineEventLoopResources<'a> {
     pub thread_id: &'a str,
     pub lifecycle_hooks: Option<&'a LifecycleHookEngine>,
     pub harness_emitter: Option<&'a HarnessEventEmitter>,
+    pub editor_open_sender: &'a EditorOpenRequestSender,
     pub idle_wake_delay: Duration,
 }
 
@@ -450,6 +456,8 @@ mod tests {
         let mut startup_update_notice_rx = None;
         let mut header_context = InlineHeaderContext::default();
         let ctrl_c_notify = Arc::new(Notify::new());
+        let (editor_open_sender, _editor_open_receiver) =
+            crate::agent::runloop::unified::session_setup::bounded_editor_open_requests();
 
         let resources = InlineEventLoopResources {
             renderer: &mut renderer,
@@ -476,6 +484,7 @@ mod tests {
             thread_id: "test-thread",
             lifecycle_hooks: None,
             harness_emitter: None,
+            editor_open_sender: &editor_open_sender,
             idle_wake_delay: Duration::from_millis(5),
             ctrl_c_state: &ctrl_c_state,
             ctrl_c_notify: &ctrl_c_notify,

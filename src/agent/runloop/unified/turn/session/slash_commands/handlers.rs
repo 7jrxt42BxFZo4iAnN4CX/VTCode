@@ -42,8 +42,8 @@ mod update;
 mod workspace;
 
 pub(super) use agents::{handle_manage_agents, handle_manage_subprocesses};
-pub(crate) use apps::run_with_event_loop_suspended;
 pub(super) use apps::{handle_launch_editor, handle_new_session, handle_open_docs, handle_open_donate_links};
+pub(crate) use apps::{run_with_event_loop_suspended, run_with_event_loop_suspended_async};
 pub(super) use compact::handle_compact_conversation;
 pub(super) use control::{
     handle_clear_conversation, handle_clear_screen, handle_copy_latest_assistant_reply, handle_exit, handle_notify,

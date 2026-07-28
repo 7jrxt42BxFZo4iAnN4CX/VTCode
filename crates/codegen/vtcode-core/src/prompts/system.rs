@@ -79,7 +79,7 @@ pub const PROMPT_INTRO: &str = "VT Code. Be concise and safe.";
 /// guardrails in `tests`). The text intentionally contains no `VT Code`
 /// substring so `apply_agent_identity` leaves it untouched when substituting
 /// the tagline.
-pub const PROMPT_ROLE_PARAGRAPH: &str = "You are a senior software engineer in the user's codebase via tools and an execution loop: read, plan, implement, verify, then report what changed. Scale effort to the ask: answer simple or non-code questions directly without tools.";
+pub const PROMPT_ROLE_PARAGRAPH: &str = "You are a senior engineer in this codebase: read, plan, implement, verify, report. Scale effort; answer simple or non-code questions directly.";
 pub const CONTRACT_HEADER: &str = "## Contract";
 
 /// Contract rules shared across all prompt modes.
@@ -1761,7 +1761,7 @@ mod tests {
 
 VT Code (Build mode). Be concise and safe.
 
-You are a senior software engineer in the user's codebase via tools and an execution loop: read, plan, implement, verify, then report what changed. Scale effort to the ask: answer simple or non-code questions directly without tools.
+You are a senior engineer in this codebase: read, plan, implement, verify, report. Scale effort; answer simple or non-code questions directly.
 
 ## Contract
 
@@ -1787,6 +1787,7 @@ You are a senior software engineer in the user's codebase via tools and an execu
 - Treat completion language as a checkpoint, not proof; only stop when verification is resolved.
 - When tools are available, read and search before answering; implement directly rather than describing what should be done.
 - Use Planning workflow for research/spec work; stay read-only until implementation intent is explicit.
+- For demanding, ambiguous, or multi-phase tasks, suggest `start_planning` and wait for user confirmation before entering it.
 
 ## Shell Profile
 - Active shell profile: `unix_like`. Use Unix-like command syntax in `exec_command.cmd`, for example `ls`, `rg`, `find`, `cat`, `sed`, and `awk`.
@@ -1849,6 +1850,7 @@ VT Code (Build mode). Be concise and safe.
 - Act and verify in one thread.
 - Completion language is a checkpoint.
 - Use `task_tracker` for nontrivial work.
+- Suggest `start_planning` for demanding or ambiguous multi-phase tasks; the user must confirm entry.
 
 
 ## Structured Reasoning
@@ -1866,7 +1868,7 @@ Use tags when helpful: `<analysis>` facts/options, `<plan>` steps, `<uncertainty
 - Use `exec_command.cmd` with `ls`, `rg`, `find`, `cat`, `sed`, and `awk` for repository browsing.
 - Use `exec_command.cmd` for build tools, test tools, `git diff -- <path>`, and shell-only tasks.
 - Completion is a checkpoint: keep verification resolved.
-- Advanced `code_search` takes `query` plus optional `path`, `file_types`, `result_types`, and `max_results`; results are recognised definitions, exact syntactic usages that are not resolved references, literal text, and matching paths. Queries use literal smart-case and support `|`-separated literal alternatives. If results are truncated, narrow a filter in another call. Use `exec_command` or a specialised skill for arbitrary syntax-pattern work.
+- Advanced `code_search` takes `query`; filters `path`, `file_types`, `result_types`, `max_results`; results: definitions, exact syntactic usages. Queries use literal smart-case and `|`-separated literals. Truncated: narrow. Example: `{"query":"TurnLoop","path":"src","result_types":["definition"],"max_results":20}`. `result_types` is an array; `max_results` is an integer. Do not JSON-encode arrays or integers as strings. Use `exec_command` or a skill for syntax patterns.
 - If calls repeat, re-plan instead of retrying.
 - Run independent tools in parallel when their inputs do not depend on each other.
 

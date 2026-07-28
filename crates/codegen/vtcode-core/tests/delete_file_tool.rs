@@ -11,6 +11,7 @@ async fn delete_file_tool_removes_file() {
 
     let registry = ToolRegistry::new(tmp.path().to_path_buf()).await;
     registry.initialize_async().await.unwrap();
+    registry.allow_all_tools().await.unwrap();
 
     // Ensure file exists
     assert!(file_path.exists());
@@ -34,6 +35,7 @@ async fn delete_file_tool_removes_directory_recursively() {
 
     let registry = ToolRegistry::new(tmp.path().to_path_buf()).await;
     registry.initialize_async().await.unwrap();
+    registry.allow_all_tools().await.unwrap();
 
     let val = registry
         .execute_harness_command_session(json!({
