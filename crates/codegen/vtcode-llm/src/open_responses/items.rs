@@ -294,7 +294,7 @@ impl OutputItem {
     /// Creates a new function call output item (status: `InProgress`).
     ///
     /// Use this for streaming scenarios. For completed tool results, use
-    /// [`completed_function_call_output`](Self::completed_function_call_output).
+    /// `OutputItem::completed_function_call_output`.
     pub fn function_call_output(
         id: impl Into<OutputItemId>,
         call_id: Option<String>,
