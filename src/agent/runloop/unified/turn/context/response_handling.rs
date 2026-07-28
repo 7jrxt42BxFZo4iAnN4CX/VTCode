@@ -3,6 +3,25 @@ use crate::agent::runloop::unified::ui_interaction_stream_helpers::render_compac
 
 const DENIED_INTERVIEW_PLAN_SYNTHESIS_RETRY_DIRECTIVE: &str = "Planning recovery: the interactive interview is unavailable, and the previous response did not contain a completed plan. Do not ask another question or offer approval yet. Emit exactly one compact `<proposed_plan>` now from the repository evidence already in this conversation; include Summary, numbered `Action -> files/symbols -> verify:` steps, Validation, and short Assumptions. Do not emit tool calls.";
 
+/// Detect whether a planning-mode text response is a clarifying question
+/// posed to the user rather than a plan or research prose. The deterministic
+/// interview-denial recovery must NOT force plan synthesis when the model is
+/// legitimately asking the user a question in plain text (the text-mode
+/// equivalent of the unavailable `request_user_input` modal). Without this
+/// check, the retry directive suppresses the question and the agent proceeds
+/// to propose a plan without waiting for the user's answer (checkpoint
+/// turn_856).
+///
+/// Heuristic: the last non-empty line ends with `?`. This is a strong signal
+/// that the model is asking a question, and it does not match completed plans
+/// (which end with Assumptions/Validation prose) or research dumps.
+pub(super) fn looks_like_clarifying_question(text: &str) -> bool {
+    text.lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .is_some_and(|last_line| last_line.trim().ends_with('?'))
+}
+
 impl<'a> TurnProcessingContext<'a> {
     /// Schedule the one bounded plan-only retry allowed after a permanent
     /// interview denial. Keeping the transition here prevents callers from
@@ -240,8 +259,21 @@ impl<'a> TurnProcessingContext<'a> {
         // ignored the recovery directive and returned prose without a plan,
         // retry once while tools remain disabled instead of ending mid-turn
         // with no approval-ready draft.
+        //
+        // EXCEPTION: if the text is a clarifying question (the text-mode
+        // equivalent of the unavailable interview modal), end the turn so the
+        // user can answer it. Forcing plan synthesis here would suppress the
+        // question and proceed to propose a plan without user input
+        // (checkpoint turn_856).
         if denied_interview_recovery_retry {
-            if self.retry_denied_interview_plan_synthesis() {
+            if looks_like_clarifying_question(&final_text) {
+                tracing::info!(
+                    target: "vtcode.planning_workflow",
+                    "denied interview recovery produced a clarifying question; ending turn for user input instead of retrying plan synthesis"
+                );
+                // Fall through to normal turn completion — the question is
+                // already in working_history as the assistant's final answer.
+            } else if self.retry_denied_interview_plan_synthesis() {
                 tracing::info!(
                     target: "vtcode.planning_workflow",
                     "retrying tool-free synthesis after denied interview returned no plan"
@@ -257,7 +289,11 @@ impl<'a> TurnProcessingContext<'a> {
         // Give that response one bounded synthesis retry. This keeps the
         // approval path draft-backed without re-enabling the unavailable
         // interview tool or allowing an unbounded continuation loop.
-        if denied_interview_plan_retry {
+        //
+        // EXCEPTION: a clarifying question is the text-mode equivalent of
+        // the unavailable interview modal — end the turn for user input
+        // instead of suppressing it with a forced synthesis retry.
+        if denied_interview_plan_retry && !looks_like_clarifying_question(&final_text) {
             self.plan_session.mark_plan_synthesis_retry_used();
             self.push_system_message(DENIED_INTERVIEW_PLAN_SYNTHESIS_RETRY_DIRECTIVE);
             tracing::info!(

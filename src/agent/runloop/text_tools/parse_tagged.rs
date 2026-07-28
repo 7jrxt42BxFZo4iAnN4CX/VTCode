@@ -11,7 +11,9 @@ const MAX_TAGGED_NESTING_DEPTH: usize = 256;
 
 #[cfg_attr(feature = "profiling", hotpath::measure)]
 pub(super) fn parse_tagged_tool_call(text: &str) -> Option<(String, Value)> {
-    parse_standard_tagged_tool_call(text).or_else(|| parse_minimax_tool_call(text))
+    parse_standard_tagged_tool_call(text)
+        .or_else(|| parse_minimax_tool_call(text))
+        .or_else(|| parse_function_equals_tool_call(text))
 }
 
 fn parse_standard_tagged_tool_call(text: &str) -> Option<(String, Value)> {
@@ -326,10 +328,154 @@ fn read_tag_text(input: &str) -> (String, &str) {
     }
 }
 
+/// Parse the `<function=NAME><parameter=KEY>VALUE</parameter>...` dialect.
+///
+/// Some models (e.g. certain checkpoints) emit tool calls in this alternative
+/// XML-ish format instead of the standard `<tool_call>` or `<invoke name="">`
+/// dialects. Without a parser for it, the call is silently dropped and the
+/// task is never executed (checkpoint turn_856).
+fn parse_function_equals_tool_call(text: &str) -> Option<(String, Value)> {
+    const FUNCTION_TAG: &str = "<function=";
+    const FUNCTION_CLOSE: &str = "</function>";
+    const PARAMETER_TAG: &str = "<parameter=";
+    const PARAMETER_CLOSE: &str = "</parameter>";
+
+    let fn_start = text.find(FUNCTION_TAG)?;
+    let after_tag = &text[fn_start + FUNCTION_TAG.len()..];
+
+    // The function name runs from after `<function=` to the next `>` or
+    // whitespace. Strip surrounding quotes if present.
+    let name_end = after_tag.find(|c: char| c == '>' || c.is_whitespace())?;
+    let raw_name = after_tag[..name_end].trim();
+    let name = raw_name.trim_matches(|c| c == '"' || c == '\'').to_string();
+    if name.is_empty() {
+        return None;
+    }
+
+    // Skip to the `>` that closes the `<function=NAME>` tag.
+    let after_name = &after_tag[name_end..];
+    let body_start = after_name.find('>')?;
+    let body = &after_name[body_start + 1..];
+
+    // Find the closing `</function>` (or end of string as fallback).
+    let body_end = body.find(FUNCTION_CLOSE).unwrap_or(body.len());
+    let mut rest = body[..body_end].trim();
+
+    let mut object = Map::new();
+    let mut indexed_values: BTreeMap<String, BTreeMap<usize, Value>> = BTreeMap::new();
+
+    while let Some(param_start) = rest.find(PARAMETER_TAG) {
+        rest = &rest[param_start + PARAMETER_TAG.len()..];
+
+        // The parameter key runs from after `<parameter=` to the next `>`.
+        let key_end = rest.find('>')?;
+        let raw_key = rest[..key_end].trim();
+        let key = raw_key.trim_matches(|c| c == '"' || c == '\'');
+        if key.is_empty() {
+            // Skip to after '>' and continue
+            rest = &rest[key_end + 1..];
+            continue;
+        }
+
+        rest = &rest[key_end + 1..];
+
+        // The value runs to the next `</parameter>` (or end of string).
+        let value_end = rest.find(PARAMETER_CLOSE).unwrap_or(rest.len());
+        let raw_value = rest[..value_end].trim();
+        let value = parse_scalar_value(raw_value);
+
+        if let Some((base, index)) = split_indexed_key(key) {
+            indexed_values.entry(base.to_string()).or_default().insert(index, value);
+        } else {
+            object.insert(key.to_string(), value);
+        }
+
+        if value_end >= rest.len() {
+            break;
+        }
+        rest = &rest[value_end + PARAMETER_CLOSE.len()..];
+        rest = rest.trim_start();
+    }
+
+    finalize_indexed_and_command(&mut object, indexed_values);
+
+    Some((name, Value::Object(object)))
+}
+
+/// Shared post-processing: normalize indexed-array parameters and the
+/// `command` field into the canonical shape expected by downstream tool
+/// execution. Extracted from `parse_standard_tagged_tool_call` and
+/// `parse_minimax_tool_call` to avoid duplication.
+fn finalize_indexed_and_command(
+    object: &mut Map<String, Value>,
+    indexed_values: BTreeMap<String, BTreeMap<usize, Value>>,
+) {
+    for (base, entries) in indexed_values {
+        let offset = if entries.contains_key(&0) {
+            0usize
+        } else {
+            entries.keys().next().cloned().unwrap_or(0)
+        };
+
+        let mut ordered: Vec<Value> = Vec::new();
+        for (index, value) in entries {
+            let normalized = index.saturating_sub(offset);
+            if normalized >= ordered.len() {
+                ordered.resize(normalized + 1, Value::Null);
+            }
+            ordered[normalized] = value;
+        }
+
+        while matches!(ordered.last(), Some(Value::Null)) {
+            ordered.pop();
+        }
+
+        object.insert(base, Value::Array(ordered));
+    }
+
+    if let Some(Value::String(command)) = object.get("command").cloned()
+        && let Some(array) = normalize_command_string(&command)
+    {
+        object.insert("command".to_string(), Value::Array(array));
+    }
+}
+
 /// Collects XML-style tagged tool-call regions for stripping.
 pub(super) fn collect_tagged_regions(text: &str, regions: &mut Vec<(usize, usize)>) {
     collect_enclosed_regions(text, "<tool_call>", "</tool_call>", regions);
     collect_enclosed_regions(text, "<invoke name=\"", "</invoke>", regions);
+    // <function=...> blocks may use either </function> or </function=NAME>
+    // as the close tag. Match the </function prefix and extend to the next >.
+    collect_function_equals_regions(text, regions);
+}
+
+/// Collect regions for the `<function=NAME>` dialect. The close tag can be
+/// either `</function>` (standard) or `</function=NAME>` (parameterised),
+/// so we match the `</function` prefix and extend to the next `>`.
+fn collect_function_equals_regions(text: &str, regions: &mut Vec<(usize, usize)>) {
+    const FUNCTION_OPEN: &str = "<function=";
+    const FUNCTION_CLOSE_PREFIX: &str = "</function";
+
+    let mut search_start = 0usize;
+    while let Some(relative_start) = text[search_start..].find(FUNCTION_OPEN) {
+        let start = search_start + relative_start;
+        let content_start = start + FUNCTION_OPEN.len();
+        // Find the close tag prefix, then extend to the next > after it.
+        let end = text[content_start..]
+            .find(FUNCTION_CLOSE_PREFIX)
+            .map(|idx| {
+                let prefix_end = content_start + idx + FUNCTION_CLOSE_PREFIX.len();
+                text[prefix_end..]
+                    .find(char::from(62))
+                    .map(|gt_idx| prefix_end + gt_idx + 1)
+                    .unwrap_or(text.len())
+            })
+            .unwrap_or(text.len());
+        if start < end && end <= text.len() {
+            regions.push((start, end));
+        }
+        search_start = end.max(content_start);
+    }
 }
 
 fn collect_enclosed_regions(text: &str, open_marker: &str, close_marker: &str, regions: &mut Vec<(usize, usize)>) {

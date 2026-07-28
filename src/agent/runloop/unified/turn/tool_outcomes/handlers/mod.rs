@@ -54,7 +54,7 @@ fn build_failure_error_content(error: String, failure_kind: &'static str) -> Str
     super::execution_result::build_error_content(error, None, None, failure_kind).to_string()
 }
 
-const INTERVIEW_DENIAL_RECOVERY_DIRECTIVE: &str = "Planning recovery: the interactive interview is unavailable in this runtime. Tools are disabled for the next pass. Synthesize exactly one completed `<proposed_plan>` from the research already gathered; do not ask another question, emit tool calls, or request approval until the plan is present.";
+const INTERVIEW_DENIAL_RECOVERY_DIRECTIVE: &str = "Planning recovery: the interactive interview is unavailable in this runtime. Tools are disabled for the next pass. If you have a clarifying question, present it to the user in plain text and end your turn — the user's next message will answer it and you can continue planning. Otherwise, synthesize exactly one completed `<proposed_plan>` from the research already gathered. Do not emit tool calls or request approval until the plan is present.";
 
 /// Convert a permanent interview denial into a bounded, tool-free planning
 /// pass. This is flushed after the current tool batch so the directive follows

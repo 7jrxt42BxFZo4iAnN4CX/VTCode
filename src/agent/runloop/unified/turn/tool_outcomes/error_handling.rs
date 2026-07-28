@@ -60,7 +60,7 @@ pub(crate) fn tool_denial_diagnostic(tool_name: &str) -> Option<serde_json::Valu
             "cause": "The 'request_user_input' tool is permanently unavailable in this runtime (non-interactive session or the inline UI is not supported).",
             "impact": "You cannot ask the user clarifying questions via a modal in this session.",
             "directive": "STOP calling request_user_input. Do not retry it — the denial is permanent for this session.",
-            "present_plan": "Instead of asking, finalize the plan from the evidence already gathered and present it to the user in plain text. End your message by offering a simple choice: type `yes` (or `implement`) to start implementation, `no` to abandon, or `edit` (or `keep planning`) to refine — if the user picks edit, they will describe what to revise in their next message."
+            "present_plan": "If you have a clarifying question, present it to the user in plain text and end your turn — the user's next message will answer it. Otherwise, finalize the plan from the evidence already gathered and present it to the user in plain text. End your message by offering a simple choice: type `yes` (or `implement`) to start implementation, `no` to abandon, or `edit` (or `keep planning`) to refine — if the user picks edit, they will describe what to revise in their next message."
         })),
         _ => None,
     }

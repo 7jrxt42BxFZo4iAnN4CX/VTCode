@@ -65,6 +65,11 @@ pub(crate) fn is_known_textual_tool(name: &str) -> bool {
             | tools::LIST_FILES
             | tools::APPLY_PATCH
             | tools::RESIZE_PTY_SESSION
+            | tools::CREATE_FILE
+            | tools::DELETE_FILE
+            | tools::SEARCH_REPLACE
+            | tools::UNIFIED_FILE
+            | tools::TASK_TRACKER
     )
 }
 

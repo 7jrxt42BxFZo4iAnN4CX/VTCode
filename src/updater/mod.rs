@@ -167,13 +167,13 @@ impl Updater {
             // Use .tar.gz as identifier to specifically match tarball archives
             // and avoid .sha256 checksum files that have the same target triple
             let identifier = format!("{target}.tar.gz");
-            let mut builder = self_update::backends::github::Update::configure();
+            let mut builder = self_update::backends::github::UpdateBuilder::new();
             builder
                 .repo_owner(github::REPO_OWNER)
                 .repo_name(github::REPO_NAME)
                 .bin_name("vtcode")
                 .target(target)
-                .identifier(&identifier)
+                .asset_identifier(&identifier)
                 .show_download_progress(show_progress)
                 // `show_output` gates self_update's own status messages
                 // ("Checking target-arch…", "Extracting archive…", "Replacing
@@ -197,14 +197,15 @@ impl Updater {
                 .update()
                 .context("Failed to apply self-update")?;
 
-            Ok::<self_update::Status, anyhow::Error>(status)
+            Ok::<self_update::VersionStatus, anyhow::Error>(status)
         })
         .await
         .context("Update task join failed")??;
 
         match status {
-            self_update::Status::Updated(version) => Ok(InstallOutcome::Updated(version)),
-            self_update::Status::UpToDate(version) => Ok(InstallOutcome::UpToDate(version)),
+            self_update::VersionStatus::Updated(version) => Ok(InstallOutcome::Updated(version)),
+            self_update::VersionStatus::UpToDate(version) => Ok(InstallOutcome::UpToDate(version)),
+            _ => Ok(InstallOutcome::UpToDate(self.current_version.to_string())),
         }
     }
 

@@ -99,3 +99,47 @@ fn interim_continuation_handles_multibyte_clause_boundaries() {
     assert!(!decision.should_continue);
     assert_eq!(decision.reason, "non_interim_text");
 }
+
+#[test]
+fn clarifying_question_detected_when_last_line_ends_with_question_mark() {
+    assert!(looks_like_clarifying_question(
+        "I've reviewed the codebase. Should I implement this in a single unified runloop branch?"
+    ));
+}
+
+#[test]
+fn clarifying_question_detected_with_trailing_whitespace() {
+    assert!(looks_like_clarifying_question("Which approach do you prefer?   \n\n"));
+}
+
+#[test]
+fn clarifying_question_detected_with_preamble_and_blank_lines() {
+    assert!(looks_like_clarifying_question(
+        "I analyzed the module.\n\nNext open decision: Do you want a unified branch or a reviewable exec-plan document?\n"
+    ));
+}
+
+#[test]
+fn clarifying_question_not_detected_for_plan_ending_with_prose() {
+    assert!(!looks_like_clarifying_question(
+        "Summary: fix the parser\n1. Action -> file.rs -> verify: tests pass\n\nAssumptions: none"
+    ));
+}
+
+#[test]
+fn clarifying_question_not_detected_for_empty_text() {
+    assert!(!looks_like_clarifying_question(""));
+    assert!(!looks_like_clarifying_question("   \n\n  "));
+}
+
+#[test]
+fn clarifying_question_not_detected_for_rhetorical_question_in_middle() {
+    assert!(!looks_like_clarifying_question("Why is this needed? Because X. Step 1: Do Y. Step 2: Do Z."));
+}
+
+#[test]
+fn clarifying_question_detected_for_exact_checkpoint_turn_856_phrase() {
+    assert!(looks_like_clarifying_question(
+        "Next open decision: Do you want me to implement this in a single unified runloop branch, or first create a reviewable exec-plan document under docs/harness/exec-plans/?"
+    ));
+}

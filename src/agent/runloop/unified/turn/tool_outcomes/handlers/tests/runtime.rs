@@ -809,7 +809,7 @@ async fn permanent_interview_denial_switches_to_tool_free_plan_recovery() {
         message
             .content
             .as_text()
-            .contains("Synthesize exactly one completed `<proposed_plan>`")
+            .contains("synthesize exactly one completed `<proposed_plan>`")
     }));
 }
 

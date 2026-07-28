@@ -308,7 +308,7 @@ rustc-hash = { workspace = true }
 unicode-width = { workspace = true }
 url = { workspace = true }
 smallvec = "1.13"
-self_update = { version = "0.43", default-features = false, features = ["archive-tar", "compression-flate2", "rustls", "reqwest"] }
+self_update = { version = "1.0.0-rc.6", default-features = false, features = ["github", "rustls", "reqwest"] }
 reqwest = { workspace = true }
 semver = { workspace = true }
 thiserror = { workspace = true }

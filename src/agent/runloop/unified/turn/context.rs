@@ -19,6 +19,8 @@ use self::message_history::{
     build_combined_reasoning, parse_reasoning_detail_value, push_assistant_message, reasoning_duplicates_content,
     should_suppress_redundant_diff_recap,
 };
+#[cfg(test)]
+use self::response_handling::looks_like_clarifying_question;
 use crate::agent::runloop::mcp_events;
 use crate::agent::runloop::unified::state::SessionStats;
 use crate::agent::runloop::unified::tool_catalog::ToolCatalogState;

@@ -847,3 +847,89 @@ fn test_parse_tagged_tool_call_stops_at_next_tool_call_tag() {
     let (name, _) = result.unwrap();
     assert_eq!(name, tools::LIST_FILES);
 }
+
+#[test]
+fn parse_function_equals_extracts_task_tracker_list_action() {
+    let lt: char = 60.into();
+    let gt: char = 62.into();
+    let slash: char = 47.into();
+    let text = format!(
+        "{lt}function=task_tracker{gt}{lt}parameter=action{gt}list{lt}{slash}parameter{gt}{lt}{slash}function{gt}"
+    );
+    let result = super::parse_tagged::parse_tagged_tool_call(&text);
+    assert!(result.is_some(), "should parse function= dialect");
+    let (name, args) = result.unwrap();
+    assert_eq!(name, "task_tracker");
+    assert_eq!(args["action"], "list");
+}
+
+#[test]
+fn parse_function_equals_extracts_multiple_parameters() {
+    let lt: char = 60.into();
+    let gt: char = 62.into();
+    let slash: char = 47.into();
+    let text = format!(
+        "{lt}function=exec_command{gt}{lt}parameter=command{gt}ls -la{lt}{slash}parameter{gt}{lt}parameter=action{gt}run{lt}{slash}parameter{gt}{lt}{slash}function{gt}"
+    );
+    let result = super::parse_tagged::parse_tagged_tool_call(&text);
+    assert!(result.is_some());
+    let (name, args) = result.unwrap();
+    assert_eq!(name, "exec_command");
+    assert_eq!(args["action"], "run");
+}
+
+#[test]
+fn parse_function_equals_handles_missing_close_tag() {
+    let lt: char = 60.into();
+    let gt: char = 62.into();
+    let text = format!("{lt}function=task_tracker{gt}{lt}parameter=action{gt}create");
+    let result = super::parse_tagged::parse_tagged_tool_call(&text);
+    assert!(result.is_some());
+    let (name, args) = result.unwrap();
+    assert_eq!(name, "task_tracker");
+    assert_eq!(args["action"], "create");
+}
+
+#[test]
+fn parse_function_equals_returns_none_for_empty_name() {
+    let lt: char = 60.into();
+    let gt: char = 62.into();
+    let text = format!("{lt}function={gt}{lt}parameter=action{gt}list");
+    let result = super::parse_tagged::parse_tagged_tool_call(&text);
+    assert!(result.is_none());
+}
+
+#[test]
+fn parse_function_equals_returns_none_when_no_function_tag() {
+    let result = super::parse_tagged::parse_tagged_tool_call("just some text without tags");
+    assert!(result.is_none());
+}
+
+#[test]
+fn parse_function_equals_strips_quotes_around_name() {
+    let lt: char = 60.into();
+    let gt: char = 62.into();
+    let slash: char = 47.into();
+    let text = format!(
+        "{lt}function=\"task_tracker\"{gt}{lt}parameter=action{gt}list{lt}{slash}parameter{gt}{lt}{slash}function{gt}"
+    );
+    let result = super::parse_tagged::parse_tagged_tool_call(&text);
+    assert!(result.is_some());
+    let (name, _) = result.unwrap();
+    assert_eq!(name, "task_tracker");
+}
+
+#[test]
+fn parse_function_equals_handles_whitespace_around_values() {
+    let lt: char = 60.into();
+    let gt: char = 62.into();
+    let slash: char = 47.into();
+    let text = format!(
+        "{lt}function=task_tracker{gt}\n  {lt}parameter=action{gt}\n  list  \n{lt}{slash}parameter{gt}\n{lt}{slash}function{gt}"
+    );
+    let result = super::parse_tagged::parse_tagged_tool_call(&text);
+    assert!(result.is_some());
+    let (name, args) = result.unwrap();
+    assert_eq!(name, "task_tracker");
+    assert_eq!(args["action"], "list");
+}
