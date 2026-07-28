@@ -105,6 +105,8 @@ pub enum ModelId {
     HuggingFaceGlm52Novita,
     /// Kimi K2.6 via Novita on Hugging Face router
     HuggingFaceKimiK26Novita,
+    /// Kimi K3 via Together on Hugging Face router
+    HuggingFaceKimiK3Together,
     /// DeepSeek V4 Flash via Novita on Hugging Face router
     HuggingFaceDeepseekV4FlashNovita,
     /// DeepSeek V4 Pro via Together on Hugging Face router
@@ -236,6 +238,8 @@ pub enum ModelId {
     OllamaKimiK26Cloud,
     /// Kimi K2.7 Code Cloud - Moonshot Kimi K2.7 Code via Ollama Cloud
     OllamaKimiK27CodeCloud,
+    /// Kimi K3 Cloud - Moonshot Kimi K3 via Ollama Cloud
+    OllamaKimiK3Cloud,
     /// Gemma 4 - Google Gemma 4 model served via Ollama
     OllamaGemma4,
     /// Laguna XS.2 - Poolside's 33B MoE model (3B activated) for agentic coding via Ollama

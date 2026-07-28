@@ -1546,6 +1546,26 @@
         "capabilities": {
           "structured_output": true
         }
+      },
+      "moonshotai/Kimi-K3:together": {
+        "id": "moonshotai/Kimi-K3:together",
+        "name": "Kimi K3 (Together)",
+        "description": "Kimi K3 2.8T flagship with 1M context and native vision via Together inference provider on HuggingFace router",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text",
+            "image"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 1000000,
+        "capabilities": {
+          "structured_output": true
+        }
       }
     }
   },
@@ -3454,6 +3474,22 @@
           ]
         },
         "context": 262144
+      },
+      "kimi-k3:cloud": {
+        "id": "kimi-k3:cloud",
+        "name": "Kimi K3 (cloud)",
+        "description": "Cloud-hosted Kimi K3 2.8T flagship with 1M context and native vision via Ollama Cloud",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 1000000
       },
       "gemma4": {
         "id": "gemma4",

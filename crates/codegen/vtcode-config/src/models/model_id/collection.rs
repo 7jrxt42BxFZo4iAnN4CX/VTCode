@@ -97,6 +97,7 @@ impl ModelId {
             ModelId::OllamaMinimaxM3Cloud,
             ModelId::OllamaKimiK26Cloud,
             ModelId::OllamaKimiK27CodeCloud,
+            ModelId::OllamaKimiK3Cloud,
             ModelId::OllamaGemma4,
             ModelId::OllamaLagunaXs2,
             // llama.cpp models
@@ -113,6 +114,7 @@ impl ModelId {
             ModelId::HuggingFaceGlm51ZaiOrg,
             ModelId::HuggingFaceGlm52Novita,
             ModelId::HuggingFaceKimiK26Novita,
+            ModelId::HuggingFaceKimiK3Together,
             ModelId::HuggingFaceDeepseekV4FlashNovita,
             ModelId::HuggingFaceDeepseekV4ProTogether,
             ModelId::HuggingFaceStep35Flash,

@@ -349,6 +349,13 @@ model_id_table! {
         display: "Kimi K2.6 (Novita)",
         description: "Kimi K2.6 via Novita inference provider on HuggingFace router.",
     },
+    HuggingFaceKimiK3Together {
+        provider: HuggingFace,
+        id: models::huggingface::KIMI_K3_TOGETHER,
+        parse: [models::huggingface::KIMI_K3_TOGETHER],
+        display: "Kimi K3 (Together)",
+        description: "Kimi K3 2.8T flagship with 1M context and native vision via Together inference provider on HuggingFace router.",
+    },
     HuggingFaceDeepseekV4FlashNovita {
         provider: HuggingFace,
         id: models::huggingface::DEEPSEEK_V4_FLASH_NOVITA,
@@ -760,6 +767,13 @@ model_id_table! {
         parse: [models::ollama::KIMI_K2_7_CODE_CLOUD],
         display: "Kimi-K2.7-Code (cloud)",
         description: "Cloud-hosted Kimi K2.7 Code model served via Ollama Cloud",
+    },
+    OllamaKimiK3Cloud {
+        provider: OllamaCloud,
+        id: models::ollama::KIMI_K3_CLOUD,
+        parse: [models::ollama::KIMI_K3_CLOUD],
+        display: "Kimi-K3 (cloud)",
+        description: "Cloud-hosted Kimi K3 flagship model with 1M context and native vision via Ollama Cloud",
     },
     OllamaGemma4 {
         provider: Ollama,

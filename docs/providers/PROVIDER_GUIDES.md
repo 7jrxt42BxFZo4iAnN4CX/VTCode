@@ -181,11 +181,12 @@ VT Code provides compatibility with the Anthropic Messages API to help connect e
 -   **Auth:** `MOONSHOT_API_KEY` environment variable
 -   **Setup:** Set `MOONSHOT_API_KEY` from Moonshot platform, then configure `provider = "moonshot"` in `vtcode.toml`
 -   **Models:**
+    -   `kimi-k3` — 2.8T parameter flagship with Delta Attention, native vision, 1M context
     -   `kimi-k2.7-code` — most capable coding model with long-horizon coding breakthrough, 256K context
     -   `kimi-k2.6` — multimodal model for coding and UI/UX generation, 1M context
     -   `kimi-k2.5` — enhanced reasoning model
--   **Default:** `kimi-k2.7-code`
--   **Features:** Streaming, tool calling, reasoning support (K2.7 Code), multimodal input (K2.6)
+-   **Default:** `kimi-k3`
+-   **Features:** Streaming, tool calling, reasoning support, multimodal input (text, image, video)
 
 ## StepFun
 
@@ -217,7 +218,8 @@ VT Code provides compatibility with the Anthropic Messages API to help connect e
 -   **Official docs:** [HuggingFace Inference API](https://huggingface.co/docs/api-inference)
 -   **Auth:** `HUGGINGFACE_API_KEY` environment variable
 -   **Setup:** Set `HUGGINGFACE_API_KEY` from HuggingFace settings, then configure `provider = "huggingface"` in `vtcode.toml`
--   **Features:** Access to various models through HuggingFace's inference API, including models from Z.AI, DeepSeek, and other providers
+-   **Notable models:** `moonshotai/Kimi-K3:together` (2.8T flagship, 1M context, native vision via Together), `deepseek-ai/DeepSeek-V4-Pro:together`, `zai-org/GLM-5.2:novita`, `MiniMaxAI/MiniMax-M3:novita`
+-   **Features:** Access to various models through HuggingFace's inference API, including models from Z.AI, DeepSeek, Moonshot, and other providers
 
 ## Poolside
 

@@ -22,6 +22,7 @@ fn test_model_string_conversion() {
     assert_eq!(ModelId::DeepSeekV4Flash.as_str(), models::deepseek::DEEPSEEK_V4_FLASH);
     // Hugging Face models
     assert_eq!(ModelId::HuggingFaceGlm51ZaiOrg.as_str(), models::huggingface::ZAI_GLM_5_1_ZAI_ORG);
+    assert_eq!(ModelId::HuggingFaceKimiK3Together.as_str(), models::huggingface::KIMI_K3_TOGETHER);
     // OpenCode models
     assert_eq!(ModelId::OpenCodeZenGPT54.as_str(), models::opencode_zen::GPT_5_4);
     for entry in openrouter_generated::ENTRIES {
@@ -53,6 +54,10 @@ fn test_model_from_string() {
     assert_eq!(
         models::huggingface::ZAI_GLM_5_1_ZAI_ORG.parse::<ModelId>().unwrap(),
         ModelId::HuggingFaceGlm51ZaiOrg
+    );
+    assert_eq!(
+        models::huggingface::KIMI_K3_TOGETHER.parse::<ModelId>().unwrap(),
+        ModelId::HuggingFaceKimiK3Together
     );
     assert_eq!("opencode/gpt-5.4".parse::<ModelId>().unwrap(), ModelId::OpenCodeZenGPT54);
     assert_eq!("opencode-zen/claude-sonnet-4-6".parse::<ModelId>().unwrap(), ModelId::OpenCodeZenClaudeSonnet46);
@@ -272,6 +277,7 @@ fn test_ollama_cloud_models() {
         (ModelId::OllamaGlm51Cloud, models::ollama::GLM_5_1_CLOUD),
         (ModelId::OllamaKimiK26Cloud, models::ollama::KIMI_K2_6_CLOUD),
         (ModelId::OllamaKimiK27CodeCloud, models::ollama::KIMI_K2_7_CODE_CLOUD),
+        (ModelId::OllamaKimiK3Cloud, models::ollama::KIMI_K3_CLOUD),
     ];
 
     for (model_id, expected_str) in model_pairs {
