@@ -31,6 +31,8 @@ pub enum Action {
     HistoryNext,
     /// Toggle the log panel visibility.
     ToggleLogs,
+    /// Toggle compact grouping for tool transition summaries.
+    ToggleToolDisplayMode,
     /// Generate an inline prompt suggestion via the LLM.
     GeneratePromptSuggestion,
 }
@@ -50,6 +52,7 @@ impl Action {
             Action::HistoryPrevious => "history_previous",
             Action::HistoryNext => "history_next",
             Action::ToggleLogs => "toggle_logs",
+            Action::ToggleToolDisplayMode => "toggle_tool_display_mode",
             Action::GeneratePromptSuggestion => "generate_prompt_suggestion",
         }
     }
@@ -68,6 +71,7 @@ impl Action {
             Action::HistoryPrevious,
             Action::HistoryNext,
             Action::ToggleLogs,
+            Action::ToggleToolDisplayMode,
             Action::GeneratePromptSuggestion,
         ]
     }
@@ -222,6 +226,13 @@ fn default_bindings() -> HashMap<Action, Vec<(KeyCode, KeyModifiers)>> {
         ],
     );
     m.insert(
+        ToggleToolDisplayMode,
+        vec![
+            (KeyCode::Char('t'), KeyModifiers::ALT),
+            (KeyCode::Char('T'), KeyModifiers::ALT),
+        ],
+    );
+    m.insert(
         GeneratePromptSuggestion,
         vec![
             (KeyCode::Char('p'), KeyModifiers::ALT),
@@ -337,6 +348,12 @@ impl BindingStore {
     }
 }
 
+impl super::Session {
+    pub(crate) fn resolve_rebindable_action(&self, key: &KeyEvent) -> Option<Action> {
+        self.bindings.resolve(key)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,6 +417,26 @@ mod tests {
         // Ctrl+C (uppercase C) → Interrupt
         let key = KeyEvent::new(KeyCode::Char('C'), KeyModifiers::CONTROL);
         assert_eq!(store.resolve(&key), Some(Action::Interrupt));
+    }
+
+    #[test]
+    fn test_default_tool_display_binding_is_alt_t() {
+        let store = BindingStore::defaults();
+        let key = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::ALT);
+        assert_eq!(store.resolve(&key), Some(Action::ToggleToolDisplayMode));
+    }
+
+    #[test]
+    fn test_tool_display_binding_can_be_rebound() {
+        let mut overlay = HashMap::new();
+        overlay.insert("toggle_tool_display_mode".to_string(), vec!["ctrl+x".to_string()]);
+        let store = BindingStore::new(overlay);
+
+        assert_eq!(
+            store.resolve(&KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL)),
+            Some(Action::ToggleToolDisplayMode)
+        );
+        assert_eq!(store.resolve(&KeyEvent::new(KeyCode::Char('t'), KeyModifiers::ALT)), None);
     }
 
     #[test]

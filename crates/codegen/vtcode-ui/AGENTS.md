@@ -26,3 +26,4 @@
 - Floating approval/list overlays own mouse input only inside `modal_list_area`; wheel events outside that hitbox must pass through to the transcript so long plan markdown remains scrollable.
 - PTY/tool reflow must preserve explicit status color on the `•` prefix; apply action/tool styling only to the verb so success, failure, and warning remain visually distinct.
 - Tool and PTY blocks reserve at least one blank line above and below; shell syntax highlighting is accepted only when it produces distinct token colors, otherwise semantic token styles are the fallback.
+- `toggle_tool_display_mode` is a rebindable session action (default `Alt+T`); dispatch it before the legacy `Alt+T` text-edit shortcut and invalidate transcript caches after toggling.

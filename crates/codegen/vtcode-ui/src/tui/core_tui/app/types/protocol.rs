@@ -167,6 +167,7 @@ pub enum InlineEvent {
     },
     HistoryPrevious,
     HistoryNext,
+    ToggleToolDisplayMode,
 }
 
 pub type InlineEventCallback = Arc<dyn Fn(&InlineEvent) + Send + Sync + 'static>;
@@ -202,6 +203,7 @@ impl From<crate::tui::core_tui::types::InlineEvent> for InlineEvent {
             crate::tui::core_tui::types::InlineEvent::SelectPrimaryAgent { name } => Self::SelectPrimaryAgent { name },
             crate::tui::core_tui::types::InlineEvent::HistoryPrevious => Self::HistoryPrevious,
             crate::tui::core_tui::types::InlineEvent::HistoryNext => Self::HistoryNext,
+            crate::tui::core_tui::types::InlineEvent::ToggleToolDisplayMode => Self::ToggleToolDisplayMode,
         }
     }
 }

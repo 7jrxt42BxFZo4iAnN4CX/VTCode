@@ -1,5 +1,4 @@
 # vtcode-core
-
 [Root AGENTS.md](../AGENTS.md) | Agent loop, tools, LLM, safety, UI.
 
 ## Module map
@@ -28,4 +27,4 @@
 - Async plugin, skill, file-tool, planning, persistent-memory, and durable-scheduler paths must use Tokio filesystem APIs or `spawn_blocking` for recursive/synchronous scans, record loading, claim files, persistence, or Git work.
 - `TerminalAppLauncher::launch_editor_target_non_waiting` is for existing-file GUI opens; preserve adapter-specific reuse/location flags and keep temporary-file `/edit` flows on the waiting API.
 - Token/catalog deferral thresholds are correct behavior; warn only when deferral is disabled but beneficial. Shell safety must preserve raw command text when classifying dynamic syntax.
-- `web_fetch` accepts remote HTTP(S) URLs only; local workspace reads must use `read_file`/`unified_file`, and its structured error should direct the model to that fallback.
+- `web_fetch` accepts remote HTTP(S) URLs only; local workspace reads must use `read_file`/`unified_file`, and its structured error should direct the model to that fallback. `AnsiRenderer` owns the session-local tool-summary display mode; compact batches flush before non-success summaries and never change the `ThreadEvent` contract.

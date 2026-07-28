@@ -1,3 +1,4 @@
+use crate::config::ToolDisplayMode;
 use crate::config::loader::SyntaxHighlightingConfig;
 use crate::ui::markdown::{
     MarkdownLine, MarkdownSegment, RenderMarkdownOptions, render_markdown_to_lines_with_options,
@@ -22,6 +23,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use url::Url;
 use vtcode_commons::color_policy::{self, ColorOutputPolicySource};
 use vtcode_commons::diff_paths::looks_like_diff_content;
+use vtcode_commons::ui_protocol::CompactToolSummaryCall;
 use vtcode_commons::{parse_editor_target, resolve_editor_path};
 
 static FILE_OPENER: OnceLock<Mutex<vtcode_config::FileOpener>> = OnceLock::new();
@@ -88,6 +90,8 @@ pub struct AnsiRenderer {
     reasoning_visible: bool,
     screen_reader_mode: bool,
     show_diagnostics_in_transcript: bool,
+    tool_display_mode: ToolDisplayMode,
+    compact_tool_summary_batch: Option<Vec<CompactToolSummaryCall>>,
 }
 
 impl AnsiRenderer {
@@ -129,6 +133,8 @@ impl AnsiRenderer {
             reasoning_visible: true,
             screen_reader_mode: false,
             show_diagnostics_in_transcript: false,
+            tool_display_mode: ToolDisplayMode::Expanded,
+            compact_tool_summary_batch: None,
         }
     }
 
@@ -194,6 +200,46 @@ impl AnsiRenderer {
 
     pub fn set_show_diagnostics_in_transcript(&mut self, enabled: bool) {
         self.show_diagnostics_in_transcript = if cfg!(debug_assertions) { enabled } else { false };
+    }
+
+    pub fn set_tool_display_mode(&mut self, mode: ToolDisplayMode) {
+        self.tool_display_mode = match mode {
+            ToolDisplayMode::Compact => ToolDisplayMode::Compact,
+            ToolDisplayMode::Expanded | ToolDisplayMode::Unknown => ToolDisplayMode::Expanded,
+        };
+    }
+
+    pub fn tool_display_mode(&self) -> ToolDisplayMode {
+        self.tool_display_mode
+    }
+
+    pub fn toggle_tool_display_mode(&mut self) -> ToolDisplayMode {
+        let next = match self.tool_display_mode {
+            ToolDisplayMode::Expanded | ToolDisplayMode::Unknown => ToolDisplayMode::Compact,
+            ToolDisplayMode::Compact => ToolDisplayMode::Expanded,
+        };
+        self.tool_display_mode = next;
+        next
+    }
+
+    pub fn begin_compact_tool_summary_batch(&mut self) {
+        if self.tool_display_mode == ToolDisplayMode::Compact {
+            self.compact_tool_summary_batch = Some(Vec::new());
+        }
+    }
+
+    pub fn compact_tool_summary_batch_active(&self) -> bool {
+        self.compact_tool_summary_batch.is_some()
+    }
+
+    pub fn queue_compact_tool_summary(&mut self, summary: CompactToolSummaryCall) {
+        if let Some(batch) = &mut self.compact_tool_summary_batch {
+            batch.push(summary);
+        }
+    }
+
+    pub fn take_compact_tool_summary_batch(&mut self) -> Vec<CompactToolSummaryCall> {
+        self.compact_tool_summary_batch.take().unwrap_or_default()
     }
 
     /// Set the maximum width for markdown tables. When set, tables wider than
@@ -1518,6 +1564,8 @@ mod tests {
             reasoning_visible: true,
             screen_reader_mode: false,
             show_diagnostics_in_transcript: false,
+            tool_display_mode: ToolDisplayMode::default(),
+            compact_tool_summary_batch: None,
         };
 
         // This should not create an extra empty line after "line 2"

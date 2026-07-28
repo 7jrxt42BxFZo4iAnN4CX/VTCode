@@ -217,6 +217,7 @@ pub enum InlineEvent {
     },
     HistoryPrevious,
     HistoryNext,
+    ToggleToolDisplayMode,
 }
 
 pub type InlineEventCallback = Arc<dyn Fn(&InlineEvent) + Send + Sync + 'static>;

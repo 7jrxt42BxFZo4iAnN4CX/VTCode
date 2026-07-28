@@ -349,14 +349,26 @@ async fn render_tool_output_common(
         let summary_ctx = crate::agent::runloop::unified::tool_summary::ToolSummaryRenderContext { workspace_root };
         let status = ToolDisplayStatus::from_command_output(output, command_success);
         let bullet_color = status.color(ColorPalette::default());
-        crate::agent::runloop::unified::tool_summary::render_tool_call_summary(
-            renderer,
-            name,
-            args_val,
-            stream_label,
-            &summary_ctx,
-            bullet_color,
-        )?;
+        if matches!(status, ToolDisplayStatus::Success) {
+            crate::agent::runloop::unified::tool_summary::render_tool_call_summary(
+                renderer,
+                name,
+                args_val,
+                stream_label,
+                &summary_ctx,
+                bullet_color,
+            )?;
+        } else {
+            crate::agent::runloop::unified::tool_summary::flush_compact_tool_summary_batch(renderer)?;
+            crate::agent::runloop::unified::tool_summary::render_expanded_tool_call_summary(
+                renderer,
+                name,
+                args_val,
+                stream_label,
+                &summary_ctx,
+                bullet_color,
+            )?;
+        }
     }
 
     crate::agent::runloop::tool_output::render_tool_output(renderer, Some(name), output, vt_config).await
@@ -502,7 +514,8 @@ fn render_non_success_summary(
     status: ToolDisplayStatus,
 ) -> Result<()> {
     let summary_ctx = crate::agent::runloop::unified::tool_summary::ToolSummaryRenderContext { workspace_root };
-    crate::agent::runloop::unified::tool_summary::render_tool_call_summary(
+    crate::agent::runloop::unified::tool_summary::flush_compact_tool_summary_batch(renderer)?;
+    crate::agent::runloop::unified::tool_summary::render_expanded_tool_call_summary(
         renderer,
         name,
         args_val,

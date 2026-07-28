@@ -26,3 +26,4 @@
 - `utils/` contains `calculate_sha256()` used by `vtcode-indexer`.
 - `formatting/` owns the canonical middle-truncation helpers `truncate_middle` (head+tail, control chars sanitized) and `truncate_path_middle` (separator-aware, for path display). Downstream crates delegate here — do not re-implement per crate.
 - `ui_protocol::SessionSurface` defaults to `Inline`; callers requiring alternate-screen detection must request `Auto` or `Alternate` explicitly.
+- `ui_protocol::tool_summary` contains renderer-independent compact summary data and grouping; keep fingerprints, statuses, and output boundaries independent of TUI/runtime types.

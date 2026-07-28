@@ -266,6 +266,7 @@ pub(crate) async fn initialize_session_ui(
     if let Some(cfg) = vt_cfg {
         renderer.set_screen_reader_mode(cfg.ui.screen_reader_mode);
         renderer.set_show_diagnostics_in_transcript(cfg.ui.show_diagnostics_in_transcript);
+        renderer.set_tool_display_mode(cfg.ui.tool_display_mode);
     }
     let workspace_for_palette = config.workspace.clone();
     let handle_for_palette = handle.clone();

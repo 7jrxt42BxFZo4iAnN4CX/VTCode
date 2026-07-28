@@ -319,6 +319,52 @@ mod tests {
     }
 
     #[test]
+    fn tool_display_mode_is_exposed_as_a_cycle_setting() {
+        let state = SettingsPaletteState {
+            workspace: PathBuf::from("."),
+            source_path: PathBuf::from("vtcode.toml"),
+            source_label: "test".to_string(),
+            draft: VTCodeConfig::default(),
+            view_path: Some("ui".to_string()),
+        };
+        let draft = TomlValue::try_from(state.draft.clone()).expect("default config should serialize");
+
+        let items = build_settings_items(&state, &draft).expect("settings items");
+        let item = items
+            .iter()
+            .find(|item| item.title == "Tool Display Mode")
+            .expect("tool display mode entry");
+        assert_eq!(
+            item.selection,
+            Some(InlineListSelection::ConfigAction("settings:set:ui.tool_display_mode:cycle".to_string()))
+        );
+        assert_eq!(item.badge.as_deref(), Some("Pick"));
+        assert!(item.subtitle.as_deref().is_some_and(|subtitle| subtitle.contains("expanded")));
+        assert!(item.subtitle.as_deref().is_some_and(|subtitle| subtitle.contains("compact")));
+    }
+
+    #[test]
+    fn tool_display_mode_cycle_persists_to_disk() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let source_path = temp.path().join("vtcode.toml");
+        let mut state = SettingsPaletteState {
+            workspace: temp.path().to_path_buf(),
+            source_path: source_path.clone(),
+            source_label: "test".to_string(),
+            draft: VTCodeConfig::default(),
+            view_path: Some("ui".to_string()),
+        };
+
+        let outcome = apply_settings_action(&mut state, "settings:set:ui.tool_display_mode:cycle")
+            .expect("cycle tool display mode");
+
+        assert!(outcome.saved);
+        assert_eq!(state.draft.ui.tool_display_mode, vtcode_core::config::ToolDisplayMode::Compact);
+        let persisted = std::fs::read_to_string(&source_path).expect("persisted config");
+        assert!(persisted.contains("tool_display_mode = \"compact\""));
+    }
+
+    #[test]
     fn root_settings_items_include_nested_keys_for_global_search() {
         let state = SettingsPaletteState {
             workspace: PathBuf::from("."),

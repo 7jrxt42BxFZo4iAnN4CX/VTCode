@@ -133,6 +133,8 @@ async fn execute_parallel_group<'a, 'b>(
         return Ok(None);
     }
 
+    t_ctx.ctx.renderer.begin_compact_tool_summary_batch();
+
     let progress_reporter = ProgressReporter::new();
     let _spinner = crate::agent::runloop::unified::ui_interaction::PlaceholderSpinner::with_progress(
         t_ctx.ctx.handle,
@@ -326,6 +328,7 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
         match kind {
             PreparedToolBatchKind::ParallelReadonly => {
                 if let Some(outcome) = execute_parallel_group(t_ctx, group, &mut batch_tracker).await? {
+                    crate::agent::runloop::unified::tool_summary::flush_compact_tool_summary_batch(t_ctx.ctx.renderer)?;
                     return Ok(Some(outcome));
                 }
             }
@@ -346,6 +349,9 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
                     )
                     .await?
                     {
+                        crate::agent::runloop::unified::tool_summary::flush_compact_tool_summary_batch(
+                            t_ctx.ctx.renderer,
+                        )?;
                         return Ok(Some(outcome));
                     }
                 }
@@ -367,6 +373,8 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
             "tool batch outcome"
         );
     }
+
+    crate::agent::runloop::unified::tool_summary::flush_compact_tool_summary_batch(t_ctx.ctx.renderer)?;
 
     Ok(None)
 }

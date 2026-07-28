@@ -383,6 +383,7 @@ pub fn render_modal(session: &mut Session, frame: &mut Frame<'_>, area: Rect) {
                     Binding::new("Ctrl+M", "model picker"),
                     Binding::new("Ctrl+O", "copy response"),
                     Binding::new("Alt+P", "prompt suggest"),
+                    Binding::new("Alt+T", "toggle tool summaries"),
                     Binding::new("Alt+O", "transcript review"),
                     Binding::new("Ctrl+I", "lists"),
                     Binding::new("Ctrl+G", "editor"),

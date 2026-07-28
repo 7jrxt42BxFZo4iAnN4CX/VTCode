@@ -37,6 +37,7 @@ Entry point for VT Code contributor workflows.
 - [Changelog Generation](./CHANGELOG_GENERATION.md) - `git-cliff`-based changelog updates.
 - [Desire Paths](./DESIRE_PATHS.md) - Known architecture pressure points.
 - [TUI-Only Refactoring Notes](./TUI_ONLY_REFACTORING.md) - Historical refactor details.
+- [Tool Summary Display](./tool-summary-display.md) - Compact and expanded tool transition summaries, configuration, and testing boundaries.
 
 ## Navigation
 

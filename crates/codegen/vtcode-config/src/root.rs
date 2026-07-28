@@ -17,6 +17,22 @@ pub enum ToolOutputMode {
     Unknown,
 }
 
+/// Controls how adjacent successful tool transition summaries are rendered.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[derive(Default)]
+pub enum ToolDisplayMode {
+    /// Render each tool transition summary independently.
+    #[default]
+    Expanded,
+    /// Group adjacent semantically equivalent successful summaries.
+    Compact,
+    /// Catch-all for unknown modes added by future versions.
+    #[serde(other)]
+    Unknown,
+}
+
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -237,6 +253,10 @@ pub struct UiConfig {
     /// Tool output display mode ("compact" or "full")
     #[serde(default = "default_tool_output_mode")]
     pub tool_output_mode: ToolOutputMode,
+
+    /// Tool transition summary display mode ("expanded" or "compact")
+    #[serde(default = "default_tool_display_mode")]
+    pub tool_display_mode: ToolDisplayMode,
 
     /// Maximum number of lines to display in tool output (prevents transcript flooding)
     #[serde(default = "default_tool_output_max_lines")]
@@ -545,6 +565,7 @@ impl Default for UiConfig {
     fn default() -> Self {
         Self {
             tool_output_mode: default_tool_output_mode(),
+            tool_display_mode: default_tool_display_mode(),
             tool_output_max_lines: default_tool_output_max_lines(),
             tool_output_spool_bytes: default_tool_output_spool_bytes(),
             tool_output_spool_dir: None,
@@ -634,6 +655,42 @@ mod tests {
     fn thinking_display_defaults_to_collapsed() {
         let ui = UiConfig::default();
         assert_eq!(ui.thinking_display, ThinkingBlockState::Collapsed);
+    }
+
+    #[test]
+    fn tool_display_mode_defaults_to_expanded() {
+        assert_eq!(UiConfig::default().tool_display_mode, ToolDisplayMode::Expanded);
+    }
+
+    #[test]
+    fn tool_display_mode_round_trips_through_toml() {
+        let compact: UiConfig = toml::from_str("tool_display_mode = \"compact\"").expect("compact mode parses");
+        let expanded: UiConfig = toml::from_str("tool_display_mode = \"expanded\"").expect("expanded mode parses");
+
+        assert_eq!(compact.tool_display_mode, ToolDisplayMode::Compact);
+        assert_eq!(expanded.tool_display_mode, ToolDisplayMode::Expanded);
+        let compact_toml = toml::to_string(&compact).expect("compact mode serializes");
+        let expanded_toml = toml::to_string(&expanded).expect("expanded mode serializes");
+        assert!(compact_toml.contains("tool_display_mode = \"compact\""));
+        assert!(expanded_toml.contains("tool_display_mode = \"expanded\""));
+        assert_eq!(
+            toml::from_str::<UiConfig>(&compact_toml)
+                .expect("compact mode round trips")
+                .tool_display_mode,
+            ToolDisplayMode::Compact
+        );
+        assert_eq!(
+            toml::from_str::<UiConfig>(&expanded_toml)
+                .expect("expanded mode round trips")
+                .tool_display_mode,
+            ToolDisplayMode::Expanded
+        );
+    }
+
+    #[test]
+    fn unknown_tool_display_mode_is_compatible() {
+        let ui: UiConfig = toml::from_str("tool_display_mode = \"future_mode\"").expect("unknown mode parses");
+        assert_eq!(ui.tool_display_mode, ToolDisplayMode::Unknown);
     }
 
     #[test]
@@ -827,6 +884,10 @@ fn default_large_output_threshold_kb() -> usize {
 
 fn default_tool_output_mode() -> ToolOutputMode {
     ToolOutputMode::Compact
+}
+
+fn default_tool_display_mode() -> ToolDisplayMode {
+    ToolDisplayMode::Expanded
 }
 
 fn default_tool_output_max_lines() -> usize {

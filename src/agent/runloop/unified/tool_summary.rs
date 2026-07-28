@@ -1,5 +1,4 @@
 use hashbrown::HashSet;
-
 use std::path::Path;
 
 use anstyle::{Color, Reset, Style as AnsiStyle};
@@ -7,6 +6,10 @@ use anyhow::Result;
 use serde_json::Value;
 use vtcode_commons::color_policy;
 use vtcode_commons::formatting::wrap_text_words;
+use vtcode_commons::ui_protocol::{
+    CompactToolSummaryCall, CompactToolSummaryDetail, CompactToolSummaryLine, CompactToolSummaryLineKind,
+    CompactToolSummaryStatus, adjacent_compact_summary_groups, compact_detail_values, stable_arguments_json,
+};
 
 use vtcode_core::config::constants::tools as tool_names;
 use vtcode_core::tools::registry::labels::tool_action_label;
@@ -162,6 +165,32 @@ pub(crate) fn render_tool_call_summary(
 ) -> Result<()> {
     let data = prepare_summary_data(tool_name, args, ctx.workspace_root);
 
+    if renderer.compact_tool_summary_batch_active() {
+        renderer.queue_compact_tool_summary(compact_summary_call(tool_name, args, stream_label, ctx.workspace_root));
+        return Ok(());
+    }
+
+    render_expanded_tool_summary_data(renderer, &data, stream_label, bullet_color)
+}
+
+pub(crate) fn render_expanded_tool_call_summary(
+    renderer: &mut AnsiRenderer,
+    tool_name: &str,
+    args: &Value,
+    stream_label: Option<&str>,
+    ctx: &ToolSummaryRenderContext,
+    bullet_color: Color,
+) -> Result<()> {
+    let data = prepare_summary_data(tool_name, args, ctx.workspace_root);
+    render_expanded_tool_summary_data(renderer, &data, stream_label, bullet_color)
+}
+
+fn render_expanded_tool_summary_data(
+    renderer: &mut AnsiRenderer,
+    data: &SummaryData,
+    stream_label: Option<&str>,
+    bullet_color: Color,
+) -> Result<()> {
     let theme_styles = theme::active_styles();
     let main_color = theme_styles
         .primary
@@ -173,7 +202,7 @@ pub(crate) fn render_tool_call_summary(
     line.push_str(&render_styled("•", bullet_color, None));
     line.push(' ');
 
-    let wrapped_run_segments = render_bullet_line(&mut line, &data, stream_label, main_color, &palette);
+    let wrapped_run_segments = render_bullet_line(&mut line, data, stream_label, main_color, &palette);
 
     renderer.line_with_override_style(MessageStyle::Info, AnsiStyle::new(), &line)?;
 
@@ -184,11 +213,131 @@ pub(crate) fn render_tool_call_summary(
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct SummaryData {
     summary: String,
     summary_highlights: Vec<String>,
     command_line: Option<String>,
     details: Vec<String>,
+}
+
+fn compact_summary_details(details: &[String]) -> Vec<CompactToolSummaryDetail> {
+    details
+        .iter()
+        .map(|detail| {
+            detail
+                .split_once(": ")
+                .map(|(label, value)| CompactToolSummaryDetail { label: label.to_string(), value: value.to_string() })
+                .unwrap_or_else(|| CompactToolSummaryDetail { label: detail.clone(), value: String::new() })
+        })
+        .collect()
+}
+
+fn compact_summary_expanded_lines(data: &SummaryData, stream_label: Option<&str>) -> Vec<CompactToolSummaryLine> {
+    let mut lines = Vec::new();
+    if let Some(command) = data.summary.strip_prefix("Ran ") {
+        let wrapped = wrap_text_words(command, RUN_SUMMARY_FIRST_WIDTH, RUN_SUMMARY_CONTINUATION_WIDTH);
+        let first = wrapped.first().map(String::as_str).unwrap_or("command");
+        lines.push(CompactToolSummaryLine {
+            kind: CompactToolSummaryLineKind::Info,
+            text: format!("• Ran {first}"),
+        });
+        lines.extend(wrapped.iter().skip(1).map(|segment| CompactToolSummaryLine {
+            kind: CompactToolSummaryLineKind::Info,
+            text: format!("  │ {segment}"),
+        }));
+    } else {
+        lines.push(CompactToolSummaryLine {
+            kind: CompactToolSummaryLineKind::Info,
+            text: format!("• {}{}", data.summary, stream_label.map(|label| format!(" {label}")).unwrap_or_default()),
+        });
+    }
+    if let Some(command_line) = &data.command_line {
+        lines.push(CompactToolSummaryLine {
+            kind: CompactToolSummaryLineKind::Detail,
+            text: format!("$ {command_line}"),
+        });
+    }
+    lines.extend(data.details.iter().map(|detail| CompactToolSummaryLine {
+        kind: CompactToolSummaryLineKind::Detail,
+        text: detail.clone(),
+    }));
+    lines
+}
+
+fn compact_summary_call(
+    tool_name: &str,
+    args: &Value,
+    stream_label: Option<&str>,
+    workspace_root: Option<&Path>,
+) -> CompactToolSummaryCall {
+    let data = prepare_summary_data(tool_name, args, workspace_root);
+    CompactToolSummaryCall {
+        canonical_tool_name: canonical_summary_tool_name(tool_name),
+        semantic_action: tool_action_label(tool_name, args).into_owned(),
+        stable_arguments: stable_arguments_json(args),
+        headline: data.summary.clone(),
+        details: compact_summary_details(&data.details),
+        output_boundary: stream_label.is_some(),
+        status: CompactToolSummaryStatus::Success,
+        expanded_lines: compact_summary_expanded_lines(&data, stream_label),
+    }
+}
+
+fn canonical_summary_tool_name(tool_name: &str) -> String {
+    if let Some(stripped) = tool_name.strip_prefix("mcp__") {
+        return stripped.split("__").last().unwrap_or(stripped).to_string();
+    }
+    if let Some(stripped) = tool_name.strip_prefix("mcp_") {
+        return stripped.split("__").last().unwrap_or(stripped).to_string();
+    }
+    if let Some(stripped) = tool_name.strip_prefix("mcp::") {
+        return stripped.split("::").last().unwrap_or(stripped).to_string();
+    }
+    tool_name.to_string()
+}
+
+fn render_compact_summary_group(
+    renderer: &mut AnsiRenderer,
+    group: &vtcode_commons::ui_protocol::CompactToolSummaryGroup,
+) -> Result<()> {
+    let Some(first) = group.calls.first() else {
+        return Ok(());
+    };
+    if group.calls.len() == 1 {
+        for line in &first.expanded_lines {
+            match line.kind {
+                CompactToolSummaryLineKind::Info => {
+                    renderer.line_with_override_style(MessageStyle::Info, AnsiStyle::new(), &line.text)?;
+                }
+                CompactToolSummaryLineKind::Detail => render_tree_detail(renderer, &line.text)?,
+            }
+        }
+        return Ok(());
+    }
+
+    renderer.line_with_override_style(
+        MessageStyle::Info,
+        AnsiStyle::new(),
+        &format!("• {} ×{}", first.headline, group.calls.len()),
+    )?;
+    for detail in compact_detail_values(group) {
+        let text = if detail.value.is_empty() {
+            detail.label
+        } else {
+            format!("{}: {}", detail.label, detail.value)
+        };
+        render_tree_detail(renderer, &text)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn flush_compact_tool_summary_batch(renderer: &mut AnsiRenderer) -> Result<()> {
+    let calls = renderer.take_compact_tool_summary_batch();
+    for group in adjacent_compact_summary_groups(calls) {
+        render_compact_summary_group(renderer, &group)?;
+    }
+    Ok(())
 }
 
 fn prepare_summary_data(tool_name: &str, args: &Value, workspace_root: Option<&Path>) -> SummaryData {
@@ -662,8 +811,8 @@ mod tests {
     use vtcode_ui::tui::app::{InlineCommand, InlineHandle};
 
     use super::{
-        ToolSummaryRenderContext, build_tool_summary, describe_tool_action, render_tool_call_summary,
-        run_summary_is_placeholder,
+        ToolSummaryRenderContext, build_tool_summary, describe_tool_action, flush_compact_tool_summary_batch,
+        render_tool_call_summary, run_summary_is_placeholder,
     };
 
     #[test]
@@ -926,5 +1075,40 @@ mod tests {
             .and_then(|segment| segment.style.color);
 
         assert_ne!(command_color, option_color);
+    }
+
+    #[test]
+    fn compact_tool_summary_groups_limit_only_differences() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let handle = InlineHandle::new_for_tests(sender);
+        let mut renderer = AnsiRenderer::with_inline_ui(handle, Default::default());
+        renderer.set_tool_display_mode(vtcode_core::config::ToolDisplayMode::Compact);
+        renderer.begin_compact_tool_summary_batch();
+        let context = ToolSummaryRenderContext { workspace_root: None };
+
+        for max_results in [30, 100] {
+            render_tool_call_summary(
+                &mut renderer,
+                tool_names::LIST_FILES,
+                &json!({"path": ".", "max_results": max_results}),
+                None,
+                &context,
+                anstyle::Color::Ansi(anstyle::AnsiColor::Green),
+            )
+            .expect("summary should queue");
+        }
+        flush_compact_tool_summary_batch(&mut renderer).expect("summary group should render");
+
+        let text = std::iter::from_fn(|| receiver.try_recv().ok())
+            .filter_map(|command| match command {
+                InlineCommand::AppendLine { segments, .. } => {
+                    Some(segments.into_iter().map(|s| s.text).collect::<String>())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("×2"));
+        assert!(text.contains("30, 100"));
     }
 }

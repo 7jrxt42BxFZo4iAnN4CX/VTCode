@@ -9,6 +9,7 @@ use super::super::types::{
 use crate::tui::core_tui::app::session::transient::TransientSurface;
 use crate::tui::core_tui::app::types::InlineMessageKind;
 use crate::tui::core_tui::runner::TuiSessionDriver;
+use crate::tui::core_tui::session::action::Action;
 use crate::tui::core_tui::session::clipboard_image::{ClipboardImageError, read_clipboard_image};
 use crate::tui::core_tui::session::modal::{ModalKeyModifiers, ModalListKeyResult};
 use crate::tui::core_tui::session::mode_switch_guard::{self};
@@ -416,6 +417,16 @@ pub(super) fn process_key_with_clipboard_image_reader(
             }
             ModalListKeyResult::NotHandled => {}
         }
+    }
+
+    if session
+        .core
+        .resolve_rebindable_action(&key)
+        .is_some_and(|action| action == Action::ToggleToolDisplayMode)
+    {
+        session.invalidate_transcript_cache();
+        session.mark_dirty();
+        return Some(InlineEvent::ToggleToolDisplayMode);
     }
 
     if let Some(wizard) = session.wizard_overlay_mut() {
@@ -1121,12 +1132,6 @@ pub(super) fn process_key_with_clipboard_image_reader(
                     // Alt+C: Capitalize the current word
                     'c' | 'C' if session.core.input_enabled() => {
                         session.capitalize_word();
-                        session.update_input_triggers();
-                        session.mark_dirty();
-                    }
-                    // Alt+T: Transpose words
-                    't' | 'T' if session.core.input_enabled() => {
-                        session.transpose_words();
                         session.update_input_triggers();
                         session.mark_dirty();
                     }

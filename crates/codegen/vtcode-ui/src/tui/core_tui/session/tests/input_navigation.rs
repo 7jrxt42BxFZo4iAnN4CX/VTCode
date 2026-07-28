@@ -383,14 +383,14 @@ fn ctrl_t_transposes_characters() {
 }
 
 #[test]
-fn alt_t_transposes_words() {
+fn alt_t_toggles_tool_display_mode() {
     let mut session = session_with_input("hello world", 6);
 
     let event = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::ALT);
     let result = session.process_key(event);
 
-    assert!(result.is_none());
-    assert_eq!(session.input_manager.content(), "world hello");
+    assert!(matches!(result, Some(InlineEvent::ToggleToolDisplayMode)));
+    assert_eq!(session.input_manager.content(), "hello world");
 }
 
 #[test]

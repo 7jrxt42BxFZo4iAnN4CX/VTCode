@@ -11,9 +11,11 @@
 mod markdown;
 mod selection;
 mod style;
+mod tool_summary;
 mod types;
 
 pub use markdown::*;
 pub use selection::*;
 pub use style::*;
+pub use tool_summary::*;
 pub use types::*;

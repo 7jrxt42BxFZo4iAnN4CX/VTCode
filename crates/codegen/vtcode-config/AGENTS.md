@@ -1,5 +1,4 @@
 # vtcode-config
-
 [Root AGENTS.md](../AGENTS.md) | Config loading, schema, constants. `vtcode.toml` is the source of truth.
 
 ## Modules
@@ -28,3 +27,4 @@ Two pathways: **OpenRouter** (code-generated) — edit `ModelId`, `Provider::Ope
 - `constants::tool_limits` is the source of truth for execution-loop defaults, planning/approved-plan floors, and tool-loop extension caps; `agent.max_conversation_turns` remains context retention only.
 - Token-efficiency defaults: `tool_result_clearing.enabled` defaults to `true` (old tool results stripped past `trigger_tokens`), `tools.client_tool_search` defaults to `true` (client-local deferral for providers without hosted tool search), and `agent.system_prompt_mode`/`tool_documentation_mode` stay `default`/`progressive`. When changing these, update `docs/config/CONFIG_FIELD_REFERENCE.md` and the guard-rail tests. `agent.ui_surface` defaults to `inline` so interactive plan/interview HITL overlays work without configuration; `auto` and `alternate` remain explicit overrides.
 - Use `api_keys::get_api_key_with_mode` and `provider_credential_detail_with_mode` when a loaded config is available; OpenAI runtime auth also uses `resolve_openai_api_key_for_auth`. Compatibility wrappers use the platform default storage mode.
+- Keep `ui.tool_display_mode` separate from `ui.tool_output_mode`; the former controls transition-summary grouping, while the latter controls tool output rendering.

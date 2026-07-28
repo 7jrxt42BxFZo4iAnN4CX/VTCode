@@ -788,6 +788,7 @@ python3 scripts/generate_config_field_reference.py
 | `ui.terminal_title.items[]` | `string` | no | `-` | - |
 | `ui.thinking_display` | `string` | no | `"collapsed"` | Default collapse state of agent thinking/reasoning blocks ("collapsed" or "extended") |
 | `ui.tool_output_max_lines` | `integer` | no | `30` | Maximum number of lines to display in tool output (prevents transcript flooding) |
+| `ui.tool_display_mode` | `string` | no | `"expanded"` | Tool transition summary mode. Options: "expanded" or "compact"; expanded renders each summary separately, while compact groups adjacent semantically equivalent successful summaries. |
 | `ui.tool_output_mode` | `string` | no | `"compact"` | Tool output display mode ("compact" or "full") |
 | `ui.tool_output_spool_bytes` | `integer` | no | `80000` | Maximum bytes of output to display before auto-spooling to disk |
 | `ui.tool_output_spool_dir` | `null \| string` | no | `null` | Optional custom directory for spooled tool output logs |

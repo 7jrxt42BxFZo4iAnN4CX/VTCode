@@ -218,6 +218,20 @@ impl<'a> InlineEventContext<'a> {
                 self.state.reset_interrupt_state();
                 InlineLoopAction::SelectPrimaryAgent { name }
             }
+            InlineEvent::ToggleToolDisplayMode => {
+                self.state.reset_interrupt_state();
+                let mode = self.state.renderer().toggle_tool_display_mode();
+                let label = match mode {
+                    vtcode_core::config::ToolDisplayMode::Compact => "compact",
+                    vtcode_core::config::ToolDisplayMode::Expanded | vtcode_core::config::ToolDisplayMode::Unknown => {
+                        "expanded"
+                    }
+                };
+                self.state
+                    .renderer()
+                    .line(MessageStyle::Status, &format!("Tool summaries: {label}"))?;
+                InlineLoopAction::Continue
+            }
             InlineEvent::OpenTranscriptReviewInEditor(text) => {
                 self.state.reset_interrupt_state();
                 InlineLoopAction::OpenTranscriptReviewInEditor(text)

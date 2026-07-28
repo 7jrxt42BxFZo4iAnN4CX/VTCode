@@ -138,6 +138,11 @@ fn dispatch_action(session: &mut Session, action: Action) -> Option<InlineEvent>
             session.toggle_logs();
             None
         }
+        Action::ToggleToolDisplayMode => {
+            session.invalidate_transcript_cache();
+            session.mark_dirty();
+            Some(InlineEvent::ToggleToolDisplayMode)
+        }
         Action::GeneratePromptSuggestion => {
             if !session.input_enabled {
                 return None;
@@ -279,7 +284,7 @@ pub(super) fn process_key(session: &mut Session, key: KeyEvent) -> Option<Inline
     }
 
     // Binding store: resolve user-rebindable actions first.
-    // Readline keybindings (Ctrl+F/B/P/N/T, Alt+D/T/U/L/C/\) are hardcoded
+    // Readline keybindings (Ctrl+F/B/P/N/T, Alt+D/U/L/C/\) are hardcoded
     // editing shortcuts and take priority over the binding store.
     if let Some(action) = session.bindings.resolve(&key) {
         // Skip binding store for Readline keybindings that are hardcoded below
@@ -306,8 +311,6 @@ pub(super) fn process_key(session: &mut Session, key: KeyEvent) -> Option<Inline
                 key.code,
                 KeyCode::Char('d')
                     | KeyCode::Char('D')
-                    | KeyCode::Char('t')
-                    | KeyCode::Char('T')
                     | KeyCode::Char('u')
                     | KeyCode::Char('U')
                     | KeyCode::Char('l')

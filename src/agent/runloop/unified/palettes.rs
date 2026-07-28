@@ -409,6 +409,7 @@ pub(crate) async fn refresh_runtime_config_from_manager(
     *vt_cfg = Some(runtime_config.clone());
     config.reasoning_effort = runtime_config.agent.reasoning_effort;
     renderer.set_show_diagnostics_in_transcript(runtime_config.ui.show_diagnostics_in_transcript);
+    renderer.set_tool_display_mode(runtime_config.ui.tool_display_mode);
     vtcode_ui::tui::panic_hook::set_show_diagnostics(runtime_config.ui.show_diagnostics_in_transcript);
 
     let _ = theme::set_active_theme(&runtime_config.agent.theme);

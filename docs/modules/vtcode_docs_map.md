@@ -157,6 +157,10 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Overview, Architecture, Basic Usage, Flag Reference, Common Patterns
   - **User Questions**: "What can you tell me about Text Search Guide?", "How does Overview work?", "How does Architecture work?"
 
+- **File**: `docs/development/tool-summary-display.md`
+  - **Content**: Tool Summary Display
+  - **User Questions**: "What can you tell me about Tool Summary Display?"
+
 - **File**: `docs/development/async-performance-audit.md`
   - **Content**: VT Code Async Performance Audit
   - **Topics**: Audit Rubric, Findings (Prioritized), Implemented Batch (Runtime-Critical), Validation, Next Batch (Recommended)
