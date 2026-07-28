@@ -354,7 +354,7 @@ pub enum SessionUpdate {
     /// Server requests the client to execute a tool (bidirectional ACP protocol).
     ///
     /// Arrives via a `server/request` SSE event. After executing the tool,
-    /// send the result back with [`crate::client_v2::AcpClientV2::session_tool_response`].
+    /// send the result back with `AcpClientV2::session_tool_response`.
     ServerRequest {
         /// The tool execution request from the agent.
         request: ToolExecutionRequest,
