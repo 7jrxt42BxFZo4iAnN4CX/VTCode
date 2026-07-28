@@ -44,3 +44,7 @@ adjust config.
 ///////////////////////////////////////////////////////////////////////////
 
 /Users/vinhnguyenxuan/.vtcode/sessions/debug-session-vtcode-20260728t005624z_773774-71727.log /Users/vinhnguyenxuan/.vtcode/sessions/session-vtcode-20260728T005624Z_773774-71727.json /Users/vinhnguyenxuan/.vtcode/sessions/atif-trajectory-session-vtcode-20260728T005624Z_773774-71727-20260728T005626Z.json /Users/vinhnguyenxuan/.vtcode/sessions/harness-session-vtcode-20260728T005624Z_773774-71727-20260728T005626Z.jsonl
+
+===
+
+command+click (macos) on a file url path in the terminal to open it in the editor, but it doesn't work. It opens a new tab instead of focusing on the existing tab. the file open in external editor being blocked until agent program end turn, which is not ideal. It should open the file in the editor immediately, and focus on the existing tab if the file is already open.
