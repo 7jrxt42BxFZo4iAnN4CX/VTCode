@@ -7731,7 +7731,7 @@ checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
 
 [[package]]
 name = "vtcode"
-version = "0.140.3"
+version = "0.141.0"
 dependencies = [
  "anstyle",
  "anyhow",
@@ -7797,7 +7797,7 @@ dependencies = [
 
 [[package]]
 name = "vtcode-a2a"
-version = "0.140.3"
+version = "0.141.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -7821,7 +7821,7 @@ dependencies = [
 
 [[package]]
 name = "vtcode-acp"
-version = "0.140.3"
+version = "0.141.0"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -7846,7 +7846,7 @@ dependencies = [
 
 [[package]]
 name = "vtcode-auth"
-version = "0.140.3"
+version = "0.141.0"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",
@@ -7876,7 +7876,7 @@ dependencies = [
 
 [[package]]
 name = "vtcode-bash-runner"
-version = "0.140.3"
+version = "0.141.0"
 dependencies = [
  "anyhow",
  "assert_fs",
@@ -7896,7 +7896,7 @@ dependencies = [
 
 [[package]]
 name = "vtcode-commons"
-version = "0.140.3"
+version = "0.141.0"
 dependencies = [
  "anstyle",
  "anyhow",
@@ -7934,7 +7934,7 @@ dependencies = [
 
 [[package]]
 name = "vtcode-config"
-version = "0.140.3"
+version = "0.141.0"
 dependencies = [
  "anyhow",
  "assert_fs",
@@ -7965,7 +7965,7 @@ dependencies = [
 
 [[package]]
 name = "vtcode-core"
-version = "0.140.3"
+version = "0.141.0"
 dependencies = [
  "ansi-to-tui",
  "anstream",
@@ -8077,7 +8077,7 @@ dependencies = [
 
 [[package]]
 name = "vtcode-eval"
-version = "0.140.3"
+version = "0.141.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8089,7 +8089,7 @@ dependencies = [
 
 [[package]]
 name = "vtcode-exec-events"
-version = "0.140.3"
+version = "0.141.0"
 dependencies = [
  "chrono",
  "hashbrown 0.17.1",
@@ -8104,7 +8104,7 @@ dependencies = [
 
 [[package]]
 name = "vtcode-indexer"
-version = "0.140.3"
+version = "0.141.0"
 dependencies = [
  "anyhow",
  "fs2",
@@ -8126,7 +8126,7 @@ dependencies = [
 
 [[package]]
 name = "vtcode-llm"
-version = "0.140.3"
+version = "0.141.0"
 dependencies = [
  "anstyle",
  "anyhow",
@@ -8174,7 +8174,7 @@ dependencies = [
 
 [[package]]
 name = "vtcode-macros"
-version = "0.140.3"
+version = "0.141.0"
 dependencies = [
  "quote",
  "syn 2.0.119",
@@ -8182,7 +8182,7 @@ dependencies = [
 
 [[package]]
 name = "vtcode-mcp"
-version = "0.140.3"
+version = "0.141.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -8216,7 +8216,7 @@ dependencies = [
 
 [[package]]
 name = "vtcode-memory"
-version = "0.140.3"
+version = "0.141.0"
 dependencies = [
  "chrono",
  "lru",
@@ -8231,7 +8231,7 @@ dependencies = [
 
 [[package]]
 name = "vtcode-safety"
-version = "0.140.3"
+version = "0.141.0"
 dependencies = [
  "anyhow",
  "dirs",
@@ -8256,7 +8256,7 @@ dependencies = [
 
 [[package]]
 name = "vtcode-skills"
-version = "0.140.3"
+version = "0.141.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -8281,7 +8281,7 @@ dependencies = [
 
 [[package]]
 name = "vtcode-ui"
-version = "0.140.3"
+version = "0.141.0"
 dependencies = [
  "anstyle",
  "anstyle-git",
@@ -8329,7 +8329,7 @@ dependencies = [
 
 [[package]]
 name = "vtcode-utility-tool-specs"
-version = "0.140.3"
+version = "0.141.0"
 dependencies = [
  "rmcp",
  "serde",
@@ -9289,7 +9289,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.140.3"
+version = "0.141.0"
 dependencies = [
  "clap",
  "clap_complete",
