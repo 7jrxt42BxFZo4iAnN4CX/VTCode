@@ -6360,8 +6360,6 @@ dependencies = [
 [[package]]
 name = "simdutf"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f542752c7335a9174e7bb81112c3ca1415a7a6b6ec2c3e840aca347a30f9141"
 dependencies = [
  "bitflags 2.13.1",
  "cc",

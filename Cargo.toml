@@ -184,6 +184,7 @@ vtcode-llm = { path = "crates/codegen/vtcode-llm" }
 vtcode-skills = { path = "crates/codegen/vtcode-skills" }
 vtcode-memory = { path = "crates/codegen/vtcode-memory" }
 vtcode-eval = { path = "crates/codegen/vtcode-eval" }
+simdutf = { path = "patches/simdutf" }
 
 [workspace.lints]
 # Rust compiler lints
