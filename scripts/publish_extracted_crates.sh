@@ -211,8 +211,8 @@ wait_for_crates_io_version() {
 		attempt=$((attempt + 1))
 	done
 
-	print_error "Timed out waiting for ${crate} ${version} to appear on crates.io"
-	return 1
+	print_warning "Timed out waiting for ${crate} ${version} to appear on crates.io API (likely rate-limited). Continuing anyway — cargo publish for downstream crates will fail fast if the index hasn't synced yet."
+	return 0
 }
 
 generate_docs() {
