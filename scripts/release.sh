@@ -1108,7 +1108,7 @@ main() {
 				print_info "Waiting for CI builds to complete (timeout: 60 minutes)..."
 				local wait_start
 				wait_start=$(date +%s)
-				local timeout=3600 # 60 minutes
+				local timeout=7800 # 130 minutes
 				local run_id=""
 
 				# Get the workflow run ID - wait for it to appear

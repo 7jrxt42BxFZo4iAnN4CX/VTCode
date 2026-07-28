@@ -42,7 +42,7 @@ jobs:
   build-linux:
     name: Build (${{ matrix.target }})
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     permissions:
       contents: read
     env:
@@ -187,7 +187,7 @@ jobs:
     if: ${{ inputs.build_windows == true || github.event.inputs.build_windows == 'true' }}
     name: Build (x86_64-pc-windows-msvc)
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     permissions:
       contents: read
     env:
