@@ -1,6 +1,4 @@
-use std::future::Future;
 use std::path::Path;
-use std::time::Duration;
 
 use anyhow::Result;
 use vtcode_commons::resolve_editor_target;
@@ -9,13 +7,14 @@ use vtcode_core::config::loader::ConfigManager;
 use vtcode_core::tools::terminal_app::{EditorLaunchConfig, TerminalAppLauncher};
 use vtcode_core::utils::ansi::MessageStyle;
 use vtcode_ui::tui::app::{
-    InlineHandle, InlineListItem, InlineListSelection, ListOverlayRequest, TransientRequest, TransientSubmission,
-    WizardModalMode, WizardStep,
+    InlineListItem, InlineListSelection, ListOverlayRequest, TransientRequest, TransientSubmission, WizardModalMode,
+    WizardStep,
 };
 
 use vtcode_core::hooks::SessionEndReason;
 
 use super::{SlashCommandContext, SlashCommandControl};
+use crate::agent::runloop::unified::external_editor::run_with_event_loop_suspended;
 use crate::agent::runloop::unified::external_url_guard::{
     ExternalUrlGuardContext, ExternalUrlOpenOutcome, request_external_url_open,
 };
@@ -27,9 +26,6 @@ use crate::agent::runloop::unified::settings_interactive::{
 use crate::agent::runloop::unified::url_guard::open_external_url;
 use crate::agent::runloop::unified::wizard_modal::{WizardModalOutcome, show_wizard_modal_and_wait};
 
-/// Time to wait for the event stream to fully stop before launching an external editor.
-/// Covers the 100ms stop timeout + processing delay in the drive loop.
-const EVENT_STREAM_STOP_DELAY: Duration = Duration::from_millis(150);
 const DOCS_URL: &str = "https://deepwiki.com/vinhnx/vtcode";
 const DONATE_URL: &str = "https://buymeacoffee.com/vinhnx";
 const PROJECT_URL: &str = "https://github.com/sponsors/vinhnx";
@@ -296,59 +292,6 @@ pub(crate) async fn handle_configure_editor(ctx: &mut SlashCommandContext<'_>) -
     }
 
     Ok(SlashCommandControl::Continue)
-}
-
-pub(crate) async fn run_with_event_loop_suspended<T, F>(handle: &InlineHandle, suspend_tui: bool, launch: F) -> T
-where
-    F: FnOnce() -> T,
-{
-    if suspend_tui {
-        // Fully stop the background EventStream task so it stops reading stdin.
-        // The editor (e.g., nvim) must have exclusive access to the terminal.
-        handle.stop_event_stream();
-        // Wait for the stop to complete (100ms timeout in EventStreamController::stop()
-        // plus margin for command delivery through the event loop).
-        tokio::time::sleep(EVENT_STREAM_STOP_DELAY).await;
-        handle.clear_input_queue();
-    }
-
-    let result = launch();
-
-    if suspend_tui {
-        handle.clear_input_queue();
-        // Resume event processing and restart the EventStream so the TUI
-        // can receive keyboard input again.
-        handle.resume_event_loop();
-        handle.start_event_stream();
-    }
-
-    result
-}
-
-pub(crate) async fn run_with_event_loop_suspended_async<T, F, Fut>(
-    handle: &InlineHandle,
-    suspend_tui: bool,
-    launch: F,
-) -> Result<T>
-where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<T>>,
-{
-    if suspend_tui {
-        handle.stop_event_stream();
-        tokio::time::sleep(EVENT_STREAM_STOP_DELAY).await;
-        handle.clear_input_queue();
-    }
-
-    let result = launch().await;
-
-    if suspend_tui {
-        handle.clear_input_queue();
-        handle.resume_event_loop();
-        handle.start_event_stream();
-    }
-
-    result
 }
 
 fn should_wait_for_editor(opening_existing_file: bool, editor_config: &EditorToolConfig) -> bool {

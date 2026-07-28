@@ -25,6 +25,7 @@ use vtcode_ui::tui::app::{ContentPart as UiContentPart, SubmittedInput};
 
 use crate::agent::runloop::prompt::refine_and_enrich_prompt;
 use crate::agent::runloop::unified::async_mcp_manager::{AsyncMcpManager, approval_policy_from_human_in_the_loop};
+use crate::agent::runloop::unified::external_editor::run_with_event_loop_suspended;
 use crate::agent::runloop::unified::inline_events::InlineLoopAction;
 use crate::agent::runloop::unified::interactive_features::{PromptSuggestionSource, generate_inline_prompt_suggestion};
 use crate::agent::runloop::unified::session_setup::{apply_ide_context_snapshot, ide_context_status_label_from_bridge};
@@ -33,7 +34,6 @@ use crate::agent::runloop::unified::turn::primary_agent_runtime::{
     PrimaryAgentRuntimeSyncContext, load_primary_agent_specs as load_primary_agent_specs_for_runtime,
     sync_primary_agent_runtime as sync_primary_agent_runtime_context,
 };
-use crate::agent::runloop::unified::turn::session::slash_commands::run_with_event_loop_suspended;
 use crate::startup::{auto_grant_tui_full_auto_workspace_trust, ensure_full_auto_workspace_trust};
 
 use crate::agent::runloop::unified::planning_workflow_state::transition_to_planning_workflow;

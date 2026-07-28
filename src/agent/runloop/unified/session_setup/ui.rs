@@ -251,9 +251,8 @@ pub(crate) async fn initialize_session_ui(
     }
 
     let handle = session.clone_inline_handle();
-    let editor_config = vt_cfg.as_ref().map(|config| config.tools.editor.clone()).unwrap_or_default();
     let (editor_open_sender, editor_open_coordinator_task_guard) =
-        spawn_editor_open_coordinator(config.workspace.clone(), editor_config, &handle);
+        spawn_editor_open_coordinator(config.workspace.clone(), &handle);
     let highlight_config = vt_cfg.as_ref().map(|cfg| cfg.syntax_highlighting.clone()).unwrap_or_default();
 
     transcript::set_inline_handle(Arc::new(handle.clone()));

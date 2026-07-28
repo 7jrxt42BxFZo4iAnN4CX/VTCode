@@ -6,6 +6,7 @@ pub(crate) mod context_manager;
 
 mod diagnostics;
 mod display;
+pub(crate) mod external_editor;
 pub(crate) mod external_url_guard;
 mod incremental_system_prompt;
 mod inline_events;

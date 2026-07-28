@@ -1,4 +1,3 @@
-use std::future::Future;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -118,29 +117,6 @@ impl<'a> SlashCommandContext<'a> {
             harness_emitter: self.harness_emitter,
         }
     }
-}
-
-pub(crate) fn run_with_event_loop_suspended<'a, T: 'a, F>(
-    handle: &'a InlineHandle,
-    suspend_tui: bool,
-    launch: F,
-) -> impl Future<Output = Result<T>> + 'a
-where
-    F: FnOnce() -> Result<T> + 'a,
-{
-    handlers::run_with_event_loop_suspended(handle, suspend_tui, launch)
-}
-
-pub(crate) async fn run_with_event_loop_suspended_async<T, F, Fut>(
-    handle: &InlineHandle,
-    suspend_tui: bool,
-    launch: F,
-) -> Result<T>
-where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<T>>,
-{
-    handlers::run_with_event_loop_suspended_async(handle, suspend_tui, launch).await
 }
 
 pub(crate) async fn handle_outcome(

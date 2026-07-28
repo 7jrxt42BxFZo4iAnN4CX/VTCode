@@ -4,18 +4,6 @@ https://github.com/vinhnx/VTCode/security/advisories/GHSA-r249-hpfx-x2w7
 
 ===
 
-check to increase tool limit, it was locked 32 steps
-
-causing
-////////////////////////////////// Error //////////////////////////////////
-Safety validation failed: Per-turn tool limit reached (max: 32). Wait or
-adjust config.
-///////////////////////////////////////////////////////////////////////////
-
-/Users/vinhnguyenxuan/.vtcode/sessions/debug-session-vtcode-20260728t005624z_773774-71727.log /Users/vinhnguyenxuan/.vtcode/sessions/session-vtcode-20260728T005624Z_773774-71727.json /Users/vinhnguyenxuan/.vtcode/sessions/atif-trajectory-session-vtcode-20260728T005624Z_773774-71727-20260728T005626Z.json /Users/vinhnguyenxuan/.vtcode/sessions/harness-session-vtcode-20260728T005624Z_773774-71727-20260728T005626Z.jsonl
-
-===
-
 check and group repeated/similar tool calls display in the TUI transition log, instead of showing each call separately. This will make the log more readable and easier to follow. Maybe introduce a compact tool display mode. Use current tool display as expanded mode, and add a compact mode that groups repeated/similar tool calls together. Allow users to toggle between the two modes in the TUI. Confirugable via /config on vtcode.toml. This will help users to focus on the important information and reduce noise in the log.
 
 Example:

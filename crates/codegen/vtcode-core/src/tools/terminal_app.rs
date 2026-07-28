@@ -196,12 +196,21 @@ impl TerminalAppLauncher {
                 Ok(())
             })?;
         } else {
-            cmd.current_dir(&self.workspace_root)
+            let mut child = cmd
+                .current_dir(&self.workspace_root)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn()
                 .context("failed to spawn editor")?;
+            std::thread::Builder::new()
+                .name("vtcode-editor-reaper".to_string())
+                .spawn(move || {
+                    if let Err(error) = child.wait() {
+                        debug!(%error, "failed to reap detached editor process");
+                    }
+                })
+                .context("failed to supervise detached editor process")?;
         }
 
         // Read temp file contents if it was a temp file
@@ -247,81 +256,20 @@ impl TerminalAppLauncher {
         Ok(cmd)
     }
 
-    /// Try common editors in priority order as fallback when EDITOR/VISUAL not set
+    /// Try common editors in priority order as fallback when EDITOR/VISUAL not set.
     fn try_common_editors(
         target: &EditorTarget,
         wait_for_editor: bool,
         reuse_existing_window: bool,
     ) -> Result<Command> {
-        let candidates = if cfg!(target_os = "windows") {
-            vec![
-                "code --wait",
-                "code",
-                "zed --wait",
-                "zed",
-                "subl -w",
-                "subl",
-                "notepad++",
-                "notepad",
-            ]
-        } else if cfg!(target_os = "macos") {
-            vec![
-                "code --wait",
-                "code",
-                "zed --wait",
-                "zed",
-                "subl -w",
-                "subl",
-                "mate -w",
-                "mate",
-                "open -a TextEdit",
-                "nvim",
-                "vim",
-                "vi",
-                "nano",
-                "emacs",
-            ]
-        } else {
-            vec![
-                "code --wait",
-                "code",
-                "zed --wait",
-                "zed",
-                "subl -w",
-                "subl",
-                "mate -w",
-                "mate",
-                "nvim",
-                "vim",
-                "vi",
-                "nano",
-                "emacs",
-            ]
-        };
-
-        for candidate in candidates {
-            let tokens = match shell_words::split(candidate) {
-                Ok(tokens) => tokens,
-                Err(_) => continue,
-            };
-            let Some(program) = tokens.first() else {
-                continue;
-            };
-            if which::which(program).is_ok() {
-                debug!("found fallback editor: {}", candidate);
-                return Self::build_editor_command_from_string_with_reuse(
-                    candidate,
-                    target,
-                    wait_for_editor,
-                    reuse_existing_window,
-                );
-            }
-        }
-
-        Err(anyhow!(
-            "no editor found in PATH. Install an editor (e.g. nvim, code, zed, emacs), \
-             or configure tools.editor.preferred_editor"
-        ))
+        let candidate = Self::common_editor_command().ok_or_else(|| {
+            anyhow!(
+                "no editor found in PATH. Install an editor (e.g. nvim, code, zed, emacs), \
+                 or configure tools.editor.preferred_editor"
+            )
+        })?;
+        debug!("found fallback editor: {}", candidate);
+        Self::build_editor_command_from_string_with_reuse(candidate, target, wait_for_editor, reuse_existing_window)
     }
 
     fn editor_command_from_env() -> Option<String> {
@@ -334,17 +282,29 @@ impl TerminalAppLauncher {
 
     /// Return whether a configured editor command names a terminal editor.
     pub fn editor_command_requires_terminal(command: Option<&str>) -> bool {
-        let command = command
-            .filter(|value| !value.trim().is_empty())
-            .map(str::to_owned)
-            .or_else(Self::editor_command_from_env);
-        let Some(command) = command else {
-            return false;
-        };
-        let Some(program) = shell_words::split(&command).ok().and_then(|tokens| tokens.first().cloned()) else {
-            return false;
-        };
-        Self::program_requires_terminal(&program)
+        if let Some(command) = command.filter(|value| !value.trim().is_empty()) {
+            return Self::program_from_command(command)
+                .is_some_and(|program| Self::program_requires_terminal(&program));
+        }
+
+        if let Some(environment_command) = Self::editor_command_from_env() {
+            return Self::program_from_command(&environment_command)
+                .is_some_and(|program| Self::program_requires_terminal(&program));
+        }
+
+        Self::common_editor_command()
+            .and_then(Self::program_from_command)
+            .is_some_and(|program| Self::program_requires_terminal(&program))
+    }
+
+    fn common_editor_command() -> Option<&'static str> {
+        common_editor_candidates().iter().copied().find(|candidate| {
+            Self::program_from_command(candidate).is_some_and(|program| which::which(program).is_ok())
+        })
+    }
+
+    fn program_from_command(command: &str) -> Option<String> {
+        shell_words::split(command).ok()?.into_iter().next()
     }
 
     fn program_requires_terminal(program: &str) -> bool {
@@ -589,6 +549,54 @@ fn filtered_editor_args(adapter: EditorAdapter, args: &[String], wait_for_editor
     }
 
     args.iter().filter(|arg| !matches_wait_flag(adapter, arg)).cloned().collect()
+}
+
+fn common_editor_candidates() -> &'static [&'static str] {
+    if cfg!(target_os = "windows") {
+        &[
+            "code --wait",
+            "code",
+            "zed --wait",
+            "zed",
+            "subl -w",
+            "subl",
+            "notepad++",
+            "notepad",
+        ]
+    } else if cfg!(target_os = "macos") {
+        &[
+            "code --wait",
+            "code",
+            "zed --wait",
+            "zed",
+            "subl -w",
+            "subl",
+            "mate -w",
+            "mate",
+            "open -a TextEdit",
+            "nvim",
+            "vim",
+            "vi",
+            "nano",
+            "emacs",
+        ]
+    } else {
+        &[
+            "code --wait",
+            "code",
+            "zed --wait",
+            "zed",
+            "subl -w",
+            "subl",
+            "mate -w",
+            "mate",
+            "nvim",
+            "vim",
+            "vi",
+            "nano",
+            "emacs",
+        ]
+    }
 }
 
 fn matches_wait_flag(adapter: EditorAdapter, arg: &str) -> bool {

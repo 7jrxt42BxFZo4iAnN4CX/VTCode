@@ -10,9 +10,9 @@ use vtcode_core::utils::ansi::MessageStyle;
 use crate::agent::runloop::slash_commands::CompactConversationCommand;
 use crate::agent::runloop::unified::palettes::refresh_runtime_config_from_manager;
 
-use super::apps::run_with_event_loop_suspended;
 use super::config_toml::{ensure_child_table, load_toml_value, preferred_workspace_config_path, save_toml_value};
 use super::{SlashCommandContext, SlashCommandControl};
+use crate::agent::runloop::unified::external_editor::run_with_event_loop_suspended;
 
 pub(crate) async fn handle_compact_conversation(
     mut ctx: SlashCommandContext<'_>,
