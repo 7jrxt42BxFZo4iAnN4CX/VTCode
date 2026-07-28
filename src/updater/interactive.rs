@@ -167,6 +167,16 @@ fn map_update_prompt_submission(submission: TransientSubmission) -> Option<Updat
     }
 }
 
+fn should_dismiss_update_prompt(outcome: &OverlayWaitOutcome<UpdatePromptChoice>) -> bool {
+    matches!(
+        outcome,
+        OverlayWaitOutcome::Submitted(UpdatePromptChoice::StayCurrent)
+            | OverlayWaitOutcome::Cancelled
+            | OverlayWaitOutcome::Interrupted
+            | OverlayWaitOutcome::Exit
+    )
+}
+
 pub(crate) async fn run_inline_update_prompt(
     renderer: &mut AnsiRenderer,
     handle: &InlineHandle,
@@ -186,12 +196,15 @@ pub(crate) async fn run_inline_update_prompt(
     )
     .await?;
 
+    if should_dismiss_update_prompt(&outcome) {
+        let _ = super::cache::record_dismissed_version(&notice.latest_version);
+    }
+
     match outcome {
         OverlayWaitOutcome::Submitted(UpdatePromptChoice::UpdateAndRestart) => {
             execute_inline_update(renderer, handle, workspace_root, notice).await
         }
         OverlayWaitOutcome::Submitted(UpdatePromptChoice::StayCurrent) => {
-            let _ = super::cache::record_dismissed_version(&notice.latest_version);
             renderer.line(MessageStyle::Info, "Staying on the current version for this session.")?;
             Ok(InlineUpdateOutcome::Continue)
         }
@@ -276,6 +289,7 @@ fn execute_managed_update(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::runloop::unified::overlay_prompt::OverlayWaitOutcome;
     use semver::Version;
     use tokio::sync::mpsc;
     use vtcode_ui::tui::app::{InlineCommand, InlineHandle};
@@ -317,5 +331,14 @@ mod tests {
         append_notice_highlight(&mut header_context.highlights, &notice);
         append_notice_highlight(&mut header_context.highlights, &notice);
         assert_eq!(header_context.highlights.len(), 1);
+    }
+
+    #[test]
+    fn closing_update_prompt_dismisses_the_current_release() {
+        assert!(should_dismiss_update_prompt(&OverlayWaitOutcome::Submitted(UpdatePromptChoice::StayCurrent,)));
+        assert!(should_dismiss_update_prompt(&OverlayWaitOutcome::Cancelled));
+        assert!(should_dismiss_update_prompt(&OverlayWaitOutcome::Interrupted));
+        assert!(should_dismiss_update_prompt(&OverlayWaitOutcome::Exit));
+        assert!(!should_dismiss_update_prompt(&OverlayWaitOutcome::Submitted(UpdatePromptChoice::UpdateAndRestart,)));
     }
 }
