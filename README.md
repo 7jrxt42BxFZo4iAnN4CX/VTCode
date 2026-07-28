@@ -162,11 +162,11 @@ cargo nextest run        # parallel test runner
 VT Code is built by an open source community. Whether you're fixing bugs, improving docs, proposing features, reporting security issues, or shipping patches — all contributions are welcome.
 
 **Ways to contribute:**
-- **Security advisories** — Responsible disclosure strengthens everyone. See [Security Policy](https://github.com/vinhnx/VTCode/security/policy) for reporting guidelines.
-- **Bug fixes & patches** — Small or large, every fix matters.
-- **Documentation** — Guides, examples, and improvements help the whole ecosystem.
-- **Features & ideas** — Open an issue or start a discussion.
-- **Code reviews & testing** — Help maintain quality.
+- **Security advisories** — responsible disclosure makes everyone safer. See the [Security Policy](https://github.com/vinhnx/VTCode/security/policy) for reporting guidelines.
+- **Bug fixes & patches** — small or large, every fix matters.
+- **Documentation** — guides, examples, and improvements help the whole ecosystem.
+- **Features & ideas** — open an issue or start a discussion.
+- **Code reviews & testing** — help keep the project healthy.
 
 **Getting started:**
 - Browse [good first issues](https://github.com/vinhnx/vtcode/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22)
