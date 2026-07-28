@@ -38,7 +38,10 @@ pub(crate) enum PlanningTransition {
     /// No planning transition; continue the turn normally.
     None,
     /// User approved the plan; proceed with execution.
-    ExitAndImplement { execution_agent: Option<String> },
+    ExitAndImplement {
+        execution_agent: Option<String>,
+        auto_accept: bool,
+    },
     /// User wants to stay in planning mode.
     StayInPlanning,
     /// User abandoned the current plan without starting execution.
@@ -49,17 +52,19 @@ impl PlanningTransition {
     /// Convert this transition into the `TurnLoopResult::Completed` variant
     /// and an optional primary-agent switch command.
     #[inline]
-    pub(crate) fn into_result_and_agent(self) -> (TurnLoopResult, Option<String>) {
+    pub(crate) fn into_result_and_agent(self) -> (TurnLoopResult, Option<String>, bool) {
         match self {
-            PlanningTransition::None => (TurnLoopResult::Completed { plan_approved_execution_pending: false }, None),
-            PlanningTransition::ExitAndImplement { execution_agent } => {
-                (TurnLoopResult::Completed { plan_approved_execution_pending: true }, execution_agent)
+            PlanningTransition::None => {
+                (TurnLoopResult::Completed { plan_approved_execution_pending: false }, None, false)
+            }
+            PlanningTransition::ExitAndImplement { execution_agent, auto_accept } => {
+                (TurnLoopResult::Completed { plan_approved_execution_pending: true }, execution_agent, auto_accept)
             }
             PlanningTransition::StayInPlanning => {
-                (TurnLoopResult::Completed { plan_approved_execution_pending: false }, None)
+                (TurnLoopResult::Completed { plan_approved_execution_pending: false }, None, false)
             }
             PlanningTransition::CancelPlanning => {
-                (TurnLoopResult::Completed { plan_approved_execution_pending: false }, None)
+                (TurnLoopResult::Completed { plan_approved_execution_pending: false }, None, false)
             }
         }
     }
@@ -154,13 +159,28 @@ pub(crate) async fn maybe_handle_planning_exit_trigger(
                 .await?;
 
                 return Ok(match outcome {
-                    TurnHandlerOutcome::SwitchPrimaryAgent(execution_agent) => {
-                        PlanningTransition::ExitAndImplement { execution_agent: Some(execution_agent) }
+                    TurnHandlerOutcome::SwitchPrimaryAgent(execution_agent) => PlanningTransition::ExitAndImplement {
+                        execution_agent: Some(execution_agent),
+                        auto_accept: false,
+                    },
+                    TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy { agent, skip_confirmations } => {
+                        PlanningTransition::ExitAndImplement {
+                            execution_agent: Some(agent),
+                            auto_accept: skip_confirmations,
+                        }
                     }
                     TurnHandlerOutcome::Break(TurnLoopResult::Completed { plan_approved_execution_pending: true }) => {
-                        PlanningTransition::ExitAndImplement { execution_agent: None }
+                        PlanningTransition::ExitAndImplement { execution_agent: None, auto_accept: false }
                     }
+                    TurnHandlerOutcome::BreakWithPolicy {
+                        result: TurnLoopResult::Completed { plan_approved_execution_pending: true },
+                        skip_confirmations,
+                    } => PlanningTransition::ExitAndImplement {
+                        execution_agent: None,
+                        auto_accept: skip_confirmations,
+                    },
                     TurnHandlerOutcome::Break(_) | TurnHandlerOutcome::Continue => PlanningTransition::StayInPlanning,
+                    TurnHandlerOutcome::BreakWithPolicy { .. } => PlanningTransition::StayInPlanning,
                 });
             }
 
@@ -179,8 +199,12 @@ pub(crate) async fn maybe_handle_planning_exit_trigger(
                 decision,
                 approval_route == PlanApprovalRoute::Automatic,
             );
+            handle.set_skip_confirmations(approval_route == PlanApprovalRoute::Automatic);
             finish_planning_workflow(tool_registry, plan_session, handle, false).await;
-            PlanningTransition::ExitAndImplement { execution_agent }
+            PlanningTransition::ExitAndImplement {
+                execution_agent,
+                auto_accept: approval_route == PlanApprovalRoute::Automatic,
+            }
         }
         PlanningIntent::StayInPlanning => {
             display_status(renderer, &short_confirmation_hint_with_fallback())?;
@@ -215,4 +239,32 @@ pub(crate) async fn maybe_handle_planning_exit_trigger(
 
 fn display_status(renderer: &mut AnsiRenderer, message: &str) -> anyhow::Result<()> {
     renderer.line(vtcode_core::utils::ansi::MessageStyle::Status, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn approved_plan_transition_preserves_auto_accept_for_agent_handoff() {
+        let (result, agent, auto_accept) = PlanningTransition::ExitAndImplement {
+            execution_agent: Some("build".to_string()),
+            auto_accept: true,
+        }
+        .into_result_and_agent();
+
+        assert!(matches!(result, TurnLoopResult::Completed { plan_approved_execution_pending: true }));
+        assert_eq!(agent.as_deref(), Some("build"));
+        assert!(auto_accept);
+    }
+
+    #[test]
+    fn manual_plan_transition_keeps_confirmation_prompts_without_agent_switch() {
+        let (result, agent, auto_accept) =
+            PlanningTransition::ExitAndImplement { execution_agent: None, auto_accept: false }.into_result_and_agent();
+
+        assert!(matches!(result, TurnLoopResult::Completed { plan_approved_execution_pending: true }));
+        assert!(agent.is_none());
+        assert!(!auto_accept);
+    }
 }

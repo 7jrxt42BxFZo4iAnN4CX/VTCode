@@ -184,6 +184,8 @@ When a task is already running, VT Code keeps the active turn alive and lets you
 - The agent emits planning output in `<proposed_plan>...</proposed_plan>` blocks.
 - `task_tracker` mirrors checklist state with plan sidecars where planning artefacts are enabled.
 - When you are ready to implement, switch to a build-oriented primary agent such as `build` or `auto`.
+- Plan approval preserves its explicit confirmation choice across the handoff: Auto-accept and
+  auto-agent routes bypass confirmations, while Manual review and build-agent routes keep them.
 
 ## Command History
 

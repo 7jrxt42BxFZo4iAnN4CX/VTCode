@@ -1,6 +1,6 @@
 use crate::agent::runloop::unified::turn::context::{PreparedAssistantToolCall, TurnHandlerOutcome};
 use anyhow::Result;
-use call::{handle_prepared_tool_call_dispatch, push_invalid_tool_args_response};
+use call::handle_prepared_tool_call_dispatch;
 use std::time::Instant;
 
 mod call;
@@ -26,14 +26,18 @@ pub(crate) async fn handle_tool_calls<'a, 'b>(
     }
 
     if valid_calls == 0 {
-        for tool_call in tool_calls {
+        for (index, tool_call) in tool_calls.iter().enumerate() {
             if let Some(err) = tool_call.args_error() {
-                push_invalid_tool_args_response(
-                    t_ctx.ctx.working_history,
+                if let Some(outcome) = super::handlers::handle_preflight_failure(
+                    t_ctx.ctx,
                     tool_call.call_id(),
                     tool_call.tool_name(),
                     err,
-                );
+                    None,
+                ) {
+                    super::handlers::drain_preflight_circuit_responses(t_ctx.ctx, &tool_calls[index + 1..]);
+                    return Ok(Some(outcome));
+                }
             }
         }
         return Ok(None);
@@ -60,19 +64,29 @@ pub(crate) async fn handle_tool_calls<'a, 'b>(
             return Ok(Some(o));
         }
     } else {
-        for tool_call in tool_calls {
+        for (index, tool_call) in tool_calls.iter().enumerate() {
             if let Some(err) = tool_call.args_error() {
-                push_invalid_tool_args_response(
-                    t_ctx.ctx.working_history,
+                if let Some(outcome) = super::handlers::handle_preflight_failure(
+                    t_ctx.ctx,
                     tool_call.call_id(),
                     tool_call.tool_name(),
                     err,
-                );
+                    None,
+                ) {
+                    super::handlers::drain_preflight_circuit_responses(t_ctx.ctx, &tool_calls[index + 1..]);
+                    super::handlers::flush_interview_denial_recovery(t_ctx.ctx);
+                    return Ok(Some(outcome));
+                }
                 continue;
             }
 
             let outcome = handle_prepared_tool_call_dispatch(t_ctx, tool_call).await?;
             if let Some(o) = outcome {
+                if t_ctx.ctx.harness_state.consecutive_preflight_failures
+                    >= super::handlers::max_consecutive_blocked_tool_calls_per_turn(t_ctx.ctx)
+                {
+                    super::handlers::drain_preflight_circuit_responses(t_ctx.ctx, &tool_calls[index + 1..]);
+                }
                 super::handlers::flush_interview_denial_recovery(t_ctx.ctx);
                 return Ok(Some(o));
             }

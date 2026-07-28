@@ -14,7 +14,7 @@ use super::{
 };
 use crate::agent::runloop::unified::turn::tool_outcomes::execution_result::handle_tool_execution_result;
 use crate::agent::runloop::unified::turn::tool_outcomes::helpers::{
-    push_invalid_tool_args_response, resolve_max_tool_retries, update_repetition_tracker,
+    resolve_max_tool_retries, update_repetition_tracker,
 };
 use vtcode_core::core::agent::harness_kernel::{PreparedToolBatch, PreparedToolBatchKind};
 
@@ -232,6 +232,12 @@ async fn execute_parallel_group<'a, 'b>(
                     TurnHandlerOutcome::SwitchPrimaryAgent(_) => {
                         anyhow::bail!("Unexpected SwitchPrimaryAgent outcome in break-matched handler")
                     }
+                    TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy { .. } => {
+                        anyhow::bail!("Unexpected policy-bearing agent switch in break-matched handler")
+                    }
+                    TurnHandlerOutcome::BreakWithPolicy { .. } => {
+                        anyhow::bail!("Unexpected policy-bearing break in break-matched handler")
+                    }
                 };
                 return Ok(Some(
                     interrupt_parallel_group(
@@ -260,15 +266,16 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
 
     let mut validated_calls = Vec::with_capacity(tool_calls.len());
 
-    for tool_call in tool_calls {
+    for (index, tool_call) in tool_calls.iter().enumerate() {
         let Some(args) = tool_call.args() else {
             if let Some(err) = tool_call.args_error() {
-                push_invalid_tool_args_response(
-                    t_ctx.ctx.working_history,
-                    tool_call.call_id(),
-                    tool_call.tool_name(),
-                    err,
-                );
+                if let Some(outcome) =
+                    super::handle_preflight_failure(t_ctx.ctx, tool_call.call_id(), tool_call.tool_name(), err, None)
+                {
+                    super::drain_preflight_circuit_responses(t_ctx.ctx, &tool_calls[index + 1..]);
+                    flush_budget_synthesis_directives(t_ctx.ctx);
+                    return Ok(Some(outcome));
+                }
             }
             continue;
         };
@@ -280,6 +287,11 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
                 validated_calls.push(ValidatedToolCall { tool_call, prepared });
             }
             ValidationTransition::Return(Some(outcome)) => {
+                if t_ctx.ctx.harness_state.consecutive_preflight_failures
+                    >= super::max_consecutive_blocked_tool_calls_per_turn(t_ctx.ctx)
+                {
+                    super::drain_preflight_circuit_responses(t_ctx.ctx, &tool_calls[index + 1..]);
+                }
                 flush_budget_synthesis_directives(t_ctx.ctx);
                 return Ok(Some(outcome));
             }

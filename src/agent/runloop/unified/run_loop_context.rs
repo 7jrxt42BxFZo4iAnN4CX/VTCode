@@ -304,6 +304,9 @@ pub(crate) struct HarnessTurnState {
     pub tool_calls: usize,
     pub blocked_tool_calls: usize,
     pub consecutive_blocked_tool_calls: usize,
+    /// Counts consecutive malformed/schema-invalid tool calls independently
+    /// from policy denials. A valid admitted call resets this streak.
+    pub consecutive_preflight_failures: usize,
     /// Counts how many times the agent emitted an assistant *text* response
     /// (no tool calls) in this turn.  Used to short-circuit the recovery
     /// loop when the model has already produced a final answer but recovery
@@ -393,6 +396,7 @@ impl HarnessTurnState {
             tool_calls: 0,
             blocked_tool_calls: 0,
             consecutive_blocked_tool_calls: 0,
+            consecutive_preflight_failures: 0,
             assistant_text_responses_in_turn: 0,
             consecutive_spool_chunk_reads: 0,
             consecutive_same_shell_command_runs: 0,
@@ -532,6 +536,15 @@ impl HarnessTurnState {
 
     pub(crate) fn reset_blocked_tool_call_streak(&mut self) {
         self.consecutive_blocked_tool_calls = 0;
+    }
+
+    pub(crate) fn record_preflight_failure(&mut self) -> usize {
+        self.consecutive_preflight_failures = self.consecutive_preflight_failures.saturating_add(1);
+        self.consecutive_preflight_failures
+    }
+
+    pub(crate) fn reset_preflight_failure_streak(&mut self) {
+        self.consecutive_preflight_failures = 0;
     }
 
     pub(crate) fn tool_budget_usage_ratio(&self) -> f64 {
@@ -1172,6 +1185,16 @@ mod tests {
         assert_eq!(state.blocked_tool_calls, 2);
         state.reset_blocked_tool_call_streak();
         assert_eq!(state.consecutive_blocked_tool_calls, 0);
+    }
+
+    #[test]
+    fn harness_state_tracks_and_resets_preflight_failure_streak() {
+        let mut state = HarnessTurnState::new(TurnRunId("run-1".to_string()), TurnId("turn-1".to_string()), 4, 10, 1);
+
+        assert_eq!(state.record_preflight_failure(), 1);
+        assert_eq!(state.record_preflight_failure(), 2);
+        state.reset_preflight_failure_streak();
+        assert_eq!(state.consecutive_preflight_failures, 0);
     }
 
     #[test]

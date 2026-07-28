@@ -186,6 +186,7 @@ mod tests {
             result: TurnLoopResult::Completed { plan_approved_execution_pending: false },
             turn_modified_files: BTreeSet::new(),
             pending_primary_agent: None,
+            pending_plan_auto_accept: false,
             plan_approved_execution_pending: false,
         };
         conversation_history.push(uni::Message::assistant("done".to_string()));
@@ -229,6 +230,7 @@ mod tests {
             result: TurnLoopResult::Cancelled,
             turn_modified_files: BTreeSet::new(),
             pending_primary_agent: None,
+            pending_plan_auto_accept: false,
             plan_approved_execution_pending: false,
         };
         conversation_history.push(uni::Message::assistant("done".to_string()));
@@ -272,6 +274,7 @@ mod tests {
             result: TurnLoopResult::Completed { plan_approved_execution_pending: false },
             turn_modified_files: BTreeSet::new(),
             pending_primary_agent: None,
+            pending_plan_auto_accept: false,
             plan_approved_execution_pending: false,
         };
         conversation_history.push(uni::Message::assistant("done".to_string()));

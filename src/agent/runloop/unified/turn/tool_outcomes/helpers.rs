@@ -372,20 +372,6 @@ pub(crate) fn push_tool_response<S>(
     });
 }
 
-pub(crate) fn push_invalid_tool_args_response<S>(
-    history: &mut Vec<uni::Message>,
-    tool_call_id: S,
-    tool_name: &str,
-    error: &str,
-) where
-    S: AsRef<str> + Into<String>,
-{
-    let payload = serde_json::json!({
-        "error": format!("Invalid tool arguments for '{}': {}", tool_name, error)
-    });
-    push_tool_response(history, tool_call_id, Some(tool_name), payload.to_string());
-}
-
 /// Generate a tool signature key with predictable structure for loop tracking.
 pub(crate) fn signature_key_for(name: &str, args: &serde_json::Value) -> String {
     // Keep keys compact on hot paths: hash bounded argument bytes instead of

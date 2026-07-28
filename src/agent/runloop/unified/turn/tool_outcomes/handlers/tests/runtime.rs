@@ -82,6 +82,223 @@ async fn blocked_tool_call_guard_short_circuits_to_recovery_when_active() {
 }
 
 #[tokio::test]
+async fn malformed_tool_calls_trip_preflight_circuit_at_configured_cap() {
+    let mut backing = TestContextBacking::new(4).await;
+    let mut repeated_tool_attempts = LoopTracker::new();
+    let mut turn_modified_files = BTreeSet::new();
+    let malformed_call = || {
+        PreparedAssistantToolCall::new(uni::ToolCall::function(
+            "malformed_call".to_string(),
+            tool_names::CODE_SEARCH.to_string(),
+            "{not-json".to_string(),
+        ))
+    };
+    let max_failures = {
+        let ctx = backing.turn_processing_context();
+        max_consecutive_blocked_tool_calls_per_turn(&ctx)
+    };
+
+    for failure in 1..max_failures {
+        let mut ctx = backing.turn_processing_context();
+        let mut outcome_ctx = ToolOutcomeContext {
+            ctx: &mut ctx,
+            repeated_tool_attempts: &mut repeated_tool_attempts,
+            turn_modified_files: &mut turn_modified_files,
+        };
+        let outcome = handle_tool_calls(&mut outcome_ctx, &[malformed_call()])
+            .await
+            .expect("malformed call should produce recoverable feedback");
+        assert!(outcome.is_none(), "failure {failure} should remain recoverable");
+    }
+
+    let mut ctx = backing.turn_processing_context();
+    let mut outcome_ctx = ToolOutcomeContext {
+        ctx: &mut ctx,
+        repeated_tool_attempts: &mut repeated_tool_attempts,
+        turn_modified_files: &mut turn_modified_files,
+    };
+    let outcome = handle_tool_calls(&mut outcome_ctx, &[malformed_call()])
+        .await
+        .expect("preflight circuit should return a structured blocker");
+
+    assert!(matches!(
+        outcome,
+        Some(TurnHandlerOutcome::Break(TurnLoopResult::Blocked { reason: Some(reason) }))
+            if reason.contains("code_search") && reason.contains(&max_failures.to_string())
+    ));
+    assert!(ctx.working_history.iter().any(|message| {
+        let content = message.content.as_text();
+        content.contains("preflight_circuit_breaker")
+            && content.contains("schema_correction")
+            && content.contains("next_action")
+    }));
+}
+
+#[tokio::test]
+async fn valid_admitted_tool_call_resets_preflight_circuit_streak() {
+    let mut backing = TestContextBacking::new(4).await;
+    let mut repeated_tool_attempts = LoopTracker::new();
+    let mut turn_modified_files = BTreeSet::new();
+    let malformed_call = || {
+        PreparedAssistantToolCall::new(uni::ToolCall::function(
+            "malformed_call".to_string(),
+            tool_names::CODE_SEARCH.to_string(),
+            "{not-json".to_string(),
+        ))
+    };
+
+    for _ in 0..2 {
+        let mut ctx = backing.turn_processing_context();
+        let mut outcome_ctx = ToolOutcomeContext {
+            ctx: &mut ctx,
+            repeated_tool_attempts: &mut repeated_tool_attempts,
+            turn_modified_files: &mut turn_modified_files,
+        };
+        assert!(
+            handle_tool_calls(&mut outcome_ctx, &[malformed_call()])
+                .await
+                .expect("malformed call should be recoverable")
+                .is_none()
+        );
+    }
+
+    let valid_file = backing.sample_file.clone();
+    let valid_args = json!({"path": valid_file.to_string_lossy()});
+    cache_tool_permission(&mut backing, tool_names::READ_FILE, &valid_args, PermissionGrant::Permanent).await;
+    let mut ctx = backing.turn_processing_context();
+    let mut outcome_ctx = ToolOutcomeContext {
+        ctx: &mut ctx,
+        repeated_tool_attempts: &mut repeated_tool_attempts,
+        turn_modified_files: &mut turn_modified_files,
+    };
+    assert!(
+        handle_single_tool_call(&mut outcome_ctx, "valid_call", tool_names::READ_FILE, valid_args)
+            .await
+            .expect("valid call should execute")
+            .is_none()
+    );
+
+    let max_failures = {
+        let ctx = backing.turn_processing_context();
+        max_consecutive_blocked_tool_calls_per_turn(&ctx)
+    };
+    for failure in 1..max_failures {
+        let mut ctx = backing.turn_processing_context();
+        let mut outcome_ctx = ToolOutcomeContext {
+            ctx: &mut ctx,
+            repeated_tool_attempts: &mut repeated_tool_attempts,
+            turn_modified_files: &mut turn_modified_files,
+        };
+        assert!(
+            handle_tool_calls(&mut outcome_ctx, &[malformed_call()])
+                .await
+                .expect("malformed call after reset should be recoverable")
+                .is_none(),
+            "failure {failure} should remain recoverable"
+        );
+    }
+    let mut ctx = backing.turn_processing_context();
+    let mut outcome_ctx = ToolOutcomeContext {
+        ctx: &mut ctx,
+        repeated_tool_attempts: &mut repeated_tool_attempts,
+        turn_modified_files: &mut turn_modified_files,
+    };
+    assert!(matches!(
+        handle_tool_calls(&mut outcome_ctx, &[malformed_call()])
+            .await
+            .expect("preflight circuit should return a blocker"),
+        Some(TurnHandlerOutcome::Break(TurnLoopResult::Blocked { .. }))
+    ));
+}
+
+#[tokio::test]
+async fn batched_preflight_failures_trip_the_same_circuit() {
+    let mut backing = TestContextBacking::new(4).await;
+    let mut repeated_tool_attempts = LoopTracker::new();
+    let mut turn_modified_files = BTreeSet::new();
+    let malformed_call = |id: &str| {
+        PreparedAssistantToolCall::new(uni::ToolCall::function(
+            id.to_string(),
+            tool_names::CODE_SEARCH.to_string(),
+            r#"{"query":4}"#.to_string(),
+        ))
+    };
+    let max_failures = {
+        let ctx = backing.turn_processing_context();
+        max_consecutive_blocked_tool_calls_per_turn(&ctx)
+    };
+
+    for _ in 0..max_failures {
+        let mut ctx = backing.turn_processing_context();
+        ctx.full_auto = true;
+        let mut outcome_ctx = ToolOutcomeContext {
+            ctx: &mut ctx,
+            repeated_tool_attempts: &mut repeated_tool_attempts,
+            turn_modified_files: &mut turn_modified_files,
+        };
+        let calls = [malformed_call("batch_a"), malformed_call("batch_b")];
+        let outcome = handle_tool_calls(&mut outcome_ctx, &calls)
+            .await
+            .expect("batched preflight validation should complete");
+        if outcome.is_some() {
+            assert!(matches!(outcome, Some(TurnHandlerOutcome::Break(TurnLoopResult::Blocked { .. }))));
+            return;
+        }
+    }
+
+    panic!("batched preflight failures did not trip the circuit");
+}
+
+#[tokio::test]
+async fn preflight_circuit_drains_remaining_batch_tool_responses() {
+    let mut backing = TestContextBacking::new(4).await;
+    let mut repeated_tool_attempts = LoopTracker::new();
+    let mut turn_modified_files = BTreeSet::new();
+    let max_failures = {
+        let ctx = backing.turn_processing_context();
+        max_consecutive_blocked_tool_calls_per_turn(&ctx)
+    };
+    let mut tool_calls = Vec::with_capacity(max_failures + 2);
+    for index in 0..max_failures {
+        tool_calls.push(PreparedAssistantToolCall::new(uni::ToolCall::function(
+            format!("malformed_batch_{index}"),
+            tool_names::CODE_SEARCH.to_string(),
+            "{not-json".to_string(),
+        )));
+    }
+    for index in 0..2 {
+        tool_calls.push(PreparedAssistantToolCall::new(uni::ToolCall::function(
+            format!("valid_after_{index}"),
+            tool_names::CODE_SEARCH.to_string(),
+            serde_json::to_string(&json!({"query": format!("batch continuation {index}")}))
+                .expect("serialize valid tool args"),
+        )));
+    }
+    let expected_ids = tool_calls.iter().map(|call| call.call_id().to_string()).collect::<Vec<_>>();
+
+    let mut ctx = backing.turn_processing_context();
+    ctx.full_auto = true;
+    let mut outcome_ctx = ToolOutcomeContext {
+        ctx: &mut ctx,
+        repeated_tool_attempts: &mut repeated_tool_attempts,
+        turn_modified_files: &mut turn_modified_files,
+    };
+    let outcome = handle_tool_calls(&mut outcome_ctx, &tool_calls)
+        .await
+        .expect("batch preflight circuit should return a terminal outcome");
+
+    assert!(matches!(outcome, Some(TurnHandlerOutcome::Break(TurnLoopResult::Blocked { .. }))));
+    for tool_call_id in expected_ids {
+        assert!(
+            ctx.working_history
+                .iter()
+                .any(|message| message.tool_call_id.as_deref() == Some(tool_call_id.as_str())),
+            "missing tool response for {tool_call_id}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn unified_validation_ignores_preseeded_legacy_loop_detector_state() {
     let mut backing = TestContextBacking::new(2).await;
     backing.select_build_primary_agent();

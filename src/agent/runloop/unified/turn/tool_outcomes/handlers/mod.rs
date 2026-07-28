@@ -50,6 +50,88 @@ use rate_limit::acquire_adaptive_rate_limit_slot;
 use recovery::try_interactive_circuit_recovery;
 pub(crate) use types::{PreparedToolCall, ToolOutcomeContext, ValidationResult};
 
+/// Record a malformed or preflight-invalid tool call and return a terminal
+/// outcome when the independent preflight circuit breaker reaches its cap.
+/// Policy denials intentionally do not use this path; they remain governed by
+/// the existing blocked-call fuse.
+pub(crate) fn handle_preflight_failure(
+    ctx: &mut TurnProcessingContext<'_>,
+    tool_call_id: &str,
+    tool_name: &str,
+    error: &str,
+    fallback: Option<(String, serde_json::Value)>,
+) -> Option<TurnHandlerOutcome> {
+    let failure_count = ctx.record_preflight_failure();
+    let max_failures = max_consecutive_blocked_tool_calls_per_turn(ctx);
+    let circuit_tripped = failure_count >= max_failures;
+    let schema_correction = preflight_schema_correction(tool_name);
+    let next_action = if circuit_tripped {
+        "Stop retrying this malformed call. End the turn and report the schema correction to the user."
+    } else {
+        "Correct the arguments using schema_correction, then retry this tool once."
+    };
+    let failure_kind = if circuit_tripped {
+        "preflight_circuit_breaker"
+    } else {
+        "preflight_validation"
+    };
+    let mut payload = serde_json::json!({
+        "error": format!("Tool preflight validation failed for '{tool_name}': {error}"),
+        "failure_kind": failure_kind,
+        "tool_name": tool_name,
+        "failure_count": failure_count,
+        "schema_correction": schema_correction,
+        "next_action": next_action,
+        "retryable": !circuit_tripped,
+    });
+    if let Some((fallback_tool, fallback_args)) = fallback {
+        if let Some(object) = payload.as_object_mut() {
+            object.insert("fallback_tool".to_string(), serde_json::Value::String(fallback_tool));
+            object.insert("fallback_tool_args".to_string(), fallback_args);
+        }
+    }
+    ctx.push_tool_response(tool_call_id, Some(tool_name), payload.to_string());
+
+    circuit_tripped.then(|| {
+        let reason = format!(
+            "Preflight validation circuit breaker reached after {failure_count} consecutive failures for tool '{tool_name}'."
+        );
+        TurnHandlerOutcome::Break(TurnLoopResult::Blocked { reason: Some(reason) })
+    })
+}
+
+fn preflight_schema_correction(tool_name: &str) -> String {
+    format!(
+        "Provide a JSON object matching the declared schema for '{tool_name}'. Parse the arguments as JSON before retrying."
+    )
+}
+
+/// Emit matching responses for calls that remain in an assistant batch after
+/// the preflight circuit trips. These calls are intentionally not admitted or
+/// executed, but providers still require one tool response per assistant call.
+pub(crate) fn drain_preflight_circuit_responses(
+    ctx: &mut TurnProcessingContext<'_>,
+    remaining_tool_calls: &[PreparedAssistantToolCall],
+) {
+    let failure_count = ctx.harness_state.consecutive_preflight_failures;
+    for tool_call in remaining_tool_calls {
+        let tool_name = tool_call.tool_name();
+        let error = tool_call.args_error().unwrap_or(
+            "Tool call skipped because another call in this assistant batch tripped the preflight circuit breaker.",
+        );
+        let payload = serde_json::json!({
+            "error": format!("Tool call '{tool_name}' was not executed: {error}"),
+            "failure_kind": "preflight_circuit_breaker",
+            "tool_name": tool_name,
+            "failure_count": failure_count,
+            "schema_correction": preflight_schema_correction(tool_name),
+            "next_action": "Stop retrying this batch. End the turn and report the schema correction to the user.",
+            "retryable": false,
+        });
+        ctx.push_tool_response(tool_call.call_id(), Some(tool_name), payload.to_string());
+    }
+}
+
 fn build_failure_error_content(error: String, failure_kind: &'static str) -> String {
     super::execution_result::build_error_content(error, None, None, failure_kind).to_string()
 }
@@ -369,17 +451,14 @@ pub(crate) async fn validate_tool_call<'a>(
     // Early guard: reject empty tool names with a clear error message.
     // This handles malformed LLM responses where tool name is missing.
     if tool_name.trim().is_empty() {
-        ctx.push_tool_response(
+        let outcome = handle_preflight_failure(
+            ctx,
             tool_call_id,
+            "<empty tool name>",
+            "Tool call has an empty tool name. Provide a valid tool name.",
             None,
-            build_validation_error_content_with_fallback(
-                "Tool call has an empty tool name. Provide a valid tool name.".to_string(),
-                "preflight",
-                None,
-                None,
-            ),
         );
-        return Ok(ValidationResult::Blocked);
+        return Ok(outcome.map_or(ValidationResult::Handled, ValidationResult::Outcome));
     }
 
     if let Some(notice) = ctx.harness_state.record_tool_budget_exhaustion_notice() {
@@ -426,8 +505,17 @@ pub(crate) async fn validate_tool_call<'a>(
                 recovered_prepared
             } else {
                 let fallback = preflight_validation_fallback(tool_name, args_val, &err);
-                let (fallback_tool, fallback_tool_args) =
-                    fallback.map(|(tool, args)| (Some(tool), Some(args))).unwrap_or((None, None));
+                let (fallback_tool, fallback_tool_args) = fallback
+                    .as_ref()
+                    .map(|(tool, args)| (Some(tool.clone()), Some(args.clone())))
+                    .unwrap_or((None, None));
+                let error_text = err.to_string();
+                if check_is_argument_error(&error_text)
+                    || error_text.to_ascii_lowercase().contains("tool preflight validation failed")
+                {
+                    let outcome = handle_preflight_failure(ctx, tool_call_id, tool_name, &error_text, fallback);
+                    return Ok(outcome.map_or(ValidationResult::Handled, ValidationResult::Outcome));
+                }
                 ctx.push_tool_response(
                     tool_call_id,
                     Some(tool_name),
@@ -438,18 +526,15 @@ pub(crate) async fn validate_tool_call<'a>(
                         fallback_tool_args,
                     ),
                 );
-                // Malformed arguments are actionable tool feedback, not a
-                // policy violation. Keep the blocked-call fuse reserved for
-                // actual guard and permission denials so one bad model payload
-                // cannot terminate the turn before the model can self-correct.
-                return Ok(if check_is_argument_error(&err.to_string()) {
-                    ValidationResult::Handled
-                } else {
-                    ValidationResult::Blocked
-                });
+                return Ok(ValidationResult::Blocked);
             }
         }
     };
+
+    // Admission succeeded, so a previous malformed/schema-invalid streak has
+    // been corrected. Do this before later policy/loop guards, which have their
+    // own recovery fuse and should not inherit stale preflight failures.
+    ctx.reset_preflight_failure_streak();
 
     let canonical_tool_name = prepared.canonical_name.clone();
     if !primary_agent_allows_tool(ctx.active_primary_agent.active(), &canonical_tool_name) {

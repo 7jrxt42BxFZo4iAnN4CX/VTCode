@@ -493,8 +493,11 @@ pub(crate) async fn execute_plan_approval(
                 "User approved plan via inline overlay (manual edit approvals); enabling mutating tools"
             );
             Ok(execution_agent.map_or(
-                TurnHandlerOutcome::Break(TurnLoopResult::Completed { plan_approved_execution_pending: true }),
-                TurnHandlerOutcome::SwitchPrimaryAgent,
+                TurnHandlerOutcome::BreakWithPolicy {
+                    result: TurnLoopResult::Completed { plan_approved_execution_pending: true },
+                    skip_confirmations: false,
+                },
+                |agent| TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy { agent, skip_confirmations: false },
             ))
         }
         Ok(PlanConfirmationOutcome::AutoAccept) => {
@@ -506,8 +509,11 @@ pub(crate) async fn execute_plan_approval(
                 "User approved plan via inline overlay (auto-accept); enabling mutating tools"
             );
             Ok(execution_agent.map_or(
-                TurnHandlerOutcome::Break(TurnLoopResult::Completed { plan_approved_execution_pending: true }),
-                TurnHandlerOutcome::SwitchPrimaryAgent,
+                TurnHandlerOutcome::BreakWithPolicy {
+                    result: TurnLoopResult::Completed { plan_approved_execution_pending: true },
+                    skip_confirmations: true,
+                },
+                |agent| TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy { agent, skip_confirmations: true },
             ))
         }
         Ok(PlanConfirmationOutcome::SwitchBuild) => {
@@ -517,7 +523,10 @@ pub(crate) async fn execute_plan_approval(
                 target: "vtcode.planning_workflow",
                 "User handed plan to build agent via inline overlay; switching primary agent"
             );
-            Ok(TurnHandlerOutcome::SwitchPrimaryAgent(builtin_primary_build_agent().name))
+            Ok(TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy {
+                agent: builtin_primary_build_agent().name,
+                skip_confirmations: false,
+            })
         }
         Ok(PlanConfirmationOutcome::SwitchAuto) => {
             finish_planning_workflow(tool_registry, plan_session, handle, false).await;
@@ -526,7 +535,10 @@ pub(crate) async fn execute_plan_approval(
                 target: "vtcode.planning_workflow",
                 "User handed plan to auto agent via inline overlay; switching primary agent"
             );
-            Ok(TurnHandlerOutcome::SwitchPrimaryAgent(builtin_primary_auto_agent().name))
+            Ok(TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy {
+                agent: builtin_primary_auto_agent().name,
+                skip_confirmations: true,
+            })
         }
         Ok(PlanConfirmationOutcome::EditPlan) => {
             tracing::info!(

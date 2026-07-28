@@ -223,6 +223,13 @@ Handoff options perform a true primary-agent switch: the chosen agent becomes ac
 executes the approved plan. The planning workflow is disabled and mutating tools are enabled
 once the user approves the plan.
 
+The confirmation choice is preserved as explicit handoff state. **Approve (Auto-accept edits)**
+and **Switch to auto agent** bypass subsequent confirmations; **Approve (Manual review)** and
+**Switch to build agent** retain per-action confirmation prompts. This policy remains attached
+when a read-only `plan` agent falls back to `build`, and is not inferred from the destination
+agent's name. Textual approvals use the same rule: only an automatic/full-auto route enables
+the bypass.
+
 The approved execution turn ends with a concise summary of the outcome, changed
 files, verification performed, and remaining blockers. In interactive sessions
 this appears alongside the final response. In headless sessions, a plan that

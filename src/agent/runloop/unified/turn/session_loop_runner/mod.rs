@@ -917,6 +917,7 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                             result: RunLoopTurnLoopResult::Aborted,
                             turn_modified_files: std::collections::BTreeSet::new(),
                             pending_primary_agent: None,
+                            pending_plan_auto_accept: false,
                             plan_approved_execution_pending: false,
                         }
                     }
@@ -945,6 +946,8 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                 let outcome_result = outcome.result.clone();
                 let execution_modified_files = outcome.turn_modified_files.clone();
                 let switch_primary_agent = outcome.pending_primary_agent.clone();
+                let has_primary_agent_switch = switch_primary_agent.is_some();
+                let plan_auto_accept = outcome.pending_plan_auto_accept;
                 let plan_approved_execution_pending = outcome.plan_approved_execution_pending;
                 let turn_elapsed = turn_started_at.elapsed();
                 let show_turn_timer = vt_cfg.as_ref().map(|cfg| cfg.ui.show_turn_timer).unwrap_or(true);
@@ -1008,7 +1011,11 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                             &format!("Approved plan requires a write-capable agent; switching to {}.", execution_agent),
                         )?;
                     }
-                    session_skip_confirmations = execution_agent.eq_ignore_ascii_case("auto");
+                    // The approval choice, rather than the destination agent
+                    // name, owns confirmation policy. This keeps a manual
+                    // Execute/Switch Build handoff prompting even if an
+                    // earlier agent or fallback happens to be named `auto`.
+                    session_skip_confirmations = plan_auto_accept;
                     handle.set_skip_confirmations(session_skip_confirmations);
                     sync_primary_agent_permissions(&mut vt_cfg, active_primary_agent.active());
                     apply_primary_agent_tool_policy_overrides(&tool_registry, active_primary_agent.active()).await;
@@ -1035,6 +1042,10 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                         agent = %execution_agent,
                         "Switched primary agent after plan approval"
                     );
+                }
+                if plan_approved_execution_pending && !has_primary_agent_switch {
+                    session_skip_confirmations = plan_auto_accept;
+                    handle.set_skip_confirmations(session_skip_confirmations);
                 }
                 if plan_approved_execution_pending {
                     approved_plan_execution_turn = true;

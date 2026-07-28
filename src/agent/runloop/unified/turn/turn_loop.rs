@@ -204,6 +204,10 @@ pub(crate) struct TurnLoopOutcome {
     /// When set, the interaction loop should switch the active primary agent
     /// to this name after the turn completes.
     pub pending_primary_agent: Option<String>,
+    /// Explicit auto-accept state from plan approval. This must survive an
+    /// agent fallback from `plan` to `build`; inferring it from the agent name
+    /// loses the user's confirmation choice.
+    pub pending_plan_auto_accept: bool,
     /// When true, the plan was approved via the inline confirmation overlay
     /// inside the turn loop and the session loop must push an execution
     /// directive before starting the next turn so the model begins
@@ -471,6 +475,7 @@ pub(crate) async fn run_turn_loop(
     let mut result = TurnLoopResult::Completed { plan_approved_execution_pending: false };
     let mut turn_modified_files = BTreeSet::new();
     let mut pending_primary_agent: Option<String> = None;
+    let mut pending_plan_auto_accept = false;
     *ctx.auto_finish_planning_attempted = false;
 
     ctx.set_phase(TurnPhase::Preparing);
@@ -578,9 +583,10 @@ pub(crate) async fn run_turn_loop(
         .await?;
 
         if transition.should_break() {
-            let (loop_result, agent) = transition.into_result_and_agent();
+            let (loop_result, agent, auto_accept) = transition.into_result_and_agent();
             result = loop_result;
             pending_primary_agent = agent;
+            pending_plan_auto_accept = auto_accept;
             break;
         }
 
@@ -1120,6 +1126,17 @@ pub(crate) async fn run_turn_loop(
                 result = TurnLoopResult::Completed { plan_approved_execution_pending: true };
                 break;
             }
+            TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy { agent, skip_confirmations } => {
+                pending_primary_agent = Some(agent);
+                pending_plan_auto_accept = skip_confirmations;
+                result = TurnLoopResult::Completed { plan_approved_execution_pending: true };
+                break;
+            }
+            TurnHandlerOutcome::BreakWithPolicy { result: outcome_result, skip_confirmations } => {
+                pending_plan_auto_accept = skip_confirmations;
+                result = outcome_result;
+                break;
+            }
             TurnHandlerOutcome::Break(outcome_result) => {
                 // When the model violates the tool-free recovery contract
                 // (emits tool calls or textual tool-call markup instead of a
@@ -1194,6 +1211,7 @@ pub(crate) async fn run_turn_loop(
         result,
         turn_modified_files,
         pending_primary_agent,
+        pending_plan_auto_accept,
         plan_approved_execution_pending,
     })
 }

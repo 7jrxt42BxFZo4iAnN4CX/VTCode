@@ -294,13 +294,13 @@ fn shell_task_guidance(shell_profile: ResolvedShellPromptProfile) -> &'static st
 fn code_search_guidance(has_exec: bool, shell_profile: ResolvedShellPromptProfile) -> &'static str {
     match (has_exec, shell_profile) {
         (true, ResolvedShellPromptProfile::UnixLike) => {
-            "- Advanced `code_search` takes `query` plus optional `path`, `file_types`, `result_types`, and `max_results`; results are recognised definitions, exact syntactic usages that are not resolved references, literal text, and matching paths. Queries use literal smart-case and support `|`-separated literal alternatives. If results are truncated, narrow a filter in another call. Use `exec_command` or a specialised skill for arbitrary syntax-pattern work."
+            "- Advanced `code_search` takes `query` plus optional `path`, `file_types`, `result_types`, and `max_results`; results are recognised definitions, exact syntactic usages that are not resolved references, literal text, and matching paths. Queries use literal smart-case and support `|`-separated literal alternatives. If results are truncated, narrow a filter in another call. Request shape example: `{\"query\":\"TurnLoop\",\"path\":\"src\",\"result_types\":[\"definition\"],\"max_results\":20}`. `result_types` must be an array and `max_results` an integer. Do not JSON-encode arrays or integers as strings. Use `exec_command` or a specialised skill for arbitrary syntax-pattern work."
         }
         (true, ResolvedShellPromptProfile::PowerShell) => {
-            "- Advanced `code_search` takes `query` plus optional `path`, `file_types`, `result_types`, and `max_results`; results are recognised definitions, exact syntactic usages that are not resolved references, literal text, and matching paths. Queries use literal smart-case and support `|`-separated literal alternatives. If results are truncated, narrow a filter in another call. Use `exec_command` or a specialised skill for arbitrary syntax-pattern work."
+            "- Advanced `code_search` takes `query` plus optional `path`, `file_types`, `result_types`, and `max_results`; results are recognised definitions, exact syntactic usages that are not resolved references, literal text, and matching paths. Queries use literal smart-case and support `|`-separated literal alternatives. If results are truncated, narrow a filter in another call. Request shape example: `{\"query\":\"TurnLoop\",\"path\":\"src\",\"result_types\":[\"definition\"],\"max_results\":20}`. `result_types` must be an array and `max_results` an integer. Do not JSON-encode arrays or integers as strings. Use `exec_command` or a specialised skill for arbitrary syntax-pattern work."
         }
         (false, _) => {
-            "- Advanced `code_search` takes `query` plus optional `path`, `file_types`, `result_types`, and `max_results`; results are recognised definitions, exact syntactic usages that are not resolved references, literal text, and matching paths. Queries use literal smart-case and support `|`-separated literal alternatives. If results are truncated, narrow a filter in another call."
+            "- Advanced `code_search` takes `query` plus optional `path`, `file_types`, `result_types`, and `max_results`; results are recognised definitions, exact syntactic usages that are not resolved references, literal text, and matching paths. Queries use literal smart-case and support `|`-separated literal alternatives. If results are truncated, narrow a filter in another call. Request shape example: `{\"query\":\"TurnLoop\",\"path\":\"src\",\"result_types\":[\"definition\"],\"max_results\":20}`. `result_types` must be an array and `max_results` an integer. Do not JSON-encode arrays or integers as strings."
         }
     }
 }
@@ -366,6 +366,8 @@ mod tests {
         assert!(guidelines.contains("Advanced `code_search` takes `query`"));
         assert!(guidelines.contains("literal smart-case"));
         assert!(guidelines.contains("exact syntactic usages"));
+        assert!(guidelines.contains("\"result_types\":[\"definition\"]"));
+        assert!(guidelines.contains("Do not JSON-encode arrays or integers as strings"));
         assert!(guidelines.contains("git diff -- <path>"));
         assert!(guidelines.contains("build tools"));
         assert!(guidelines.contains("test tools"));

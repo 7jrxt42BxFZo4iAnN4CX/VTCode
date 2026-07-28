@@ -339,7 +339,6 @@ impl<'a> TurnProcessingContext<'a> {
         }
         self.harness_state.stop_hook_active = false;
 
-        let mut plan_approved_execution_pending = false;
         if let Some(plan_text) = proposed_plan {
             let planning_active = self.is_planning_active();
             tracing::info!(
@@ -428,13 +427,17 @@ impl<'a> TurnProcessingContext<'a> {
                 false,
             )
             .await;
-            plan_approved_execution_pending = true;
+            self.handle.set_skip_confirmations(true);
             if let Some(agent) = execution_agent {
-                return Ok(TurnHandlerOutcome::SwitchPrimaryAgent(agent));
+                return Ok(TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy { agent, skip_confirmations: true });
             }
+            return Ok(TurnHandlerOutcome::BreakWithPolicy {
+                result: TurnLoopResult::Completed { plan_approved_execution_pending: true },
+                skip_confirmations: true,
+            });
         }
 
-        Ok(TurnHandlerOutcome::Break(TurnLoopResult::Completed { plan_approved_execution_pending }))
+        Ok(TurnHandlerOutcome::Break(TurnLoopResult::Completed { plan_approved_execution_pending: false }))
     }
 
     async fn emit_plan_events(&mut self, plan_text: &str) {

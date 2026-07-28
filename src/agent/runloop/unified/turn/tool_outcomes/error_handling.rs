@@ -34,18 +34,21 @@ pub(super) fn is_blocked_or_denied_failure(error: &str) -> bool {
 /// suggest concrete fixes instead of just reporting a generic denial.
 pub(crate) fn tool_denial_diagnostic(tool_name: &str) -> Option<serde_json::Value> {
     match tool_name {
-        "exec_command" => Some(serde_json::json!({
-            "cause": "The 'exec_command' tool (shell command execution) is denied by tool policy configuration.",
-            "impact": "No shell commands can be executed, including: cargo build, cargo check, cargo test, cargo clippy, cargo fmt, and any other command-line tools.",
-            "fix": {
-                "action": "Change the tool policy from 'deny' to 'allow' (or 'prompt') in the configuration files.",
-                "files": [
-                    "vtcode.toml: [tools.policies] section - change: exec_command = \"deny\" to: exec_command = \"allow\"",
-                    ".vtcode/tool-policy.json: policies object - change: \"exec_command\": \"deny\" to: \"exec_command\": \"allow\""
-                ],
-                "note": "After changing the files, restart the session for the policy to take effect."
-            }
-        })),
+        tool_names::RUN_PTY_CMD | tool_names::UNIFIED_EXEC | tool_names::EXEC_COMMAND | "unified_exec" => {
+            Some(serde_json::json!({
+                "cause": format!("The '{tool_name}' tool (shell command execution) is denied by tool policy configuration."),
+                "impact": "No shell commands can be executed, including: cargo build, cargo check, cargo test, cargo clippy, cargo fmt, and any other command-line tools.",
+                "fix": {
+                    "action": "Change the tool policy from 'deny' to 'allow' (or 'prompt') in the configuration files.",
+                    "files": [
+                    format!("vtcode.toml: [tools.policies] section - set '{tool_name}' to \"allow\""),
+                    format!(".vtcode/tool-policy.json: policies object - set '{tool_name}' to \"allow\""),
+                    "Recognized shell aliases: run_pty_cmd, unified_exec, exec_command; update the exact alias shown in this denial.".to_string()
+                    ],
+                "note": format!("Update that exact tool alias '{tool_name}' (recognized shell aliases: run_pty_cmd, unified_exec, exec_command), then restart the session so the policy snapshot is rebuilt. Configuration changes do not alter the current session policy snapshot.")
+                }
+            }))
+        }
         // `request_user_input` is permanently unavailable in non-interactive
         // runtimes (e.g. headless sessions). Without this directive, the model
         // sees a generic "execution denied by policy" and retries the call
@@ -481,6 +484,18 @@ mod tests {
     fn exec_command_denial_still_returns_config_fix() {
         let diagnostic = tool_denial_diagnostic("exec_command").expect("exec_command should have a diagnostic");
         assert!(diagnostic.get("fix").is_some(), "exec_command diagnostic should still have a fix field");
+        let files = diagnostic["fix"]["files"].to_string();
+        assert!(files.contains("run_pty_cmd"), "diagnostic must name the configured shell policy alias");
+    }
+
+    #[test]
+    fn shell_denial_diagnostic_names_the_exact_active_alias() {
+        for tool_name in ["run_pty_cmd", "unified_exec", "exec_command"] {
+            let diagnostic = tool_denial_diagnostic(tool_name).expect("shell aliases need actionable diagnostics");
+            assert!(diagnostic["cause"].as_str().unwrap_or("").contains(tool_name));
+            assert!(diagnostic["fix"]["files"].to_string().contains(tool_name));
+            assert!(diagnostic["fix"]["note"].as_str().unwrap_or("").contains("policy snapshot"));
+        }
     }
 
     #[test]

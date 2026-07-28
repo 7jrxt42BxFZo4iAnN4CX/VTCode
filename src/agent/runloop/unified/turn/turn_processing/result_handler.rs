@@ -184,6 +184,8 @@ pub(crate) async fn handle_turn_processing_result<'a>(
                     TurnHandlerOutcome::Continue => "continue",
                     TurnHandlerOutcome::Break(_) => "break",
                     TurnHandlerOutcome::SwitchPrimaryAgent(_) => "switch_primary_agent",
+                    TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy { .. } => "switch_primary_agent",
+                    TurnHandlerOutcome::BreakWithPolicy { .. } => "break",
                 },
                 "turn metric"
             );

@@ -177,6 +177,14 @@ impl<'a> TurnProcessingContext<'a> {
         self.harness_state.blocked_tool_calls
     }
 
+    pub(crate) fn record_preflight_failure(&mut self) -> usize {
+        self.harness_state.record_preflight_failure()
+    }
+
+    pub(crate) fn reset_preflight_failure_streak(&mut self) {
+        self.harness_state.reset_preflight_failure_streak();
+    }
+
     pub(crate) fn activate_recovery(&mut self, reason: impl Into<String>) {
         self.harness_state.activate_recovery(reason);
     }

@@ -315,8 +315,17 @@ impl WebFetchTool {
     }
 
     fn validate_url(&self, url: &str) -> Result<()> {
+        let parsed = Url::parse(url).map_err(|error| {
+            anyhow!(
+                "web_fetch only accepts remote HTTP(S) URLs; use read_file or unified_file to read local files: {error}"
+            )
+        })?;
+        if !matches!(parsed.scheme(), "http" | "https") {
+            bail!("web_fetch only accepts remote HTTP(S) URLs; use read_file or unified_file to read local files");
+        }
+
         // HTTPS enforcement (can be disabled only for testing)
-        if self.strict_https_only && !url.starts_with("https://") {
+        if self.strict_https_only && parsed.scheme() != "https" {
             return Err(anyhow!("Only HTTPS URLs are allowed for security"));
         }
 
@@ -719,6 +728,21 @@ impl Default for WebFetchTool {
 #[async_trait]
 impl Tool for WebFetchTool {
     async fn execute(&self, mut args: Value) -> Result<Value> {
+        // Validate before dispatching to either backend. The markdown path is
+        // a convenience route through Defuddle, but it must have the same
+        // remote-only and SSRF policy as the normal fetch path.
+        if let Some(url) = args.get("url").and_then(Value::as_str) {
+            let max_bytes = args
+                .get("max_bytes")
+                .and_then(Value::as_u64)
+                .map(|value| value as usize)
+                .unwrap_or(MAX_CONTENT_SIZE);
+            let timeout_secs = args.get("timeout_secs").and_then(Value::as_u64).unwrap_or(DEFAULT_TIMEOUT_SECS);
+            if let Err(error) = self.validate_url(url) {
+                return Ok(web_fetch_error_response(url, max_bytes, timeout_secs, &error));
+            }
+        }
+
         // Backwards-compatible argument normalization:
         // - If called with only { "url": "..." } (no prompt), interpret as:
         //   "Fetch this URL and return a concise natural language summary."
@@ -815,6 +839,13 @@ fn classify_web_fetch_error(message: &str) -> (&'static str, Option<u16>, &'stat
             "network_error",
             None,
             "The request timed out. The host may be slow or unreachable. Try web_search to look up the page title first, or retry with a larger timeout_secs.",
+        );
+    }
+    if lower.contains("only accepts remote http") || lower.contains("local files") {
+        return (
+            "local_resource",
+            None,
+            "web_fetch is for remote HTTP(S) URLs only. Use read_file or unified_file to read a local workspace file; do not retry web_fetch with a file:// URL.",
         );
     }
     if lower.contains("dns") || lower.contains("name resolution") || lower.contains("connection refused") {
@@ -933,6 +964,76 @@ mod tests {
         .await;
         let error = error_text(&result).unwrap_or("");
         assert!(error.contains("Only HTTPS URLs are allowed"));
+    }
+
+    #[tokio::test]
+    async fn rejects_local_file_urls_with_read_file_guidance() {
+        let tool = WebFetchTool::new();
+        let result = execute_json(
+            &tool,
+            json!({
+                "url": "file:///tmp/checkpoint.json",
+                "prompt": "Read the file"
+            }),
+        )
+        .await;
+        let error = error_text(&result).unwrap_or("");
+        assert!(error.contains("remote HTTP(S) URLs"));
+        assert_eq!(result["error_type"], "local_resource");
+        assert!(result["next_action"].as_str().unwrap_or("").contains("read_file"));
+    }
+
+    #[tokio::test]
+    async fn rejects_local_file_urls_before_markdown_backend_routing() {
+        let tool = WebFetchTool::new();
+        let result = execute_json(
+            &tool,
+            json!({
+                "url": "file:///tmp/checkpoint.json",
+                "format": "markdown",
+                "prompt": "Read the file"
+            }),
+        )
+        .await;
+
+        assert_eq!(result["error_type"], "local_resource");
+        assert!(error_text(&result).unwrap_or("").contains("remote HTTP(S) URLs"));
+        assert!(result["next_action"].as_str().unwrap_or("").contains("read_file"));
+    }
+
+    #[tokio::test]
+    async fn rejects_relative_urls_before_markdown_backend_routing() {
+        let tool = WebFetchTool::new();
+        let result = execute_json(
+            &tool,
+            json!({
+                "url": "README.md",
+                "format": "markdown",
+                "prompt": "Read the file"
+            }),
+        )
+        .await;
+
+        assert_eq!(result["error_type"], "local_resource");
+        assert!(error_text(&result).unwrap_or("").contains("remote HTTP(S) URLs"));
+        assert!(result["next_action"].as_str().unwrap_or("").contains("unified_file"));
+    }
+
+    #[tokio::test]
+    async fn rejects_relative_urls_before_normal_fetch_routing() {
+        let tool = WebFetchTool::new();
+        let result = execute_json(
+            &tool,
+            json!({
+                "url": "README.md",
+                "prompt": "Read the file"
+            }),
+        )
+        .await;
+
+        assert_eq!(result["error_type"], "local_resource");
+        assert!(error_text(&result).unwrap_or("").contains("remote HTTP(S) URLs"));
+        assert!(result["next_action"].as_str().unwrap_or("").contains("unified_file"));
     }
 
     #[tokio::test]
