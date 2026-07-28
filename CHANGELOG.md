@@ -2,6 +2,16 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.141.3 - 2026-07-28
+
+### Highlights
+#### Bug Fixes
+
+- Use plain-code reference in doc comment for private item (defe6728) (@vinhnx)
+### Other Changes
+#### CI
+
+- Increase build timeout to 120 minutes for Linux and Windows, and 130 minutes in release script (eb6771d3) (@vinhnx)
 ## 0.141.2 - 2026-07-28
 
 ### Highlights
