@@ -21,19 +21,19 @@
 
 ## What is VT Code?
 
-VT Code is a Rust coding agent built for long-running autonomous workflows, with OS-native sandboxing, multi-provider LLM support, open protocols, and extensible Skills.
+VT Code is a Rust coding agent built for long-running autonomous workflows. It has OS-native sandboxing, multi-provider LLM support, open protocols, and extensible Skills.
 
 ## Features
 
-- **Agent runtime** - Interactive TUI, slash commands, streaming, `ask`/`exec` CLI, session resume
-- **Coding tools** - Safe file ops, [ripgrep](https://github.com/BurntSushi/ripgrep) search + [ast-grep](https://ast-grep.github.io/) outline symbol maps, fuzzy discovery, code intelligence, project indexing, terminal execution
-- **Extensibility** - [Agent Skills](https://agentskills.io), [Model Context Protocol](https://modelcontextprotocol.io/) MCP client/server, lifecycle hooks, subagents, custom providers, [Agent Client Protocol](https://agentclientprotocol.com) (ACP).
-- **Model providers** - 21+ LLM providers: Anthropic, OpenAI, Gemini, OpenRouter, **local inference via Ollama, LM Studio, and llama.cpp** (managed with the `/local` command), and more
-- **Safety** - Restricted shell sandbox, tool guardrails, subprocess isolation, full audit logging
-- **Provider governance** - `providers_whitelist` restricts which LLM providers are accessible, preventing accidental data leakage to unapproved endpoints
-- **Protocols** - Open Responses, Agent2Agent (A2A), ATIF, Anthropic Messages API
-- **Loop engineering** - Worktree isolation for parallel agents, propose/verify sub-agent separation, durable loop state, cost guardrails
-- **Planning workflow** - Iterate on a build plan with `/plan` and the `plan` primary agent, then hand off to `build`/`auto` via a structured review gate
+- **Agent runtime**, interactive TUI, slash commands, streaming, `ask`/`exec` CLI, and session resume
+- **Coding tools**, safe file ops, [ripgrep](https://github.com/BurntSushi/ripgrep) search, [ast-grep](https://ast-grep.github.io/) outline symbol maps, fuzzy discovery, code intelligence, project indexing, and terminal execution
+- **Extensibility**, [Agent Skills](https://agentskills.io), [Model Context Protocol](https://modelcontextprotocol.io/) MCP client/server, lifecycle hooks, subagents, custom providers, and [Agent Client Protocol](https://agentclientprotocol.com) (ACP)
+- **Model providers**, 21+ LLM providers including Anthropic, OpenAI, Gemini, OpenRouter, **local inference via Ollama, LM Studio, and llama.cpp** (managed with the `/local` command), and more
+- **Safety**, restricted shell sandbox, tool guardrails, subprocess isolation, and full audit logging
+- **Provider governance**, `providers_whitelist` restricts which LLM providers VT Code can access, preventing accidental data leakage to unapproved endpoints
+- **Protocols**, Open Responses, Agent2Agent (A2A), ATIF, and Anthropic Messages API
+- **Loop engineering**, worktree isolation for parallel agents, propose/verify sub-agent separation, durable loop state, and cost guardrails
+- **Planning workflow**, iterate on a build plan with `/plan` and the `plan` primary agent, then hand off to `build`/`auto` via a structured review gate
 
 ## Quick start
 
@@ -74,17 +74,17 @@ vtcode update                  # self-update
 
 ## Documentation
 
-- [**Interactive TUI**](./docs/user-guide/interactive-mode.md) - Primary agents, slash commands (`/model`, `/review`, `/mcp`, `/skills`, `/theme`, `/compact`)
-- [**Full automation**](./docs/guides/full-automation.md) - `--full-auto` CLI, plan-build-evaluate harness, subagents, scheduled tasks
-- [**Providers**](./docs/providers/PROVIDER_GUIDES.md) - Setup guides for all 21 providers
-- [**Configuration**](./docs/config/CONFIG_FIELD_REFERENCE.md) - `vtcode.toml`, tool config, lifecycle hooks
-- [**Agent Skills**](./docs/skills/SKILLS_GUIDE.md) - Creating, loading, and sharing skills
-- [**MCP Integration**](./docs/guides/mcp-integration.md) - Client and server modes
-- [**Editor guides**](./docs/guides/zed-acp.md) - Zed ACP, VS Code, Claude Code
-- [**Safety**](./docs/security/SECURITY_MODEL.md) - Shell sandbox, security hardening, threat model
-- [**Protocols**](./docs/protocols/OPEN_RESPONSES.md) - Open Responses, ATIF, A2A, Anthropic Messages API
-- [**Loop engineering**](./docs/project/PLAN-loop-engineering.md) - Worktree isolation, propose/verify, loop state, cost guardrails
-- [**Planning workflow**](./docs/guides/planning-workflow.md) - `/plan`, review gate, plan handoff to build/auto agents
+- [**Interactive TUI**](./docs/user-guide/interactive-mode.md), primary agents, slash commands (`/model`, `/review`, `/mcp`, `/skills`, `/theme`, `/compact`)
+- [**Full automation**](./docs/guides/full-automation.md), `--full-auto` CLI, plan-build-evaluate harness, subagents, and scheduled tasks
+- [**Providers**](./docs/providers/PROVIDER_GUIDES.md), setup guides for all 21 providers
+- [**Configuration**](./docs/config/CONFIG_FIELD_REFERENCE.md), `vtcode.toml`, tool config, and lifecycle hooks
+- [**Agent Skills**](./docs/skills/SKILLS_GUIDE.md), creating, loading, and sharing skills
+- [**MCP Integration**](./docs/guides/mcp-integration.md), client and server modes
+- [**Editor guides**](./docs/guides/zed-acp.md), Zed ACP, VS Code, and Claude Code
+- [**Safety**](./docs/security/SECURITY_MODEL.md), shell sandbox, security hardening, and threat model
+- [**Protocols**](./docs/protocols/OPEN_RESPONSES.md), Open Responses, ATIF, A2A, and Anthropic Messages API
+- [**Loop engineering**](./docs/project/PLAN-loop-engineering.md), worktree isolation, propose/verify, loop state, and cost guardrails
+- [**Planning workflow**](./docs/guides/planning-workflow.md), `/plan`, review gate, and plan handoff to build/auto agents
 
 ## Providers
 
@@ -115,9 +115,9 @@ Leave it empty (the default) to allow all built-in and custom providers. See [Co
 Run models entirely on your machine for privacy, offline use, or zero token
 cost. VT Code supports three local backends, all managed from the TUI:
 
-- **Ollama** (`ollama serve`) — best-supported local backend; auto-loads pulled models.
-- **LM Studio** (`lms server start`) — OpenAI-compatible; select the loaded model in the picker.
-- **llama.cpp** (`llama-server -m model.gguf`) — most automated; auto-starts via `LLAMACPP_MODEL_PATH`.
+- **Ollama** (`ollama serve`), best-supported local backend; auto-loads pulled models.
+- **LM Studio** (`lms server start`), OpenAI-compatible; select the loaded model in the picker.
+- **llama.cpp** (`llama-server -m model.gguf`), most automated; auto-starts via `LLAMACPP_MODEL_PATH`.
 
 ```yaml
 /local                 # interactive local server manager
@@ -128,11 +128,10 @@ cost. VT Code supports three local backends, all managed from the TUI:
 Before each generation VT Code verifies the server is up and the model is
 loaded, and on failure prints the exact recovery command (e.g.
 `ollama pull gpt-oss:20b`) instead of a cryptic error. Local inference is
-**experimental** and depends on your hardware — see
+**experimental** and depends on your hardware. See
 [Local Models guide](./docs/guides/local-models.md) for trade-offs, hardware
-sizing, and a reliable-setup checklist, and
-[Local Inference Servers](./docs/providers/local-servers.md) for the full
-`/local` reference.
+sizing, and a reliable-setup checklist. For the full `/local` reference, see
+[Local Inference Servers](./docs/providers/local-servers.md).
 
 ## Development
 
@@ -159,25 +158,25 @@ cargo nextest run        # parallel test runner
 
 ## Contributing
 
-VT Code is built by an open source community. Whether you're fixing bugs, improving docs, proposing features, reporting security issues, or shipping patches — all contributions are welcome.
+VT Code is built by an open source community. Whether you're fixing bugs, improving docs, proposing features, reporting security issues, or shipping patches, all contributions are welcome.
 
 **Ways to contribute:**
-- **Security advisories** — responsible disclosure makes everyone safer. See the [Security Policy](https://github.com/vinhnx/VTCode/security/policy) for reporting guidelines.
-- **Bug fixes & patches** — small or large, every fix matters.
-- **Documentation** — guides, examples, and improvements help the whole ecosystem.
-- **Features & ideas** — open an issue or start a discussion.
-- **Code reviews & testing** — help keep the project healthy.
+- **Security advisories**, responsible disclosure makes everyone safer. See the [Security Policy](https://github.com/vinhnx/VTCode/security/policy) for reporting guidelines.
+- **Bug fixes & patches**, small or large, every fix matters.
+- **Documentation**, guides, examples, and improvements help the whole ecosystem.
+- **Features & ideas**, open an issue or start a discussion.
+- **Code reviews & testing**, help keep the project healthy.
 
 **Getting started:**
 - Browse [good first issues](https://github.com/vinhnx/vtcode/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22)
 - Read [CONTRIBUTING.md](./docs/CONTRIBUTING.md) for humans
 - Check [AGENTS.md](./AGENTS.md) for AI agents
 
-Thank you to everyone who has contributed to VT Code — your work makes this project better for all of us.
+Thank you to everyone who has contributed to VT Code, your work makes this project better for all of us.
 
 <p align="center">
   <a href="https://github.com/kernitus"><img src="https://avatars.githubusercontent.com/u/2789734?s=60" width="40" height="40" alt="@kernitus" title="@kernitus 👑 Main Contributor (52 commits)" style="border-radius: 50%; border: 2px solid #FFD700;" /></a>&nbsp;
-  <a href="https://github.com/raphamorim"><img src="https://avatars.githubusercontent.com/u/3630346?s=60" width="40" height="40" alt="@raphamorim" title="@raphamorim 💡 PR #708 — rio-vt migration (2 commits)" style="border-radius: 50%; border: 2px solid #4A90D9;" /></a>&nbsp;
+  <a href="https://github.com/raphamorim"><img src="https://avatars.githubusercontent.com/u/3630346?s=60" width="40" height="40" alt="@raphamorim" title="@raphamorim 💡 PR #708, rio-vt migration (2 commits)" style="border-radius: 50%; border: 2px solid #4A90D9;" /></a>&nbsp;
   <a href="https://github.com/nnfrog"><img src="https://avatars.githubusercontent.com/u/142202920?s=60" width="40" height="40" alt="@nnfrog" title="@nnfrog 🛡️ GHSA-r249-hpfx-x2w7 (security advisory)" style="border-radius: 50%; border: 2px solid #FF6B6B;" /></a>&nbsp;
   <a href="https://github.com/oiwn"><img src="https://avatars.githubusercontent.com/u/398035?s=60" width="40" height="40" alt="@oiwn" title="@oiwn 🚀 Core contributor (6 commits)" style="border-radius: 50%; border: 2px solid #50C878;" /></a>&nbsp;
   <a href="https://github.com/Sachin-Bhat"><img src="https://avatars.githubusercontent.com/u/25080916?s=60" width="40" height="40" alt="@Sachin-Bhat" title="@Sachin-Bhat 🚀 Core contributor (3 commits)" style="border-radius: 50%; border: 2px solid #50C878;" /></a>&nbsp;
@@ -210,6 +209,6 @@ VT Code is a labor of love built in my spare time. If it's helped you ship somet
 
 ## License
 
-First-party code is licensed under **MIT OR Apache-2.0** — choose whichever works best for you. See [LICENSE](LICENSE) for the full Apache-2.0 text; MIT terms are also granted under the same copyright.
+First-party code is licensed under **MIT OR Apache-2.0**, choose whichever works best for you. See [LICENSE](LICENSE) for the full Apache-2.0 text; MIT terms are also granted under the same copyright.
 
 Third-party and inspired-by code remains under its original licenses. See [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES) for attributions.
