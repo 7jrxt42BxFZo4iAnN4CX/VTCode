@@ -159,7 +159,21 @@ cargo nextest run        # parallel test runner
 
 ## Contributing
 
-I'd love to have you, bug reports, docs, features, ideas, all welcome. Start with [issues](https://github.com/vinhnx/vtcode/issues) or [good first issues](https://github.com/vinhnx/vtcode/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22). AI agents see [AGENTS.md](./AGENTS.md). Humans see [CONTRIBUTING.md](./docs/CONTRIBUTING.md).
+VT Code is built by an open source community. Whether you're fixing bugs, improving docs, proposing features, reporting security issues, or shipping patches — all contributions are welcome.
+
+**Ways to contribute:**
+- **Security advisories** — Responsible disclosure strengthens everyone. See [Security Policy](https://github.com/vinhnx/VTCode/security/policy) for reporting guidelines.
+- **Bug fixes & patches** — Small or large, every fix matters.
+- **Documentation** — Guides, examples, and improvements help the whole ecosystem.
+- **Features & ideas** — Open an issue or start a discussion.
+- **Code reviews & testing** — Help maintain quality.
+
+**Getting started:**
+- Browse [good first issues](https://github.com/vinhnx/vtcode/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22)
+- Read [CONTRIBUTING.md](./docs/CONTRIBUTING.md) for humans
+- Check [AGENTS.md](./AGENTS.md) for AI agents
+
+Thank you to everyone who has contributed to VT Code — your work makes this project better for all of us.
 
 <p align="center">
   <a href="https://github.com/kernitus"><img src="https://avatars.githubusercontent.com/u/2789734?s=60" width="40" height="40" alt="@kernitus" title="@kernitus 👑 Main Contributor (52 commits)" style="border-radius: 50%; border: 2px solid #FFD700;" /></a>&nbsp;
