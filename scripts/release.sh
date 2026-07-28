@@ -611,6 +611,127 @@ update_changelog_builtin() {
 	fi
 }
 
+# Update README.md contributor list based on all-time contributors
+update_readme_contributors() {
+	local version=$1
+	local dry_run_flag=$2
+
+	print_info "Updating README.md contributor list..."
+
+	if [[ "$dry_run_flag" == 'true' ]]; then
+		print_info "Dry run - would update README.md contributor list"
+		return 0
+	fi
+
+	# Get all contributors with commit counts (all-time)
+	local temp_contributors
+	temp_contributors=$(mktemp)
+
+	git log --no-merges --pretty=format:"%ae" | while read -r email; do
+		[[ -z "$email" ]] && continue
+		local username
+		username=$(get_github_username "$email")
+		[[ -z "$username" || "$username" == "vtcode-release-bot" ]] && continue
+		echo "$username"
+	done | sort | uniq -c | sort -rn >"$temp_contributors"
+
+	if [[ ! -s "$temp_contributors" ]]; then
+		print_info "No contributors found"
+		rm -f "$temp_contributors"
+		return 0
+	fi
+
+	# Generate contributor HTML entries
+	local contributor_entries=""
+	local is_first=true
+
+	while IFS= read -r line; do
+		[[ -z "$line" ]] && continue
+		local count username
+		count=$(echo "$line" | awk '{print $1}')
+		username=$(echo "$line" | awk '{print $2}')
+
+		# Determine styling
+		local emoji="✨"
+		local border_color="#B19CD9"
+		local title="$username"
+
+		if [[ "$username" == "kernitus" ]]; then
+			emoji="👑"
+			border_color="#FFD700"
+			title="$username Main Contributor ($count commits)"
+		elif [[ $count -ge 3 ]]; then
+			emoji="🚀"
+			border_color="#50C878"
+			title="$username Core contributor ($count commits)"
+		elif [[ $count -ge 2 ]]; then
+			emoji="🚀"
+			border_color="#50C878"
+			title="$username Core contributor ($count commits)"
+		else
+			emoji="✨"
+			border_color="#B19CD9"
+			if [[ $count -eq 1 ]]; then
+				title="$username Contributor (1 commit)"
+			else
+				title="$username Contributor ($count commits)"
+			fi
+		fi
+
+		local avatar_url="https://github.com/${username}.png?size=60"
+
+		if [[ "$is_first" == "true" ]]; then
+			contributor_entries="${contributor_entries}  <a href=\"https://github.com/${username}\"><img src=\"${avatar_url}\" width=\"40\" height=\"40\" alt=\"@${username}\" title=\"${title}\" style=\"border-radius: 50%; border: 2px solid ${border_color};\" /></a>"
+			is_first=false
+		else
+			contributor_entries="${contributor_entries}&nbsp;\n  <a href=\"https://github.com/${username}\"><img src=\"${avatar_url}\" width=\"40\" height=\"40\" alt=\"@${username}\" title=\"${title}\" style=\"border-radius: 50%; border: 2px solid ${border_color};\" /></a>"
+		fi
+	done <"$temp_contributors"
+
+	rm -f "$temp_contributors"
+
+	# Update README.md
+	if [[ -n "$contributor_entries" ]]; then
+		local new_contributor_section="<p align=\"center\">\n${contributor_entries}\n</p>"
+
+		# Replace the contributor section in README.md
+		local temp_readme
+		temp_readme=$(mktemp)
+
+		awk -v new_section="$new_contributor_section" '
+			/^## Contributing/ {
+				print
+				in_contributing = 1
+				next
+			}
+			/^## Support/ && in_contributing == 1 {
+				print new_section
+				print ""
+				in_contributing = 0
+				next
+			}
+			in_contributing == 1 {
+				next
+			}
+			{ print }
+		' README.md >"$temp_readme"
+
+		mv "$temp_readme" README.md
+		git add README.md
+
+		if ! git diff --cached --quiet; then
+			GIT_AUTHOR_NAME="vtcode-release-bot" \
+				GIT_AUTHOR_EMAIL="noreply@vtcode.com" \
+				GIT_COMMITTER_NAME="vtcode-release-bot" \
+				GIT_COMMITTER_EMAIL="noreply@vtcode.com" \
+				git commit -m "docs: update contributor list for $version [skip ci]"
+			print_success "README.md contributor list updated and committed"
+		else
+			print_info "No changes to README.md contributor list"
+		fi
+	fi
+}
+
 check_branch() {
 	local current_branch
 	current_branch=$(git branch --show-current)
@@ -1046,6 +1167,9 @@ main() {
 	# 2. Changelog Update & capture for Release Notes
 	print_info "Step 2: Generating changelog and release notes..."
 	update_changelog_from_commits "$next_version" "$dry_run"
+
+	# 2.5 Update README contributor list
+	update_readme_contributors "$next_version" "$dry_run"
 
 	# 3. Cargo Release (version, tag, and push only)
 	print_info "Step 3: Running cargo release (version, tag, and push only)..."
