@@ -422,7 +422,12 @@ mod tests {
     }
 
     async fn create_registry(workspace: &TempDir) -> ToolRegistry {
-        ToolRegistry::new(workspace.path().to_path_buf()).await
+        let registry = ToolRegistry::new(workspace.path().to_path_buf()).await;
+        registry
+            .allow_all_tools()
+            .await
+            .expect("test registry policy should be writable");
+        registry
     }
 
     fn disable_hitl_notification(output: &mut Value) {

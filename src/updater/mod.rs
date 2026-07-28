@@ -1,4 +1,6 @@
+mod archive;
 mod cache;
+mod download;
 mod github;
 mod install_source;
 mod interactive;
@@ -142,11 +144,8 @@ impl Updater {
     }
 
     pub(crate) async fn install_update(&self, force: bool) -> Result<InstallOutcome> {
-        // The CLI path (`vtcode update` in a plain terminal) should show a
-        // visual progress bar while the binary downloads. The inline TUI path
-        // (`/update install` inside the TUI) must keep `self_update` quiet so
-        // its output does not leak into the alternate screen — that path uses
-        // `install_update_with_progress(force, false)` directly.
+        // The CLI path shows download progress. The inline TUI path passes
+        // false so download output does not leak into the alternate screen.
         self.install_update_with_progress(force, true).await
     }
 
@@ -160,53 +159,60 @@ impl Updater {
             bail!("VT Code was installed via {}. Update with: {}", guidance.source.label(), guidance.command());
         }
 
-        let current_version = self.current_version.to_string();
         let target = install_source::get_target_triple().context("Unsupported platform for auto-update")?;
+        let release =
+            github::fetch_latest_release_metadata(self.config.download_timeout_secs, &self.config.channel).await?;
+        if !force && release.version <= self.current_version {
+            return Ok(InstallOutcome::UpToDate(self.current_version.to_string()));
+        }
 
-        let status = tokio::task::spawn_blocking(move || {
-            // Use .tar.gz as identifier to specifically match tarball archives
-            // and avoid .sha256 checksum files that have the same target triple
-            let identifier = format!("{target}.tar.gz");
-            let mut builder = self_update::backends::github::UpdateBuilder::new();
-            builder
-                .repo_owner(github::REPO_OWNER)
-                .repo_name(github::REPO_NAME)
-                .bin_name("vtcode")
-                .target(target)
-                .asset_identifier(&identifier)
-                .show_download_progress(show_progress)
-                // `show_output` gates self_update's own status messages
-                // ("Checking target-arch…", "Extracting archive…", "Replacing
-                // binary file…", etc.) — it is independent of the indicatif
-                // progress bar controlled by `show_download_progress` above.
-                // Show the messages in the CLI path (plain terminal) and silence
-                // them in the inline TUI path so the install log does not leak
-                // into the alternate screen.
-                .show_output(show_progress)
-                .no_confirm(true);
+        let (asset, archive_kind) = github::select_archive_asset(&release.assets, target)?;
+        let binary_name = install_source::binary_name_for_target(target);
+        let temporary_directory = tempfile::tempdir().context("Failed to create update temporary directory")?;
+        // Keep remote asset names out of filesystem paths; GitHub metadata is
+        // untrusted even though the selected URL and format were validated.
+        let archive_path = temporary_directory.path().join("downloaded-update-archive");
+        download::download_asset(
+            asset,
+            &archive_path,
+            std::time::Duration::from_secs(self.config.download_timeout_secs.max(1)),
+            show_progress,
+        )
+        .await
+        .context("Failed to download update archive")?;
 
-            if force {
-                builder.current_version("0.0.0");
-            } else {
-                builder.current_version(&current_version);
+        if let Some(checksum_asset) = download::checksum_asset(&release.assets, &asset.name) {
+            match download::download_checksum(
+                checksum_asset,
+                std::time::Duration::from_secs(self.config.download_timeout_secs.max(1)),
+            )
+            .await
+            {
+                Ok(metadata) => match download::parse_checksum_metadata(&metadata, &asset.name) {
+                    Some(expected) => download::verify_file_checksum(&archive_path, &expected)
+                        .context("Downloaded update archive failed checksum verification")?,
+                    None => {
+                        tracing::warn!(asset = %checksum_asset.name, "Checksum metadata did not contain the selected archive; continuing without verification")
+                    }
+                },
+                Err(error) => {
+                    tracing::warn!(%error, asset = %checksum_asset.name, "Checksum metadata could not be downloaded; continuing without verification")
+                }
             }
+        } else {
+            tracing::warn!(asset = %asset.name, "No checksum metadata was published for the selected update archive; continuing without checksum verification");
+        }
 
-            let status = builder
-                .build()
-                .context("Failed to build self-update request")?
-                .update()
-                .context("Failed to apply self-update")?;
-
-            Ok::<self_update::VersionStatus, anyhow::Error>(status)
+        let extraction_directory = temporary_directory.path().join("extracted");
+        let archive_path_for_extraction = archive_path.clone();
+        let extracted_binary = tokio::task::spawn_blocking(move || {
+            archive::extract_binary(&archive_path_for_extraction, archive_kind, &extraction_directory, binary_name)
         })
         .await
-        .context("Update task join failed")??;
+        .context("Update extraction task join failed")??;
 
-        match status {
-            self_update::VersionStatus::Updated(version) => Ok(InstallOutcome::Updated(version)),
-            self_update::VersionStatus::UpToDate(version) => Ok(InstallOutcome::UpToDate(version)),
-            _ => Ok(InstallOutcome::UpToDate(self.current_version.to_string())),
-        }
+        self_replace::self_replace(&extracted_binary).context("Failed to replace the current VT Code binary")?;
+        Ok(InstallOutcome::Updated(release.version.to_string()))
     }
 
     pub(crate) fn update_guidance(&self) -> UpdateGuidance {
@@ -286,50 +292,6 @@ pub(crate) fn record_current_version_seen() {
 mod tests {
     use super::*;
     use std::path::Path;
-
-    #[test]
-    fn test_identifier_selects_tarball_not_checksum() {
-        // Verify that our identifier correctly picks .tar.gz over .sha256 files
-        let target = "aarch64-apple-darwin";
-        let identifier = format!("{target}.tar.gz");
-
-        // Simulate the asset selection logic from self_update
-        let assets = [
-            "checksums.txt",
-            "vtcode-0.98.1-aarch64-apple-darwin.sha256",
-            "vtcode-0.98.1-aarch64-apple-darwin.tar.gz",
-            "vtcode-0.98.1-x86_64-apple-darwin.sha256",
-            "vtcode-0.98.1-x86_64-apple-darwin.tar.gz",
-        ];
-
-        let selected = assets
-            .iter()
-            .find(|asset| asset.contains(target) && asset.contains(&identifier));
-
-        assert_eq!(
-            selected,
-            Some(&"vtcode-0.98.1-aarch64-apple-darwin.tar.gz"),
-            "Should select the .tar.gz archive, not the .sha256 checksum file"
-        );
-    }
-
-    #[test]
-    fn test_identifier_prevents_wrong_target_selection() {
-        // Verify identifier doesn't accidentally pick assets for wrong target
-        let target = "aarch64-apple-darwin";
-        let identifier = format!("{target}.tar.gz");
-
-        let assets = [
-            "vtcode-0.98.1-x86_64-apple-darwin.sha256",
-            "vtcode-0.98.1-x86_64-apple-darwin.tar.gz",
-        ];
-
-        let selected = assets
-            .iter()
-            .find(|asset| asset.contains(target) && asset.contains(&identifier));
-
-        assert!(selected.is_none(), "Should not select x86_64 assets when target is aarch64");
-    }
 
     #[test]
     fn test_version_parsing() {

@@ -194,6 +194,14 @@ pub(super) fn get_target_triple() -> Option<&'static str> {
     }
 }
 
+pub(super) fn binary_name_for_target(target: &str) -> &'static str {
+    if target.contains("-pc-windows-") {
+        "vtcode.exe"
+    } else {
+        "vtcode"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,6 +218,12 @@ mod tests {
         let action = InstallSource::Standalone.update_action_for_os("windows");
         assert_eq!(action.display_command, WINDOWS_INSTALL_COMMAND);
         assert_eq!(action.execution, UpdateExecutionStrategy::PowerShell);
+    }
+
+    #[test]
+    fn target_binary_name_matches_platform_archive() {
+        assert_eq!(binary_name_for_target("x86_64-unknown-linux-musl"), "vtcode");
+        assert_eq!(binary_name_for_target("x86_64-pc-windows-msvc"), "vtcode.exe");
     }
 
     #[test]

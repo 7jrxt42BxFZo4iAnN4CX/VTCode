@@ -230,9 +230,8 @@ pub(crate) async fn execute_inline_update(
     )?;
 
     let updater = Updater::new(&notice.current_version.to_string())?;
-    // Pass `show_progress = false` so the `self_update` crate does not write a
-    // progress bar (or any other stdout) while the TUI is owning the screen.
-    // The CLI `vtcode update` path uses `install_update` and gets the bar back.
+    // Keep download progress disabled while the TUI owns the alternate screen.
+    // The CLI `vtcode update` path uses `install_update` and shows progress.
     match updater.install_update_with_progress(false, false).await {
         Ok(InstallOutcome::Updated(version)) => {
             let _ = super::cache::clear_dismissed_version();

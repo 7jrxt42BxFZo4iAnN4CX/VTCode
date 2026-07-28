@@ -204,6 +204,11 @@ vtcode update
 4. Interactive TUI sessions automatically check for updates on launch (short cached interval)
 5. Managed installs (Homebrew/cargo/npm) show package-manager-specific update guidance
 
+Standalone releases download the exact platform archive, verify a published SHA-256
+checksum when available, safely extract `vtcode`/`vtcode.exe`, and replace the running
+binary natively. Binaries built with the former updater must be bootstrapped once with
+the native installer before this replacement flow can update them.
+
 ### Examples
 
 - Check for updates:

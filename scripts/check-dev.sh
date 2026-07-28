@@ -73,7 +73,11 @@ run_rustfmt() {
     fi
 }
 
-DEFAULT_MEMBERS=("-p" "vtcode" "-p" "vtcode-core" "-p" "vtcode-ui")
+DEFAULT_PACKAGE_NAMES=("vtcode" "vtcode-core" "vtcode-ui")
+DEFAULT_MEMBERS=()
+for package_name in "${DEFAULT_PACKAGE_NAMES[@]}"; do
+    DEFAULT_MEMBERS+=("-p" "$package_name")
+done
 
 run_clippy() {
     local scope_args=()
@@ -129,11 +133,54 @@ run_tests() {
     # Use quick profile by default for fast local iteration
     nextest_args+=("--profile" "quick")
 
-    # Changed-crate mode: only test crates with changes since HEAD~1
+    # Changed-crate mode: only test crates with changes since HEAD~1. nextest
+    # does not provide cargo's `--changed --since` flags, so resolve changed
+    # packages from Cargo metadata and pass explicit package filters instead.
     if [ "$RUN_CHANGED" = true ]; then
         if git rev-parse --git-dir > /dev/null 2>&1; then
             print_status "Detecting changed crates since HEAD~1..."
-            nextest_args+=("--changed" "--since" "HEAD~1")
+            local changed_package_names
+            changed_package_names=$(cargo metadata --no-deps --format-version 1 | python3 -c '
+import json
+import os
+import subprocess
+import sys
+
+changed_files = subprocess.check_output(["git", "diff", "--name-only", "HEAD~1", "--"], text=True).splitlines()
+changed_files += subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard"], text=True).splitlines()
+changed_paths = [os.path.abspath(path) for path in changed_files if path.strip()]
+
+for package in json.load(sys.stdin)["packages"]:
+    package_root = os.path.dirname(os.path.abspath(package["manifest_path"]))
+    for changed_path in changed_paths:
+        try:
+            if os.path.commonpath([package_root, changed_path]) == package_root:
+                print(package["name"])
+                break
+        except ValueError:
+            continue
+')
+
+            local changed_package_args=()
+            while IFS= read -r package_name; do
+                [ -z "$package_name" ] && continue
+                if [ "$RUN_WORKSPACE" = true ]; then
+                    changed_package_args+=("-p" "$package_name")
+                    continue
+                fi
+                for default_package in "${DEFAULT_PACKAGE_NAMES[@]}"; do
+                    if [ "$package_name" = "$default_package" ]; then
+                        changed_package_args+=("-p" "$package_name")
+                        break
+                    fi
+                done
+            done <<< "$changed_package_names"
+
+            if [ ${#changed_package_args[@]} -eq 0 ]; then
+                print_status "No changed packages in the selected test scope; skipping tests."
+                return 0
+            fi
+            nextest_args+=("${changed_package_args[@]}")
         else
             print_warning "Not a git repo; ignoring --changed flag."
         fi

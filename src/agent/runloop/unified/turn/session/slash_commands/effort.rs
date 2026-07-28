@@ -266,7 +266,7 @@ mod tests {
     fn xhigh_description_matches_requested_opus_copy() {
         assert_eq!(
             effort_description(ReasoningEffortLevel::XHigh, "claude-opus-4-8"),
-            "Deeper reasoning than high, just below maximum (Opus 4.8 only)"
+            "Deeper reasoning than high, just below maximum (Opus 4.8/5 only)"
         );
     }
 }

@@ -1942,9 +1942,6 @@ MIT (225 crates)
   schemars_derive 1.2.1
     Source: https://github.com/GREsau/schemars
     License: MIT
-  self_update 0.43.1
-    Source: https://github.com/jaemk/self_update
-    License: MIT
   serial_test 3.5.0
     Source: https://github.com/palfrey/serial_test/
     License: MIT

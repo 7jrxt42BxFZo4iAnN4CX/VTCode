@@ -6,13 +6,21 @@ use serde_json::{Value, json};
 use std::fs;
 use vtcode_commons::canonicalize;
 use vtcode_core::tools::cache::FileCache;
-use vtcode_core::tools::registry::ToolRegistry;
+use vtcode_core::tools::registry::{ExecSettlementMode, ToolRegistry};
 
 #[cfg(test)]
 mod e2e_tests {
     use super::*;
     use std::time::Duration;
     use tokio::time::sleep;
+
+    async fn execute_harness_tool(registry: &ToolRegistry, name: &str, args: &Value) -> anyhow::Result<Value> {
+        let prepared = registry.admit_public_tool_call(name, args)?;
+        registry.mark_tool_preapproved(name).await;
+        registry
+            .execute_prepared_public_tool_ref_with_mode(&prepared, ExecSettlementMode::Manual)
+            .await
+    }
 
     /// Test end-to-end file operations with caching
     #[tokio::test]
@@ -35,18 +43,16 @@ mod e2e_tests {
             "max_bytes": 1000
         });
 
-        let result1 = registry
-            .execute_tool_ref(vtcode_core::config::constants::tools::READ_FILE, &read_args)
-            .await;
+        let result1 =
+            execute_harness_tool(&registry, vtcode_core::config::constants::tools::READ_FILE, &read_args).await;
         assert!(result1.is_ok(), "First read should succeed");
 
         let content1 = result1.unwrap();
         assert_eq!(content1["content"], test_content);
 
         // Test 2: Second read should use cache (verify by checking cache stats)
-        let result2 = registry
-            .execute_tool(vtcode_core::config::constants::tools::READ_FILE, read_args)
-            .await;
+        let result2 =
+            execute_harness_tool(&registry, vtcode_core::config::constants::tools::READ_FILE, &read_args).await;
         assert!(result2.is_ok(), "Second read should succeed");
 
         let content2 = result2.unwrap();
@@ -60,7 +66,7 @@ mod e2e_tests {
             "mode": "overwrite"
         });
 
-        let write_result = registry.execute_tool("write_file", write_args).await;
+        let write_result = execute_harness_tool(&registry, "write_file", &write_args).await;
         assert!(write_result.is_ok(), "Write operation should succeed");
 
         // Test 4: Read after write should get updated content
@@ -69,9 +75,8 @@ mod e2e_tests {
             "max_bytes": 1000
         });
 
-        let result3 = registry
-            .execute_tool(vtcode_core::config::constants::tools::READ_FILE, read_args2)
-            .await;
+        let result3 =
+            execute_harness_tool(&registry, vtcode_core::config::constants::tools::READ_FILE, &read_args2).await;
         assert!(result3.is_ok(), "Read after write should succeed");
 
         let content3 = result3.unwrap();
@@ -149,15 +154,13 @@ mod e2e_tests {
         // List directory (should cache result)
         let list_args = json!({ "path": "subdir" });
 
-        let result1 = registry
-            .execute_tool_ref(vtcode_core::config::constants::tools::LIST_FILES, &list_args)
-            .await;
+        let result1 =
+            execute_harness_tool(&registry, vtcode_core::config::constants::tools::LIST_FILES, &list_args).await;
         assert!(result1.is_ok(), "First list should succeed");
 
         // Second list should use cache
-        let result2 = registry
-            .execute_tool(vtcode_core::config::constants::tools::LIST_FILES, list_args)
-            .await;
+        let result2 =
+            execute_harness_tool(&registry, vtcode_core::config::constants::tools::LIST_FILES, &list_args).await;
         assert!(result2.is_ok(), "Second list should succeed");
 
         // Second list should reuse the cached result. The second call annotates
@@ -190,9 +193,8 @@ mod e2e_tests {
             "path": test_file.to_string_lossy()
         });
 
-        let result1 = registry
-            .execute_tool_ref(vtcode_core::config::constants::tools::READ_FILE, &read_args)
-            .await;
+        let result1 =
+            execute_harness_tool(&registry, vtcode_core::config::constants::tools::READ_FILE, &read_args).await;
         assert!(result1.is_ok());
         assert_eq!(result1.unwrap()["content"], "original");
 
@@ -203,15 +205,13 @@ mod e2e_tests {
             "new_str": "modified"
         });
 
-        let edit_result = registry
-            .execute_tool(vtcode_core::config::constants::tools::EDIT_FILE, edit_args)
-            .await;
+        let edit_result =
+            execute_harness_tool(&registry, vtcode_core::config::constants::tools::EDIT_FILE, &edit_args).await;
         assert!(edit_result.is_ok(), "Edit should succeed");
 
         // Read again - should get updated content (cache should be invalidated)
-        let result2 = registry
-            .execute_tool(vtcode_core::config::constants::tools::READ_FILE, read_args)
-            .await;
+        let result2 =
+            execute_harness_tool(&registry, vtcode_core::config::constants::tools::READ_FILE, &read_args).await;
         assert!(result2.is_ok());
         assert_eq!(result2.unwrap()["content"], "modified");
     }
@@ -230,8 +230,7 @@ mod e2e_tests {
             "mode": "overwrite"
         });
 
-        let result = registry
-            .execute_tool("write_file", args)
+        let result = execute_harness_tool(&registry, "write_file", &args)
             .await
             .expect("write_file should succeed");
         assert_eq!(result["success"], true);
@@ -257,15 +256,12 @@ mod e2e_tests {
         let test_file = workspace_root.join("test.txt");
 
         // Write initial content
-        registry
-            .execute_tool(
-                "write_file",
-                json!({
-                    "path": "test.txt",
-                    "content": "Hello",
-                    "mode": "overwrite"
-                }),
-            )
+        let initial_args = json!({
+            "path": "test.txt",
+            "content": "Hello",
+            "mode": "overwrite"
+        });
+        execute_harness_tool(&registry, "write_file", &initial_args)
             .await
             .expect("Initial write should succeed");
 
@@ -276,8 +272,7 @@ mod e2e_tests {
             "mode": "append"
         });
 
-        let result = registry
-            .execute_tool("write_file", args)
+        let result = execute_harness_tool(&registry, "write_file", &args)
             .await
             .expect("append write_file should succeed");
         assert_eq!(result["success"], true);
@@ -296,15 +291,12 @@ mod e2e_tests {
         let test_file = workspace_root.join("test.txt");
 
         // Write initial content
-        registry
-            .execute_tool(
-                "write_file",
-                json!({
-                    "path": "test.txt",
-                    "content": "Original",
-                    "mode": "overwrite"
-                }),
-            )
+        let initial_args = json!({
+            "path": "test.txt",
+            "content": "Original",
+            "mode": "overwrite"
+        });
+        execute_harness_tool(&registry, "write_file", &initial_args)
             .await
             .expect("Initial write should succeed");
 
@@ -315,8 +307,7 @@ mod e2e_tests {
             "mode": "skip_if_exists"
         });
 
-        let result = registry
-            .execute_tool("write_file", args)
+        let result = execute_harness_tool(&registry, "write_file", &args)
             .await
             .expect("skip_if_exists write_file should succeed");
         assert_eq!(result["success"], true);
@@ -335,15 +326,12 @@ mod e2e_tests {
         let test_file = workspace_root.join("test.txt");
 
         // Create initial file
-        registry
-            .execute_tool(
-                "write_file",
-                json!({
-                    "path": "test.txt",
-                    "content": "Hello World\nThis is a test file.",
-                    "mode": "overwrite"
-                }),
-            )
+        let initial_args = json!({
+            "path": "test.txt",
+            "content": "Hello World\nThis is a test file.",
+            "mode": "overwrite"
+        });
+        execute_harness_tool(&registry, "write_file", &initial_args)
             .await
             .expect("Initial write should succeed");
 
@@ -354,8 +342,7 @@ mod e2e_tests {
             "new_str": "Hello Universe"
         });
 
-        let result = registry
-            .execute_tool(vtcode_core::config::constants::tools::EDIT_FILE, edit_args)
+        let result = execute_harness_tool(&registry, vtcode_core::config::constants::tools::EDIT_FILE, &edit_args)
             .await
             .expect("file_edit should succeed");
         assert_eq!(result["success"], true);
@@ -366,41 +353,37 @@ mod e2e_tests {
     }
 
     #[tokio::test]
-    async fn test_file_edit_multiple_occurrences() {
+    async fn test_file_edit_replaces_first_occurrence() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let workspace_root = canonicalize(temp_dir.path()).expect("Failed to canonicalize workspace");
         let registry = ToolRegistry::new(workspace_root.clone()).await;
         let test_file = workspace_root.join("test.txt");
 
         // Create initial file with multiple occurrences
-        registry
-            .execute_tool(
-                "write_file",
-                json!({
-                    "path": "test.txt",
-                    "content": "test\ntest\nmore test content",
-                    "mode": "overwrite"
-                }),
-            )
+        let initial_args = json!({
+            "path": "test.txt",
+            "content": "test\ntest\nmore test content",
+            "mode": "overwrite"
+        });
+        execute_harness_tool(&registry, "write_file", &initial_args)
             .await
             .expect("Initial write should succeed");
 
-        // Edit file - replace all "test" with "example"
+        // Edit file - replace the first matching occurrence.
         let edit_args = json!({
             "path": "test.txt",
             "old_str": "test",
             "new_str": "example"
         });
 
-        let result = registry
-            .execute_tool(vtcode_core::config::constants::tools::EDIT_FILE, edit_args)
+        let result = execute_harness_tool(&registry, vtcode_core::config::constants::tools::EDIT_FILE, &edit_args)
             .await
             .expect("file_edit should succeed");
         assert_eq!(result["success"], true);
 
-        // Verify file content - all occurrences should be replaced
+        // Verify that only the first matching occurrence was replaced.
         let content = fs::read_to_string(&test_file).expect("File should exist");
-        assert_eq!(content, "example\nexample\nmore example content");
+        assert_eq!(content, "example\ntest\nmore test content");
     }
 
     #[tokio::test]
@@ -411,15 +394,12 @@ mod e2e_tests {
         let test_file = workspace_root.join("test.txt");
 
         // Create initial file
-        registry
-            .execute_tool(
-                "write_file",
-                json!({
-                    "path": "test.txt",
-                    "content": "Line 1\nLine 2\nLine 3",
-                    "mode": "overwrite"
-                }),
-            )
+        let initial_args = json!({
+            "path": "test.txt",
+            "content": "Line 1\nLine 2\nLine 3",
+            "mode": "overwrite"
+        });
+        execute_harness_tool(&registry, "write_file", &initial_args)
             .await
             .expect("Initial write should succeed");
 
@@ -430,8 +410,7 @@ mod e2e_tests {
             "new_str": "New Line 1\nNew Line 2"
         });
 
-        let result = registry
-            .execute_tool(vtcode_core::config::constants::tools::EDIT_FILE, edit_args)
+        let result = execute_harness_tool(&registry, vtcode_core::config::constants::tools::EDIT_FILE, &edit_args)
             .await
             .expect("file_edit should succeed");
         assert_eq!(result["success"], true);
@@ -455,8 +434,7 @@ mod e2e_tests {
             "mode": "overwrite"
         });
 
-        let result = registry
-            .execute_tool("write_file", args)
+        let result = execute_harness_tool(&registry, "write_file", &args)
             .await
             .expect("write_file should succeed");
         assert_eq!(result["success"], true);

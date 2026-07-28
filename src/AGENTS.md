@@ -4,7 +4,7 @@
 
 ## Modules
 
-`main.rs` binary entry | `agent/` runloop + subagent dispatch | `cli/` CLI handlers | `startup/` first-run + onboarding | `updater/` self-update | `codex_app_server/` app server bridge | `main_helpers/` tracing + runtime init
+`main.rs` binary entry | `agent/` runloop + subagent dispatch | `cli/` CLI handlers | `startup/` first-run + onboarding | `updater/` GitHub download, archive extraction, checksum verification, self-replacement | `codex_app_server/` app server bridge | `main_helpers/` tracing + runtime init
 
 ## Rules
 
@@ -23,6 +23,8 @@
 - `agent/runloop/unified/turn/compaction/` is a **thin delegator** — all compaction logic (auto/manual orchestration, memory envelope, dedup, thresholds) lives in `vtcode-core::compaction`. Do not re-implement compaction here; call the shared orchestrator.
 
 ## Gotchas
+
+- Standalone updates own asset selection, checksum verification, safe archive extraction, and `self_replace`; keep managed-install guidance separate and keep inline TUI downloads quiet.
 
 - `main_helpers` handles runtime relaunch context — do not duplicate init logic in `main.rs`.
 - Allocator memory pinning: vtcode's bursty/sparse Tokio workload (semaphore-capped

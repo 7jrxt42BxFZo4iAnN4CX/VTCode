@@ -83,7 +83,7 @@ fn package_release(args: PackageReleaseArgs) -> Result<(), Box<dyn std::error::E
     }
     fs::create_dir_all(&stage_dir)?;
 
-    // Binary at archive root so self_update can find it via exact path match.
+    // Keep the binary at archive root so the native updater can discover it.
     fs::copy(workspace_root.join(&args.binary), stage_dir.join("vtcode"))?;
 
     // Extra files in subdirectories for cargo-binstall and install.sh.
@@ -156,7 +156,7 @@ fn create_archive(
     entries.sort();
 
     // Archive from stage_dir parent so entries have no directory prefix.
-    // self_update needs the binary at the exact path "vtcode".
+    // The native updater discovers the executable by its exact name.
     let mut cmd = Command::new("tar");
     cmd.current_dir(out_dir).arg("-czf").arg(archive).arg("-C").arg(stage_dir);
     for entry in &entries {

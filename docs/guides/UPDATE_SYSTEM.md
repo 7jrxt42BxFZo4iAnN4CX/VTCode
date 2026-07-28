@@ -11,6 +11,12 @@ VT Code includes a built-in update system that can check for and install updates
 - **Configurable update behavior** via `~/.vtcode/update.toml`
 - **Download mirrors** for better availability
 
+Standalone updates use VT Code's native replacement pipeline: the updater selects the
+exact target archive, streams it with the configured timeout, verifies published
+SHA-256 metadata when available, rejects unsafe archive paths, and replaces only the
+`vtcode`/`vtcode.exe` executable. Existing binaries built with the former updater need
+one bootstrap installation from the native installer before they can use this flow.
+
 ## Quick Start
 
 ### Check for Updates

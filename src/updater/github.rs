@@ -1,16 +1,78 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use semver::Version;
+use serde::Deserialize;
 use std::time::Duration;
 use vtcode_config::update::ReleaseChannel;
 
 use super::Updater;
+use super::archive::ArchiveKind;
 use super::types::{UpdateInfo, VersionInfo};
 
-pub(super) const REPO_OWNER: &str = "vinhnx";
-pub(super) const REPO_NAME: &str = "vtcode";
 const REPO_SLUG: &str = "vinhnx/vtcode";
 
-fn github_client() -> Result<reqwest::Client> {
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+pub(super) struct ReleaseAsset {
+    pub(super) name: String,
+    #[serde(rename = "browser_download_url")]
+    pub(super) download_url: String,
+}
+
+pub(super) fn select_archive_asset<'a>(
+    assets: &'a [ReleaseAsset],
+    target: &str,
+) -> Result<(&'a ReleaseAsset, ArchiveKind)> {
+    let target = target.to_ascii_lowercase();
+    let is_windows = target.contains("-pc-windows-");
+    let (suffix, kind) = if is_windows {
+        (".zip", ArchiveKind::Zip)
+    } else {
+        (".tar.gz", ArchiveKind::TarGz)
+    };
+    let target_suffix = format!("{target}{suffix}");
+    let candidates: Vec<_> = assets
+        .iter()
+        .filter(|asset| {
+            let name = asset.name.to_ascii_lowercase();
+            name.starts_with("vtcode-") && name.ends_with(&target_suffix)
+        })
+        .collect();
+
+    match candidates.as_slice() {
+        [asset] => Ok((asset, kind)),
+        [] => bail!("no compatible archive found for target {target}"),
+        _ => bail!("multiple compatible archives found for target {target}"),
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct GithubRelease {
+    pub(super) version: Version,
+    pub(super) release_notes: String,
+    pub(super) assets: Vec<ReleaseAsset>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubReleaseJson {
+    tag_name: String,
+    body: Option<String>,
+    #[serde(default)]
+    assets: Vec<ReleaseAsset>,
+}
+
+fn parse_release(value: &serde_json::Value) -> Result<GithubRelease> {
+    let release: GithubReleaseJson =
+        serde_json::from_value(value.clone()).context("Failed to parse GitHub release metadata")?;
+    let version_str = release.tag_name.trim_start_matches('v');
+    let version = Version::parse(version_str)
+        .with_context(|| format!("Invalid version in GitHub release: {}", release.tag_name))?;
+    Ok(GithubRelease {
+        version,
+        release_notes: release.body.unwrap_or_else(|| "See release notes on GitHub".to_string()),
+        assets: release.assets,
+    })
+}
+
+pub(super) fn github_client() -> Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder().user_agent("vtcode-updater");
 
     // Authenticate with GitHub API when a token is available.
@@ -28,7 +90,7 @@ fn github_client() -> Result<reqwest::Client> {
     builder.build().context("Failed to create HTTP client")
 }
 
-fn github_token() -> Option<String> {
+pub(super) fn github_token() -> Option<String> {
     std::env::var("GITHUB_TOKEN")
         .ok()
         .or_else(|| std::env::var("GH_TOKEN").ok())
@@ -37,7 +99,7 @@ fn github_token() -> Option<String> {
 
 /// Strip the `Authorization` header and rebuild the client for unauthenticated
 /// requests.  Used as a fallback when a configured token is rejected.
-fn unauthenticated_client() -> Result<reqwest::Client> {
+pub(super) fn unauthenticated_client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent("vtcode-updater")
         .build()
@@ -91,9 +153,59 @@ pub(super) fn release_url(version: &Version) -> String {
 /// Dispatches to the stable latest-release endpoint or the pre-release
 /// listing endpoint depending on the channel.
 pub(super) async fn fetch_latest_for_channel(timeout_secs: u64, channel: &ReleaseChannel) -> Result<UpdateInfo> {
+    let release = fetch_latest_release_metadata(timeout_secs, channel).await?;
+    Ok(UpdateInfo {
+        version: release.version,
+        release_notes: release.release_notes,
+    })
+}
+
+pub(super) async fn fetch_latest_release_metadata(
+    timeout_secs: u64,
+    channel: &ReleaseChannel,
+) -> Result<GithubRelease> {
+    let timeout = effective_timeout(timeout_secs);
     match channel {
-        ReleaseChannel::Stable | ReleaseChannel::Unknown => fetch_latest_release_info(timeout_secs).await,
-        ReleaseChannel::Beta | ReleaseChannel::Nightly => fetch_latest_prerelease_info(timeout_secs, channel).await,
+        ReleaseChannel::Stable | ReleaseChannel::Unknown => {
+            let url = format!("https://api.github.com/repos/{REPO_SLUG}/releases/latest");
+            parse_release(&try_fetch_json_with_auth_fallback(&url, timeout).await?)
+        }
+        ReleaseChannel::Beta | ReleaseChannel::Nightly => {
+            let url = format!("https://api.github.com/repos/{REPO_SLUG}/releases?per_page=20");
+            let json = try_fetch_json_with_auth_fallback(&url, timeout).await?;
+            let releases = json.as_array().context("Expected array of releases")?;
+            let mut best: Option<GithubRelease> = None;
+
+            for value in releases {
+                let release_json: GithubReleaseJson = match serde_json::from_value(value.clone()) {
+                    Ok(release) => release,
+                    Err(_) => continue,
+                };
+                let version = match Version::parse(release_json.tag_name.trim_start_matches('v')) {
+                    Ok(version) => version,
+                    Err(_) => continue,
+                };
+                let is_prerelease = value.get("prerelease").and_then(|value| value.as_bool()).unwrap_or(false);
+                let matches_channel = match channel {
+                    ReleaseChannel::Beta => is_prerelease,
+                    ReleaseChannel::Nightly => {
+                        let tag = release_json.tag_name.to_ascii_lowercase();
+                        tag.contains("nightly") || version.pre.as_str().starts_with("nightly")
+                    }
+                    ReleaseChannel::Stable | ReleaseChannel::Unknown => !is_prerelease,
+                };
+                if !matches_channel || best.as_ref().is_some_and(|best| best.version >= version) {
+                    continue;
+                }
+                best = Some(GithubRelease {
+                    version,
+                    release_notes: release_json.body.unwrap_or_else(|| "See release notes on GitHub".to_string()),
+                    assets: release_json.assets,
+                });
+            }
+
+            best.context(format!("No {channel} releases found on GitHub for {REPO_SLUG}"))
+        }
     }
 }
 
@@ -111,85 +223,11 @@ pub(super) async fn fetch_latest_release(
 }
 
 pub(super) async fn fetch_latest_release_info(timeout_secs: u64) -> Result<UpdateInfo> {
-    let url = format!("https://api.github.com/repos/{REPO_SLUG}/releases/latest");
-    let timeout = effective_timeout(timeout_secs);
-    let json = try_fetch_json_with_auth_fallback(&url, timeout).await?;
-
-    let tag_name = json
-        .get("tag_name")
-        .and_then(|v| v.as_str())
-        .context("Missing tag_name in GitHub response")?;
-
-    let version_str = tag_name.trim_start_matches('v');
-    let version =
-        Version::parse(version_str).with_context(|| format!("Invalid version in GitHub release: {tag_name}"))?;
-
+    let release = fetch_latest_release_metadata(timeout_secs, &ReleaseChannel::Stable).await?;
     Ok(UpdateInfo {
-        version,
-        release_notes: json
-            .get("body")
-            .and_then(|v| v.as_str())
-            .unwrap_or("See release notes on GitHub")
-            .to_string(),
+        version: release.version,
+        release_notes: release.release_notes,
     })
-}
-
-/// Fetch the latest pre-release from GitHub for beta/nightly channels.
-///
-/// Uses `/releases?per_page=20` and filters by channel:
-/// - **Beta**: any release where `prerelease == true`
-/// - **Nightly**: releases whose tag contains "nightly" or whose semver
-///   pre-release identifier starts with "nightly"
-///
-/// Returns the highest-versioned match.
-async fn fetch_latest_prerelease_info(timeout_secs: u64, channel: &ReleaseChannel) -> Result<UpdateInfo> {
-    let url = format!("https://api.github.com/repos/{REPO_SLUG}/releases?per_page=20");
-    let timeout = effective_timeout(timeout_secs);
-
-    let json = try_fetch_json_with_auth_fallback(&url, timeout).await?;
-    let releases = json.as_array().context("Expected array of releases")?;
-
-    let mut best: Option<(Version, String)> = None;
-
-    for release in releases {
-        let tag_name = match release.get("tag_name").and_then(|v| v.as_str()) {
-            Some(t) => t,
-            None => continue,
-        };
-        let version_str = tag_name.trim_start_matches('v');
-        let version = match Version::parse(version_str) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        let is_prerelease = release.get("prerelease").and_then(|v| v.as_bool()).unwrap_or(false);
-
-        let matches_channel = match channel {
-            ReleaseChannel::Stable | ReleaseChannel::Unknown => !is_prerelease,
-            ReleaseChannel::Beta => is_prerelease,
-            ReleaseChannel::Nightly => {
-                let tag_lower = tag_name.to_ascii_lowercase();
-                tag_lower.contains("nightly") || version.pre.as_str().starts_with("nightly")
-            }
-        };
-
-        if !matches_channel {
-            continue;
-        }
-
-        if best.as_ref().is_none_or(|(v, _)| version > *v) {
-            let notes = release
-                .get("body")
-                .and_then(|v| v.as_str())
-                .unwrap_or("See release notes on GitHub")
-                .to_string();
-            best = Some((version, notes));
-        }
-    }
-
-    let (version, release_notes) = best.context(format!("No {channel} releases found on GitHub for {REPO_SLUG}"))?;
-
-    Ok(UpdateInfo { version, release_notes })
 }
 
 pub(super) async fn list_versions(limit: usize, timeout_secs: u64) -> Result<Vec<VersionInfo>> {
@@ -218,4 +256,54 @@ pub(super) async fn list_versions(limit: usize, timeout_secs: u64) -> Result<Vec
         .collect();
 
     Ok(versions)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn asset(name: &str) -> ReleaseAsset {
+        ReleaseAsset {
+            name: name.to_string(),
+            download_url: format!("https://example.test/{name}"),
+        }
+    }
+
+    #[test]
+    fn selects_macos_tar_gz_for_exact_target() {
+        let assets = vec![
+            asset("checksums.txt"),
+            asset("vtcode-1.0.0-x86_64-apple-darwin.sha256"),
+            asset("vtcode-1.0.0-aarch64-apple-darwin.tar.gz"),
+            asset("vtcode-1.0.0-x86_64-apple-darwin.tar.gz"),
+        ];
+
+        let (selected, kind) = select_archive_asset(&assets, "aarch64-apple-darwin").expect("asset");
+
+        assert_eq!(selected.name, "vtcode-1.0.0-aarch64-apple-darwin.tar.gz");
+        assert_eq!(kind, ArchiveKind::TarGz);
+    }
+
+    #[test]
+    fn selects_linux_tar_gz_and_windows_zip() {
+        let linux = vec![asset("vtcode-1.0.0-x86_64-unknown-linux-musl.tar.gz")];
+        let windows = vec![asset("vtcode-1.0.0-x86_64-pc-windows-msvc.zip")];
+
+        assert_eq!(select_archive_asset(&linux, "x86_64-unknown-linux-musl").expect("linux").1, ArchiveKind::TarGz);
+        assert_eq!(select_archive_asset(&windows, "x86_64-pc-windows-msvc").expect("windows").1, ArchiveKind::Zip);
+    }
+
+    #[test]
+    fn rejects_checksums_signatures_and_wrong_targets() {
+        let assets = vec![
+            asset("checksums.txt"),
+            asset("vtcode-1.0.0-x86_64-pc-windows-msvc.sha256"),
+            asset("vtcode-1.0.0-x86_64-pc-windows-msvc.zip.sig"),
+            asset("other-1.0.0-aarch64-pc-windows-msvc.zip"),
+        ];
+
+        let error = select_archive_asset(&assets, "aarch64-pc-windows-msvc").expect_err("no archive");
+
+        assert!(error.to_string().contains("no compatible archive"));
+    }
 }

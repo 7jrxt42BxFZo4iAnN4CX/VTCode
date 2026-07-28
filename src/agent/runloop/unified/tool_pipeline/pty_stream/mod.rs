@@ -6,7 +6,7 @@ pub(crate) use runtime::PtyStreamRuntime;
 
 #[cfg(test)]
 mod tests {
-    use anstyle::{AnsiColor, Color as AnsiColorEnum, Effects};
+    use anstyle::{AnsiColor, Color as AnsiColorEnum};
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
     use std::time::Duration;
@@ -218,14 +218,14 @@ mod tests {
     }
 
     #[test]
-    fn line_to_segments_stdout_defaults_to_dimmed_style() {
+    fn line_to_segments_stdout_uses_output_style() {
         let styles = PtyLineStyles::new();
         let (segments, _) = line_to_segments("  └ cargo check done", &styles);
         let output_segment = segments
             .iter()
             .find(|segment| segment.text.contains("cargo check done"))
             .expect("stdout segment should be present");
-        assert!(output_segment.style.effects.contains(Effects::DIMMED));
+        assert_eq!(*output_segment.style, *styles.output);
     }
 
     #[test]
