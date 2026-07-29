@@ -663,6 +663,11 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: System Architecture Diagram, Data Flow: Style Parsing and Application, Module Dependencies, Effect Support Matrix, InlineTextStyle Evolution
   - **User Questions**: "What can you tell me about Architecture: Anstyle Integration in Vtcode?", "How does System Architecture Diagram work?", "How does Data Flow: Style Parsing and Application work?"
 
+- **File**: `docs/superpowers/specs/2026-07-29-github-gh-cli-guidance-design.md`
+  - **Content**: Authenticated GitHub CLI Guidance
+  - **Topics**: Goal, Design, Verification
+  - **User Questions**: "What can you tell me about Authenticated GitHub CLI Guidance?", "How does Goal work?", "How does Design work?"
+
 - **File**: `docs/analysis/BLOATY_ANALYSIS.md`
   - **Content**: Bloaty Analysis Report for vtcode
   - **Topics**: Overview, Binary Size Summary, Release-fast Binary Analysis (32 MiB), Debug Binary Analysis (84 MiB), Recommendations
