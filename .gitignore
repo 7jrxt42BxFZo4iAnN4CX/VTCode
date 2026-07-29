@@ -860,3 +860,4 @@ plans/
 .vtcode/history/
 
 .node-version
+.worktrees/
