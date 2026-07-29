@@ -2,6 +2,16 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.141.7 - 2026-07-29
+
+### Highlights
+#### Bug Fixes
+
+- Strip top-level oneOf/anyOf/allOf from tool input_schema  (6476423c) (@netbrah)
+#### Documentation
+
+- Update @netbrah contributor count to 2 commits (10202989) 
+### Other Changes
 ## 0.141.6 - 2026-07-29
 
 ### Highlights
