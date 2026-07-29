@@ -2,6 +2,17 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.141.6 - 2026-07-29
+
+### Highlights
+#### Bug Fixes
+
+- Rescue legacy v0.141.0-v0.141.4 self-update via compat assets (82c4f14b) 
+#### Documentation
+
+- Design authenticated GitHub CLI guidance (a2c5a595) 
+- Design legacy updater compatibility bridge (91d29d82) 
+### Other Changes
 ## 0.141.5 - 2026-07-29
 
 ### Highlights
