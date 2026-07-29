@@ -2,6 +2,24 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.141.5 - 2026-07-29
+
+### Highlights
+#### Bug Fixes
+
+- Harden /messages request for Vertex AI-backed routes  (014d56d5) (@netbrah)
+- Canonicalize cache invalidation path and correct OllamaCloud tests (5e944021) 
+#### Documentation
+
+- Add @netbrah to contributors (02a8a2c0) 
+#### Features
+
+- Add ToolDisplayMode enum to separate transition grouping from tool output rendering (2bbeebfc) 
+### Other Changes
+#### Refactors
+
+- Replace self_update with custom archive extraction and self-replace (d3c7581b) 
+- Extract external editor logic and fix detached process reaping (93cdf7f0) 
 ## 0.141.4 - 2026-07-28
 
 ### Highlights
