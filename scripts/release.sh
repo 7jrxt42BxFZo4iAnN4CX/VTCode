@@ -17,6 +17,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/common.sh"
+# Legacy updater compatibility bridge helpers (.tar.gz.compat raw exec assets).
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/release-assets.sh"
 
 # Temporary file to store release notes
 RELEASE_NOTES_FILE=$(mktemp)
@@ -132,6 +135,9 @@ Version or level:
 
 Options:
   --dry-run           Run in dry-run mode
+  --draft             Create the GitHub Release as a draft (hold publication
+                      until `gh release edit <tag> --draft=false` is run).
+                      Used to stage assets for smoke checks before publishing.
   --skip-crates       Skip the crates.io publish handoff
   --skip-binaries     Skip building and uploading binaries (and Homebrew update)
   --skip-docs         Skip docs.rs rebuild trigger
@@ -833,6 +839,7 @@ main() {
 	local release_argument=''
 	local increment_type=''
 	local dry_run=false
+	local release_draft=false
 	local skip_crates=false
 	local skip_binaries=false
 	local skip_docs=false
@@ -859,6 +866,10 @@ main() {
 			;;
 		--dry-run)
 			dry_run=true
+			shift
+			;;
+		--draft)
+			release_draft=true
 			shift
 			;;
 		--skip-crates)
@@ -1180,13 +1191,23 @@ main() {
 			release_body=$(cat "$RELEASE_NOTES_FILE")
 		fi
 
-		# Create GitHub release with release notes
+		# Create GitHub release with release notes. `--draft` (bare) holds the
+		# release as a draft for smoke checks; otherwise publish immediately.
+		local gh_draft_flag="--draft=false"
+		if [[ "$release_draft" == 'true' ]]; then
+			gh_draft_flag="--draft"
+		fi
 		if gh release create "$released_version" \
 			--title "$released_version" \
 			--notes "$release_body" \
-			--draft=false \
+			"$gh_draft_flag" \
 			--prerelease=false; then
-			print_success "GitHub Release $released_version created successfully"
+			if [[ "$release_draft" == 'true' ]]; then
+				print_success "GitHub Release $released_version created as a draft"
+				print_info "Publish with: gh release edit $released_version --draft=false --latest"
+			else
+				print_success "GitHub Release $released_version created successfully"
+			fi
 		else
 			print_error "Failed to create GitHub Release"
 			exit 1
@@ -1244,11 +1265,14 @@ main() {
 			run_id=$(gh run list --workflow build-linux-windows.yml --branch main --event workflow_dispatch --limit 1 --json databaseId,conclusion --jq '.[] | select(.conclusion == "success") | .databaseId' | head -1)
 		fi
 
-		local linux_gnu_downloaded=false
-		local linux_musl_downloaded=false
-		local linux_aarch64_downloaded=false
-		local windows_downloaded=false
-		local require_windows="${RELEASE_REQUIRE_WINDOWS:-false}"
+		# Windows x86_64 is REQUIRED for the legacy updater bridge by default so
+		# every release rescues all users. The bridge also rescues Windows
+		# v0.141.0-v0.141.4 users, whose updater used the `{target}.tar.gz`
+		# identifier that never matched the published `.zip` (so they could not
+		# self-update at all). Set RELEASE_REQUIRE_WINDOWS=false only for an
+		# emergency macOS/Linux rescue when Windows CI is flaky and would
+		# otherwise block the release.
+		local require_windows="${RELEASE_REQUIRE_WINDOWS:-true}"
 
 		if [[ -n "$run_id" ]]; then
 			# Download all artifacts from the CI run
@@ -1261,7 +1285,6 @@ main() {
 				mv "$ci_artifacts_dir"/*.tar.gz "$binaries_dir/" 2>/dev/null || true
 				mv "$ci_artifacts_dir"/*.sha256 "$binaries_dir/" 2>/dev/null || true
 				print_success "Downloaded: Linux x86_64 gnu"
-				linux_gnu_downloaded=true
 			else
 				print_warning "Could not download: Linux x86_64 gnu"
 			fi
@@ -1272,7 +1295,6 @@ main() {
 				mv "$ci_artifacts_dir"/*.tar.gz "$binaries_dir/" 2>/dev/null || true
 				mv "$ci_artifacts_dir"/*.sha256 "$binaries_dir/" 2>/dev/null || true
 				print_success "Downloaded: Linux x86_64 musl"
-				linux_musl_downloaded=true
 			else
 				print_warning "Could not download: Linux x86_64 musl"
 			fi
@@ -1283,24 +1305,23 @@ main() {
 				mv "$ci_artifacts_dir"/*.tar.gz "$binaries_dir/" 2>/dev/null || true
 				mv "$ci_artifacts_dir"/*.sha256 "$binaries_dir/" 2>/dev/null || true
 				print_success "Downloaded: Linux aarch64"
-				linux_aarch64_downloaded=true
 			else
 				print_warning "Could not download: Linux aarch64"
 			fi
 
-			# Download Windows x86_64 artifact only when explicitly required.
+			# Download Windows x86_64 artifact. Required for the bridge; the
+			# required-target coverage check below fails the release if missing.
 			if [[ "$require_windows" == "true" ]]; then
 				print_info "Downloading Windows x86_64 artifact..."
 				if gh run download "$run_id" --name "vtcode-${released_version}-x86_64-pc-windows-msvc" --dir "$ci_artifacts_dir" 2>/dev/null; then
 					mv "$ci_artifacts_dir"/*.zip "$binaries_dir/" 2>/dev/null || true
 					mv "$ci_artifacts_dir"/*.sha256 "$binaries_dir/" 2>/dev/null || true
 					print_success "Downloaded: Windows x86_64"
-					windows_downloaded=true
 				else
 					print_warning "Could not download: Windows x86_64"
 				fi
 			else
-				print_info "Skipping Windows artifact download (set RELEASE_REQUIRE_WINDOWS=true to enable)"
+				print_info "Skipping Windows artifact download (RELEASE_REQUIRE_WINDOWS=false)"
 			fi
 
 			rm -rf "$ci_artifacts_dir"
@@ -1308,29 +1329,67 @@ main() {
 			print_warning "No CI workflow run found - will use macOS binaries only"
 		fi
 
-		# Summary of what we have
-		if [[ "$linux_gnu_downloaded" == false || "$linux_musl_downloaded" == false || "$linux_aarch64_downloaded" == false ]] || [[ "$require_windows" == "true" && "$windows_downloaded" == false ]]; then
-			print_warning "Some platform binaries are missing - release will include:"
-			# shellcheck disable=SC2015
-			[[ "$linux_gnu_downloaded" == true ]] && print_info "  ✓ Linux x86_64 gnu" || print_warning "  ✗ Linux x86_64 gnu"
-			# shellcheck disable=SC2015
-			[[ "$linux_musl_downloaded" == true ]] && print_info "  ✓ Linux x86_64 musl" || print_warning "  ✗ Linux x86_64 musl"
-			# shellcheck disable=SC2015
-			[[ "$linux_aarch64_downloaded" == true ]] && print_info "  ✓ Linux aarch64" || print_warning "  ✗ Linux aarch64"
-			if [[ "$require_windows" == "true" ]]; then
-				# shellcheck disable=SC2015
-				[[ "$windows_downloaded" == true ]] && print_info "  ✓ Windows x86_64" || print_warning "  ✗ Windows x86_64"
-			else
-				print_info "  - Windows x86_64 (optional, skipped)"
+		# Required target coverage for the legacy updater bridge. Every listed
+		# target must publish a normal archive so a raw compatibility executable
+		# (compat-vtcode-<v>-<target>.tar.gz.compat) can be derived for the broken
+		# v0.141.0-v0.141.4 updaters. Windows is required by default; opt out
+		# with RELEASE_REQUIRE_WINDOWS=false for an emergency rescue (see above).
+		local -a required_targets=(
+			"x86_64-apple-darwin:tar.gz"
+			"aarch64-apple-darwin:tar.gz"
+			"x86_64-unknown-linux-gnu:tar.gz"
+			"x86_64-unknown-linux-musl:tar.gz"
+			"aarch64-unknown-linux-gnu:tar.gz"
+		)
+		if [[ "$require_windows" == "true" ]]; then
+			required_targets+=("x86_64-pc-windows-msvc:zip")
+		fi
+		local missing_required=0
+		for item in "${required_targets[@]}"; do
+			local rtarget="${item%%:*}"
+			local rext="${item##*:}"
+			if [[ ! -f "$binaries_dir/vtcode-${released_version}-${rtarget}.${rext}" ]]; then
+				print_error "Missing required release archive: vtcode-${released_version}-${rtarget}.${rext}"
+				missing_required=1
 			fi
-			print_info "  ✓ macOS x86_64"
-			print_info "  ✓ macOS aarch64"
+		done
+		if [[ "$missing_required" -ne 0 ]]; then
+			print_error "Release aborted: not all required target archives are present."
+			print_info "Ensure the build-linux-windows workflow succeeded and macOS builds completed."
+			exit 1
 		fi
 
-		# Upload all binaries to GitHub Release
-		print_info "Uploading all binaries to GitHub Release..."
+		# Generate one raw compatibility executable per normal archive. The
+		# legacy self_update matcher returns the FIRST asset (GitHub sorts the
+		# assets array alphabetically by name) whose name contains both the
+		# target triple and the `{target}.tar.gz` identifier. `compat-` sorts
+		# before `vtcode-`, so the `compat-vtcode-<v>-<target>.tar.gz.compat`
+		# asset is selected; its `.compat` final extension is treated as a plain
+		# uncompressed binary, sidestepping the missing `compression-tar-gz`
+		# feature. See scripts/release-assets.sh for the full rationale.
+		print_info "Generating legacy updater compatibility assets..."
+		local -a compat_assets=()
+		for item in "${required_targets[@]}"; do
+			local ctarget="${item%%:*}"
+			local cext="${item##*:}"
+			local normal_archive="$binaries_dir/vtcode-${released_version}-${ctarget}.${cext}"
+			local compat_path
+			if ! compat_path=$(compatibility_asset_path "$normal_archive" "$binaries_dir"); then
+				print_error "Failed to derive compatibility asset path for $normal_archive"
+				exit 1
+			fi
+			if ! create_compatibility_asset "$normal_archive" "$compat_path"; then
+				print_error "Failed to generate compatibility asset from $normal_archive"
+				exit 1
+			fi
+			compat_assets+=("$compat_path")
+		done
+		print_success "Generated ${#compat_assets[@]} compatibility assets"
 
-		# Generate consolidated checksums.txt
+		# Upload all binaries to GitHub Release
+		print_info "Uploading binaries to GitHub Release..."
+
+		# Generate consolidated checksums.txt over compat + normal archives.
 		(
 			cd "$binaries_dir"
 			local shacmd=""
@@ -1347,43 +1406,83 @@ main() {
 			rm -f checksums.txt
 			touch checksums.txt
 
-			for f in *.tar.gz *.zip; do
+			# `*.tar.gz.compat` matches `compat-*.tar.gz.compat` (ends with that
+			# suffix); `*.tar.gz` does NOT match `*.tar.gz.compat`. shellcheck
+			# disable=SC2015
+			for f in *.tar.gz.compat *.tar.gz *.zip; do
 				if [ -f "$f" ]; then
 					$shacmd "$f" >>checksums.txt
 				fi
 			done
 		)
 
-		shopt -s nullglob
-		release_files=(
-			"$binaries_dir"/*.tar.gz
-			"$binaries_dir"/*.zip
-			"$binaries_dir"/*.sha256
-			"$SCRIPT_DIR/install.sh"
-			"$SCRIPT_DIR/install.ps1"
-		)
-		shopt -u nullglob
-
-		# Only include checksums.txt if it has content
-		if [[ -s "$binaries_dir/checksums.txt" ]]; then
-			release_files+=("$binaries_dir/checksums.txt")
-		fi
-
-		# Skip upload if there are no binary files
-		if [[ ${#release_files[@]} -eq 0 ]]; then
-			print_warning "No binaries to upload"
-		else
-			# Ensure install scripts are executable
-			chmod +x "$SCRIPT_DIR/install.sh" 2>/dev/null || true
-			chmod +x "$SCRIPT_DIR/install.ps1" 2>/dev/null || true
-
-			if gh release upload "$released_version" "${release_files[@]}" --clobber; then
-				print_success "All binaries, checksums.txt, and install scripts uploaded successfully"
-			else
-				print_error "Failed to upload binaries to GitHub Release"
+		# Validate the complete staged release (compat + archive + checksum per
+		# target, plus checksums.txt) before uploading anything. The full
+		# contract requires Windows; skip it when Windows was explicitly
+		# excluded via RELEASE_REQUIRE_WINDOWS=false.
+		if [[ "$require_windows" == "true" ]]; then
+			if ! validate_release_assets "$binaries_dir" "$released_version"; then
+				print_error "Release asset validation failed; aborting upload"
 				exit 1
 			fi
 		fi
+
+		# Ensure install scripts are executable
+		chmod +x "$SCRIPT_DIR/install.sh" 2>/dev/null || true
+		chmod +x "$SCRIPT_DIR/install.ps1" 2>/dev/null || true
+
+		# Two-phase upload: compatibility assets first, then normal archives,
+		# checksums, and install scripts. Upload order does NOT control legacy
+		# selection (GitHub re-sorts assets alphabetically by name; the `compat-`
+		# prefix is what makes the legacy updater pick them). Uploading compat
+		# first is harmless defense-in-depth kept for clarity.
+		local upload_failed=0
+		if [[ ${#compat_assets[@]} -gt 0 ]]; then
+			print_info "Uploading compatibility assets (legacy bridge)..."
+			if ! gh release upload "$released_version" "${compat_assets[@]}" --clobber; then
+				print_error "Failed to upload compatibility assets to GitHub Release"
+				upload_failed=1
+			fi
+		fi
+
+		if [[ "$upload_failed" -eq 0 ]]; then
+			shopt -s nullglob
+			local -a normal_release_files=(
+				"$binaries_dir"/vtcode-*.tar.gz
+				"$binaries_dir"/vtcode-*.zip
+				"$binaries_dir"/vtcode-*.sha256
+				"$SCRIPT_DIR/install.sh"
+				"$SCRIPT_DIR/install.ps1"
+			)
+			shopt -u nullglob
+			# Exclude compatibility assets from the normal upload glob; they
+			# start with `compat-` so `vtcode-*.tar.gz`/`vtcode-*.zip` already
+			# skip them, but this guard defends against re-runs/renames.
+			local -a filtered_normal_files=()
+			local nf
+			for nf in "${normal_release_files[@]}"; do
+				case "$(basename "$nf")" in
+					compat-*.tar.gz.compat) continue ;;
+				esac
+				filtered_normal_files+=("$nf")
+			done
+			# Only include checksums.txt if it has content
+			if [[ -s "$binaries_dir/checksums.txt" ]]; then
+				filtered_normal_files+=("$binaries_dir/checksums.txt")
+			fi
+			if [[ ${#filtered_normal_files[@]} -gt 0 ]]; then
+				print_info "Uploading normal archives, checksums, and install scripts..."
+				if ! gh release upload "$released_version" "${filtered_normal_files[@]}" --clobber; then
+					print_error "Failed to upload binaries to GitHub Release"
+					upload_failed=1
+				fi
+			fi
+		fi
+
+		if [[ "$upload_failed" -ne 0 ]]; then
+			exit 1
+		fi
+		print_success "All binaries, compatibility assets, checksums.txt, and install scripts uploaded successfully"
 
 		# Extract checksums before cleanup for Homebrew formula update
 		local release_x86_sha=""

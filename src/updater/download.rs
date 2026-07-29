@@ -81,16 +81,39 @@ async fn response_for_url(url: &str, timeout: Duration) -> Result<reqwest::Respo
 
 pub(super) fn checksum_asset<'a>(assets: &'a [ReleaseAsset], archive_name: &str) -> Option<&'a ReleaseAsset> {
     let archive_name = archive_name.to_ascii_lowercase();
-    let exact_name = format!("{archive_name}.sha256");
+    // Modern sidecar: `archive.tar.gz.sha256` / `archive.zip.sha256`.
+    let modern_sidecar = format!("{archive_name}.sha256");
+    // Legacy extension-stripped sidecar: `vtcode-<v>-<target>.sha256`
+    // (the `.tar.gz`/`.zip` suffix removed). This is the convention the
+    // release pipeline publishes today, so prefer it over the aggregate file.
+    let legacy_sidecar = legacy_checksum_name(&archive_name);
+
     assets
         .iter()
-        .find(|asset| asset.name.to_ascii_lowercase() == exact_name)
+        .find(|asset| asset.name.to_ascii_lowercase() == modern_sidecar)
+        .or_else(|| {
+            let legacy = legacy_sidecar.as_deref();
+            assets
+                .iter()
+                .find(|asset| legacy.is_some_and(|name| asset.name.to_ascii_lowercase() == name))
+        })
         .or_else(|| {
             assets.iter().find(|asset| {
                 let name = asset.name.to_ascii_lowercase();
                 name == "checksums.txt" || name == "sha256sums.txt"
             })
         })
+}
+
+/// Derive the legacy extension-stripped checksum sidecar name for an archive.
+///
+/// `vtcode-1.0.0-aarch64-apple-darwin.tar.gz` -> `vtcode-1.0.0-aarch64-apple-darwin.sha256`.
+/// Returns `None` for archives that are neither `.tar.gz` nor `.zip`.
+fn legacy_checksum_name(archive_name: &str) -> Option<String> {
+    archive_name
+        .strip_suffix(".tar.gz")
+        .or_else(|| archive_name.strip_suffix(".zip"))
+        .map(|stem| format!("{stem}.sha256"))
 }
 
 pub(super) fn parse_checksum_metadata(metadata: &str, archive_name: &str) -> Option<String> {
@@ -191,6 +214,62 @@ mod tests {
         ];
 
         assert!(checksum_asset(&assets, "vtcode-1.0.0-aarch64-apple-darwin.tar.gz").is_none());
+    }
+
+    #[test]
+    fn selects_legacy_extension_stripped_checksum_sidecar() {
+        // The release pipeline publishes `vtcode-<v>-<target>.sha256`
+        // (extension-stripped) alongside the `.tar.gz` archive.
+        let assets = vec![
+            ReleaseAsset {
+                name: "vtcode-1.0.0-aarch64-apple-darwin.tar.gz".to_string(),
+                download_url: "https://example.test/archive".to_string(),
+            },
+            ReleaseAsset {
+                name: "vtcode-1.0.0-aarch64-apple-darwin.sha256".to_string(),
+                download_url: "https://example.test/checksum".to_string(),
+            },
+        ];
+
+        let selected = checksum_asset(&assets, "vtcode-1.0.0-aarch64-apple-darwin.tar.gz").expect("sidecar");
+
+        assert_eq!(selected.name, "vtcode-1.0.0-aarch64-apple-darwin.sha256");
+    }
+
+    #[test]
+    fn selects_legacy_extension_stripped_checksum_sidecar_for_zip() {
+        let assets = vec![
+            ReleaseAsset {
+                name: "vtcode-1.0.0-x86_64-pc-windows-msvc.zip".to_string(),
+                download_url: "https://example.test/archive".to_string(),
+            },
+            ReleaseAsset {
+                name: "vtcode-1.0.0-x86_64-pc-windows-msvc.sha256".to_string(),
+                download_url: "https://example.test/checksum".to_string(),
+            },
+        ];
+
+        let selected = checksum_asset(&assets, "vtcode-1.0.0-x86_64-pc-windows-msvc.zip").expect("sidecar");
+
+        assert_eq!(selected.name, "vtcode-1.0.0-x86_64-pc-windows-msvc.sha256");
+    }
+
+    #[test]
+    fn prefers_modern_sidecar_over_legacy_stripped_sidecar() {
+        let assets = vec![
+            ReleaseAsset {
+                name: "vtcode-1.0.0-aarch64-apple-darwin.tar.gz.sha256".to_string(),
+                download_url: "https://example.test/modern".to_string(),
+            },
+            ReleaseAsset {
+                name: "vtcode-1.0.0-aarch64-apple-darwin.sha256".to_string(),
+                download_url: "https://example.test/legacy".to_string(),
+            },
+        ];
+
+        let selected = checksum_asset(&assets, "vtcode-1.0.0-aarch64-apple-darwin.tar.gz").expect("sidecar");
+
+        assert_eq!(selected.name, "vtcode-1.0.0-aarch64-apple-darwin.tar.gz.sha256");
     }
 
     #[tokio::test]

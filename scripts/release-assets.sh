@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# Release asset helpers for the legacy updater compatibility bridge.
+#
+# Broken `self_update` 1.0.0-rc.6 updaters (VT Code v0.141.0-v0.141.4) cannot
+# extract gzip tar archives: they were built with the `archive-tar` feature but
+# NOT `compression-tar-gz`, so a real `.tar.gz` fails with
+# `CompressionNotEnabledError: 'gz' compression not supported`.
+#
+# How the legacy updater selects an asset (verified against the crate source):
+#   1. `asset_for(target, Some("{target}.tar.gz"))` returns the FIRST asset
+#      whose name `contains(target)` AND `contains("{target}.tar.gz")`.
+#   2. GitHub's releases API returns the `assets` array sorted ALPHABETICALLY
+#      BY NAME (ascending) -- upload order is irrelevant. So "first match" is
+#      the alphabetically-first matching asset.
+#   3. The downloaded file is saved under the asset's own name, and
+#      `detect_archive` reads the FINAL path extension. Anything other than
+#      zip/tar/tgz/gz -> `ArchiveKind::Plain(None)`, and `extract_file` then
+#      copies the raw bytes verbatim to `<dir>/vtcode` -- no gzip feature used.
+#
+# The compatibility asset is a raw executable named
+# `compat-vtcode-<v>-<target>.tar.gz.compat`. It contains the `{target}.tar.gz`
+# substring (so the legacy identifier matches it) and its final extension is
+# `.compat` (so it is treated as a plain binary). Crucially, the `compat-`
+# prefix sorts BEFORE `vtcode-` (`c` < `v`), so it is the alphabetically-first
+# match and the legacy updater picks it instead of the broken `.tar.gz`.
+#
+# The v0.141.5+ updater ignores these assets: its matcher requires the name to
+# `starts_with("vtcode-")` AND `ends_with("{target}.tar.gz" | "{target}.zip")`,
+# and `compat-vtcode-...tar.gz.compat` matches neither, so it selects the real
+# archive. Both generations therefore install byte-identical binaries.
+#
+# These helpers derive the raw compatibility executables from the same normal
+# release archives used by installers.
+#
+# This file is sourced by `scripts/release.sh`; it intentionally does not set
+# shell options so the caller controls `set -euo pipefail`.
+
+# Print the compatibility asset path for a normal release archive.
+#
+#   compatibility_asset_path <archive> <output-dir>
+#
+# Both `.tar.gz` (macOS/Linux) and `.zip` (Windows) archives map to a
+# `compat-<stem>.tar.gz.compat` asset. The `compat-` prefix is load-bearing:
+# it makes the asset sort before `vtcode-<v>-<target>.tar.gz` so the legacy
+# updater's alphabetically-first `find()` picks the raw binary. Returns
+# nonzero on an unsupported archive extension.
+compatibility_asset_path() {
+    if [[ $# -ne 2 ]]; then
+        echo "usage: compatibility_asset_path <archive> <output-dir>" >&2
+        return 2
+    fi
+    local archive=$1
+    local output_dir=$2
+    local name
+    name=$(basename "$archive")
+    local stem
+    stem="${name%.tar.gz}"
+    stem="${stem%.zip}"
+    if [[ "$stem" == "$name" ]]; then
+        echo "unsupported archive extension: $name (expected .tar.gz or .zip)" >&2
+        return 1
+    fi
+    printf '%s/compat-%s.tar.gz.compat\n' "$output_dir" "$stem"
+}
+
+# Extract the platform executable from a normal release archive into a raw
+# `.tar.gz.compat` file.
+#
+#   create_compatibility_asset <archive> <output>
+#
+# The archive must contain exactly one `vtcode` (Unix) or `vtcode.exe`
+# (Windows) entry at any path. Rejects unsupported suffixes, missing binaries,
+# empty output, and multiple matching binary entries.
+create_compatibility_asset() {
+    if [[ $# -ne 2 ]]; then
+        echo "usage: create_compatibility_asset <archive> <output>" >&2
+        return 2
+    fi
+    local archive=$1
+    local output=$2
+    local name
+    name=$(basename "$archive")
+
+    local binary
+    if [[ "$name" == *.tar.gz ]]; then
+        binary="vtcode"
+    elif [[ "$name" == *.zip ]]; then
+        binary="vtcode.exe"
+    else
+        echo "unsupported archive extension: $name (expected .tar.gz or .zip)" >&2
+        return 1
+    fi
+
+    # Validate exactly one matching binary entry to avoid ambiguity.
+    local matches
+    if [[ "$name" == *.tar.gz ]]; then
+        matches=$(tar -tf "$archive" 2>/dev/null | grep -E "(^|/)${binary}\$" || true)
+    else
+        matches=$(unzip -Z1 "$archive" 2>/dev/null | grep -E "(^|/)${binary}\$" || true)
+    fi
+    local count
+    count=$(printf '%s\n' "$matches" | grep -c . || true)
+    if [[ "$count" -eq 0 ]]; then
+        echo "archive $name does not contain ${binary}" >&2
+        return 1
+    fi
+    if [[ "$count" -gt 1 ]]; then
+        echo "archive $name contains multiple ${binary} entries" >&2
+        return 1
+    fi
+
+    local entry
+    entry=$(printf '%s\n' "$matches" | head -n1)
+
+    : >"$output"
+    if [[ "$name" == *.tar.gz ]]; then
+        tar -xOf "$archive" "$entry" >"$output"
+    else
+        unzip -p "$archive" "$entry" >"$output"
+    fi
+
+    if [[ ! -s "$output" ]]; then
+        echo "extracted compatibility asset is empty: $name" >&2
+        rm -f "$output"
+        return 1
+    fi
+    return 0
+}
+
+# Validate a staged release directory has complete target coverage.
+#
+#   validate_release_assets <stage-dir> <version>
+#
+# Fails when any required target lacks its compatibility binary, normal
+# archive, or checksum sidecar.
+validate_release_assets() {
+    if [[ $# -ne 2 ]]; then
+        echo "usage: validate_release_assets <stage-dir> <version>" >&2
+        return 2
+    fi
+    local stage_dir=$1
+    local version=$2
+    local -a required_targets=(
+        "x86_64-apple-darwin:tar.gz"
+        "aarch64-apple-darwin:tar.gz"
+        "x86_64-unknown-linux-gnu:tar.gz"
+        "x86_64-unknown-linux-musl:tar.gz"
+        "aarch64-unknown-linux-gnu:tar.gz"
+        "x86_64-pc-windows-msvc:zip"
+    )
+    local missing=0
+    local item target ext archive compat checksum
+    for item in "${required_targets[@]}"; do
+        target="${item%%:*}"
+        ext="${item##*:}"
+        archive="vtcode-${version}-${target}.${ext}"
+        compat="compat-vtcode-${version}-${target}.tar.gz.compat"
+        checksum="vtcode-${version}-${target}.sha256"
+        for file in "$compat" "$archive" "$checksum"; do
+            if [[ ! -f "$stage_dir/$file" ]]; then
+                echo "missing required release asset: $file" >&2
+                missing=1
+            fi
+        done
+    done
+    if [[ ! -f "$stage_dir/checksums.txt" ]]; then
+        echo "missing required release asset: checksums.txt" >&2
+        missing=1
+    fi
+    if [[ "$missing" -ne 0 ]]; then
+        echo "release asset validation failed for v${version}" >&2
+        return 1
+    fi
+    return 0
+}

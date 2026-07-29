@@ -306,4 +306,39 @@ mod tests {
 
         assert!(error.to_string().contains("no compatible archive"));
     }
+
+    #[test]
+    fn ignores_legacy_compat_assets_and_selects_real_archive() {
+        // The legacy updater compatibility bridge publishes a raw executable
+        // named `compat-vtcode-<v>-<target>.tar.gz.compat` (it sorts before the
+        // normal archive so the broken v0.141.0-v0.141.4 `self_update` matcher
+        // picks it). The v0.141.5+ matcher must IGNORE it: the name does not
+        // `starts_with("vtcode-")` and does not `ends_with("{target}.tar.gz")`,
+        // so exactly one candidate (the real archive) remains.
+        let assets = vec![
+            asset("checksums.txt"),
+            asset("compat-vtcode-1.0.0-aarch64-apple-darwin.tar.gz.compat"),
+            asset("vtcode-1.0.0-aarch64-apple-darwin.sha256"),
+            asset("vtcode-1.0.0-aarch64-apple-darwin.tar.gz"),
+        ];
+
+        let (selected, kind) = select_archive_asset(&assets, "aarch64-apple-darwin").expect("asset");
+
+        assert_eq!(selected.name, "vtcode-1.0.0-aarch64-apple-darwin.tar.gz");
+        assert_eq!(kind, ArchiveKind::TarGz);
+    }
+
+    #[test]
+    fn ignores_legacy_compat_assets_for_windows() {
+        let assets = vec![
+            asset("compat-vtcode-1.0.0-x86_64-pc-windows-msvc.tar.gz.compat"),
+            asset("vtcode-1.0.0-x86_64-pc-windows-msvc.sha256"),
+            asset("vtcode-1.0.0-x86_64-pc-windows-msvc.zip"),
+        ];
+
+        let (selected, kind) = select_archive_asset(&assets, "x86_64-pc-windows-msvc").expect("asset");
+
+        assert_eq!(selected.name, "vtcode-1.0.0-x86_64-pc-windows-msvc.zip");
+        assert_eq!(kind, ArchiveKind::Zip);
+    }
 }

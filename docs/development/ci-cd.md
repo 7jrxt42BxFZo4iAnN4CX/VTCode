@@ -44,9 +44,30 @@ The project uses several GitHub Actions workflows to ensure code quality and aut
 
 **Jobs:**
 
-- **Build Linux**: Compiles x86_64-unknown-linux-gnu binary
-- **Build Windows**: Compiles x86_64-pc-windows-msvc binary
-- **Upload Artifacts**: Stores compiled binaries for release
+- **Build Linux**: Compiles `x86_64-unknown-linux-gnu`, `x86_64-unknown-linux-musl`, and `aarch64-unknown-linux-gnu` binaries
+- **Build Windows**: Compiles `x86_64-pc-windows-msvc` binary
+- **Upload Artifacts**: Stores compiled binaries + extension-stripped `.sha256` sidecars for release
+
+**Required release target matrix** (enforced by `scripts/release.sh`):
+
+| Target | Built by | Archive |
+| --- | --- | --- |
+| `x86_64-apple-darwin` | local (`release.sh`) | `.tar.gz` |
+| `aarch64-apple-darwin` | local (`release.sh`) | `.tar.gz` |
+| `x86_64-unknown-linux-gnu` | `build-linux-windows.yml` | `.tar.gz` |
+| `x86_64-unknown-linux-musl` | `build-linux-windows.yml` | `.tar.gz` |
+| `aarch64-unknown-linux-gnu` | `build-linux-windows.yml` | `.tar.gz` |
+| `x86_64-pc-windows-msvc` | `build-linux-windows.yml` | `.zip` (required by default) |
+
+`release.sh` derives a raw `compat-vtcode-<v>-<target>.tar.gz.compat` executable from
+each normal archive. These are the legacy updater compatibility bridge for
+v0.141.0-v0.141.4 (see [Update System Guide](../guides/UPDATE_SYSTEM.md)). The
+`compat-` prefix is load-bearing: GitHub returns release assets sorted alphabetically
+by name, and the prefix makes the compat asset sort before `vtcode-<v>-<target>.tar.gz`
+so the broken legacy updater picks the raw binary instead of the gzip archive it
+cannot extract. The release fails if any required target archive (including
+Windows by default) is missing. Set `RELEASE_REQUIRE_WINDOWS=false` only for an
+emergency macOS/Linux rescue when Windows CI is flaky.
 
 ### 4. Coverage (`coverage.yml`)
 

@@ -22,16 +22,27 @@ binary independently of archive features.
 For every supported target, v0.141.6 publishes:
 
 1. A raw executable compatibility asset named
-   `vtcode-<version>-<target>.tar.gz.compat`.
+   `compat-vtcode-<version>-<target>.tar.gz.compat`.
 2. The normal archive:
    - `<target>.tar.gz` for macOS and Linux.
    - `<target>.zip` for Windows.
 3. SHA-256 metadata covering every executable asset.
 
-Compatibility assets must be uploaded before normal archives. Legacy updaters
-select the first asset containing `<target>.tar.gz`, then treat the final
-`.compat` extension as a plain executable. The v0.141.5+ updater requires the
-normal archive suffix and therefore ignores compatibility assets.
+> **The `compat-` prefix is load-bearing.** GitHub's releases API returns the
+> `assets` array sorted alphabetically by name (ascending), and the legacy
+> updater's `asset_for` returns the **first** asset whose name `contains(target)`
+> and `contains("{target}.tar.gz")`. Both the normal `vtcode-<v>-<target>.tar.gz`
+> and the compat asset match that substring test, so the alphabetically-first one
+> wins. `compat-` sorts before `vtcode-` (`c` < `v`), so the compat asset is
+> selected. Without the prefix (`vtcode-<v>-<target>.tar.gz.compat`) the normal
+> archive sorts first and the legacy updater still hits
+> `CompressionNotEnabledError`. Upload order is irrelevant because GitHub
+> re-sorts by name.
+
+Legacy updaters select the first matching asset (alphabetical order), then treat
+the final `.compat` extension as a plain executable. The v0.141.5+ updater
+requires `starts_with("vtcode-")` and `ends_with("{target}.tar.gz"` /
+`"{target}.zip")` and therefore ignores compatibility assets.
 
 Compatibility assets retain the platform executable name internally through
 the legacy updater's `bin_name` setting: `vtcode` on Unix and `vtcode.exe` on
@@ -41,9 +52,14 @@ Windows.
 
 - Generate compatibility assets from the exact binaries packaged into normal
   release archives.
-- Make x86_64 Windows artifacts required for the release.
+- Include x86_64 Windows artifacts in the bridge **by default**
+  (`RELEASE_REQUIRE_WINDOWS=false` to opt out) so every release rescues all
+  users, including Windows v0.141.0-v0.141.4 whose updater used the
+  `{target}.tar.gz` identifier that never matched the published `.zip`. Reserve
+  the opt-out for emergency macOS/Linux rescues when Windows CI is flaky.
 - Publish compatibility assets in a separate upload operation before normal
-  assets.
+  assets (defense-in-depth only — GitHub re-sorts assets by name, so the
+  `compat-` prefix, not upload order, is what drives legacy selection).
 - Include compatibility assets in `checksums.txt`.
 - Accept the repository's legacy sidecar convention
   (`archive.tar.gz` paired with `archive.sha256`) as well as

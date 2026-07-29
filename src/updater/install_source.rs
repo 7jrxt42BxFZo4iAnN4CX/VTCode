@@ -183,13 +183,22 @@ pub(super) fn detect_install_source_from_path(path: &Path) -> InstallSource {
 }
 
 pub(super) fn get_target_triple() -> Option<&'static str> {
-    match (env::consts::OS, env::consts::ARCH) {
+    get_target_triple_for(env::consts::OS, env::consts::ARCH)
+}
+
+/// Resolve the release asset target triple for an `(os, arch)` pair.
+///
+/// Returns `None` for platforms the release pipeline does not publish.
+/// Windows ARM is intentionally unsupported until the build workflow produces
+/// that target; returning `None` surfaces "Unsupported platform for
+/// auto-update" instead of a misleading "no compatible archive found".
+pub(super) fn get_target_triple_for(os: &str, arch: &str) -> Option<&'static str> {
+    match (os, arch) {
         ("macos", "x86_64") => Some("x86_64-apple-darwin"),
         ("macos", "aarch64") => Some("aarch64-apple-darwin"),
         ("linux", "x86_64") => Some("x86_64-unknown-linux-musl"),
         ("linux", "aarch64") => Some("aarch64-unknown-linux-gnu"),
         ("windows", "x86_64") => Some("x86_64-pc-windows-msvc"),
-        ("windows", "aarch64") => Some("aarch64-pc-windows-msvc"),
         _ => None,
     }
 }
@@ -224,6 +233,24 @@ mod tests {
     fn target_binary_name_matches_platform_archive() {
         assert_eq!(binary_name_for_target("x86_64-unknown-linux-musl"), "vtcode");
         assert_eq!(binary_name_for_target("x86_64-pc-windows-msvc"), "vtcode.exe");
+    }
+
+    #[test]
+    fn supported_target_triples_match_release_pipeline() {
+        for (os, arch, target) in [
+            ("macos", "x86_64", "x86_64-apple-darwin"),
+            ("macos", "aarch64", "aarch64-apple-darwin"),
+            ("linux", "x86_64", "x86_64-unknown-linux-musl"),
+            ("linux", "aarch64", "aarch64-unknown-linux-gnu"),
+            ("windows", "x86_64", "x86_64-pc-windows-msvc"),
+        ] {
+            assert_eq!(get_target_triple_for(os, arch), Some(target), "({os}, {arch}) should resolve to {target}");
+        }
+    }
+
+    #[test]
+    fn windows_aarch64_is_unsupported_until_pipeline_publishes_it() {
+        assert_eq!(get_target_triple_for("windows", "aarch64"), None);
     }
 
     #[test]
