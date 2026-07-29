@@ -743,6 +743,11 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Semantic Understanding, Tree-sitter Security Parsing (Bash), Syntax Highlighting
   - **User Questions**: "What can you tell me about Language Support in VT Code?", "How does Semantic Understanding work?", "How does Tree-sitter Security Parsing (Bash) work?"
 
+- **File**: `docs/superpowers/specs/2026-07-29-legacy-updater-compatibility-release-design.md`
+  - **Content**: Legacy Updater Compatibility Release
+  - **Topics**: Goal, Root Cause, Release Asset Contract, Pipeline Changes, Safety
+  - **User Questions**: "What can you tell me about Legacy Updater Compatibility Release?", "How does Goal work?", "How does Root Cause work?"
+
 - **File**: `docs/build-with-claude/migrating-to-claude-opus-5.md`
   - **Content**: Migrating Claude models in VT Code
   - **Topics**: Quick navigation, Model comparison, Where to make changes in VT Code, Migrating to Claude Fable 5 / Claude Mythos 5, Migrating to Claude Opus 5
