@@ -376,9 +376,6 @@ pub(crate) struct HarnessTurnState {
     /// instead of the turn hard-blocking and silently dropping an approved
     /// plan build.
     preflight_circuit_recovery_pending: bool,
-    /// Set when the safety gateway's per-turn tool limit fires. The tool batch
-    /// drains remaining calls and flushes a synthesis directive after the batch.
-    turn_limit_pending: bool,
     pub max_tool_calls: usize,
     pub max_tool_wall_clock: Duration,
     pub max_tool_retries: u32,
@@ -435,7 +432,6 @@ impl HarnessTurnState {
             approved_plan_recovery_retries: 0,
             interview_denial_recovery_pending: false,
             preflight_circuit_recovery_pending: false,
-            turn_limit_pending: false,
             max_tool_calls,
             max_tool_wall_clock: Duration::from_secs(max_tool_wall_clock_secs),
             max_tool_retries,
@@ -670,18 +666,6 @@ impl HarnessTurnState {
 
     pub(crate) fn take_preflight_circuit_recovery(&mut self) -> bool {
         std::mem::take(&mut self.preflight_circuit_recovery_pending)
-    }
-
-    pub(crate) fn turn_limit_pending(&self) -> bool {
-        self.turn_limit_pending
-    }
-
-    pub(crate) fn arm_turn_limit_recovery(&mut self) {
-        self.turn_limit_pending = true;
-    }
-
-    pub(crate) fn take_turn_limit_recovery(&mut self) -> bool {
-        std::mem::take(&mut self.turn_limit_pending)
     }
 
     pub(crate) fn recovery_is_tool_free(&self) -> bool {

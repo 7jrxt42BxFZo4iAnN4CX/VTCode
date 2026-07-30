@@ -9,9 +9,6 @@ use std::path::PathBuf;
 use vtcode_core::llm::provider as uni;
 use vtcode_core::utils::ansi::MessageStyle;
 
-use crate::agent::runloop::text_tools::{
-    contains_pseudo_tool_call_markers, detect_textual_tool_call, strip_dsml_markup, strip_textual_tool_call_regions,
-};
 use crate::agent::runloop::unified::run_loop_context::RecoveryMode;
 use crate::agent::runloop::unified::turn::context::{
     PreparedAssistantToolCall, TurnHandlerOutcome, TurnLoopResult, TurnProcessingContext, TurnProcessingResult,
@@ -198,12 +195,16 @@ pub(crate) async fn handle_turn_processing_result<'a>(
             if params.ctx.is_recovery_active()
                 && params.ctx.recovery_pass_used()
                 && params.ctx.recovery_is_tool_free()
-                && (detect_textual_tool_call(&text).is_some() || contains_pseudo_tool_call_markers(&text))
+                && (crate::agent::runloop::text_tools::detect_textual_tool_call(&text).is_some()
+                    || crate::agent::runloop::text_tools::contains_pseudo_tool_call_markers(&text))
             {
-                let cleaned = strip_dsml_markup(&text).trim().to_string();
+                let cleaned = crate::agent::runloop::text_tools::strip_dsml_markup(&text).trim().to_string();
+                // If DSML stripping produced a clean, markup-free text, use it.
+                // Otherwise try stripping the entire detected non-DSML tool-call
+                // region while preserving surrounding prose.
                 if !cleaned.is_empty()
-                    && detect_textual_tool_call(&cleaned).is_none()
-                    && !contains_pseudo_tool_call_markers(&cleaned)
+                    && crate::agent::runloop::text_tools::detect_textual_tool_call(&cleaned).is_none()
+                    && !crate::agent::runloop::text_tools::contains_pseudo_tool_call_markers(&cleaned)
                 {
                     let _ = params
                         .ctx
@@ -220,10 +221,12 @@ pub(crate) async fn handle_turn_processing_result<'a>(
                         )
                         .await;
                 }
-                let cleaned = strip_textual_tool_call_regions(&text).trim().to_string();
+                let cleaned = crate::agent::runloop::text_tools::strip_textual_tool_call_regions(&text)
+                    .trim()
+                    .to_string();
                 if !cleaned.is_empty()
-                    && detect_textual_tool_call(&cleaned).is_none()
-                    && !contains_pseudo_tool_call_markers(&cleaned)
+                    && crate::agent::runloop::text_tools::detect_textual_tool_call(&cleaned).is_none()
+                    && !crate::agent::runloop::text_tools::contains_pseudo_tool_call_markers(&cleaned)
                 {
                     let _ = params
                         .ctx
@@ -240,7 +243,14 @@ pub(crate) async fn handle_turn_processing_result<'a>(
                         )
                         .await;
                 }
-                let salvage = strip_textual_tool_call_regions(&strip_dsml_markup(&text)).trim().to_string();
+                // Both cleanup attempts failed. Salvage the best-effort
+                // stripped prose so an exhausted-retries fallback can use it
+                // instead of the canned answer.
+                let salvage = crate::agent::runloop::text_tools::strip_textual_tool_call_regions(
+                    &crate::agent::runloop::text_tools::strip_dsml_markup(&text),
+                )
+                .trim()
+                .to_string();
                 params.ctx.harness_state.record_recovery_rejected_synthesis(salvage);
                 return Ok(TurnHandlerOutcome::Break(TurnLoopResult::Blocked {
                     reason: Some(RECOVERY_CONTRACT_VIOLATION_REASON.to_string()),

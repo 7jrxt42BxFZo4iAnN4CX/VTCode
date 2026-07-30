@@ -10,7 +10,7 @@ use vtcode_core::tools::registry::labels::tool_action_label;
 use vtcode_core::utils::ansi::MessageStyle;
 
 use crate::agent::runloop::unified::async_mcp_manager::approval_policy_from_human_in_the_loop;
-use crate::agent::runloop::unified::tool_call_safety::{SafetyError, invocation_id_from_call_id};
+use crate::agent::runloop::unified::tool_call_safety::invocation_id_from_call_id;
 use crate::agent::runloop::unified::tool_pipeline::validation::{
     SafetyValidationFailure, validate_tool_call_with_limit_prompt,
 };
@@ -155,31 +155,9 @@ const INTERVIEW_DENIAL_RECOVERY_DIRECTIVE: &str = "Planning recovery: the intera
 
 const PREFLIGHT_CIRCUIT_RECOVERY_DIRECTIVE: &str = "Recovery: repeated tool preflight validation failures tripped the circuit breaker, so tools are disabled for this pass. Do not emit tool calls. Summarize what you were trying to do and the validation errors above, then tell the user in plain text what you need to proceed (e.g. re-state the request so the next turn retries with correct arguments). End your turn after this response.";
 
-const TURN_LIMIT_REACHED_RECOVERY_DIRECTIVE: &str = "Recovery: the per-turn tool limit was reached; tools are disabled for this pass. Synthesize a plain-text response from the tool outputs already gathered in this conversation — report what was completed and what still needs to be done. End your turn after this response.";
-
-/// Convert a per-turn tool-limit reached signal into a bounded, tool-free
-/// synthesis pass. Flushed after the current tool batch (including drained
-/// remaining calls) so the directive never lands between tool responses of
-/// the same assistant message.
-pub(crate) fn flush_turn_limit_reached_recovery(ctx: &mut TurnProcessingContext<'_>) {
-    if !ctx.harness_state.take_turn_limit_recovery() {
-        return;
-    }
-
-    ctx.push_system_message(TURN_LIMIT_REACHED_RECOVERY_DIRECTIVE);
-    if ctx.harness_state.recovery_reason.is_none() {
-        ctx.harness_state.recovery_reason = Some("per-turn tool limit reached".to_string());
-    }
-    ctx.harness_state.switch_to_tool_free_recovery();
-    tracing::info!(
-        target: "vtcode.turn.metrics",
-        "per-turn tool limit reached; scheduling bounded tool-free synthesis"
-    );
-}
-
 /// Convert a permanent interview denial into a bounded, tool-free planning
-/// pass. Flushed after the current tool batch so the directive follows every
-/// tool response and remains valid for providers that require strict
+/// pass. This is flushed after the current tool batch so the directive follows
+/// every tool response and remains valid for providers that require strict
 /// assistant/tool ordering.
 pub(crate) fn flush_interview_denial_recovery(ctx: &mut TurnProcessingContext<'_>) {
     if !ctx.harness_state.take_interview_denial_recovery() {
@@ -327,14 +305,6 @@ pub(super) fn finalize_validation_result(
                 ValidationTransition::Return(outcome)
             }
         }
-        ValidationResult::LimitReached => {
-            ctx.harness_state.arm_turn_limit_recovery();
-            // Do not increment blocked call counter — this is not a
-            // safety violation, just a budget limit. Return None so
-            // the batch continues draining remaining tool calls; the
-            // recovery directive is flushed after the batch completes.
-            ValidationTransition::Return(None)
-        }
         ValidationResult::Proceed(prepared) => {
             ctx.reset_blocked_tool_call_streak();
             ValidationTransition::Proceed(prepared)
@@ -378,17 +348,6 @@ async fn run_safety_validation_loop(
             Ok(Some((ValidationResult::Handled, Some(justification))))
         }
         Err(SafetyValidationFailure::Validation(err)) => {
-            if matches!(err, SafetyError::TurnLimitReached { .. }) {
-                ctx.harness_state.arm_turn_limit_recovery();
-                ctx.renderer
-                    .line(MessageStyle::Error, &format!("Safety validation failed: {err}"))?;
-                ctx.push_tool_response(
-                    tool_call_id,
-                    Some(canonical_tool_name),
-                    build_failure_error_content(format!("Safety validation failed: {err}"), "safety_limit"),
-                );
-                return Ok(Some((ValidationResult::LimitReached, None)));
-            }
             ctx.renderer
                 .line(MessageStyle::Error, &format!("Safety validation failed: {err}"))?;
             ctx.push_tool_response(
@@ -527,18 +486,6 @@ pub(crate) async fn validate_tool_call<'a>(
     tool_name: &str,
     args_val: &serde_json::Value,
 ) -> Result<ValidationResult> {
-    // Early guard: if the turn limit was already exceeded in this batch,
-    // reject subsequent calls without running safety validation.
-    if ctx.harness_state.turn_limit_pending() {
-        let error_msg = "Per-turn tool limit already exceeded — skipping this call.";
-        ctx.push_tool_response(
-            tool_call_id,
-            Some(tool_name),
-            build_failure_error_content(error_msg.to_string(), "policy"),
-        );
-        return Ok(ValidationResult::LimitReached);
-    }
-
     // Early guard: reject empty tool names with a clear error message.
     // This handles malformed LLM responses where tool name is missing.
     if tool_name.trim().is_empty() {
@@ -725,7 +672,7 @@ pub(crate) async fn validate_tool_call<'a>(
         run_safety_validation_loop(ctx, tool_call_id, &canonical_tool_name, effective_args).await?
     {
         safety_approval_justification = justification;
-        if matches!(outcome, ValidationResult::Blocked) || matches!(outcome, ValidationResult::LimitReached) {
+        if matches!(outcome, ValidationResult::Blocked) {
             return Ok(outcome);
         }
     }
