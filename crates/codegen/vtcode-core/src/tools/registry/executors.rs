@@ -526,6 +526,7 @@ impl ToolRegistry {
     delegate_to_self!(list_files_executor, list_files);
     delegate_to_self!(edit_file_executor, edit_file);
     delegate_to_self!(get_errors_executor, execute_get_errors);
+    delegate_to_self!(search_tools_executor, execute_search_tools);
     delegate_to_self!(mcp_search_tools_executor, execute_mcp_search_tools);
     delegate_to_self!(mcp_get_tool_details_executor, execute_mcp_get_tool_details);
     delegate_to_self!(mcp_list_servers_executor, execute_mcp_list_servers);

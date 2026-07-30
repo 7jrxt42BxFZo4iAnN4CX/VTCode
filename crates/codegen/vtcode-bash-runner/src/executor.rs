@@ -14,7 +14,7 @@ use std::fs;
 #[cfg(feature = "exec-events")]
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(feature = "dry-run")]
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex as DryRunMutex};
 
 #[cfg(feature = "exec-events")]
 use vtcode_exec_events::{
@@ -202,7 +202,7 @@ impl CommandExecutor for ProcessCommandExecutor {
 #[cfg(feature = "dry-run")]
 #[derive(Clone, Default)]
 pub struct DryRunCommandExecutor {
-    log: Arc<Mutex<Vec<CommandInvocation>>>,
+    log: Arc<DryRunMutex<Vec<CommandInvocation>>>,
 }
 
 #[cfg(feature = "dry-run")]

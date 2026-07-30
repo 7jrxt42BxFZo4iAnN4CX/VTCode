@@ -775,7 +775,13 @@ impl ToolRegistry {
             .registration_for(&tool_name)
             .and_then(|registration| registration.parameter_schema().cloned());
         let normalized_args = execution_kernel::normalize_tool_args(&tool_name, args, parameter_schema.as_ref())?;
-        let args = normalized_args.as_ref();
+        let max_output_tokens = crate::tools::output_limits::max_output_tokens(normalized_args.as_ref())?;
+        let handler_args = if crate::tools::output_limits::handler_accepts_output_metadata(parameter_schema.as_ref()) {
+            Cow::Borrowed(normalized_args.as_ref())
+        } else {
+            Cow::Owned(crate::tools::output_limits::args_without_output_metadata(normalized_args.as_ref()))
+        };
+        let args = handler_args.as_ref();
         let requested_name = name.to_string();
 
         // Clone args once at the start for error recording paths (clone only here)
@@ -1723,7 +1729,9 @@ impl ToolRegistry {
                 }
                 self.record_tool_latency(timeout_category, execution_started_at.elapsed());
                 // Dynamic context discovery: spool large outputs to files
-                let processed_value = self.process_tool_output(&tool_name_owned, value, is_mcp_tool).await;
+                let processed_value = self
+                    .process_tool_output(&tool_name_owned, value, is_mcp_tool, max_output_tokens)
+                    .await;
                 let mut normalized_value = normalize_tool_output(processed_value);
                 if tool_name_owned == tools::CODE_SEARCH
                     && let Some(output) = normalized_value.as_object_mut()

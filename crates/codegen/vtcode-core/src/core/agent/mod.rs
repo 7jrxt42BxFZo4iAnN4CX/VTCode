@@ -21,6 +21,7 @@ pub mod handoff;
 pub mod hash_utils;
 pub mod orient;
 pub mod progress_monitor;
+pub mod request_envelope;
 pub mod request_plan;
 pub mod result_reducers;
 pub mod runner;

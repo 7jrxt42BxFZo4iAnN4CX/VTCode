@@ -19,7 +19,7 @@ pub mod atif;
 pub mod trace;
 
 /// Semantic version of the serialized event schema exported by this crate.
-pub const EVENT_SCHEMA_VERSION: &str = "0.9.0";
+pub const EVENT_SCHEMA_VERSION: &str = "0.10.0";
 
 /// Wraps a [`ThreadEvent`] with schema metadata so downstream consumers can
 /// negotiate compatibility before processing an event stream.
@@ -520,6 +520,24 @@ pub struct ThreadCompactBoundaryEvent {
     /// Optional persisted artifact containing the archived compaction summary/history.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub history_artifact_path: Option<String>,
+    /// Segment identifier that contained the request prefix before compaction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_segment_id: Option<String>,
+    /// Segment identifier created after compaction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_segment_id: Option<String>,
+    /// Hash of the immutable request prefix before compaction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_prefix_hash: Option<String>,
+    /// Hash of the immutable request prefix after compaction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_prefix_hash: Option<String>,
+    /// Hash of the ordered tool catalog before compaction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_catalog_hash: Option<String>,
+    /// Hash of the ordered tool catalog after compaction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_catalog_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -1483,12 +1501,45 @@ mod tests {
             original_message_count: 12,
             compacted_message_count: 5,
             history_artifact_path: Some("/tmp/history.jsonl".to_string()),
+            previous_segment_id: Some("segment-0001".to_string()),
+            new_segment_id: Some("segment-0002".to_string()),
+            previous_prefix_hash: Some("prefix-before".to_string()),
+            new_prefix_hash: Some("prefix-after".to_string()),
+            previous_catalog_hash: Some("catalog-before".to_string()),
+            new_catalog_hash: Some("catalog-after".to_string()),
         });
 
         let json = serde_json::to_string(&event)?;
         let restored: ThreadEvent = serde_json::from_str(&json)?;
 
         assert_eq!(restored, event);
+        Ok(())
+    }
+
+    #[test]
+    fn compact_boundary_deserializes_legacy_payload_without_segment_metadata() -> Result<(), Box<dyn Error>> {
+        let payload = r#"{
+            "type":"thread.compact_boundary",
+            "thread_id":"thread-1",
+            "trigger":"recovery",
+            "mode":"provider",
+            "original_message_count":12,
+            "compacted_message_count":5
+        }"#;
+
+        let restored: ThreadEvent = serde_json::from_str(payload)?;
+        let ThreadEvent::ThreadCompactBoundary(event) = restored else {
+            panic!("expected thread.compact_boundary event");
+        };
+
+        assert_eq!(event.thread_id, "thread-1");
+        assert_eq!(event.history_artifact_path, None);
+        assert_eq!(event.previous_segment_id, None);
+        assert_eq!(event.new_segment_id, None);
+        assert_eq!(event.previous_prefix_hash, None);
+        assert_eq!(event.new_prefix_hash, None);
+        assert_eq!(event.previous_catalog_hash, None);
+        assert_eq!(event.new_catalog_hash, None);
         Ok(())
     }
 }

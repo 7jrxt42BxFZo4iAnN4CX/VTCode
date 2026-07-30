@@ -185,6 +185,14 @@ pub fn get_api_key_with_mode(
     // Try secure storage only after env/config lookup fails. Preserve storage
     // errors: callers must not turn an unreadable encrypted credential into a
     // misleading "paste a new key" prompt.
+    // Tests explicitly override an environment variable to `None` to model an
+    // unset variable. Do not let credentials from the developer's keyring or
+    // home directory make those tests depend on host state.
+    #[cfg(test)]
+    if test_storage_lookup_is_overridden(&normalized_provider) {
+        return provider_result;
+    }
+
     match load_stored_api_key_with_mode(&normalized_provider, storage_mode) {
         Ok(Some(key)) => Ok(key),
         Ok(None) => provider_result,
@@ -324,7 +332,18 @@ pub fn provider_credential_detail_with_mode(
         });
     }
 
-    // OAuth-backed providers: an active session counts as ready.
+    // Primary env var for the provider.
+    let env_key = provider.default_api_key_env();
+    if !env_key.is_empty() && env_value_present(env_key) {
+        return Some(DiscoveredProvider {
+            provider,
+            source: CredentialSource::Env,
+            env_var: Some(env_key),
+        });
+    }
+
+    // OAuth-backed providers: an active session counts as ready after env vars
+    // have been considered, preserving the documented resolution order.
     if matches!(provider, Provider::OpenRouter)
         && crate::auth::load_oauth_token_with_mode(storage_mode).ok().flatten().is_some()
     {
@@ -347,16 +366,6 @@ pub fn provider_credential_detail_with_mode(
         });
     }
 
-    // Primary env var for the provider.
-    let env_key = provider.default_api_key_env();
-    if !env_key.is_empty() && env_value_present(env_key) {
-        return Some(DiscoveredProvider {
-            provider,
-            source: CredentialSource::Env,
-            env_var: Some(env_key),
-        });
-    }
-
     // Provider-specific alternate env vars (kept in sync with get_api_key).
     let alt = alternate_env_var(provider);
     if let Some(alt_key) = alt
@@ -370,6 +379,11 @@ pub fn provider_credential_detail_with_mode(
     }
 
     // Secure storage (OS keyring with encrypted-file fallback).
+    #[cfg(test)]
+    if test_storage_lookup_is_overridden(provider.as_ref()) {
+        return None;
+    }
+
     if has_stored_credential(provider, storage_mode) {
         return Some(DiscoveredProvider {
             provider,
@@ -445,6 +459,20 @@ fn has_stored_credential(provider: Provider, storage_mode: crate::auth::AuthCred
         .ok()
         .flatten()
         .is_some()
+}
+
+#[cfg(test)]
+fn test_storage_lookup_is_overridden(provider: &str) -> bool {
+    let env_key = api_key_env_var(provider);
+    if !env_key.is_empty() && crate::env_helpers::test_env_overrides::is_overridden(&env_key) {
+        return true;
+    }
+
+    match provider {
+        "gemini" => crate::env_helpers::test_env_overrides::is_overridden("GOOGLE_API_KEY"),
+        "qwen" => crate::env_helpers::test_env_overrides::is_overridden("DASHSCOPE_API_KEY"),
+        _ => false,
+    }
 }
 
 #[cfg(test)]

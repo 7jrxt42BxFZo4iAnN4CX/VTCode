@@ -5,8 +5,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use vtcode_core::compaction::PrefireState;
 use vtcode_core::config::WorkspaceTrustLevel;
+use vtcode_core::core::agent::request_envelope::SessionRequestEnvelope;
 use vtcode_core::exec::events::Usage as HarnessUsage;
-use vtcode_core::llm::provider::{Message, PromptCacheProfile, ResponsesContinuationState, responses_continuation_key};
+use vtcode_core::llm::provider::{
+    Message, PromptCacheProfile, ResponsesContinuationState, ToolDefinition, responses_continuation_key,
+};
 use vtcode_core::llm::request_gap::RequestGapTracker;
 use vtcode_core::llm::usage_cost;
 
@@ -96,6 +99,10 @@ pub(crate) struct SessionStats {
     prompt_cache_stable_prefix_changes: usize,
     prompt_cache_tool_catalog_changes: usize,
     prompt_cache_combined_changes: usize,
+    request_envelope: Option<SessionRequestEnvelope>,
+    request_envelope_identity: Option<RequestEnvelopeIdentity>,
+    request_segment_sequence: u64,
+    pending_request_segment_id: Option<String>,
     recent_touched_files: VecDeque<String>,
     total_usage: HarnessUsage,
     total_cost_usd: Option<f64>,
@@ -117,7 +124,90 @@ pub(crate) struct SessionStats {
     pub auto_compact_suppressed: u8,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RequestEnvelopeIdentity {
+    model: String,
+    provider: String,
+    mode: String,
+    prefix_hash: u64,
+    catalog_hash: Option<u64>,
+    instruction_digest: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RequestSegmentTransition {
+    pub previous_segment_id: Option<String>,
+    pub new_segment_id: String,
+    pub previous_prefix_hash: Option<String>,
+    pub previous_catalog_hash: Option<String>,
+}
+
 impl SessionStats {
+    pub(crate) fn begin_request_segment(&mut self) -> RequestSegmentTransition {
+        let previous_segment_id = self.request_envelope.as_ref().map(|envelope| envelope.segment_id().to_string());
+        let previous_prefix_hash = self
+            .request_envelope
+            .as_ref()
+            .map(|envelope| format!("{:016x}", envelope.prefix_hash()));
+        let previous_catalog_hash = self
+            .request_envelope
+            .as_ref()
+            .and_then(SessionRequestEnvelope::catalog_hash)
+            .map(|hash| format!("{hash:016x}"));
+        self.request_segment_sequence = self.request_segment_sequence.saturating_add(1);
+        let new_segment_id = format!("segment-{:08}", self.request_segment_sequence);
+        self.pending_request_segment_id = Some(new_segment_id.clone());
+        self.request_envelope = None;
+        self.request_envelope_identity = None;
+        RequestSegmentTransition {
+            previous_segment_id,
+            new_segment_id,
+            previous_prefix_hash,
+            previous_catalog_hash,
+        }
+    }
+
+    pub(crate) fn request_envelope(
+        &mut self,
+        model: &str,
+        provider: &str,
+        mode: &str,
+        system_prompt: String,
+        tools: Vec<ToolDefinition>,
+        instruction_digest: u64,
+    ) -> SessionRequestEnvelope {
+        let candidate = SessionRequestEnvelope::new("candidate", system_prompt, tools, instruction_digest);
+        let identity = RequestEnvelopeIdentity {
+            model: model.to_string(),
+            provider: provider.to_string(),
+            mode: mode.to_string(),
+            prefix_hash: candidate.prefix_hash(),
+            catalog_hash: candidate.catalog_hash(),
+            instruction_digest,
+        };
+        if self.request_envelope_identity.as_ref() == Some(&identity)
+            && let Some(envelope) = self.request_envelope.as_ref()
+        {
+            return envelope.clone();
+        }
+
+        let segment_id = if let Some(pending_segment_id) = self.pending_request_segment_id.take() {
+            pending_segment_id
+        } else {
+            self.request_segment_sequence = self.request_segment_sequence.saturating_add(1);
+            format!("segment-{:08}", self.request_segment_sequence)
+        };
+        let envelope = SessionRequestEnvelope::new(
+            segment_id,
+            candidate.system_prompt(),
+            candidate.ordered_tools().as_ref().clone(),
+            instruction_digest,
+        );
+        self.request_envelope_identity = Some(identity);
+        self.request_envelope = Some(envelope.clone());
+        envelope
+    }
+
     pub(crate) fn record_tool(&mut self, name: &str) {
         let normalized_name =
             vtcode_core::tools::tool_intent::canonical_command_session_tool_name(name).unwrap_or(name);
@@ -707,6 +797,48 @@ mod tests {
     };
     use vtcode_core::config::WorkspaceTrustLevel;
     use vtcode_core::config::constants::tools;
+    use vtcode_core::llm::provider::ToolDefinition;
+
+    fn function_tool(name: &str) -> ToolDefinition {
+        ToolDefinition::function(name.to_string(), name.to_string(), serde_json::json!({"type": "object"}))
+    }
+
+    #[test]
+    fn equivalent_requests_reuse_the_same_segment_bytes() {
+        let mut stats = SessionStats::default();
+        let first = stats.request_envelope(
+            "model",
+            "provider",
+            "build",
+            "fixed".to_string(),
+            vec![function_tool("zeta"), function_tool("exec_command")],
+            7,
+        );
+        let second = stats.request_envelope(
+            "model",
+            "provider",
+            "build",
+            "fixed".to_string(),
+            vec![function_tool("exec_command"), function_tool("zeta")],
+            7,
+        );
+
+        assert_eq!(first.segment_id(), second.segment_id());
+        assert_eq!(first.system_prompt().as_bytes(), second.system_prompt().as_bytes());
+        assert_eq!(first.catalog_hash(), second.catalog_hash());
+    }
+
+    #[test]
+    fn compaction_reserves_exactly_one_new_segment() {
+        let mut stats = SessionStats::default();
+        let first = stats.request_envelope("model", "provider", "build", "fixed".to_string(), vec![], 7);
+        let transition = stats.begin_request_segment();
+        let second = stats.request_envelope("model", "provider", "build", "fixed".to_string(), vec![], 7);
+
+        assert_eq!(transition.previous_segment_id.as_deref(), Some(first.segment_id()));
+        assert_eq!(transition.new_segment_id, second.segment_id());
+        assert_ne!(first.segment_id(), second.segment_id());
+    }
 
     #[test]
     fn record_tool_normalizes_exec_aliases() {

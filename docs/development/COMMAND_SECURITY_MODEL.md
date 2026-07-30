@@ -1,5 +1,10 @@
 # VT Code Command Security Model
 
+Model-facing schemas preserve request intent (`sandbox_permissions`,
+`additional_permissions`, and `justification`) without embedding the active
+approval policy or its current value. The execution gateway resolves those
+stable intent fields against the live sandbox and approval configuration.
+
 ## Overview
 
 VT Code implements a comprehensive, defense-in-depth command security system that enables non-powered users to run safe commands by default while protecting against dangerous operations. This system helps the agent use system and build tools properly via environment PATH configuration.

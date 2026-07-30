@@ -1,5 +1,10 @@
 # Prompt Caching Guide
 
+The harness treats a cache prefix as an immutable segment. Tool definitions use
+deterministic core-first ordering followed by tool name and type, and the
+serialized catalog is reused for the segment. Catalog expansion through tool
+discovery takes effect at the next segment boundary.
+
 Prompt caching lets VT Code reuse validated conversation prefixes across providers to reduce latency and token consumption. This guide explains how to configure the feature globally and fine-tune the per-provider behaviour exposed in `vtcode.toml`.
 
 ## Global Settings

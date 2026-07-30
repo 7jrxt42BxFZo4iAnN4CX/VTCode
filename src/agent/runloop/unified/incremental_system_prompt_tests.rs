@@ -3,7 +3,6 @@ use super::*;
 fn test_context() -> SystemPromptContext {
     SystemPromptContext {
         full_auto: false,
-        auto_permission: false,
         planning_active: false,
         request_user_input_enabled: true,
         discovered_skills: Vec::new(),

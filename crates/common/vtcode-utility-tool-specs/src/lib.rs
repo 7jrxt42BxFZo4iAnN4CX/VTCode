@@ -36,6 +36,41 @@ pub const APPLY_PATCH_ALIAS_DESCRIPTION: &str = "Patch in VT Code format (*** Be
 pub const DEFAULT_APPLY_PATCH_INPUT_DESCRIPTION: &str =
     "Patch in VT Code format: *** Begin Patch, *** Update File: path, @@ hunk, -/+ lines, *** End Patch";
 
+/// Default model-visible preview budget for function-tool results.
+pub const DEFAULT_MAX_OUTPUT_TOKENS: usize = 10_000;
+/// Smallest valid model-visible preview budget for a function-tool result.
+pub const MIN_MAX_OUTPUT_TOKENS: usize = 1;
+/// Largest valid model-visible preview budget for a function-tool result.
+pub const MAX_MAX_OUTPUT_TOKENS: usize = 50_000;
+
+/// Adds the common result-preview budget field to an object-shaped tool schema.
+///
+/// The returned schema deliberately preserves every existing constraint,
+/// including `additionalProperties`, so callers can use it for legacy schemas
+/// without weakening their argument validation.
+#[must_use]
+pub fn with_max_output_tokens_parameter(mut schema: Value) -> Value {
+    let Some(schema_object) = schema.as_object_mut() else {
+        return schema;
+    };
+    let properties = schema_object
+        .entry("properties")
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    let Some(properties_object) = properties.as_object_mut() else {
+        return schema;
+    };
+    properties_object.entry("max_output_tokens").or_insert_with(|| {
+        json!({
+            "type": "integer",
+            "minimum": MIN_MAX_OUTPUT_TOKENS,
+            "maximum": MAX_MAX_OUTPUT_TOKENS,
+            "default": DEFAULT_MAX_OUTPUT_TOKENS,
+            "description": "Maximum number of result tokens returned to the model. Full oversized output is spooled when available."
+        })
+    });
+    schema
+}
+
 #[must_use]
 pub fn with_semantic_anchor_guidance(base: &str) -> String {
     let trimmed = base.trim_end();
@@ -163,7 +198,7 @@ pub fn exec_command_parameters() -> Value {
         "properties": {
             "cmd": {"type": "string", "description": "Shell command to execute, subject to command policy. Examples include `ls`, `rg`, `find`, `cat`, `sed`, `awk`, build tools, and test tools."},
             "yield_time_ms": {"type": "integer", "description": "Wait before returning output (ms). If the command is still running, the response includes a session_id for write_stdin.", "default": 10000},
-            "max_output_tokens": {"type": "integer", "description": "Output token cap. Large or truncated output can return a spool_path for the full output."},
+            "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 50000, "default": 10000, "description": "Output token cap. Large or truncated output can return a spool_path for the full output."},
             "workdir": {"type": "string", "description": "Working directory."},
             "tty": {"type": "boolean", "description": "Run the command in PTY mode for interactive or terminal-sensitive commands.", "default": false},
             "sandbox_permissions": {
@@ -181,7 +216,7 @@ pub fn exec_command_parameters() -> Value {
                 },
                 "additionalProperties": false
             },
-            "justification": {"type": "string", "description": "Short approval question required for escalated or bypassed sandbox execution."}
+            "justification": {"type": "string", "description": "Reason for requesting the expanded sandbox permission scope."}
         },
         "additionalProperties": false
     })
@@ -196,10 +231,37 @@ pub fn write_stdin_parameters() -> Value {
             "session_id": {"type": "string", "description": "Active execution session id."},
             "chars": {"type": "string", "description": "Bytes to write to stdin. Pass an empty string to poll without sending input."},
             "yield_time_ms": {"type": "integer", "description": "Wait before returning fresh session output (ms).", "default": 1000},
-            "max_output_tokens": {"type": "integer", "description": "Output token cap for the continuation response. Large or truncated output can return a spool_path for the full output."}
+            "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 50000, "default": 10000, "description": "Output token cap for the continuation response. Large or truncated output can return a spool_path for the full output."}
         },
         "additionalProperties": false
     })
+}
+
+#[must_use]
+pub fn search_tools_parameters() -> Value {
+    with_max_output_tokens_parameter(json!({
+        "type": "object",
+        "required": ["query"],
+        "properties": {
+            "query": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Natural-language description of the capability to discover."
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 25,
+                "default": 5
+            },
+            "detail_level": {
+                "type": "string",
+                "enum": ["name", "name_description", "full"],
+                "default": "name_description"
+            }
+        },
+        "additionalProperties": false
+    }))
 }
 
 #[must_use]
@@ -302,6 +364,19 @@ mod tests {
             .as_str()
             .expect("input description");
         assert!(input_description.contains(SEMANTIC_ANCHOR_GUIDANCE));
+    }
+
+    #[test]
+    fn common_output_limit_parameter_preserves_strict_schema() {
+        let schema = with_max_output_tokens_parameter(json!({
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "additionalProperties": false
+        }));
+        assert_eq!(schema["additionalProperties"], json!(false));
+        assert_eq!(schema["properties"]["max_output_tokens"]["default"], json!(DEFAULT_MAX_OUTPUT_TOKENS));
+        assert_eq!(schema["properties"]["max_output_tokens"]["minimum"], json!(MIN_MAX_OUTPUT_TOKENS));
+        assert_eq!(schema["properties"]["max_output_tokens"]["maximum"], json!(MAX_MAX_OUTPUT_TOKENS));
     }
 
     #[test]

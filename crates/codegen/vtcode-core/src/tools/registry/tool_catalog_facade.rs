@@ -442,6 +442,35 @@ mod tests {
         assert_eq!(third.version, 1);
     }
 
+    #[tokio::test]
+    async fn local_search_expands_ranked_deferred_tools_at_next_epoch() {
+        let state = SessionToolCatalogState::new();
+        let deferred = ToolDefinition::function(
+            "remote_issue_search".to_string(),
+            "Search remote issue trackers".to_string(),
+            serde_json::json!({"type": "object"}),
+        )
+        .with_defer_loading(true);
+        let tools = Arc::new(RwLock::new(vec![function_tool(tools::EXEC_COMMAND), deferred]));
+
+        let results = state.search_tools(&tools, "remote issue search", 5).await;
+        assert_eq!(results.first().map(|result| result.name.as_str()), Some("remote_issue_search"));
+        let references = results.into_iter().map(|result| result.name).collect::<Vec<_>>();
+        let epoch = state.note_tool_references(&tools, &references).await;
+        assert_eq!(epoch, Some(1));
+
+        let snapshot = state
+            .filtered_snapshot_with_stats(&tools, false, true)
+            .await
+            .snapshot
+            .expect("expanded snapshot");
+        let expanded = snapshot
+            .iter()
+            .find(|tool| tool.function_name() == "remote_issue_search")
+            .expect("expanded tool");
+        assert_eq!(expanded.defer_loading, None);
+    }
+
     #[test]
     fn snapshot_for_defs_sorts_tool_order_for_stable_projections() {
         let state = SessionToolCatalogState::new();

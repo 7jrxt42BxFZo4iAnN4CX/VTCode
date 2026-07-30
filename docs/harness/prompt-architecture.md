@@ -1,17 +1,30 @@
 # Prompt Architecture
 
+## Cache-stable segments
+
+Each harness segment freezes one `SessionRequestEnvelope`: a segment ID, the
+system prompt, a canonically ordered tool catalog, and the instruction digest.
+Ordinary turns only append messages. Compaction or a change to the catalog
+epoch, primary agent, model, provider, mode, or instruction digest starts a new
+segment and therefore one intentional cache miss.
+
+Session-start time is rendered once into the cached system prompt. Later time
+must come from tool output. Approval and sandbox policy values are execution
+gateway state and must not be rendered into prompts or tool descriptions.
+
 VT Code's prompt system follows the four pillars of *Section 18.3 (Prompt
 Architecture)* of the agentic-AI guide:
 
 1. **System-prompt design** (18.3.1) — persona, capabilities, constraints,
-   and output format assembled per turn.
-2. **Dynamic assembly** (18.3.2) — modular, cache-friendly composition
-   from base prompt, instruction appendix, runtime contract, recovery
-   mode, harness limits, tool catalog, primary-agent state, and (when
-   configured) few-shot examples.
+   and output format assembled once per segment.
+2. **Dynamic assembly** (18.3.2) — modular, cache-friendly composition at
+   segment creation from the base prompt, instruction appendix, runtime
+   contract, recovery mode, harness limits, tool catalog, and primary-agent
+   state. Later runtime changes are appended as context messages.
 3. **Few-shot management** (18.3.3) — keyword-tagged examples loaded from
    disk, token-budgeted via `vtcode_commons::tokens::estimate_tokens`,
-   and rendered into the system prompt when relevant.
+   and appended as a synthetic system context message when relevant; they do
+   not rewrite the immutable prompt prefix.
 4. **Tool descriptions** (18.3.4) — every LLM-visible tool must include
    when-to-use guidance, when-NOT-to-use guidance, and a constraints cue
    (rate-limit, max size, side-effect, permission). The
@@ -21,8 +34,8 @@ Architecture)* of the agentic-AI guide:
 
 ## Assembly order
 
-Per turn, `request_builder::build_prompt_output` produces the final
-`system_prompt` in this order:
+At segment creation, `request_builder::build_prompt_output` produces the
+immutable `system_prompt` in this order:
 
 1. **Base system prompt** — `vtcode_core::prompts::system::generate_system_instruction`
    (with `Default / Minimal / Lightweight / Specialized` variants cached
@@ -42,7 +55,9 @@ Per turn, `request_builder::build_prompt_output` produces the final
 9. **GitHub Copilot Client Tools** — only for the Copilot provider.
 10. **Active Primary Agent Runtime State** — model, reasoning effort,
     instructions, and `### Memory Appendix` if the agent has memory.
-11. **[Few-Shot Examples]** — when relevant and budget allows (see below).
+11. **[Few-Shot Examples]** — appended after the immutable prompt as a
+    synthetic system context message when relevant and budget allows (see
+    below).
 
 ## Few-shot management (Section 18.3.3)
 

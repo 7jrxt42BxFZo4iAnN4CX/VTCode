@@ -1,5 +1,9 @@
 # Per-Call Output Limits
 
+Function-tool output caps default to 10,000 tokens. Public overrides are
+bounded to 1–50,000 tokens; oversized output is retained in the spool while the
+model receives only the bounded preview.
+
 ## Overview
 
 Public command tools can cap large responses per call. Prefer

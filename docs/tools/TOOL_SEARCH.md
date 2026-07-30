@@ -93,11 +93,11 @@ The deferral policy is active when **any** of these is true:
 
 - **Anthropic** with `defer_by_default = true` (default): every non-core tool is deferred, including MCP tools.
 - **OpenAI** Responses (`model_supports_responses_compaction`): hosted `tool_search` is injected and non-core tools are deferred.
-- **Any provider** when `tools.client_tool_search = true` (default): client-local MCP deferral is enabled. Deferred MCP schemas are omitted from the request payload and replaced by a compact discoverability summary in the system prompt; `mcp_search_tools` expands matched schemas into the next request.
+- **Any provider** when `tools.client_tool_search = true` (default): client-local deferral is enabled. Unused built-ins, MCP tools, skill tools, and plugin tools are omitted from the initial payload; the generic `search_tools` tool expands ranked matches into the next request segment.
 
 Key changes from earlier behavior:
 
-- **MCP presence is the trigger.** Any MCP tool in the catalog is deferred regardless of tool count. MCP schemas are the dominant source of token inflation, so eager exposure is no longer attempted even for a single server.
+- **Non-core tools defer by default.** The initial catalog contains the execution/editing core plus discovery. Other built-ins, MCP tools, skill tools, and plugin tools are loaded only after discovery.
 - **Token-budget backstop.** A catalog is also deferred when its combined schema size exceeds ~4k tokens (≈16k chars), even if the tool count is below the numeric threshold. This catches single large servers whose schema dwarfs the whole builtin set.
 - **Client-local is the default.** Providers without a hosted tool search (e.g. Gemini) now default to client-local deferral, so MCP schemas are not sent eagerly.
 
@@ -106,8 +106,8 @@ Key changes from earlier behavior:
 When `tools.client_tool_search` is enabled and no provider-hosted search is available, VT Code:
 
 1. Omits `defer_loading: true` tools from the wire payload.
-2. Appends a compact, cache-stable summary of discoverable tools to the system prompt (names + one-line purpose).
-3. Keeps `mcp_search_tools` available so a search match expands the tool's full schema into the next request.
+2. Appends a compact, cache-stable summary of discoverable groups.
+3. Keeps `search_tools` available. A ranked match expands the selected full definitions in a new request segment; expansion order is deterministic.
 
 Set `tools.client_tool_search = false` to restore the eager catalog for unsupported providers.
 

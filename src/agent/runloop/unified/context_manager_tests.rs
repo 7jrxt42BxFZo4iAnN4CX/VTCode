@@ -107,7 +107,6 @@ async fn build_system_prompt_with_empty_base_prompt_fails() {
 
     let params = SystemPromptParams {
         full_auto: false,
-        auto_permission: false,
         planning_active: false,
         request_user_input_enabled: true,
     };
@@ -155,7 +154,6 @@ async fn request_editor_context_message_includes_active_editor_context_block() {
     let prompt = manager
         .build_system_prompt(SystemPromptParams {
             full_auto: false,
-            auto_permission: false,
             planning_active: false,
             request_user_input_enabled: true,
         })
@@ -200,7 +198,6 @@ async fn request_editor_context_message_skips_disallowed_provider_family() {
     let prompt = manager
         .build_system_prompt(SystemPromptParams {
             full_auto: false,
-            auto_permission: false,
             planning_active: false,
             request_user_input_enabled: true,
         })
@@ -234,7 +231,6 @@ async fn request_editor_context_message_respects_session_local_ide_toggle() {
     let enabled_prompt = manager
         .build_system_prompt(SystemPromptParams {
             full_auto: false,
-            auto_permission: false,
             planning_active: false,
             request_user_input_enabled: true,
         })
@@ -248,7 +244,6 @@ async fn request_editor_context_message_respects_session_local_ide_toggle() {
     let disabled_prompt = manager
         .build_system_prompt(SystemPromptParams {
             full_auto: false,
-            auto_permission: false,
             planning_active: false,
             request_user_input_enabled: true,
         })
@@ -261,7 +256,6 @@ async fn request_editor_context_message_respects_session_local_ide_toggle() {
     let reenabled_prompt = manager
         .build_system_prompt(SystemPromptParams {
             full_auto: false,
-            auto_permission: false,
             planning_active: false,
             request_user_input_enabled: true,
         })
@@ -328,7 +322,6 @@ async fn build_system_prompt_ignores_token_usage_updates() {
 
     let params = SystemPromptParams {
         full_auto: false,
-        auto_permission: false,
         planning_active: false,
         request_user_input_enabled: true,
     };

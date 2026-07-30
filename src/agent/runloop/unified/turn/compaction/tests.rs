@@ -427,6 +427,7 @@ async fn manual_compaction_emits_local_compaction_boundary_event() {
     let content = fs::read_to_string(harness_path).expect("read harness log");
     assert!(content.contains("\"type\":\"thread.compact_boundary\""));
     assert!(content.contains("\"mode\":\"local\""));
+    assert!(content.contains("\"new_segment_id\":\"segment-00000001\""));
 }
 
 #[tokio::test]

@@ -20,7 +20,7 @@ use crate::tools::web_search::{WEB_SEARCH_DESCRIPTION, WebSearchTool};
 use serde_json::json;
 use vtcode_utility_tool_specs::{
     agent_parameters, apply_patch_parameters, code_search_parameters, cron_parameters, exec_command_parameters,
-    list_files_parameters, mcp_parameters, write_stdin_parameters,
+    list_files_parameters, mcp_parameters, search_tools_parameters, write_stdin_parameters,
 };
 
 use super::distributed::{BUILTIN_TOOLS, tool_config};
@@ -354,6 +354,21 @@ fn register_mcp(_plan_state: Option<&PlanningWorkflowState>) -> ToolRegistration
     ])
 }
 
+#[distributed_slice(BUILTIN_TOOLS)]
+fn register_search_tools(_plan_state: Option<&PlanningWorkflowState>) -> ToolRegistration {
+    ToolRegistration::new(
+        tools::SEARCH_TOOLS,
+        CapabilityLevel::Basic,
+        false,
+        ToolRegistry::search_tools_executor,
+    )
+    .with_description(
+        "Search the deferred local tool catalog by capability. Matching definitions are expanded deterministically for the next request segment.",
+    )
+    .with_parameter_schema(search_tools_parameters())
+    .with_permission(ToolPolicy::Allow)
+}
+
 // ---------------------------------------------------------------------------
 // SHELL EXECUTION
 // ---------------------------------------------------------------------------
@@ -367,7 +382,7 @@ fn register_exec_command(_plan_state: Option<&PlanningWorkflowState>) -> ToolReg
         ToolRegistry::exec_command_executor,
     )
     .with_description(
-        "Use this to execute a shell command through the active sandbox policy and permission checks. Put normal shell tools such as ls, rg, find, cat, sed, awk, build tools, and test tools in cmd. Returns output, exit status, and a reusable session id when the command is still running.",
+        "Use this to execute a shell command. Optional sandbox_permissions, additional_permissions, and justification fields express request intent. Put normal shell tools such as ls, rg, find, cat, sed, awk, build tools, and test tools in cmd. Returns output, exit status, and a reusable session id when the command is still running.",
     )
     .with_parameter_schema(exec_command_parameters())
     .with_permission(ToolPolicy::Allow)
@@ -806,6 +821,7 @@ mod tests {
             tools::MCP_LIST_SERVERS,
             tools::MCP_GET_TOOL_DETAILS,
             tools::MCP_SEARCH_TOOLS,
+            tools::SEARCH_TOOLS,
             tools::TASK_TRACKER,
             tools::START_PLANNING,
             tools::CODE_SEARCH,

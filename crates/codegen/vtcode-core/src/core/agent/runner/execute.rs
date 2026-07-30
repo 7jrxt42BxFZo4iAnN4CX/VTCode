@@ -38,13 +38,8 @@ use std::sync::Arc;
 use tracing::{debug, warn};
 
 pub(super) struct RuntimePromptBundle {
-    system_instruction: Arc<String>,
-    /// Stable prefix hash of `system_instruction`, computed once per bundle
-    /// build (the bundle is memoized) so each turn can reuse it instead of
-    /// re-hashing the full system prompt.
-    system_instruction_prefix_hash: u64,
+    request_envelope: crate::core::agent::request_envelope::SessionRequestEnvelope,
     tool_snapshot: SessionToolCatalogSnapshot,
-    request_tools: Option<Arc<Vec<ToolDefinition>>>,
     /// Estimated token overhead of `request_tools`, computed once per
     /// snapshot (see [`crate::llm::usage_cost::estimate_tool_definition_tokens`]).
     tool_def_tokens: u64,
@@ -135,11 +130,15 @@ impl AgentRunner {
         debug!(tool_def_tokens, tool_count, "tool definition overhead");
 
         let system_instruction_prefix_hash = stable_system_prefix_hash(&system_prompt);
-        Ok(RuntimePromptBundle {
-            system_instruction: Arc::new(system_prompt),
+        let request_envelope = crate::core::agent::request_envelope::SessionRequestEnvelope::new(
+            format!("{}-catalog-{}-{}", self.session_id, tool_snapshot.version, tool_snapshot.epoch),
+            system_prompt,
+            request_tools.as_deref().map_or_else(Vec::new, |tools| tools.clone()),
             system_instruction_prefix_hash,
+        );
+        Ok(RuntimePromptBundle {
+            request_envelope,
             tool_snapshot,
-            request_tools,
             tool_def_tokens,
             system_prompt_report,
         })
@@ -186,7 +185,7 @@ impl AgentRunner {
                 let planning_active = runner.tool_registry.is_planning_active();
                 let request_user_input_enabled = runner.features().request_user_input_enabled(planning_active, false);
                 prompt_alignment::validate_prompt_catalog_alignment(
-                    &bundle.system_instruction,
+                    bundle.request_envelope.system_prompt().as_ref(),
                     &bundle.tool_snapshot,
                     planning_active,
                     request_user_input_enabled,
@@ -618,8 +617,9 @@ impl AgentRunner {
                 };
                 let request = build_harness_request_plan(HarnessRequestPlanInput {
                     messages: request_messages,
-                    system_prompt: prompt_bundle.system_instruction.as_ref().clone(),
-                    tools: prompt_bundle.request_tools.clone(),
+                    system_prompt: prompt_bundle.request_envelope.system_prompt().to_string(),
+                    tools: (!prompt_bundle.request_envelope.ordered_tools().is_empty())
+                        .then(|| prompt_bundle.request_envelope.ordered_tools()),
                     model: turn_model.clone(),
                     max_tokens,
                     temperature,
@@ -643,8 +643,8 @@ impl AgentRunner {
                         Some(&self.session_id),
                     ),
                     prompt_cache_profile: None,
-                    tool_catalog_hash: prompt_bundle.tool_snapshot.tool_catalog_hash,
-                    system_prompt_prefix_hash: Some(prompt_bundle.system_instruction_prefix_hash),
+                    tool_catalog_hash: prompt_bundle.request_envelope.catalog_hash(),
+                    system_prompt_prefix_hash: Some(prompt_bundle.request_envelope.prefix_hash()),
                 })
                 .request;
                 // Cheap pre-flight: catch malformed requests (empty system

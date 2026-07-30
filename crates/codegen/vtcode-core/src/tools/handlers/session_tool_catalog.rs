@@ -17,7 +17,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
-use vtcode_utility_tool_specs::parse_tool_input_schema;
+use vtcode_utility_tool_specs::{parse_tool_input_schema, with_max_output_tokens_parameter};
 
 use super::tool_handler::{ConfiguredToolSpec, ResponsesApiTool, ToolSpec};
 
@@ -467,10 +467,7 @@ impl SessionToolCatalog {
         let has_mcp_tools = filtered_entries
             .iter()
             .any(|entry| matches!(entry.source, ToolCatalogSource::Mcp));
-        let expose_tools_directly = !config.deferred_tool_policy.is_enabled()
-            || (deferable_tool_count < DIRECT_TOOL_EXPOSURE_THRESHOLD
-                && !has_mcp_tools
-                && estimated_schema_tokens <= DIRECT_TOOL_EXPOSURE_TOKEN_BUDGET);
+        let expose_tools_directly = !config.deferred_tool_policy.is_enabled();
 
         // Advisory one-shot: if deferred loading is disabled but this catalog
         // is large enough that deferral would engage, the user is paying the
@@ -576,13 +573,13 @@ impl ToolCatalogEntry {
     fn from_registration(registration: &ToolRegistration) -> Option<Self> {
         let metadata = registration.metadata();
         let description = metadata.description()?.to_string();
-        let parameters = metadata.parameter_schema().cloned().unwrap_or_else(|| {
+        let parameters = with_max_output_tokens_parameter(metadata.parameter_schema().cloned().unwrap_or_else(|| {
             json!({
                 "type": "object",
                 "properties": {},
                 "additionalProperties": true
             })
-        });
+        }));
         let default_permission = metadata.default_permission().unwrap_or(ToolPolicy::Prompt);
         let supports_parallel_tool_calls = registration_supports_parallel_tool_calls(registration);
         let aliases = metadata.aliases().to_vec();
@@ -721,7 +718,7 @@ impl ToolCatalogEntry {
 fn profile_allows_tool(profile: ToolProfile, tool_name: &str, planning_active: bool) -> bool {
     match profile {
         ToolProfile::VtCode => {
-            matches!(tool_name, tools::EXEC_COMMAND | tools::WRITE_STDIN | tools::APPLY_PATCH)
+            matches!(tool_name, tools::EXEC_COMMAND | tools::WRITE_STDIN | tools::APPLY_PATCH | tools::SEARCH_TOOLS)
                 || (planning_active && matches!(tool_name, tools::CODE_SEARCH | tools::REQUEST_USER_INPUT))
         }
         ToolProfile::AdvancedVtCode => !matches!(
@@ -756,19 +753,18 @@ fn should_defer_tool_loading(entry: &ToolCatalogEntry, config: &SessionToolsConf
         return false;
     }
 
-    if matches!(entry.source, ToolCatalogSource::Dynamic) {
-        return false;
-    }
-
     if config.deferred_tool_policy.keeps_entry_available(entry) || is_core_tool_entry(entry, config) {
         return false;
     }
 
     if config.deferred_tool_policy.is_client_local() {
-        return matches!(entry.source, ToolCatalogSource::Mcp);
+        return matches!(
+            entry.source,
+            ToolCatalogSource::Builtin | ToolCatalogSource::Mcp | ToolCatalogSource::Dynamic
+        );
     }
 
-    matches!(entry.source, ToolCatalogSource::Builtin | ToolCatalogSource::Mcp)
+    matches!(entry.source, ToolCatalogSource::Builtin | ToolCatalogSource::Mcp | ToolCatalogSource::Dynamic)
 }
 
 fn is_core_tool_entry(entry: &ToolCatalogEntry, config: &SessionToolsConfig) -> bool {
@@ -784,7 +780,8 @@ fn is_core_tool_entry(entry: &ToolCatalogEntry, config: &SessionToolsConfig) -> 
         | tools::AGENT
         | tools::LIST_SKILLS
         | tools::LOAD_SKILL
-        | tools::LOAD_SKILL_RESOURCE => true,
+        | tools::LOAD_SKILL_RESOURCE
+        | tools::SEARCH_TOOLS => true,
         tools::MCP_SEARCH_TOOLS | tools::MCP_GET_TOOL_DETAILS | tools::MCP_LIST_SERVERS => {
             config.deferred_tool_policy.is_client_local()
         }
@@ -862,6 +859,9 @@ mod tests {
             registration(tools::CODE_SEARCH)
                 .with_description("Search code")
                 .with_parameter_schema(empty_object_schema()),
+            registration(tools::SEARCH_TOOLS)
+                .with_description("Discover deferred tools")
+                .with_parameter_schema(empty_object_schema()),
             registration(tools::READ_FILE)
                 .with_llm_visibility(false)
                 .with_description("Read file")
@@ -915,6 +915,7 @@ mod tests {
                 tools::EXEC_COMMAND.to_string(),
                 tools::WRITE_STDIN.to_string(),
                 tools::APPLY_PATCH.to_string(),
+                tools::SEARCH_TOOLS.to_string(),
             ]
         );
         for command in ["ls", "rg", "find", "cat", "sed", "awk"] {

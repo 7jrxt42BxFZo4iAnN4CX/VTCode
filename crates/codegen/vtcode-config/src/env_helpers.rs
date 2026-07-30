@@ -56,6 +56,10 @@ pub(crate) mod test_env_overrides {
         overrides().lock().expect("env overrides lock poisoned").get(name).cloned()
     }
 
+    pub(crate) fn is_overridden(name: &str) -> bool {
+        overrides().lock().expect("env overrides lock poisoned").contains_key(name)
+    }
+
     pub(crate) fn set(name: &str, value: Option<&str>) {
         overrides()
             .lock()

@@ -629,8 +629,9 @@ impl crate::EventEmitter for AtifTrajectoryBuilder {
 mod tests {
     use super::*;
     use crate::{
-        AgentMessageItem, ItemCompletedEvent, ThreadItem, ThreadStartedEvent, ToolInvocationItem, ToolOutputItem,
-        TurnCompletedEvent, TurnStartedEvent, Usage,
+        AgentMessageItem, CompactionMode, CompactionTrigger, ItemCompletedEvent, ThreadCompactBoundaryEvent,
+        ThreadItem, ThreadStartedEvent, ToolInvocationItem, ToolOutputItem, TurnCompletedEvent, TurnStartedEvent,
+        Usage,
     };
 
     fn fixed_ts() -> DateTime<Utc> {
@@ -785,5 +786,34 @@ mod tests {
         let mut builder = AtifTrajectoryBuilder::new(AtifAgent::vtcode());
         builder.process_event(&ThreadEvent::TurnStarted(TurnStartedEvent::default()));
         assert_eq!(builder.step_count(), 0);
+    }
+
+    #[test]
+    fn compact_boundary_with_segment_metadata_preserves_atif_export() {
+        let mut builder = AtifTrajectoryBuilder::new(AtifAgent::vtcode());
+        let event = ThreadEvent::ThreadCompactBoundary(ThreadCompactBoundaryEvent {
+            thread_id: "thread-1".to_string(),
+            trigger: CompactionTrigger::Auto,
+            mode: CompactionMode::Local,
+            original_message_count: 12,
+            compacted_message_count: 5,
+            history_artifact_path: None,
+            previous_segment_id: Some("segment-0001".to_string()),
+            new_segment_id: Some("segment-0002".to_string()),
+            previous_prefix_hash: Some("prefix-before".to_string()),
+            new_prefix_hash: Some("prefix-after".to_string()),
+            previous_catalog_hash: Some("catalog-before".to_string()),
+            new_catalog_hash: Some("catalog-after".to_string()),
+        });
+
+        builder.process_event_at(&event, fixed_ts());
+        let trajectory = builder.finish(None);
+
+        assert_eq!(trajectory.steps.len(), 1);
+        assert_eq!(trajectory.steps[0].source, StepSource::System);
+        assert_eq!(
+            trajectory.steps[0].message.as_deref(),
+            Some("context_compaction: 12 messages -> 5 messages (auto)")
+        );
     }
 }

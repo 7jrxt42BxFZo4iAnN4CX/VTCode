@@ -635,7 +635,6 @@ fn cache_key(
 ) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     let mut hasher = DefaultHasher::new();
 
@@ -652,14 +651,6 @@ fn cache_key(
         cfg.agent.system_prompt_budget_warning.hash(&mut hasher);
         cfg.agent.trim_system_prompt.hash(&mut hasher);
         cfg.default_primary_agent.hash(&mut hasher);
-
-        if cfg.agent.include_temporal_context && !cfg.prompt_cache.cache_friendly_prompt_shaping {
-            let epoch_secs = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs() / 60)
-                .unwrap_or(0);
-            epoch_secs.hash(&mut hasher);
-        }
     } else {
         "default".hash(&mut hasher);
     }
@@ -1434,10 +1425,7 @@ mod tests {
 
         let result = compose_system_instruction_text(&PathBuf::from("."), Some(&config), None).await;
 
-        assert!(
-            !result.contains("Time:"),
-            "Stable system prompt should omit temporal context when cache-friendly shaping is enabled"
-        );
+        assert!(result.contains("Time:"), "Session-start time should be frozen in the cached prompt");
     }
 
     #[tokio::test]
@@ -1452,7 +1440,7 @@ mod tests {
         let result = compose_system_instruction_text(&PathBuf::from("."), Some(&config), None).await;
 
         assert!(result.contains("## Environment"));
-        assert!(result.contains("Interaction: approval may gate sensitive actions"));
+        assert!(!result.contains("approval may gate"));
         assert!(result.contains("request_user_input"));
         assert!(result.contains("Sources: prefer MCP"));
         assert!(!result.contains("PTY functionality"));
@@ -1468,7 +1456,7 @@ mod tests {
 
         let result = compose_system_instruction_text(&PathBuf::from("."), Some(&config), None).await;
 
-        assert!(result.contains("Interaction: approval reduced by config"));
+        assert!(!result.contains("approval reduced by config"));
     }
 
     #[tokio::test]

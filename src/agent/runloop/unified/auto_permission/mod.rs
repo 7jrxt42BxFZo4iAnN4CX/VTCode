@@ -16,7 +16,6 @@ use vtcode_core::llm::{LightweightFeature, provider as uni, resolve_lightweight_
 use vtcode_core::permissions::{PermissionRequest, build_permission_request};
 use vtcode_core::tools::command_args;
 
-const AUTO_PERMISSION_SYSTEM_PROMPT: &str = include_str!("prompts/system-prompt-auto-permission-review.md");
 const REVIEWER_PROMPT: &str = include_str!("prompts/agent-prompt-auto-permission-rule-reviewer.md");
 
 const PROBE_PROMPT: &str = r#"
@@ -48,10 +47,6 @@ struct StageTwoDecision {
     matched_rule: Option<String>,
     #[serde(default)]
     matched_exception: Option<String>,
-}
-
-pub(crate) fn system_prompt_addendum() -> &'static str {
-    AUTO_PERMISSION_SYSTEM_PROMPT
 }
 
 pub(crate) async fn review_tool_call(

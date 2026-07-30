@@ -3,7 +3,7 @@
 
 ## Module map
 
-- `core/agent/`: runtime, event recording, runner, progress, harness artifacts.
+- `core/agent/`: runtime, event recording, runner, progress, harness artifacts; `request_envelope` freezes each segment's prompt and ordered catalog.
 - `tools/`: handlers, registry, policy, execution; `read_file/batch.rs` owns batch admission, bounded fan-out, and ordered assembly while `read_file.rs` owns single-file semantics.
 - `llm/`: re-export facade; providers live in `vtcode-llm`. `exec/events.rs` re-exports canonical `vtcode-exec-events::ThreadEvent`.
 

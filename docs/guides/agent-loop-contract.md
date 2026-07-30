@@ -57,6 +57,16 @@ Fields:
 - `original_message_count`
 - `compacted_message_count`
 - `history_artifact_path`: optional archived history path
+- `previous_segment_id` and `new_segment_id`: optional cache segment transition
+- `previous_prefix_hash` and `new_prefix_hash`: optional immutable prompt-prefix hashes
+- `previous_catalog_hash` and `new_catalog_hash`: optional ordered tool-catalog hashes
+
+Each request segment freezes one system prompt, instruction digest, and
+deterministically ordered tool catalog. Ordinary turns only append messages.
+Compaction, instruction changes, catalog expansion, or primary
+model/provider/mode changes start one new segment; the immutable event archive
+is retained and local compaction seeds the new segment with its summary and
+continuity tail.
 
 This is emitted for manual `/compact` flows, for automatic compaction, and for
 automatic local fallback compaction. When Open Responses is enabled, VT Code

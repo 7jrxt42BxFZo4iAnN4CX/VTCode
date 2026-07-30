@@ -26,7 +26,10 @@ pub fn render_environment_addenda(
             lines.push("- Sources: prefer MCP before external fetches when available.".to_string());
         }
 
-        if cfg.agent.include_temporal_context && !cfg.prompt_cache.cache_friendly_prompt_shaping {
+        // The system-prompt cache freezes this value at segment/session start.
+        // Do not move temporal context into a per-turn runtime appendix: doing
+        // so changes the cache prefix on every request.
+        if cfg.agent.include_temporal_context {
             lines.push(
                 generate_temporal_context(cfg.agent.temporal_context_use_utc)
                     .trim()
@@ -52,16 +55,11 @@ pub fn render_environment_addenda(
 
 /// Render the interaction addendum line based on HITL and ask_questions config.
 fn render_interaction_addendum(cfg: &VTCodeConfig) -> Option<String> {
-    match (cfg.security.human_in_the_loop, cfg.chat.ask_questions.enabled) {
-        (true, true) => None,
-        (true, false) => Some(
-            "- Interaction: approval may gate sensitive actions; no `request_user_input`, so make reasonable assumptions unless Planning workflow needs follow-up.".to_string(),
-        ),
-        (false, true) => Some(
-            "- Interaction: approval reduced by config; use `request_user_input` for material blockers.".to_string(),
-        ),
-        (false, false) => Some(
-            "- Interaction: approval reduced by config; no `request_user_input`, so make reasonable assumptions unless Planning workflow needs follow-up.".to_string(),
+    match cfg.chat.ask_questions.enabled {
+        true => None,
+        false => Some(
+            "- Interaction: no `request_user_input`; make reasonable assumptions unless Planning workflow needs follow-up."
+                .to_string(),
         ),
     }
 }

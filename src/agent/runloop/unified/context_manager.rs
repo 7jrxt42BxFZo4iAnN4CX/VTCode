@@ -18,7 +18,6 @@ use vtcode_commons::canonicalize;
 #[derive(Clone)]
 pub(crate) struct SystemPromptParams {
     pub full_auto: bool,
-    pub auto_permission: bool,
     pub planning_active: bool,
     pub request_user_input_enabled: bool,
 }
@@ -214,7 +213,6 @@ impl ContextManager {
 
         let context = SystemPromptContext {
             full_auto: params.full_auto,
-            auto_permission: params.auto_permission,
             planning_active: params.planning_active,
             request_user_input_enabled: params.request_user_input_enabled,
             discovered_skills: self.loaded_skills.read().await.values().cloned().collect(),

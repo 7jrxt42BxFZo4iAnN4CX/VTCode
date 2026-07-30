@@ -21,8 +21,7 @@ use vtcode_core::core::agent::runner::prompt_alignment;
 use vtcode_core::llm::provider as uni;
 use vtcode_core::prompts::{
     DEFAULT_FEW_SHOT_BUDGET_TOKENS, FewShotStore, PromptContext, append_deferred_tools_prompt_section,
-    append_runtime_tool_prompt_sections, render_few_shot_section, temporal::generate_temporal_context,
-    upsert_harness_limits_section,
+    append_runtime_tool_prompt_sections, render_few_shot_section, upsert_harness_limits_section,
 };
 use vtcode_core::subagents::load_primary_memory_appendix;
 use vtcode_core::{ActivePrimaryAgent, apply_primary_agent_prompt_context};
@@ -40,6 +39,7 @@ pub(super) struct PromptAssemblyOutput {
     pub system_prompt: String,
     pub tool_snapshot: SessionToolCatalogSnapshot,
     pub agent_prompt_context: Option<PromptContext>,
+    pub few_shot_context: Option<String>,
 }
 
 /// Build the few-shot section for the current turn.
@@ -98,7 +98,6 @@ async fn build_prompt_output(
         .context_manager
         .build_system_prompt(crate::agent::runloop::unified::context_manager::SystemPromptParams {
             full_auto: input.turn.full_auto,
-            auto_permission: input.turn.auto_permission,
             planning_active: input.turn.planning_active,
             request_user_input_enabled: input.turn.request_user_input_enabled,
         })
@@ -187,13 +186,14 @@ async fn build_prompt_output(
     // DEFAULT_FEW_SHOT_BUDGET_TOKENS of relevant few-shot examples selected
     // from `.vtcode/prompts/examples/`. Skip in recovery mode (the model is
     // in "summarize only" mode and adding examples would distract).
-    if !input.turn.tool_free_recovery
-        && let Some(section) = build_few_shot_section(ctx)
-    {
-        let _ = writeln!(system_prompt, "\n{section}");
-    }
+    let few_shot_context = (!input.turn.tool_free_recovery).then(|| build_few_shot_section(ctx)).flatten();
 
-    Ok(PromptAssemblyOutput { system_prompt, tool_snapshot, agent_prompt_context })
+    Ok(PromptAssemblyOutput {
+        system_prompt,
+        tool_snapshot,
+        agent_prompt_context,
+        few_shot_context,
+    })
 }
 
 fn active_primary_agent_prompt_context(ctx: &TurnProcessingContext<'_>, agent: &ActivePrimaryAgent) -> PromptContext {
@@ -294,11 +294,9 @@ pub(super) async fn render_primary_agent_runtime_context(
     }
     let _ = writeln!(
         buf,
-        "- Session state: planning_workflow={}, auto_permission={}, full_auto={}",
-        turn_snapshot.planning_active, turn_snapshot.auto_permission, turn_snapshot.full_auto
+        "- Session state: planning_workflow={}, full_auto={}",
+        turn_snapshot.planning_active, turn_snapshot.full_auto
     );
-    let _ =
-        writeln!(buf, "- Active primary permission default: {}", permission_default_label(agent.permissions.default));
     let _ = writeln!(buf, "- Effective request tools: {}", render_tool_names(tool_snapshot));
     if let Some(tools) = agent.tools.as_ref().filter(|tools| !tools.is_empty()) {
         let _ = writeln!(buf, "- Primary-agent tool allow-list: {}", tools.join(", "));
@@ -323,12 +321,6 @@ pub(super) async fn render_primary_agent_runtime_context(
             let _ = writeln!(buf, "- Active primary skills: {}", agent.skills.join(", "));
         }
     }
-    if let Some(cfg) = ctx.vt_cfg
-        && cfg.agent.include_temporal_context
-    {
-        let _ = writeln!(buf, "{}", generate_temporal_context(cfg.agent.temporal_context_use_utc).trim());
-    }
-
     let _ = writeln!(buf, "### Instructions");
     let _ = writeln!(buf, "{}", agent.instructions.trim());
     if let Some(memory_appendix) = active_primary_agent_memory_appendix(ctx, agent) {
@@ -375,15 +367,6 @@ fn render_tool_names(tool_snapshot: &SessionToolCatalogSnapshot) -> String {
     result
 }
 
-fn permission_default_label(default: vtcode_config::core::permissions::PermissionDefault) -> &'static str {
-    match default {
-        vtcode_config::core::permissions::PermissionDefault::Ask => "ask",
-        vtcode_config::core::permissions::PermissionDefault::Allow => "allow",
-        vtcode_config::core::permissions::PermissionDefault::Auto => "auto",
-        vtcode_config::core::permissions::PermissionDefault::Deny => "deny",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -420,6 +403,7 @@ mod tests {
             system_prompt: misaligned_prompt,
             tool_snapshot: make_snapshot(),
             agent_prompt_context: None,
+            few_shot_context: None,
         };
 
         let aligned_snapshot = make_snapshot();
@@ -429,6 +413,7 @@ mod tests {
             system_prompt: aligned_prompt,
             tool_snapshot: aligned_snapshot,
             agent_prompt_context: None,
+            few_shot_context: None,
         };
 
         let err = validate_prompt_output_alignment(&misaligned_output, &turn)

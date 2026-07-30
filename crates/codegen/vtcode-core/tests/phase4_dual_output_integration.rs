@@ -3,16 +3,26 @@
 //!
 //! Demonstrates dual-output execution with real tools showing token savings.
 
+use anyhow::Result;
 use serde_json::json;
 use std::path::PathBuf;
 use vtcode_config::constants::tools;
+use vtcode_core::tool_policy::ToolPolicyManager;
 use vtcode_core::tools::registry::ToolRegistry;
 
+async fn create_registry(workspace: PathBuf) -> Result<ToolRegistry> {
+    let policy_dir = tempfile::tempdir()?;
+    let policy_manager = ToolPolicyManager::new_with_config_path(policy_dir.path().join("tool-policy.json")).await?;
+    let registry = ToolRegistry::new_with_custom_policy(workspace, policy_manager).await;
+    registry.allow_all_tools().await?;
+    Ok(registry)
+}
+
 #[tokio::test]
-async fn test_code_search_dual_output_integration() {
+async fn test_code_search_dual_output_integration() -> Result<()> {
     // Setup: Create a registry with workspace
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let registry = ToolRegistry::new(workspace).await;
+    let registry = create_registry(workspace).await?;
 
     // Test: Execute code_search with dual output
     let args = json!({
@@ -47,13 +57,14 @@ async fn test_code_search_dual_output_integration() {
     assert_eq!(response["filters"]["result_types"], json!(["definition", "usage", "text"]));
     assert_eq!(response["filters"]["max_results"], 10);
     assert_eq!(response["returned"].as_u64(), response["results"].as_array().map(|results| results.len() as u64));
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_shell_listing_dual_output_integration() {
+async fn test_shell_listing_dual_output_integration() -> Result<()> {
     // Setup: Create a registry with workspace
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let registry = ToolRegistry::new(workspace).await;
+    let registry = create_registry(workspace).await?;
 
     // Test: Execute a shell listing with dual output
     let args = json!({
@@ -92,13 +103,14 @@ async fn test_shell_listing_dual_output_integration() {
     println!("v List Dual Output:");
     println!("   LLM: {}", result.llm_content);
     println!("   Savings: {}", result.savings_summary());
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_file_inspection_dual_output() {
+async fn test_file_inspection_dual_output() -> Result<()> {
     // Setup: Create a registry
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let registry = ToolRegistry::new(workspace).await;
+    let registry = create_registry(workspace).await?;
 
     // Test: Inspect a file through exec_command.
     let args = json!({
@@ -143,13 +155,14 @@ async fn test_file_inspection_dual_output() {
         println!("v Read File Dual Output (small file):");
         println!("   File too small for significant savings");
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_exec_command_dual_output() {
+async fn test_exec_command_dual_output() -> Result<()> {
     // Setup: Create a registry
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let registry = ToolRegistry::new(workspace).await;
+    let registry = create_registry(workspace).await?;
 
     // Test: Execute exec_command with BashSummarizer
     let args = json!({
@@ -196,15 +209,16 @@ async fn test_exec_command_dual_output() {
         println!("v Bash Dual Output (small output):");
         println!("   Command output too small for significant savings");
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_apply_patch_dual_output() {
+async fn test_apply_patch_dual_output() -> Result<()> {
     // Setup: Create a registry
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let test_file = workspace.join("test_temp_write.txt");
 
-    let registry = ToolRegistry::new(workspace).await;
+    let registry = create_registry(workspace).await?;
 
     // Test with apply_patch which creates a temp file
     use std::fs;
@@ -243,23 +257,25 @@ async fn test_apply_patch_dual_output() {
     println!("   Tool: {}", result.tool_name);
     println!("   LLM summary: {}", result.llm_content);
     println!("   Savings: {}", result.savings_summary());
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_backward_compatibility() {
+async fn test_backward_compatibility() -> Result<()> {
     // Verify that old execute_tool() still works alongside execute_tool_dual()
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let registry = ToolRegistry::new(workspace).await;
+    let registry = create_registry(workspace).await?;
 
     let args = json!({
-        "pattern": "pub struct",
+        "query": "pub struct",
         "path": "src/tools",
+        "result_types": ["text"],
         "max_results": 5
     });
 
     // Old API should still work
     let old_result = registry
-        .execute_tool(tools::GREP_FILE, args.clone())
+        .execute_tool(tools::CODE_SEARCH, args.clone())
         .await
         .expect("Old execute_tool should still work");
 
@@ -267,7 +283,7 @@ async fn test_backward_compatibility() {
 
     // New API should also work
     let new_result = registry
-        .execute_tool_dual(tools::GREP_FILE, args)
+        .execute_tool_dual(tools::CODE_SEARCH, args)
         .await
         .expect("New execute_tool_dual should work");
 
@@ -277,4 +293,5 @@ async fn test_backward_compatibility() {
     println!("v Backward Compatibility:");
     println!("   Old API: Working");
     println!("   New API: Working with {} savings", new_result.savings_summary());
+    Ok(())
 }

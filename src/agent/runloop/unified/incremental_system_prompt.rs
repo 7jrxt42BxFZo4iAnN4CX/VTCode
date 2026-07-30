@@ -7,15 +7,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-fn append_auto_permission_notice(prompt: &mut String) {
-    if prompt.contains("## Auto Permission Review Active") {
-        return;
-    }
-    prompt.push('\n');
-    prompt.push_str(crate::agent::runloop::unified::auto_permission::system_prompt_addendum());
-    prompt.push('\n');
-}
-
 pub(crate) fn hash_base_system_prompt(base_prompt: &str) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -129,7 +120,6 @@ impl IncrementalSystemPrompt {
     /// 1. Base system prompt (from `vtcode_core::prompts::system`)
     /// 2. Instruction appendix (from AGENTS.md, CLAUDE.md, and project docs)
     /// 3. Runtime prompt contract sections
-    /// 4. Auto permission review notice when applicable
     async fn build_prompt_content(
         &self,
         base_system_prompt: &str,
@@ -162,10 +152,6 @@ impl IncrementalSystemPrompt {
             },
         );
 
-        if context.auto_permission && !context.planning_active {
-            append_auto_permission_notice(&mut prompt);
-        }
-
         prompt
     }
 
@@ -187,7 +173,6 @@ impl Default for IncrementalSystemPrompt {
 #[derive(Debug, Clone)]
 pub(crate) struct SystemPromptContext {
     pub(crate) full_auto: bool,
-    pub(crate) auto_permission: bool,
     /// Planning workflow with read-only permissions for exploration and planning.
     pub(crate) planning_active: bool,
     /// Whether `request_user_input` can be called in the current runtime.
@@ -207,18 +192,11 @@ impl SystemPromptContext {
 
         let mut hasher = DefaultHasher::new();
         self.full_auto.hash(&mut hasher);
-        self.auto_permission.hash(&mut hasher);
         self.planning_active.hash(&mut hasher);
         self.request_user_input_enabled.hash(&mut hasher);
         self.active_instruction_directory.hash(&mut hasher);
         for path in &self.instruction_context_paths {
             path.hash(&mut hasher);
-            if let Ok(meta) = std::fs::metadata(path) {
-                if let Ok(mtime) = meta.modified() {
-                    mtime.hash(&mut hasher);
-                }
-                meta.len().hash(&mut hasher);
-            }
         }
         // Include the lean skill metadata that appears in the prompt.
         for skill in &self.discovered_skills {

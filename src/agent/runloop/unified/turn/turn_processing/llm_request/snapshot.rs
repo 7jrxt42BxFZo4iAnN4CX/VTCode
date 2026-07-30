@@ -52,7 +52,6 @@ pub(super) struct TurnRequestSnapshot {
     pub provider_name: String,
     pub planning_active: bool,
     pub full_auto: bool,
-    pub auto_permission: bool,
     pub tool_free_recovery: bool,
     pub recovery_reason: Option<String>,
     pub request_user_input_enabled: bool,
@@ -86,7 +85,6 @@ pub(super) fn capture_turn_request_snapshot(
 ) -> TurnRequestSnapshot {
     let prompt_cache_config = &ctx.config.prompt_cache;
     let planning_active = ctx.is_planning_active();
-    let auto_permission = ctx.full_auto && !planning_active;
     let provider_name = ctx.provider_client.name().to_ascii_lowercase();
     let openai_prompt_cache_enabled = is_openai_prompt_cache_enabled(
         &provider_name,
@@ -118,7 +116,6 @@ pub(super) fn capture_turn_request_snapshot(
         provider_name,
         planning_active,
         full_auto,
-        auto_permission,
         tool_free_recovery,
         recovery_reason: ctx.recovery_reason().map(str::to_string),
         request_user_input_enabled,

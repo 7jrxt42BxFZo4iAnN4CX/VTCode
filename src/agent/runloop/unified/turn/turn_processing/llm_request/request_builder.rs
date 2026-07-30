@@ -105,8 +105,32 @@ pub(super) async fn build_turn_request(
         &turn_snapshot.openai_prompt_cache_key_mode,
         ctx.session_stats.prompt_cache_lineage_id(),
     );
-    let stable_prefix_hash = stable_system_prefix_hash(&prompt_output.system_prompt);
-    let tool_catalog_hash = prompt_output.tool_snapshot.tool_catalog_hash;
+    let selected_tools = if use_out_of_band_copilot_tools || turn_snapshot.tool_free_recovery {
+        None
+    } else if turn_snapshot.client_local_tool_deferral {
+        client_local_wire_tools(prompt_output.tool_snapshot.snapshot.clone())
+    } else {
+        prompt_output.tool_snapshot.snapshot.clone()
+    };
+    let few_shot_context = prompt_output.few_shot_context.take();
+    let assembled_prefix_hash = stable_system_prefix_hash(&prompt_output.system_prompt);
+    let envelope_mode = format!(
+        "planning={};full_auto={};tool_free={};request_user_input={}",
+        turn_snapshot.planning_active,
+        turn_snapshot.full_auto,
+        turn_snapshot.tool_free_recovery,
+        turn_snapshot.request_user_input_enabled
+    );
+    let request_envelope = ctx.session_stats.request_envelope(
+        request_model,
+        &turn_snapshot.provider_name,
+        &envelope_mode,
+        prompt_output.system_prompt,
+        selected_tools.as_deref().map_or_else(Vec::new, |tools| tools.clone()),
+        assembled_prefix_hash,
+    );
+    let stable_prefix_hash = request_envelope.prefix_hash();
+    let tool_catalog_hash = request_envelope.catalog_hash();
     let prefix_change_reason =
         ctx.session_stats
             .record_prompt_cache_fingerprint(request_model, stable_prefix_hash, tool_catalog_hash);
@@ -134,26 +158,15 @@ pub(super) async fn build_turn_request(
         &continuation_messages,
     );
     let request_messages = request_messages.into_owned();
-    let request_messages =
+    let mut request_messages =
         prepend_request_context_message(request_messages, ctx.context_manager.request_editor_context_message());
+    if let Some(few_shot_context) = few_shot_context {
+        request_messages.push(uni::Message::system(few_shot_context));
+    }
     let request_plan = build_harness_request_plan(HarnessRequestPlanInput {
         messages: Arc::new(request_messages),
-        system_prompt: prompt_output.system_prompt,
-        tools: if use_out_of_band_copilot_tools || turn_snapshot.tool_free_recovery {
-            // Strip tool definitions during tool-free recovery (including
-            // wall-clock exhaustion recovery) so the model cannot even attempt
-            // tool calls. ToolChoice::none() alone is advisory — the model
-            // still sees definitions and may try (observed in turn_637).
-            None
-        } else if turn_snapshot.client_local_tool_deferral {
-            // No hosted tool search for this provider: deferred tools are
-            // not sent eagerly. The model discovers them through the relevant
-            // local discovery tool (see `[Deferred Tools]` in
-            // the system prompt, appended in `build_prompt_output`).
-            client_local_wire_tools(prompt_output.tool_snapshot.snapshot.clone())
-        } else {
-            prompt_output.tool_snapshot.snapshot.clone()
-        },
+        system_prompt: request_envelope.system_prompt().to_string(),
+        tools: (!request_envelope.ordered_tools().is_empty()).then(|| request_envelope.ordered_tools()),
         model: turn_snapshot.active_model.clone(),
         max_tokens: max_tokens_opt,
         temperature,
@@ -711,11 +724,9 @@ mod tests {
         assert!(runtime_context.contains("## Active Primary Agent Runtime State"));
         assert!(runtime_context.contains("- Active agent: planner"));
         assert!(runtime_context.contains("- Effective request tools: code_search"));
-        assert!(
-            runtime_context
-                .contains("- Session state: planning_workflow=false, auto_permission=false, full_auto=false")
-        );
-        assert!(runtime_context.contains("- Active primary permission default: deny"));
+        assert!(runtime_context.contains("- Session state: planning_workflow=false, full_auto=false"));
+        assert!(!runtime_context.contains("auto_permission="));
+        assert!(!runtime_context.contains("permission default"));
         assert!(runtime_context.contains("Plan carefully before editing."));
         assert_eq!(built.continuation_messages, vec![uni::Message::user("hello".to_string())]);
     }
@@ -901,7 +912,7 @@ mod tests {
                 .expect("request should build")
         };
 
-        assert_eq!(request_tool_names(&built.request), vec!["code_search", "apply_patch"]);
+        assert_eq!(request_tool_names(&built.request), vec!["apply_patch", "code_search"]);
         assert_eq!(built.continuation_messages, vec![uni::Message::user("hello".to_string())]);
     }
 
@@ -981,8 +992,10 @@ mod tests {
         assert_eq!(stable_system_prefix_hash(first_system), stable_system_prefix_hash(second_system));
         assert!(first_system.contains("Planner instructions."));
         assert!(second_system.contains("Reviewer instructions."));
-        assert!(first_system.contains("Current date and time"));
-        assert!(second_system.contains("Current date and time"));
+        assert!(
+            !first_system.contains("Current date and time") && !second_system.contains("Current date and time"),
+            "temporal context must not be regenerated in the per-turn primary-agent appendix"
+        );
     }
 
     #[tokio::test]

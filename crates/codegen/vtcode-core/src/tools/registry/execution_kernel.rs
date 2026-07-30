@@ -459,6 +459,9 @@ pub(super) fn preflight_validate_resolved_call(
     let mut validation_args = normalize_tool_args(normalized_tool_name, args, parameter_schema.as_ref())?;
     let mut effective_args = None;
 
+    crate::tools::output_limits::max_output_tokens(validation_args.as_ref())
+        .map_err(|error| anyhow!("Invalid arguments for tool '{routed_tool_name}': {error}"))?;
+
     if let Some(exec_args) = public_exec_validation_args(normalized_tool_name, validation_args.as_ref())? {
         validation_tool_name = tool_names::UNIFIED_EXEC.to_string();
         validation_args = std::borrow::Cow::Owned(exec_args);
@@ -542,10 +545,11 @@ pub(super) fn preflight_validate_resolved_call(
         .inventory
         .registration_for(&validation_tool_name)
         .and_then(|registration| registration.parameter_schema().cloned());
+    let schema_validation_args = crate::tools::output_limits::args_without_output_metadata(validation_args.as_ref());
     if let Some(schema) = effective_parameter_schema.as_ref() {
         let error_msg = match jsonschema::validator_for(schema) {
             Ok(validator) => validator
-                .iter_errors(validation_args.as_ref())
+                .iter_errors(&schema_validation_args)
                 .map(|error| crate::tools::validation::describe_jsonschema_error(&error))
                 .collect::<Vec<_>>()
                 .join("; "),
@@ -559,7 +563,7 @@ pub(super) fn preflight_validate_resolved_call(
         }
     }
     if validation_tool_name == tool_names::CODE_SEARCH {
-        crate::tools::code_search::validate_args(validation_args.as_ref())
+        crate::tools::code_search::validate_args(&schema_validation_args)
             .map_err(|error| anyhow!("Invalid arguments for tool '{routed_tool_name}': {error}"))?;
     }
 
@@ -602,6 +606,30 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp workspace");
         let registry = ToolRegistry::new(temp.path().to_path_buf()).await;
         (temp, registry)
+    }
+
+    #[tokio::test]
+    async fn preflight_accepts_output_limit_for_legacy_strict_schemas() {
+        let (_temp, registry) = new_test_registry().await;
+        let outcome = preflight_validate_call(
+            &registry,
+            tool_names::CODE_SEARCH,
+            &json!({"query": "ToolRegistry", "max_output_tokens": 37}),
+        )
+        .expect("a valid integer output limit should pass preflight");
+        assert_eq!(outcome.effective_args["max_output_tokens"], 37);
+    }
+
+    #[tokio::test]
+    async fn preflight_rejects_invalid_output_limits_before_dispatch() {
+        let (_temp, registry) = new_test_registry().await;
+        let error = preflight_validate_call(
+            &registry,
+            tool_names::CODE_SEARCH,
+            &json!({"query": "ToolRegistry", "max_output_tokens": "37"}),
+        )
+        .expect_err("string output limits must be rejected");
+        assert!(error.to_string().contains("max_output_tokens must be an integer"));
     }
     #[test]
     fn patch_action_within_limit_is_allowed() {

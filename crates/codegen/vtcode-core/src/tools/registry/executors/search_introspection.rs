@@ -6,6 +6,59 @@ use hashbrown::HashMap;
 use serde_json::{Value, json};
 
 impl ToolRegistry {
+    pub(super) async fn execute_search_tools(&self, args: Value) -> Result<Value> {
+        let query = args
+            .get("query")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|query| !query.is_empty())
+            .ok_or_else(|| anyhow!("query is required"))?;
+        let limit = args
+            .get("limit")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(5)
+            .clamp(1, 25);
+        let detail_level = args.get("detail_level").and_then(Value::as_str).unwrap_or("name_description");
+        let session_tools = self
+            .session_model_tools()
+            .ok_or_else(|| anyhow!("session tool catalog is not available"))?;
+        let catalog_state = self.tool_catalog_state();
+        let results = catalog_state.search_tools(&session_tools, query, limit).await;
+        let references = results.iter().map(|result| result.name.clone()).collect::<Vec<_>>();
+        let next_epoch = catalog_state.note_tool_references(&session_tools, &references).await;
+        let definitions = session_tools.read().await;
+        let tools = results
+            .into_iter()
+            .map(|result| {
+                let mut item = json!({
+                    "name": result.name,
+                    "score": result.score,
+                });
+                if detail_level != "name" {
+                    item["description"] = Value::String(result.description);
+                }
+                if detail_level == "full"
+                    && let Some(definition) = definitions
+                        .iter()
+                        .find(|definition| definition.function_name() == item["name"].as_str().unwrap_or_default())
+                    && let Some(function) = definition.function.as_ref()
+                {
+                    item["parameters"] = function.parameters.clone();
+                }
+                item
+            })
+            .collect::<Vec<_>>();
+
+        Ok(json!({
+            "query": query,
+            "count": tools.len(),
+            "tools": tools,
+            "expanded_for_next_segment": references,
+            "next_catalog_epoch": next_epoch,
+        }))
+    }
+
     pub(super) async fn execute_get_errors(&self, args: Value) -> Result<Value> {
         let scope = args.get("scope").and_then(|v| v.as_str()).unwrap_or("archive");
         let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;

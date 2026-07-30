@@ -492,6 +492,7 @@ async fn apply_compacted_history(
         previous_response_chain_present,
         "Applied conversation compaction"
     );
+    let segment_transition = session_stats.begin_request_segment();
     if let Some(harness_emitter) = harness_emitter {
         let event = compact_boundary_event(
             thread_id.to_string(),
@@ -500,6 +501,7 @@ async fn apply_compacted_history(
             original_len,
             compacted_len,
             history_artifact_path.clone(),
+            Some(&segment_transition),
         );
         if let Err(err) = harness_emitter.emit(event) {
             tracing::debug!(error = %err, "harness compact boundary event emission failed");
@@ -583,6 +585,7 @@ async fn compact_history_before_index_in_place(
 
     let compacted_len = history.len();
     let history_artifact_path = prefix_outcome.history_artifact_path.clone();
+    let segment_transition = session_stats.begin_request_segment();
     if let Some(harness_emitter) = harness_emitter {
         let event = compact_boundary_event(
             thread_id.to_string(),
@@ -591,6 +594,7 @@ async fn compact_history_before_index_in_place(
             original_len,
             compacted_len,
             history_artifact_path.clone(),
+            Some(&segment_transition),
         );
         if let Err(err) = harness_emitter.emit(event) {
             tracing::debug!(error = %err, "harness compact boundary event emission failed");
@@ -772,6 +776,7 @@ pub(crate) async fn maybe_auto_compact_history(
     // emit the canonical `thread.compact_boundary` event.
     session_stats.clear_previous_response_chain_for(provider.name(), model);
     context_manager.cap_token_usage_after_compaction(effective_compaction_threshold(vt_cfg, provider, model));
+    let segment_transition = session_stats.begin_request_segment();
     if let Some(harness_emitter) = harness_emitter {
         let event = compact_boundary_event(
             thread_id.to_string(),
@@ -780,6 +785,7 @@ pub(crate) async fn maybe_auto_compact_history(
             outcome.original_len,
             outcome.compacted_len,
             outcome.history_artifact_path.clone(),
+            Some(&segment_transition),
         );
         let _ = harness_emitter.emit(event);
     }

@@ -160,7 +160,7 @@ pub fn append_deferred_tools_prompt_section(prompt: &mut String, tools: &[ToolDe
     }
 
     let section = format!(
-        "[Deferred Tools]\n{}\nUse the relevant discovery tool to load a deferred capability before calling it.",
+        "[Deferred Tools]\n{}\nUse `search_tools` to find a deferred capability. Selected definitions become available in the next request segment.",
         lines.join("\n")
     );
     append_prompt_block(prompt, &section);

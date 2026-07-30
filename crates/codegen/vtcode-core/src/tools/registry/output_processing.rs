@@ -20,11 +20,25 @@ fn output_field_bytes(value: &Value) -> usize {
         .unwrap_or(0)
 }
 
-fn should_force_spool(tool_name: &str, value: &Value, is_mcp: bool, spooling_enabled: bool) -> bool {
-    if !spooling_enabled || is_mcp || !is_pty_output_tool(tool_name) {
+fn should_force_spool(
+    tool_name: &str,
+    value: &Value,
+    is_mcp: bool,
+    spooling_enabled: bool,
+    max_output_tokens: usize,
+) -> bool {
+    if !spooling_enabled {
         return false;
     }
+    if value.to_string().len()
+        > max_output_tokens.saturating_mul(crate::tools::output_limits::OUTPUT_PREVIEW_CHARS_PER_TOKEN)
+    {
+        return true;
+    }
     if value.get("no_spool").and_then(|v| v.as_bool()).unwrap_or(false) {
+        return false;
+    }
+    if is_mcp || !is_pty_output_tool(tool_name) {
         return false;
     }
     if value.get("truncated").and_then(|v| v.as_bool()).unwrap_or(false) {
@@ -33,14 +47,46 @@ fn should_force_spool(tool_name: &str, value: &Value, is_mcp: bool, spooling_ena
     output_field_bytes(value) >= PTY_FORCE_SPOOL_MIN_BYTES
 }
 
+fn limit_spooled_preview(mut value: Value, max_output_tokens: usize) -> Value {
+    if value.get("spool_path").and_then(Value::as_str).is_none() {
+        return value;
+    }
+    let max_preview_bytes = max_output_tokens
+        .saturating_mul(crate::tools::output_limits::OUTPUT_PREVIEW_CHARS_PER_TOKEN)
+        .max(1);
+    let Some(object) = value.as_object_mut() else {
+        return value;
+    };
+    let mut preview_truncated = false;
+    for field in ["raw_output", "output", "stdout", "content"] {
+        let Some(text) = object.get(field).and_then(Value::as_str) else {
+            continue;
+        };
+        if text.len() > max_preview_bytes {
+            object.insert(field.to_string(), Value::String(text.chars().take(max_preview_bytes).collect()));
+            preview_truncated = true;
+        }
+    }
+    if preview_truncated {
+        object.insert("truncated".to_string(), Value::Bool(true));
+        object.insert("preview_truncated".to_string(), Value::Bool(true));
+    }
+    value
+}
+
 impl ToolRegistry {
-    fn sanitize_tool_output(value: Value, is_mcp: bool) -> Value {
+    fn sanitize_tool_output(value: Value, is_mcp: bool, max_output_tokens: usize) -> Value {
         let (entry_fuse, depth_fuse, token_fuse, byte_fuse) = Self::fuse_limits();
 
         let trimmed = Self::clamp_value_recursive(&value, entry_fuse, depth_fuse);
 
         let serialized = trimmed.to_string();
         let approx_tokens = serialized.len() / 4;
+        let max_preview_bytes = max_output_tokens
+            .saturating_mul(crate::tools::output_limits::OUTPUT_PREVIEW_CHARS_PER_TOKEN)
+            .max(1);
+        let byte_fuse = byte_fuse.min(max_preview_bytes);
+        let token_fuse = token_fuse.min(max_output_tokens);
         if serialized.len() > byte_fuse || approx_tokens > token_fuse {
             let truncated = serialized.chars().take(byte_fuse).collect::<String>();
             return json!({
@@ -147,9 +193,15 @@ impl ToolRegistry {
     ///
     /// This is more token-efficient as agents can inspect spooled files with
     /// shell commands or use `code_search` for code structure on demand.
-    pub(super) async fn process_tool_output(&self, tool_name: &str, value: Value, is_mcp: bool) -> Value {
+    pub(super) async fn process_tool_output(
+        &self,
+        tool_name: &str,
+        value: Value,
+        is_mcp: bool,
+        max_output_tokens: usize,
+    ) -> Value {
         let spooling_enabled = self.output_spooler.config().enabled;
-        let force_spool = should_force_spool(tool_name, &value, is_mcp, spooling_enabled);
+        let force_spool = should_force_spool(tool_name, &value, is_mcp, spooling_enabled, max_output_tokens);
 
         // Check if output should be spooled to file
         if force_spool || self.output_spooler.should_spool(&value) {
@@ -158,7 +210,7 @@ impl ToolRegistry {
                 .process_output_with_force(tool_name, value.clone(), is_mcp, force_spool)
                 .await
             {
-                Ok(spooled) => return spooled,
+                Ok(spooled) => return limit_spooled_preview(spooled, max_output_tokens),
                 Err(e) => {
                     // Log error but fall back to standard sanitization
                     tracing::warn!(
@@ -170,7 +222,7 @@ impl ToolRegistry {
             }
         }
 
-        Self::sanitize_tool_output(value, is_mcp)
+        Self::sanitize_tool_output(value, is_mcp, max_output_tokens)
     }
 }
 
@@ -185,7 +237,13 @@ mod tests {
             "output": "x",
             "truncated": true
         });
-        assert!(should_force_spool("run_pty_cmd", &value, false, true));
+        assert!(should_force_spool(
+            "run_pty_cmd",
+            &value,
+            false,
+            true,
+            vtcode_utility_tool_specs::DEFAULT_MAX_OUTPUT_TOKENS,
+        ));
     }
 
     #[test]
@@ -193,7 +251,13 @@ mod tests {
         let value = json!({
             "output": "x".repeat(PTY_FORCE_SPOOL_MIN_BYTES + 1)
         });
-        assert!(should_force_spool("run_pty_cmd", &value, false, true));
+        assert!(should_force_spool(
+            "run_pty_cmd",
+            &value,
+            false,
+            true,
+            vtcode_utility_tool_specs::DEFAULT_MAX_OUTPUT_TOKENS,
+        ));
     }
 
     #[test]
@@ -202,13 +266,57 @@ mod tests {
             "output": "x".repeat(PTY_FORCE_SPOOL_MIN_BYTES + 1),
             "no_spool": true
         });
-        assert!(!should_force_spool("run_pty_cmd", &no_spool_value, false, true));
+        assert!(!should_force_spool(
+            "run_pty_cmd",
+            &no_spool_value,
+            false,
+            true,
+            vtcode_utility_tool_specs::DEFAULT_MAX_OUTPUT_TOKENS,
+        ));
 
         let non_pty_value = json!({
             "output": "x".repeat(PTY_FORCE_SPOOL_MIN_BYTES + 1)
         });
-        assert!(!should_force_spool(tools::GREP_FILE, &non_pty_value, false, true));
-        assert!(!should_force_spool("run_pty_cmd", &non_pty_value, false, false));
+        assert!(!should_force_spool(
+            tools::GREP_FILE,
+            &non_pty_value,
+            false,
+            true,
+            vtcode_utility_tool_specs::DEFAULT_MAX_OUTPUT_TOKENS,
+        ));
+        assert!(!should_force_spool(
+            "run_pty_cmd",
+            &non_pty_value,
+            false,
+            false,
+            vtcode_utility_tool_specs::DEFAULT_MAX_OUTPUT_TOKENS,
+        ));
+    }
+
+    #[test]
+    fn custom_preview_cap_forces_spooling_for_any_tool() {
+        let value = json!({"content": "output exceeds one token"});
+        assert!(should_force_spool(tools::CODE_SEARCH, &value, false, true, 1));
+        assert!(should_force_spool("mcp::server::tool", &value, true, true, 1));
+        assert!(should_force_spool(
+            tools::CODE_SEARCH,
+            &json!({"content": "output exceeds one token", "no_spool": true}),
+            false,
+            true,
+            1,
+        ));
+    }
+
+    #[test]
+    fn spooled_preview_keeps_the_full_output_reference() {
+        let value = json!({
+            "content": "output exceeds one token",
+            "spool_path": ".vtcode/context/tool_outputs/result.txt"
+        });
+        let result = limit_spooled_preview(value, 1);
+        assert_eq!(result["spool_path"], ".vtcode/context/tool_outputs/result.txt");
+        assert_eq!(result["content"], "outp");
+        assert_eq!(result["preview_truncated"], true);
     }
 
     #[tokio::test]
@@ -221,7 +329,14 @@ mod tests {
             "truncated": true
         });
 
-        let result = registry.process_tool_output("run_pty_cmd", value.clone(), false).await;
+        let result = registry
+            .process_tool_output(
+                "run_pty_cmd",
+                value.clone(),
+                false,
+                vtcode_utility_tool_specs::DEFAULT_MAX_OUTPUT_TOKENS,
+            )
+            .await;
 
         assert!(result.get("spool_path").is_none());
         assert_eq!(result.get("output"), value.get("output"));
@@ -252,7 +367,14 @@ mod tests {
             };
             let mut value = json!({});
             value[field] = json!(big);
-            let result = registry.process_tool_output(tool, value.clone(), tool.starts_with("mcp")).await;
+            let result = registry
+                .process_tool_output(
+                    tool,
+                    value.clone(),
+                    tool.starts_with("mcp"),
+                    vtcode_utility_tool_specs::DEFAULT_MAX_OUTPUT_TOKENS,
+                )
+                .await;
 
             assert!(result.get("spool_path").is_some(), "tool {tool} should spool large output to a file path");
             assert!(

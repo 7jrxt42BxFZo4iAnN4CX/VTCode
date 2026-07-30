@@ -11,9 +11,6 @@ labels:
   EL:
     style: primary
     message: this element's innerHTML is being set directly
-  VAL:
-    style: secondary
-    message: this value is rendered as raw HTML
 rule:
   pattern: $EL.innerHTML = $VAL
 files:

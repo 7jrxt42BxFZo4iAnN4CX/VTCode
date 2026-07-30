@@ -7,7 +7,7 @@ the Codex-style tool migration.
 
 | Profile | Tools | Use |
 |---|---|---|
-| Default | `exec_command`, `write_stdin`, `apply_patch` | Normal repository work: shell inspection, validation, interactive sessions, and patch edits. |
+| Default | `exec_command`, `write_stdin`, `apply_patch`, `search_tools` | Normal repository work plus deferred capability discovery. |
 | Advanced VT Code | Default tools plus `code_search` | Bounded workspace search for definitions, syntactic usages, literal text, and matching paths. |
 
 No `unified_*` schema, alias, hidden public tool, or compatibility profile is
@@ -18,8 +18,9 @@ only and must not be used in new prompts, config examples, evals, or tool calls.
 
 ### `exec_command`
 
-Runs a shell command through the active shell profile and the usual command
-policy, sandbox, approval, and output-limit checks.
+Runs a shell command through the active shell profile. Permission-related
+fields express stable request intent; the execution gateway resolves runtime
+enforcement without changing the model-visible schema.
 
 Required:
 
@@ -31,6 +32,10 @@ Common optional fields:
 - `tty`: allocate a PTY when the command needs an interactive terminal.
 - `yield_time_ms`: how long to wait before returning output.
 - `max_output_tokens`: output budget for the response.
+
+Every function tool accepts `max_output_tokens`. It defaults to 10,000 and must
+be between 1 and 50,000. VT Code spools the complete output and limits only the
+model-visible preview.
 
 Unix-like example:
 
@@ -74,6 +79,17 @@ Example:
 -old text
 +new text
 *** End Patch
+```
+
+### `search_tools`
+
+Searches the deferred local catalog by name and description. `query` is
+required; `limit` is optional (1–25), and `detail_level` accepts `name`,
+`name_description`, or `full`. Ranked matches are expanded deterministically
+for the next request segment.
+
+```json
+{"query":"GitHub pull request review","limit":5,"detail_level":"name_description"}
 ```
 
 ## Advanced Code Search

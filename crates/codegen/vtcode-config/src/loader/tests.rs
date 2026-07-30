@@ -492,7 +492,9 @@ fn save_config_writes_sparse_model_theme_and_permission_values() {
     let temp_dir = tempfile::tempdir().unwrap();
     let workspace = temp_dir.path();
     let config_path = workspace.join("vtcode.toml");
-    fs::write(&config_path, "").expect("failed to write initial config");
+    // Opt out of the developer's global config so this persistence test is
+    // deterministic when run on a machine with user-level settings.
+    fs::write(&config_path, "[workspace]\nuse_root_config = true\n").expect("failed to write initial config");
 
     let mut manager = ConfigManager::load_from_workspace(workspace).expect("failed to load config");
     let mut modified_config = manager.config().clone();
@@ -535,6 +537,9 @@ fn deprecated_permission_keys_are_migrated_on_save() {
             &config_path,
             format!(
                 r#"
+[workspace]
+use_root_config = true
+
 [permissions]
 {deprecated_key} = ["read_file"]
 "#

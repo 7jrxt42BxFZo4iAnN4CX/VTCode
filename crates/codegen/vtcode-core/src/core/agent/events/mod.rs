@@ -377,6 +377,12 @@ impl ExecEventRecorder {
             original_message_count,
             compacted_message_count,
             history_artifact_path: history_artifact_path.map(str::to_string),
+            previous_segment_id: None,
+            new_segment_id: None,
+            previous_prefix_hash: None,
+            new_prefix_hash: None,
+            previous_catalog_hash: None,
+            new_catalog_hash: None,
         }));
     }
 

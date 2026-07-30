@@ -26,3 +26,4 @@
   `PlanApprovalResolvedEvent`; keep `PlanApprovalDecision` stable because it is
   consumed by headless clients and Open Responses adapters.
 - `HarnessEventItem` uses `HarnessEventKind` enum — adding variants requires schema version bump.
+- Schema `0.10.0` adds optional segment and prefix/catalog hashes to compact boundaries; keep legacy payloads readable and ATIF output stable.

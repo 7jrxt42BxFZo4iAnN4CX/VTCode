@@ -12,7 +12,14 @@ use crate::config::constants::tools;
 
 impl ToolRegistry {
     async fn process_harness_command_session_output(&self, value: Value) -> Result<Value> {
-        let processed = self.process_tool_output(tools::UNIFIED_EXEC, value, false).await;
+        let processed = self
+            .process_tool_output(
+                tools::UNIFIED_EXEC,
+                value,
+                false,
+                vtcode_utility_tool_specs::DEFAULT_MAX_OUTPUT_TOKENS,
+            )
+            .await;
         Ok(super::normalize_tool_output(processed))
     }
 

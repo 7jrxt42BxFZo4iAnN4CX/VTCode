@@ -405,6 +405,7 @@ pub(crate) fn compact_boundary_event(
     original_message_count: usize,
     compacted_message_count: usize,
     history_artifact_path: Option<String>,
+    segment_transition: Option<&crate::agent::runloop::unified::state::RequestSegmentTransition>,
 ) -> ThreadEvent {
     ThreadEvent::ThreadCompactBoundary(ThreadCompactBoundaryEvent {
         thread_id: thread_id.into(),
@@ -413,6 +414,12 @@ pub(crate) fn compact_boundary_event(
         original_message_count,
         compacted_message_count,
         history_artifact_path,
+        previous_segment_id: segment_transition.and_then(|transition| transition.previous_segment_id.clone()),
+        new_segment_id: segment_transition.map(|transition| transition.new_segment_id.clone()),
+        previous_prefix_hash: segment_transition.and_then(|transition| transition.previous_prefix_hash.clone()),
+        new_prefix_hash: None,
+        previous_catalog_hash: segment_transition.and_then(|transition| transition.previous_catalog_hash.clone()),
+        new_catalog_hash: None,
     })
 }
 
