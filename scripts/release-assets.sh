@@ -127,6 +127,45 @@ create_compatibility_asset() {
     return 0
 }
 
+# Generate the aggregate checksum manifest for installable archives.
+#
+# Compatibility assets are intentionally excluded: updater versions that use
+# substring filename matching can otherwise mistake
+# `compat-<archive>.compat` for `<archive>`.
+generate_checksums_manifest() {
+    if [[ $# -ne 1 ]]; then
+        echo "usage: generate_checksums_manifest <stage-dir>" >&2
+        return 2
+    fi
+    local stage_dir=$1
+    local -a checksum_command
+    if command -v sha256sum &>/dev/null; then
+        checksum_command=(sha256sum)
+    elif command -v shasum &>/dev/null; then
+        checksum_command=(shasum -a 256)
+    else
+        echo "neither sha256sum nor shasum found" >&2
+        return 1
+    fi
+
+    local nullglob_was_set=0
+    shopt -q nullglob && nullglob_was_set=1
+    shopt -s nullglob
+    local -a archives=("$stage_dir"/*.tar.gz "$stage_dir"/*.zip)
+    [[ "$nullglob_was_set" -eq 1 ]] || shopt -u nullglob
+
+    local manifest_tmp="$stage_dir/checksums.txt.tmp"
+    : >"$manifest_tmp"
+    local archive
+    for archive in "${archives[@]}"; do
+        (
+            cd "$stage_dir"
+            "${checksum_command[@]}" "$(basename "$archive")"
+        ) >>"$manifest_tmp"
+    done
+    mv "$manifest_tmp" "$stage_dir/checksums.txt"
+}
+
 # Validate a staged release directory has complete target coverage.
 #
 #   validate_release_assets <stage-dir> <version>

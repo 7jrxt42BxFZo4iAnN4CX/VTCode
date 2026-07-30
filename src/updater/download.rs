@@ -121,7 +121,11 @@ pub(super) fn parse_checksum_metadata(metadata: &str, archive_name: &str) -> Opt
     metadata.lines().find_map(|line| {
         let tokens: Vec<_> = line.split_whitespace().collect();
         let digest = tokens.iter().find(|token| is_sha256(token))?;
-        if tokens.len() == 1 || line.to_ascii_lowercase().contains(&archive_name) {
+        let matches_archive = tokens.iter().any(|token| {
+            let filename = token.trim_start_matches('*').rsplit(['/', '\\']).next().unwrap_or_default();
+            filename.eq_ignore_ascii_case(&archive_name)
+        });
+        if tokens.len() == 1 || matches_archive {
             Some(digest.to_ascii_lowercase())
         } else {
             None
@@ -185,6 +189,19 @@ mod tests {
     fn ignores_checksum_for_another_archive() {
         let checksum = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef  other.tar.gz\n";
         assert!(parse_checksum_metadata(checksum, "vtcode.tar.gz").is_none());
+    }
+
+    #[test]
+    fn selects_exact_archive_over_compatibility_asset() {
+        let checksum = "\
+83bcccc61f7dac396a2ffd31bcd6f2dbdc46363b7551e3dd8fc2dedfe5546cb7  compat-vtcode-0.141.7-aarch64-apple-darwin.tar.gz.compat
+b9362df9124a6180c5cf0787d6159ff525e7caee6ceb51a0987fb827205df91e  vtcode-0.141.7-aarch64-apple-darwin.tar.gz
+";
+
+        assert_eq!(
+            parse_checksum_metadata(checksum, "vtcode-0.141.7-aarch64-apple-darwin.tar.gz"),
+            Some("b9362df9124a6180c5cf0787d6159ff525e7caee6ceb51a0987fb827205df91e".to_string())
+        );
     }
 
     #[test]

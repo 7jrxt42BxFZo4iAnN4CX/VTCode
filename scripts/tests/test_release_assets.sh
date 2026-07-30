@@ -128,6 +128,23 @@ else
     pass "empty binary rejected"
 fi
 
+echo "Testing generate_checksums_manifest..."
+
+manifest_stage="$tmp/manifest-stage"
+mkdir -p "$manifest_stage"
+printf 'archive' >"$manifest_stage/vtcode-0.141.7-aarch64-apple-darwin.tar.gz"
+printf 'compatibility binary' >"$manifest_stage/compat-vtcode-0.141.7-aarch64-apple-darwin.tar.gz.compat"
+if generate_checksums_manifest "$manifest_stage"; then
+    if grep -q '  vtcode-0.141.7-aarch64-apple-darwin.tar.gz$' "$manifest_stage/checksums.txt" \
+        && ! grep -q 'compat-' "$manifest_stage/checksums.txt"; then
+        pass "aggregate manifest includes archives without ambiguous compatibility assets"
+    else
+        fail_test "aggregate manifest contains ambiguous or missing entries"
+    fi
+else
+    fail_test "aggregate manifest generation should succeed"
+fi
+
 echo "Testing validate_release_assets..."
 
 # Build a complete staged release directory for v0.141.6.

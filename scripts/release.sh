@@ -1389,32 +1389,13 @@ main() {
 		# Upload all binaries to GitHub Release
 		print_info "Uploading binaries to GitHub Release..."
 
-		# Generate consolidated checksums.txt over compat + normal archives.
-		(
-			cd "$binaries_dir"
-			local shacmd=""
-			if command -v sha256sum &>/dev/null; then
-				shacmd="sha256sum"
-			elif command -v shasum &>/dev/null; then
-				shacmd="shasum -a 256"
-			else
-				print_error "Neither sha256sum nor shasum found"
-				exit 1
-			fi
-
-			# Clear/create checksums.txt
-			rm -f checksums.txt
-			touch checksums.txt
-
-			# `*.tar.gz.compat` matches `compat-*.tar.gz.compat` (ends with that
-			# suffix); `*.tar.gz` does NOT match `*.tar.gz.compat`. shellcheck
-			# disable=SC2015
-			for f in *.tar.gz.compat *.tar.gz *.zip; do
-				if [ -f "$f" ]; then
-					$shacmd "$f" >>checksums.txt
-				fi
-			done
-		)
+		# Keep compatibility binaries out of the aggregate manifest. Older
+		# updaters match checksum filenames by substring and would otherwise
+		# accept `compat-<archive>.compat` as the checksum for `<archive>`.
+		if ! generate_checksums_manifest "$binaries_dir"; then
+			print_error "Failed to generate checksums.txt"
+			exit 1
+		fi
 
 		# Validate the complete staged release (compat + archive + checksum per
 		# target, plus checksums.txt) before uploading anything. The full
