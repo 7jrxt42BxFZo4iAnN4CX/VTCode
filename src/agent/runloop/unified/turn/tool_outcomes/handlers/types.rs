@@ -10,6 +10,8 @@ pub(crate) enum ValidationResult {
     Handled,
     /// Stop turn/loop with a specific outcome (e.g. Exit or Cancel)
     Outcome(TurnHandlerOutcome),
+    /// Per-turn tool limit reached; arm recovery and drain remaining calls
+    LimitReached,
 }
 
 /// Canonicalized validation data reused across the execution path.

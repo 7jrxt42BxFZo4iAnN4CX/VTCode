@@ -47,6 +47,106 @@ async fn blocked_tool_call_guard_allows_configured_consecutive_cap() {
 }
 
 #[tokio::test]
+async fn validate_tool_call_returns_limit_reached_when_safety_gateway_trips() {
+    let mut backing = TestContextBacking::new(4).await;
+    backing.select_build_primary_agent();
+    let valid_file = backing.sample_file.clone();
+    let valid_args = json!({"path": valid_file.to_string_lossy()});
+    cache_tool_permission(&mut backing, tool_names::READ_FILE, &valid_args, PermissionGrant::Permanent).await;
+
+    backing.safety_validator.set_limits(1, 120);
+    backing.safety_validator.start_turn();
+
+    let mut ctx = backing.turn_processing_context();
+    let first = validate_tool_call(&mut ctx, "first_call", tool_names::READ_FILE, &valid_args)
+        .await
+        .expect("first call within limit should validate");
+    assert!(matches!(first, ValidationResult::Proceed(_)), "first call must proceed within the limit");
+    assert!(!ctx.harness_state.turn_limit_pending(), "turn_limit_pending must not be set on first call");
+
+    let second = validate_tool_call(&mut ctx, "second_call", tool_names::READ_FILE, &valid_args)
+        .await
+        .expect("second call exceeding limit should return LimitReached");
+    assert!(matches!(second, ValidationResult::LimitReached), "second call must return LimitReached");
+    assert!(ctx.harness_state.turn_limit_pending(), "turn_limit_pending must be set after limit reached");
+
+    let third = validate_tool_call(&mut ctx, "third_call", tool_names::READ_FILE, &valid_args)
+        .await
+        .expect("third call past limit should short-circuit");
+    assert!(matches!(third, ValidationResult::LimitReached), "third call must short-circuit to LimitReached");
+    assert_eq!(
+        ctx.harness_state.consecutive_blocked_tool_calls, 0,
+        "LimitReached must not increment blocked call counter"
+    );
+}
+
+#[tokio::test]
+async fn flush_turn_limit_reached_recovery_pushes_directive_and_arms_tool_free() {
+    let mut backing = TestContextBacking::new(4).await;
+    let mut ctx = backing.turn_processing_context();
+
+    ctx.harness_state.arm_turn_limit_recovery();
+    let directive_count_before = ctx
+        .working_history
+        .iter()
+        .filter(|message| {
+            message.role == uni::MessageRole::System
+                && message.content.as_text().contains("per-turn tool limit was reached")
+                && message.content.as_text().contains("tools are disabled for this pass")
+        })
+        .count();
+    assert_eq!(directive_count_before, 0, "directive must not be pushed before flush");
+
+    flush_turn_limit_reached_recovery(&mut ctx);
+    let directive_count_after = ctx
+        .working_history
+        .iter()
+        .filter(|message| {
+            message.role == uni::MessageRole::System
+                && message.content.as_text().contains("per-turn tool limit was reached")
+                && message.content.as_text().contains("tools are disabled for this pass")
+        })
+        .count();
+    assert_eq!(directive_count_after, 1, "directive must be pushed exactly once");
+    assert!(ctx.harness_state.recovery_is_tool_free(), "flush must arm tool-free recovery mode");
+    assert!(ctx.harness_state.consume_recovery_pass(), "recovery pass must be pending after flush");
+
+    flush_turn_limit_reached_recovery(&mut ctx);
+    let directive_count_final = ctx
+        .working_history
+        .iter()
+        .filter(|message| {
+            message.role == uni::MessageRole::System
+                && message.content.as_text().contains("per-turn tool limit was reached")
+                && message.content.as_text().contains("tools are disabled for this pass")
+        })
+        .count();
+    assert_eq!(directive_count_final, 1, "directive must not be duplicated");
+}
+
+#[tokio::test]
+async fn finalize_validation_result_limit_reached_does_not_increment_blocked_count() {
+    let mut backing = TestContextBacking::new(4).await;
+    let sample_path = backing.sample_file.to_string_lossy().to_string();
+    let args = json!({"path": sample_path});
+    let mut ctx = backing.turn_processing_context();
+
+    let transition = finalize_validation_result(
+        &mut ctx,
+        "limit_call",
+        tool_names::READ_FILE,
+        &args,
+        ValidationResult::LimitReached,
+    );
+    assert!(matches!(transition, ValidationTransition::Return(None)), "LimitReached must return Return(None)");
+    assert_eq!(
+        ctx.harness_state.consecutive_blocked_tool_calls, 0,
+        "LimitReached must not increment blocked call counter"
+    );
+    assert!(ctx.harness_state.turn_limit_pending(), "LimitReached must arm turn_limit_pending");
+}
+
+#[tokio::test]
 async fn blocked_tool_call_guard_caps_non_consecutive_total_churn() {
     let mut backing = TestContextBacking::new(4).await;
     let mut ctx = backing.turn_processing_context();

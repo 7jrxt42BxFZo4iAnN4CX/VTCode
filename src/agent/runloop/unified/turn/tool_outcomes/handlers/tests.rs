@@ -6,9 +6,10 @@ use super::looping::{
 };
 use super::recovery;
 use super::{
-    ToolOutcomeContext, ValidationResult, apply_reused_read_only_loop_metadata, build_tool_permissions_context,
-    enforce_blocked_tool_call_guard, enforce_duplicate_task_tracker_create_guard, enforce_repeated_shell_run_guard,
-    flush_budget_synthesis_directives, flush_preflight_circuit_recovery, handle_prepared_tool_call,
+    ToolOutcomeContext, ValidationResult, ValidationTransition, apply_reused_read_only_loop_metadata,
+    build_tool_permissions_context, enforce_blocked_tool_call_guard, enforce_duplicate_task_tracker_create_guard,
+    enforce_repeated_shell_run_guard, finalize_validation_result, flush_budget_synthesis_directives,
+    flush_preflight_circuit_recovery, flush_turn_limit_reached_recovery, handle_prepared_tool_call,
     handle_single_tool_call, max_consecutive_blocked_tool_calls_per_turn, validate_tool_call,
 };
 use crate::agent::runloop::mcp_events::McpPanelState;

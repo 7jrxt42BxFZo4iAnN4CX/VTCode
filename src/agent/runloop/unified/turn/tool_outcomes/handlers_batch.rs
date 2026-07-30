@@ -10,7 +10,7 @@ use crate::agent::runloop::unified::turn::context::{
 
 use super::{
     PreparedToolCall, ToolOutcomeContext, ValidationTransition, finalize_validation_result,
-    flush_budget_synthesis_directives, validate_tool_call,
+    flush_budget_synthesis_directives, flush_turn_limit_reached_recovery, validate_tool_call,
 };
 use crate::agent::runloop::unified::turn::tool_outcomes::execution_result::handle_tool_execution_result;
 use crate::agent::runloop::unified::turn::tool_outcomes::helpers::{
@@ -276,6 +276,7 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
                 {
                     super::drain_preflight_circuit_responses(t_ctx.ctx, &tool_calls[index + 1..]);
                     flush_budget_synthesis_directives(t_ctx.ctx);
+                    flush_turn_limit_reached_recovery(t_ctx.ctx);
                     return Ok(Some(outcome));
                 }
             }
@@ -295,6 +296,7 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
                     super::drain_preflight_circuit_responses(t_ctx.ctx, &tool_calls[index + 1..]);
                 }
                 flush_budget_synthesis_directives(t_ctx.ctx);
+                flush_turn_limit_reached_recovery(t_ctx.ctx);
                 return Ok(Some(outcome));
             }
             ValidationTransition::Return(None) => continue,
@@ -304,6 +306,7 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
     // If the wall-clock budget tripped during validation, push the single
     // "synthesize now" directive after all tool responses (never interleaved).
     flush_budget_synthesis_directives(t_ctx.ctx);
+    flush_turn_limit_reached_recovery(t_ctx.ctx);
 
     if validated_calls.is_empty() {
         return Ok(None);
@@ -328,6 +331,7 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
         match kind {
             PreparedToolBatchKind::ParallelReadonly => {
                 if let Some(outcome) = execute_parallel_group(t_ctx, group, &mut batch_tracker).await? {
+                    flush_turn_limit_reached_recovery(t_ctx.ctx);
                     crate::agent::runloop::unified::tool_summary::flush_compact_tool_summary_batch(t_ctx.ctx.renderer)?;
                     return Ok(Some(outcome));
                 }
@@ -349,6 +353,7 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
                     )
                     .await?
                     {
+                        flush_turn_limit_reached_recovery(t_ctx.ctx);
                         crate::agent::runloop::unified::tool_summary::flush_compact_tool_summary_batch(
                             t_ctx.ctx.renderer,
                         )?;
@@ -373,6 +378,8 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
             "tool batch outcome"
         );
     }
+
+    flush_turn_limit_reached_recovery(t_ctx.ctx);
 
     crate::agent::runloop::unified::tool_summary::flush_compact_tool_summary_batch(t_ctx.ctx.renderer)?;
 
