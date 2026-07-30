@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use super::selection::supports_gpt5_none_reasoning;
 use super::*;
 use crate::agent::runloop::unified::external_url_guard::{
@@ -23,7 +25,7 @@ impl ModelPickerState {
             "xhigh" => Some(ReasoningEffortLevel::XHigh),
             "max" => Some(ReasoningEffortLevel::Max),
             "hard" | "high" => Some(ReasoningEffortLevel::High),
-            "skip" => Some(self.current_reasoning),
+            "skip" => Some(self.settings.current_reasoning),
             _ => None,
         };
 
@@ -45,16 +47,16 @@ impl ModelPickerState {
         let Some(selection) = self.selection.as_ref() else {
             return Err(anyhow!("Reasoning requested before selecting a model"));
         };
-        if self.inline_enabled {
-            render_reasoning_inline(renderer, selection, self.current_reasoning)?;
+        if self.settings.inline_enabled {
+            render_reasoning_inline(renderer, selection, self.settings.current_reasoning)?;
             return Ok(None);
         }
 
-        match select_reasoning_with_ratatui(selection, self.current_reasoning) {
+        match select_reasoning_with_ratatui(selection, self.settings.current_reasoning) {
             Ok(Some(ReasoningChoice::Level(level))) => self.apply_reasoning_choice(renderer, level).map(Some),
             Ok(Some(ReasoningChoice::Disable)) => self.apply_reasoning_off_choice(renderer).map(Some),
             Ok(None) => {
-                prompt_reasoning_plain(renderer, selection, self.current_reasoning)?;
+                prompt_reasoning_plain(renderer, selection, self.settings.current_reasoning)?;
                 Ok(None)
             }
             Err(err) => {
@@ -65,7 +67,7 @@ impl ModelPickerState {
                     MessageStyle::Info,
                     &format!("Interactive reasoning selector unavailable ({err}). Falling back to manual input."),
                 )?;
-                prompt_reasoning_plain(renderer, selection, self.current_reasoning)?;
+                prompt_reasoning_plain(renderer, selection, self.settings.current_reasoning)?;
                 Ok(None)
             }
         }
@@ -75,23 +77,23 @@ impl ModelPickerState {
         let Some(selection) = self.selection.as_ref() else {
             return Err(anyhow!("API key requested before selecting a model"));
         };
-        if self.inline_enabled {
-            show_secure_api_modal(renderer, selection, self.workspace.as_deref());
+        if self.settings.inline_enabled {
+            show_secure_api_modal(renderer, selection, self.settings.workspace.as_deref());
             return Ok(());
         }
-        prompt_api_key_plain(renderer, selection, self.workspace.as_deref())
+        prompt_api_key_plain(renderer, selection, self.settings.workspace.as_deref())
     }
 
     fn prompt_service_tier_step(&mut self, renderer: &mut AnsiRenderer) -> Result<Option<ModelPickerProgress>> {
         let Some(selection) = self.selection.as_ref() else {
             return Err(anyhow!("Service tier requested before selecting a model"));
         };
-        if self.inline_enabled {
-            render_service_tier_inline(renderer, selection, self.current_service_tier)?;
+        if self.settings.inline_enabled {
+            render_service_tier_inline(renderer, selection, self.settings.current_service_tier)?;
             return Ok(None);
         }
 
-        match select_service_tier_with_ratatui(selection, self.current_service_tier) {
+        match select_service_tier_with_ratatui(selection, self.settings.current_service_tier) {
             Ok(Some(ServiceTierChoice::ProjectDefault)) => self.apply_service_tier_choice(renderer, None).map(Some),
             Ok(Some(ServiceTierChoice::Flex)) => self
                 .apply_service_tier_choice(renderer, Some(OpenAIServiceTier::Flex))
@@ -100,7 +102,7 @@ impl ModelPickerState {
                 .apply_service_tier_choice(renderer, Some(OpenAIServiceTier::Priority))
                 .map(Some),
             Ok(None) => {
-                prompt_service_tier_plain(renderer, selection, self.current_service_tier)?;
+                prompt_service_tier_plain(renderer, selection, self.settings.current_service_tier)?;
                 Ok(None)
             }
             Err(err) => {
@@ -111,7 +113,7 @@ impl ModelPickerState {
                     MessageStyle::Info,
                     &format!("Interactive service tier selector unavailable ({err}). Falling back to manual input."),
                 )?;
-                prompt_service_tier_plain(renderer, selection, self.current_service_tier)?;
+                prompt_service_tier_plain(renderer, selection, self.settings.current_service_tier)?;
                 Ok(None)
             }
         }
@@ -163,7 +165,7 @@ impl ModelPickerState {
                     MessageStyle::Error,
                     "Unknown auth method. Use 'token-plan' or 'pay-as-you-go', or type 'skip' for default.",
                 )?;
-                if self.inline_enabled {
+                if self.settings.inline_enabled {
                     render_mimo_auth_method_inline(renderer)?;
                 } else {
                     prompt_mimo_auth_method_plain(renderer)?;
@@ -200,7 +202,7 @@ impl ModelPickerState {
     }
 
     fn prompt_mimo_auth_method_step(&mut self, renderer: &mut AnsiRenderer) -> Result<Option<ModelPickerProgress>> {
-        if self.inline_enabled {
+        if self.settings.inline_enabled {
             render_mimo_auth_method_inline(renderer)?;
             return Ok(None);
         }
@@ -251,15 +253,16 @@ impl ModelPickerState {
 
         let Some(ref target_model) = current_selection.reasoning_off_model else {
             renderer.line(MessageStyle::Error, "This model does not have a non-reasoning variant.")?;
-            if self.inline_enabled {
-                render_reasoning_inline(renderer, current_selection, self.current_reasoning)?;
+            if self.settings.inline_enabled {
+                render_reasoning_inline(renderer, current_selection, self.settings.current_reasoning)?;
             } else {
-                prompt_reasoning_plain(renderer, current_selection, self.current_reasoning)?;
+                prompt_reasoning_plain(renderer, current_selection, self.settings.current_reasoning)?;
             }
             return Ok(ModelPickerProgress::InProgress);
         };
 
         let Some(option) = self
+            .settings
             .options
             .iter()
             .find(|candidate| candidate.id.eq_ignore_ascii_case(&target_model.as_str()))
@@ -268,22 +271,16 @@ impl ModelPickerState {
                 MessageStyle::Error,
                 &format!("Unable to locate the non-reasoning variant {}.", target_model.as_str()),
             )?;
-            if self.inline_enabled {
-                render_reasoning_inline(renderer, current_selection, self.current_reasoning)?;
+            if self.settings.inline_enabled {
+                render_reasoning_inline(renderer, current_selection, self.settings.current_reasoning)?;
             } else {
-                prompt_reasoning_plain(renderer, current_selection, self.current_reasoning)?;
+                prompt_reasoning_plain(renderer, current_selection, self.settings.current_reasoning)?;
             }
             return Ok(ModelPickerProgress::InProgress);
         };
 
         self.selected_reasoning = Some(ReasoningEffortLevel::None);
-        let mut new_selection = selection::selection_from_option_with_mode(
-            option,
-            self.vt_cfg
-                .as_ref()
-                .map(|cfg| cfg.agent.credential_storage_mode)
-                .unwrap_or_default(),
-        );
+        let mut new_selection = selection::selection_from_option_with_mode(option, self.storage_mode());
         if new_selection.provider_label != current_selection.provider_label {
             new_selection.provider_label = current_selection.provider_label.clone();
         }
@@ -297,10 +294,10 @@ impl ModelPickerState {
 
     pub(super) fn build_result(&self) -> Result<ModelSelectionResult> {
         let selection = self.selection.as_ref().ok_or_else(|| anyhow!("Model selection missing"))?;
-        let chosen_reasoning = self.selected_reasoning.unwrap_or(self.current_reasoning);
-        let reasoning_changed = chosen_reasoning != self.current_reasoning;
-        let chosen_service_tier = self.selected_service_tier.unwrap_or(self.current_service_tier);
-        let service_tier_changed = chosen_service_tier != self.current_service_tier;
+        let chosen_reasoning = self.selected_reasoning.unwrap_or(self.settings.current_reasoning);
+        let reasoning_changed = chosen_reasoning != self.settings.current_reasoning;
+        let chosen_service_tier = self.selected_service_tier.unwrap_or(self.settings.current_service_tier);
+        let service_tier_changed = chosen_service_tier != self.settings.current_service_tier;
 
         Ok(ModelSelectionResult {
             provider: selection.provider_key.clone(),
@@ -353,14 +350,25 @@ impl ModelPickerState {
             .unwrap_or(true);
         if provider_changed {
             self.pending_api_key = None;
+            self.selected_service_tier = None;
+            self.selected_mimo_auth = None;
         }
-        self.selected_service_tier = None;
-        self.selected_mimo_auth = None;
         let mut selection = selection;
         if selection.requires_api_key {
             match self.find_existing_api_key(&selection.provider_key, &selection.env_key) {
                 Ok(Some(existing)) => {
                     finalize_existing_api_key(&mut selection, &existing);
+                    // Load the actual key value so build_result() carries it and
+                    // resolve_runtime_api_key() takes the early return at
+                    // model_selection.rs:303 instead of re-resolving through a different
+                    // code path (env var -> provider-specific -> storage fallback).
+                    self.pending_api_key = load_existing_key_value(
+                        &existing,
+                        &selection.provider_key,
+                        &selection.env_key,
+                        self.settings.workspace.as_deref(),
+                        self.storage_mode(),
+                    );
                     renderer.line(MessageStyle::Info, &existing_api_key_message(&selection, &existing))?;
                 }
                 Ok(None) => {}
@@ -398,11 +406,11 @@ impl ModelPickerState {
             "flex" => self.apply_service_tier_choice(renderer, Some(OpenAIServiceTier::Flex)),
             "priority" => self.apply_service_tier_choice(renderer, Some(OpenAIServiceTier::Priority)),
             "default" | "project" | "inherit" => self.apply_service_tier_choice(renderer, None),
-            "skip" => self.apply_service_tier_choice(renderer, self.current_service_tier),
+            "skip" => self.apply_service_tier_choice(renderer, self.settings.current_service_tier),
             _ => {
                 renderer
                     .line(MessageStyle::Error, "Unknown service tier option. Use flex, priority, default, or skip.")?;
-                prompt_service_tier_plain(renderer, selection, self.current_service_tier)?;
+                prompt_service_tier_plain(renderer, selection, self.settings.current_service_tier)?;
                 Ok(ModelPickerProgress::InProgress)
             }
         }
@@ -441,6 +449,20 @@ impl ModelPickerState {
 
         self.pending_api_key = Some(input.to_string());
         renderer.close_modal();
+
+        // Eagerly persist to secure storage so the key survives even if
+        // finalize_model_selection() fails before calling persist_selection().
+        // Use pending_api_key (already set above) to stay consistent with build_result.
+        if let Some(selection) = self.selection.as_ref() {
+            if let Some(key) = self.pending_api_key.as_deref() {
+                if let Err(err) = vtcode_config::auth::CustomApiKeyStorage::new(&selection.provider_key)
+                    .store(key, self.storage_mode())
+                {
+                    tracing::warn!("Failed to eagerly persist API key: {:#}", err);
+                }
+            }
+        }
+
         let result = self.build_result();
         Ok(ModelPickerProgress::Completed(result?))
     }
@@ -450,7 +472,7 @@ impl ModelPickerState {
         renderer: &mut AnsiRenderer,
         url_guard: ExternalUrlGuardContext<'_>,
     ) -> Result<ModelPickerProgress> {
-        if let Some(ctrl_c_state) = self.ctrl_c_state.as_ref() {
+        if let Some(ctrl_c_state) = self.settings.ctrl_c_state.as_ref() {
             if ctrl_c_state.is_exit_requested() {
                 return Ok(ModelPickerProgress::Exit);
             }
@@ -461,7 +483,7 @@ impl ModelPickerState {
             }
         }
 
-        let prepared = prepare_openai_login(self.vt_cfg.as_ref())?;
+        let prepared = prepare_openai_login(self.settings.vt_cfg.as_ref())?;
         let auth_url = prepared.auth_url.clone();
         match request_external_url_open(url_guard, &auth_url).await? {
             ExternalUrlOpenOutcome::Opened => {
@@ -487,10 +509,10 @@ impl ModelPickerState {
             }
         }
         let started = crate::cli::auth::begin_openai_login(prepared).await?;
-        let Some(ctrl_c_state) = self.ctrl_c_state.as_ref() else {
+        let Some(ctrl_c_state) = self.settings.ctrl_c_state.as_ref() else {
             return Err(anyhow!("OAuth login requires Ctrl+C state"));
         };
-        let Some(ctrl_c_notify) = self.ctrl_c_notify.as_ref() else {
+        let Some(ctrl_c_notify) = self.settings.ctrl_c_notify.as_ref() else {
             return Err(anyhow!("OAuth login requires Ctrl+C notifications"));
         };
         match complete_openai_login_with_tui_cancel(started, ctrl_c_state, ctrl_c_notify).await {
@@ -504,7 +526,7 @@ impl ModelPickerState {
             }
             Err(err) => return Err(err),
         }
-        if self.inline_enabled {
+        if self.settings.inline_enabled {
             renderer.close_modal();
         }
         renderer.line(MessageStyle::Info, "Using ChatGPT subscription for OpenAI.")?;
@@ -522,7 +544,7 @@ impl ModelPickerState {
         renderer: &mut AnsiRenderer,
         selection: SelectionDetail,
     ) -> Result<ModelPickerProgress> {
-        if self.inline_enabled {
+        if self.settings.inline_enabled {
             renderer.close_modal();
         }
         match self.find_existing_api_key(&selection.provider_key, &selection.env_key) {
@@ -530,7 +552,13 @@ impl ModelPickerState {
                 let mut selection = selection.clone();
                 finalize_existing_api_key(&mut selection, &existing);
                 renderer.line(MessageStyle::Info, &existing_api_key_message(&selection, &existing))?;
-                self.pending_api_key = None;
+                self.pending_api_key = load_existing_key_value(
+                    &existing,
+                    &selection.provider_key,
+                    &selection.env_key,
+                    self.settings.workspace.as_deref(),
+                    self.storage_mode(),
+                );
                 if let Some(current) = self.selection.as_mut() {
                     current.requires_api_key = selection.requires_api_key;
                     current.uses_chatgpt_auth = selection.uses_chatgpt_auth;
@@ -546,7 +574,7 @@ impl ModelPickerState {
                         selection.provider_label, selection.provider_key
                     ),
                 )?;
-                prompt_api_key_plain(renderer, &selection, self.workspace.as_deref())?;
+                prompt_api_key_plain(renderer, &selection, self.settings.workspace.as_deref())?;
                 Ok(ModelPickerProgress::InProgress)
             }
             Err(err) => Err(err),
@@ -555,11 +583,7 @@ impl ModelPickerState {
 
     fn find_existing_api_key(&self, provider: &str, env_key: &str) -> Result<Option<ExistingKey>> {
         // For OpenRouter, check OAuth token first
-        let storage_mode = self
-            .vt_cfg
-            .as_ref()
-            .map(|cfg| cfg.agent.credential_storage_mode)
-            .unwrap_or_default();
+        let storage_mode = self.storage_mode();
 
         if env_key == "OPENROUTER_API_KEY" && vtcode_config::auth::load_oauth_token_with_mode(storage_mode)?.is_some() {
             return Ok(Some(ExistingKey::OAuthToken));
@@ -577,7 +601,7 @@ impl ModelPickerState {
             return Ok(Some(ExistingKey::Environment));
         }
 
-        if let Some(workspace) = self.workspace.as_deref()
+        if let Some(workspace) = self.settings.workspace.as_deref()
             && let Some(value) = read_workspace_env(workspace, env_key)?
             && !value.trim().is_empty()
         {
@@ -586,6 +610,28 @@ impl ModelPickerState {
 
         vtcode_config::api_keys::load_stored_api_key_with_mode(provider, storage_mode)
             .map(|stored| stored.map(|_| ExistingKey::StoredCredential))
+    }
+}
+
+fn load_existing_key_value(
+    existing: &ExistingKey,
+    provider_key: &str,
+    env_key: &str,
+    workspace: Option<&Path>,
+    storage_mode: vtcode_config::auth::AuthCredentialsStoreMode,
+) -> Option<String> {
+    match existing {
+        ExistingKey::StoredCredential => {
+            vtcode_config::api_keys::load_stored_api_key_with_mode(provider_key, storage_mode)
+                .ok()
+                .flatten()
+        }
+        ExistingKey::Environment => std::env::var(env_key).ok().filter(|v| !v.trim().is_empty()),
+        ExistingKey::WorkspaceDotenv => workspace
+            .and_then(|w| read_workspace_env(w, env_key).ok())
+            .flatten()
+            .filter(|v| !v.trim().is_empty()),
+        ExistingKey::OAuthToken => None,
     }
 }
 

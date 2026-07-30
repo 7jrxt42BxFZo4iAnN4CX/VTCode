@@ -36,6 +36,7 @@ pub(crate) async fn handle_tool_calls<'a, 'b>(
                     None,
                 ) {
                     super::handlers::drain_preflight_circuit_responses(t_ctx.ctx, &tool_calls[index + 1..]);
+                    super::handlers::flush_preflight_circuit_recovery(t_ctx.ctx);
                     return Ok(Some(outcome));
                 }
             }
@@ -61,6 +62,7 @@ pub(crate) async fn handle_tool_calls<'a, 'b>(
         .await?;
         if let Some(o) = outcome {
             super::handlers::flush_interview_denial_recovery(t_ctx.ctx);
+            super::handlers::flush_preflight_circuit_recovery(t_ctx.ctx);
             return Ok(Some(o));
         }
     } else {
@@ -75,6 +77,7 @@ pub(crate) async fn handle_tool_calls<'a, 'b>(
                 ) {
                     super::handlers::drain_preflight_circuit_responses(t_ctx.ctx, &tool_calls[index + 1..]);
                     super::handlers::flush_interview_denial_recovery(t_ctx.ctx);
+                    super::handlers::flush_preflight_circuit_recovery(t_ctx.ctx);
                     return Ok(Some(outcome));
                 }
                 continue;
@@ -88,12 +91,14 @@ pub(crate) async fn handle_tool_calls<'a, 'b>(
                     super::handlers::drain_preflight_circuit_responses(t_ctx.ctx, &tool_calls[index + 1..]);
                 }
                 super::handlers::flush_interview_denial_recovery(t_ctx.ctx);
+                super::handlers::flush_preflight_circuit_recovery(t_ctx.ctx);
                 return Ok(Some(o));
             }
         }
     }
 
     super::handlers::flush_interview_denial_recovery(t_ctx.ctx);
+    super::handlers::flush_preflight_circuit_recovery(t_ctx.ctx);
 
     Ok(None)
 }

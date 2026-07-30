@@ -84,6 +84,14 @@ mod selection;
 mod state_machine;
 mod subagent;
 
+enum RatatuiOutcome {
+    Completed(ModelSelectionResult),
+    InProgress,
+    Exit,
+    FallbackToPlain,
+    NeedsRefresh,
+}
+
 pub(crate) use self::config_persistence::persist_lightweight_selection;
 pub(crate) use self::dynamic_models::DynamicModelRegistry;
 #[cfg(test)]
@@ -110,27 +118,31 @@ pub(crate) enum ModelPickerProgress {
     Exit,
 }
 
-pub(crate) struct ModelPickerState {
+pub(crate) struct PickerSettings {
     options: Cow<'static, [ModelOption]>,
-    step: PickerStep,
     inline_enabled: bool,
     vt_cfg: Option<VTCodeConfig>,
+    workspace: Option<PathBuf>,
+    ctrl_c_state: Option<Arc<CtrlCState>>,
+    ctrl_c_notify: Option<Arc<Notify>>,
+    provider_order: Vec<Provider>,
     current_reasoning: ReasoningEffortLevel,
     current_service_tier: Option<OpenAIServiceTier>,
     current_provider: String,
     current_model: String,
+}
+
+pub(crate) struct ModelPickerState {
+    settings: PickerSettings,
+    step: PickerStep,
     selection: Option<SelectionDetail>,
     custom_providers: Vec<SelectionDetail>,
+    dynamic_models: DynamicModelRegistry,
     selected_reasoning: Option<ReasoningEffortLevel>,
     selected_service_tier: Option<Option<OpenAIServiceTier>>,
     selected_mimo_auth: Option<MiMoAuthMethod>,
     pending_api_key: Option<String>,
-    workspace: Option<PathBuf>,
-    ctrl_c_state: Option<Arc<CtrlCState>>,
-    ctrl_c_notify: Option<Arc<Notify>>,
-    dynamic_models: DynamicModelRegistry,
     plain_mode_active: bool,
-    provider_order: Vec<Provider>,
 }
 
 pub(crate) enum ModelPickerStart {
@@ -176,134 +188,61 @@ impl ModelPickerState {
             })
             .unwrap_or_default();
 
-        let mut state = Self {
+        let settings = PickerSettings {
             options,
-            step: PickerStep::AwaitModel,
             inline_enabled,
             vt_cfg,
+            workspace,
+            ctrl_c_state,
+            ctrl_c_notify,
+            provider_order,
             current_reasoning,
             current_service_tier,
             current_provider,
             current_model,
+        };
+
+        let mut state = Self {
+            settings,
+            step: PickerStep::AwaitModel,
             selection: None,
             custom_providers,
             selected_reasoning: None,
             selected_service_tier: None,
             selected_mimo_auth: None,
             pending_api_key: None,
-            workspace,
-            ctrl_c_state,
-            ctrl_c_notify,
             dynamic_models,
             plain_mode_active: false,
-            provider_order,
         };
 
         if inline_enabled {
             render_step_one_inline(
                 renderer,
-                &state.options,
+                &state.settings.options,
                 current_reasoning,
                 &state.dynamic_models,
                 state.preferred_model_selection(),
-                &state.current_provider,
-                &state.current_model,
+                &state.settings.current_provider,
+                &state.settings.current_model,
                 &state.custom_providers,
-                &state.provider_order,
+                &state.settings.provider_order,
             )?;
         }
 
         if !inline_enabled {
             loop {
-                match select_model_with_ratatui_list(
-                    &state.options,
-                    current_reasoning,
-                    &state.dynamic_models,
-                    &state.custom_providers,
-                    &state.provider_order,
-                    state
-                        .vt_cfg
-                        .as_ref()
-                        .map(|cfg| cfg.agent.credential_storage_mode)
-                        .unwrap_or_default(),
-                ) {
-                    Ok(ModelSelectionListOutcome::Predefined(detail)) => {
-                        match state.process_model_selection(renderer, detail)? {
-                            ModelPickerProgress::Completed(result) => {
-                                return Ok(ModelPickerStart::Completed { state, selection: result });
-                            }
-                            ModelPickerProgress::InProgress => {
-                                return Ok(ModelPickerStart::InProgress(state));
-                            }
-                            ModelPickerProgress::Cancelled => {
-                                renderer.line(MessageStyle::Info, "Model picker cancelled.")?;
-                                return Ok(ModelPickerStart::InProgress(state));
-                            }
-                            ModelPickerProgress::Exit => {
-                                renderer.line(MessageStyle::Info, "Exiting model picker.")?;
-                                return Ok(ModelPickerStart::Exit);
-                            }
-                            ModelPickerProgress::NeedsRefresh => {
-                                state
-                                    .refresh_dynamic_models(renderer)
-                                    .await
-                                    .context("Failed to refresh local models")?;
-                                continue;
-                            }
-                        }
+                match state.run_ratatui_selection(renderer, current_reasoning).await? {
+                    RatatuiOutcome::Completed(result) => {
+                        return Ok(ModelPickerStart::Completed { state, selection: result });
                     }
-                    Ok(ModelSelectionListOutcome::Manual) => {
-                        state.plain_mode_active = true;
-                        render_step_one_plain(
-                            renderer,
-                            &state.options,
-                            &state.dynamic_models,
-                            &state.custom_providers,
-                            &state.current_provider,
-                            &state.provider_order,
-                        )?;
-                        prompt_custom_model_entry(renderer)?;
-                        break;
-                    }
-                    Ok(ModelSelectionListOutcome::Cancelled) => {
-                        state.plain_mode_active = true;
-                        render_step_one_plain(
-                            renderer,
-                            &state.options,
-                            &state.dynamic_models,
-                            &state.custom_providers,
-                            &state.current_provider,
-                            &state.provider_order,
-                        )?;
-                        prompt_custom_model_entry(renderer)?;
-                        break;
-                    }
-                    Ok(ModelSelectionListOutcome::Refresh) => {
+                    RatatuiOutcome::InProgress => return Ok(ModelPickerStart::InProgress(state)),
+                    RatatuiOutcome::Exit => return Ok(ModelPickerStart::Exit),
+                    RatatuiOutcome::FallbackToPlain => break,
+                    RatatuiOutcome::NeedsRefresh => {
                         state
                             .refresh_dynamic_models(renderer)
                             .await
                             .context("Failed to refresh local models")?;
-                        continue;
-                    }
-                    Err(err) => {
-                        if err.is::<SelectionInterrupted>() {
-                            return Err(err);
-                        }
-                        renderer.line(
-                            MessageStyle::Info,
-                            &format!("Interactive model picker unavailable ({err}). Falling back to manual input."),
-                        )?;
-                        state.plain_mode_active = true;
-                        render_step_one_plain(
-                            renderer,
-                            &state.options,
-                            &state.dynamic_models,
-                            &state.custom_providers,
-                            &state.current_provider,
-                            &state.provider_order,
-                        )?;
-                        prompt_custom_model_entry(renderer)?;
-                        break;
                     }
                 }
             }
@@ -314,9 +253,14 @@ impl ModelPickerState {
 
     pub async fn refresh_dynamic_models(&mut self, renderer: &mut AnsiRenderer) -> Result<()> {
         renderer.line(MessageStyle::Info, "Refreshing local model inventory...")?;
-        self.dynamic_models =
-            DynamicModelRegistry::load(&self.options, self.workspace.as_deref(), self.vt_cfg.as_ref()).await;
+        self.dynamic_models = DynamicModelRegistry::load(
+            &self.settings.options,
+            self.settings.workspace.as_deref(),
+            self.settings.vt_cfg.as_ref(),
+        )
+        .await;
         self.custom_providers = self
+            .settings
             .vt_cfg
             .as_ref()
             .map(|cfg| cfg.custom_providers.iter().flat_map(selections_from_custom_provider).collect())
@@ -327,26 +271,26 @@ impl ModelPickerState {
         self.selected_mimo_auth = None;
         self.pending_api_key = None;
         self.step = PickerStep::AwaitModel;
-        if self.inline_enabled {
+        if self.settings.inline_enabled {
             render_step_one_inline(
                 renderer,
-                &self.options,
-                self.current_reasoning,
+                &self.settings.options,
+                self.settings.current_reasoning,
                 &self.dynamic_models,
                 self.preferred_model_selection(),
-                &self.current_provider,
-                &self.current_model,
+                &self.settings.current_provider,
+                &self.settings.current_model,
                 &self.custom_providers,
-                &self.provider_order,
+                &self.settings.provider_order,
             )?;
         } else if self.plain_mode_active {
             render_step_one_plain(
                 renderer,
-                &self.options,
+                &self.settings.options,
                 &self.dynamic_models,
                 &self.custom_providers,
-                &self.current_provider,
-                &self.provider_order,
+                &self.settings.current_provider,
+                &self.settings.provider_order,
             )?;
             prompt_custom_model_entry(renderer)?;
         }
@@ -365,7 +309,7 @@ impl ModelPickerState {
             return Ok(ModelPickerProgress::InProgress);
         }
         if is_cancel_command(trimmed) {
-            if !self.inline_enabled {
+            if !self.settings.inline_enabled {
                 renderer.line(MessageStyle::Info, "Model picker cancelled.")?;
             }
             return Ok(ModelPickerProgress::Cancelled);
@@ -388,6 +332,71 @@ impl ModelPickerState {
         config_persistence::persist_selection(workspace, selection).await
     }
 
+    async fn run_ratatui_selection(
+        &mut self,
+        renderer: &mut AnsiRenderer,
+        current_reasoning: ReasoningEffortLevel,
+    ) -> Result<RatatuiOutcome> {
+        match select_model_with_ratatui_list(
+            &self.settings.options,
+            current_reasoning,
+            &self.dynamic_models,
+            &self.custom_providers,
+            &self.settings.provider_order,
+            self.storage_mode(),
+        ) {
+            Ok(ModelSelectionListOutcome::Predefined(detail)) => {
+                match self.process_model_selection(renderer, detail)? {
+                    ModelPickerProgress::Completed(result) => Ok(RatatuiOutcome::Completed(result)),
+                    ModelPickerProgress::InProgress => Ok(RatatuiOutcome::InProgress),
+                    ModelPickerProgress::Cancelled => {
+                        renderer.line(MessageStyle::Info, "Model picker cancelled.")?;
+                        Ok(RatatuiOutcome::InProgress)
+                    }
+                    ModelPickerProgress::Exit => {
+                        renderer.line(MessageStyle::Info, "Exiting model picker.")?;
+                        Ok(RatatuiOutcome::Exit)
+                    }
+                    ModelPickerProgress::NeedsRefresh => Ok(RatatuiOutcome::NeedsRefresh),
+                }
+            }
+            Ok(ModelSelectionListOutcome::Manual | ModelSelectionListOutcome::Cancelled) => {
+                self.plain_mode_active = true;
+                render_step_one_plain(
+                    renderer,
+                    &self.settings.options,
+                    &self.dynamic_models,
+                    &self.custom_providers,
+                    &self.settings.current_provider,
+                    &self.settings.provider_order,
+                )?;
+                prompt_custom_model_entry(renderer)?;
+                Ok(RatatuiOutcome::FallbackToPlain)
+            }
+            Ok(ModelSelectionListOutcome::Refresh) => Ok(RatatuiOutcome::NeedsRefresh),
+            Err(err) => {
+                if err.is::<SelectionInterrupted>() {
+                    return Err(err);
+                }
+                renderer.line(
+                    MessageStyle::Info,
+                    &format!("Interactive model picker unavailable ({err}). Falling back to manual input."),
+                )?;
+                self.plain_mode_active = true;
+                render_step_one_plain(
+                    renderer,
+                    &self.settings.options,
+                    &self.dynamic_models,
+                    &self.custom_providers,
+                    &self.settings.current_provider,
+                    &self.settings.provider_order,
+                )?;
+                prompt_custom_model_entry(renderer)?;
+                Ok(RatatuiOutcome::FallbackToPlain)
+            }
+        }
+    }
+
     pub fn handle_list_selection(
         &mut self,
         renderer: &mut AnsiRenderer,
@@ -396,17 +405,11 @@ impl ModelPickerState {
         match self.step {
             PickerStep::AwaitModel => match choice {
                 InlineListSelection::Model(index) => {
-                    let Some(option) = self.options.get(index) else {
+                    let Some(option) = self.settings.options.get(index) else {
                         renderer.line(MessageStyle::Error, "Unable to locate the selected model option.")?;
                         return Ok(ModelPickerProgress::InProgress);
                     };
-                    let detail = selection::selection_from_option_with_mode(
-                        option,
-                        self.vt_cfg
-                            .as_ref()
-                            .map(|cfg| cfg.agent.credential_storage_mode)
-                            .unwrap_or_default(),
-                    );
+                    let detail = selection::selection_from_option_with_mode(option, self.storage_mode());
                     self.process_model_selection(renderer, detail)
                 }
                 InlineListSelection::DynamicModel(entry_index) => {
@@ -480,11 +483,11 @@ impl ModelPickerState {
                     )?;
                     Ok(ModelPickerProgress::InProgress)
                 }
-                InlineListSelection::CustomModel
-                | InlineListSelection::Model(_)
-                | InlineListSelection::RefreshDynamicModels
+                InlineListSelection::Model(_)
                 | InlineListSelection::DynamicModel(_)
                 | InlineListSelection::CustomProvider(_)
+                | InlineListSelection::RefreshDynamicModels
+                | InlineListSelection::CustomModel
                 | InlineListSelection::ToolApproval(_)
                 | InlineListSelection::ToolApprovalDenyOnce
                 | InlineListSelection::ToolApprovalSession
@@ -499,25 +502,7 @@ impl ModelPickerState {
                     renderer.line(MessageStyle::Error, CLOSE_THEME_MESSAGE)?;
                     Ok(ModelPickerProgress::InProgress)
                 }
-                InlineListSelection::ConfigAction(_)
-                | InlineListSelection::SlashCommand(_)
-                | InlineListSelection::Session(_)
-                | InlineListSelection::SessionForkMode { .. }
-                | InlineListSelection::FileConflictReload
-                | InlineListSelection::FileConflictViewDiff
-                | InlineListSelection::FileConflictAbort
-                | InlineListSelection::SessionLimitIncrease(_)
-                | InlineListSelection::RewindCheckpoint(_)
-                | InlineListSelection::RewindAction(_)
-                | InlineListSelection::AskUserChoice { .. }
-                | InlineListSelection::RequestUserInputAnswer { .. }
-                | InlineListSelection::PlanApprovalExecute
-                | InlineListSelection::PlanApprovalEditPlan
-                | InlineListSelection::PlanApprovalDiscuss
-                | InlineListSelection::PlanApprovalAutoAccept
-                | InlineListSelection::PlanApprovalSwitchBuild
-                | InlineListSelection::PlanApprovalSwitchAuto
-                | InlineListSelection::ToolApprovalEnable => Ok(ModelPickerProgress::InProgress),
+                _ => Ok(ModelPickerProgress::InProgress),
             },
             PickerStep::AwaitMiMoAuthMethod => match choice {
                 InlineListSelection::ConfigAction(action) => {
@@ -541,37 +526,7 @@ impl ModelPickerState {
                         Ok(ModelPickerProgress::InProgress)
                     }
                 }
-                InlineListSelection::Model(_)
-                | InlineListSelection::DynamicModel(_)
-                | InlineListSelection::CustomProvider(_)
-                | InlineListSelection::RefreshDynamicModels
-                | InlineListSelection::Reasoning(_)
-                | InlineListSelection::DisableReasoning
-                | InlineListSelection::OpenAIServiceTier(_)
-                | InlineListSelection::CustomModel
-                | InlineListSelection::Theme(_)
-                | InlineListSelection::Session(_)
-                | InlineListSelection::SessionForkMode { .. }
-                | InlineListSelection::SlashCommand(_)
-                | InlineListSelection::ToolApproval(_)
-                | InlineListSelection::ToolApprovalDenyOnce
-                | InlineListSelection::ToolApprovalSession
-                | InlineListSelection::ToolApprovalPermanent
-                | InlineListSelection::ToolApprovalEnable
-                | InlineListSelection::FileConflictReload
-                | InlineListSelection::FileConflictViewDiff
-                | InlineListSelection::FileConflictAbort
-                | InlineListSelection::SessionLimitIncrease(_)
-                | InlineListSelection::RewindCheckpoint(_)
-                | InlineListSelection::RewindAction(_)
-                | InlineListSelection::AskUserChoice { .. }
-                | InlineListSelection::RequestUserInputAnswer { .. }
-                | InlineListSelection::PlanApprovalExecute
-                | InlineListSelection::PlanApprovalEditPlan
-                | InlineListSelection::PlanApprovalDiscuss
-                | InlineListSelection::PlanApprovalAutoAccept
-                | InlineListSelection::PlanApprovalSwitchBuild
-                | InlineListSelection::PlanApprovalSwitchAuto => {
+                _ => {
                     renderer.line(MessageStyle::Error, "Choose an auth method for MiMo or press Esc to cancel.")?;
                     Ok(ModelPickerProgress::InProgress)
                 }
@@ -634,7 +589,7 @@ impl ModelPickerState {
     }
 
     fn handle_model_selection(&mut self, renderer: &mut AnsiRenderer, input: &str) -> Result<ModelPickerProgress> {
-        let selection = match parse_model_selection(&self.options, input, self.vt_cfg.as_ref()) {
+        let selection = match parse_model_selection(&self.settings.options, input, self.settings.vt_cfg.as_ref()) {
             Ok(detail) => detail,
             Err(err) => {
                 renderer.line(MessageStyle::Error, &err.to_string())?;
@@ -646,15 +601,23 @@ impl ModelPickerState {
         self.process_model_selection(renderer, selection)
     }
 
+    fn storage_mode(&self) -> vtcode_config::auth::AuthCredentialsStoreMode {
+        self.settings
+            .vt_cfg
+            .as_ref()
+            .map(|cfg| cfg.agent.credential_storage_mode)
+            .unwrap_or_default()
+    }
+
     fn preferred_model_selection(&self) -> Option<InlineListSelection> {
-        let provider_key = self.current_provider.trim();
-        let model_key = self.current_model.trim();
+        let provider_key = self.settings.current_provider.trim();
+        let model_key = self.settings.current_model.trim();
         if provider_key.is_empty() || model_key.is_empty() {
             return None;
         }
 
         if let Ok(provider) = Provider::from_str(provider_key) {
-            if let Some(index) = find_option_index(provider, model_key, &self.options) {
+            if let Some(index) = find_option_index(provider, model_key, &self.settings.options) {
                 return Some(InlineListSelection::Model(index));
             }
             for entry_index in self.dynamic_models.indexes_for(provider) {

@@ -152,6 +152,16 @@ define_provider_config!(
     ()
 );
 define_provider_config!(
+    /// Provider configuration for Ollama Cloud.
+    OllamaCloudProviderConfig,
+    "ollama-cloud",
+    "Ollama Cloud",
+    crate::config::constants::models::ollama::DEFAULT_CLOUD_MODEL,
+    crate::config::constants::urls::OLLAMA_CLOUD_API_BASE,
+    Some(crate::config::constants::env_vars::OLLAMA_BASE_URL),
+    ()
+);
+define_provider_config!(
     /// Provider configuration for LM Studio (local inference).
     LmStudioProviderConfig,
     "lmstudio",

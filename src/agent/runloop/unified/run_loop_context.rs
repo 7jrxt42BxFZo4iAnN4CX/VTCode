@@ -369,6 +369,13 @@ pub(crate) struct HarnessTurnState {
     /// tool batch consumes this flag after all tool responses have been
     /// appended so the recovery directive is not interleaved with a batch.
     interview_denial_recovery_pending: bool,
+    /// Set when the preflight validation circuit breaker trips. The tool
+    /// batch consumes this flag after all tool responses (including drained
+    /// skipped-call responses) have been appended, then arms a tool-free
+    /// recovery pass so the model can synthesize a plain-text response
+    /// instead of the turn hard-blocking and silently dropping an approved
+    /// plan build.
+    preflight_circuit_recovery_pending: bool,
     pub max_tool_calls: usize,
     pub max_tool_wall_clock: Duration,
     pub max_tool_retries: u32,
@@ -424,6 +431,7 @@ impl HarnessTurnState {
             approved_plan_execution: false,
             approved_plan_recovery_retries: 0,
             interview_denial_recovery_pending: false,
+            preflight_circuit_recovery_pending: false,
             max_tool_calls,
             max_tool_wall_clock: Duration::from_secs(max_tool_wall_clock_secs),
             max_tool_retries,
@@ -648,6 +656,16 @@ impl HarnessTurnState {
 
     pub(crate) fn interview_denial_recovery_pending(&self) -> bool {
         self.interview_denial_recovery_pending
+    }
+
+    /// Arm the preflight circuit-breaker recovery so the tool batch can flush
+    /// its synthesis directive after all tool responses land.
+    pub(crate) fn arm_preflight_circuit_recovery(&mut self) {
+        self.preflight_circuit_recovery_pending = true;
+    }
+
+    pub(crate) fn take_preflight_circuit_recovery(&mut self) -> bool {
+        std::mem::take(&mut self.preflight_circuit_recovery_pending)
     }
 
     pub(crate) fn recovery_is_tool_free(&self) -> bool {

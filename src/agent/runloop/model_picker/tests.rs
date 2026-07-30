@@ -253,26 +253,28 @@ fn step_one_header_lines_explain_codex_runtime_configuration() {
 
 fn base_picker_state(current_provider: &str, current_model: &str) -> ModelPickerState {
     ModelPickerState {
-        options: Cow::Borrowed(MODEL_OPTIONS.as_slice()),
+        settings: PickerSettings {
+            options: Cow::Borrowed(MODEL_OPTIONS.as_slice()),
+            inline_enabled: true,
+            vt_cfg: None,
+            workspace: None,
+            ctrl_c_state: None,
+            ctrl_c_notify: None,
+            provider_order: picker_provider_order().to_vec(),
+            current_reasoning: ReasoningEffortLevel::Medium,
+            current_service_tier: None,
+            current_provider: current_provider.to_string(),
+            current_model: current_model.to_string(),
+        },
         step: PickerStep::AwaitModel,
-        inline_enabled: true,
-        vt_cfg: None,
-        current_reasoning: ReasoningEffortLevel::Medium,
-        current_service_tier: None,
-        current_provider: current_provider.to_string(),
-        current_model: current_model.to_string(),
         selection: None,
         custom_providers: Vec::new(),
+        dynamic_models: DynamicModelRegistry::default(),
         selected_reasoning: None,
         selected_service_tier: None,
         selected_mimo_auth: None,
         pending_api_key: None,
-        workspace: None,
-        ctrl_c_state: None,
-        ctrl_c_notify: None,
-        dynamic_models: DynamicModelRegistry::default(),
         plain_mode_active: false,
-        provider_order: picker_provider_order().to_vec(),
     }
 }
 
@@ -294,7 +296,7 @@ fn preferred_model_selection_matches_current_static_model() {
         panic!("expected static model selection, got {selection:?}");
     };
 
-    let option = picker.options.get(index).expect("selected index should be valid");
+    let option = picker.settings.options.get(index).expect("selected index should be valid");
     assert_eq!(option.provider, Provider::Anthropic);
     assert_eq!(option.id, model_id);
 }

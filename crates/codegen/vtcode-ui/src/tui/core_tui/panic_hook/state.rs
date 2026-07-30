@@ -1,0 +1,138 @@
+use std::sync::Once;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+pub(crate) static TUI_INITIALIZED: AtomicBool = AtomicBool::new(false);
+pub(crate) static KEYBOARD_ENHANCEMENTS_PUSHED: AtomicBool = AtomicBool::new(false);
+pub(crate) static RESTORE_DONE: AtomicBool = AtomicBool::new(false);
+static DEBUG_MODE: AtomicBool = AtomicBool::new(cfg!(debug_assertions));
+pub(crate) static COLOR_EYRE_ENABLED: AtomicBool = AtomicBool::new(cfg!(debug_assertions));
+static SHOW_DIAGNOSTICS: AtomicBool = AtomicBool::new(false);
+pub(crate) static COLOR_EYRE_SETUP_ONCE: Once = Once::new();
+#[cfg(debug_assertions)]
+pub(crate) static COLOR_EYRE_PANIC_HOOK: OnceLock<color_eyre::config::PanicHook> = OnceLock::new();
+pub(crate) static APP_METADATA: OnceLock<AppMetadata> = OnceLock::new();
+
+#[derive(Clone, Debug)]
+pub(crate) struct AppMetadata {
+    pub(crate) name: &'static str,
+    pub(crate) version: &'static str,
+    pub(crate) authors: &'static str,
+    pub(crate) repository: Option<&'static str>,
+}
+
+impl AppMetadata {
+    pub(crate) fn default_for_tui_crate() -> Self {
+        Self {
+            name: env!("CARGO_PKG_NAME"),
+            version: env!("CARGO_PKG_VERSION"),
+            authors: env!("CARGO_PKG_AUTHORS"),
+            repository: Some(env!("CARGO_PKG_REPOSITORY")).filter(|value| !value.is_empty()),
+        }
+    }
+}
+
+pub fn set_debug_mode(enabled: bool) {
+    DEBUG_MODE.store(enabled, Ordering::SeqCst);
+}
+
+pub(crate) fn is_debug_mode() -> bool {
+    DEBUG_MODE.load(Ordering::SeqCst)
+}
+
+pub fn set_color_eyre_enabled(enabled: bool) {
+    COLOR_EYRE_ENABLED.store(enabled, Ordering::SeqCst);
+}
+
+pub(crate) fn is_color_eyre_enabled() -> bool {
+    COLOR_EYRE_ENABLED.load(Ordering::SeqCst)
+}
+
+pub fn set_show_diagnostics(enabled: bool) {
+    SHOW_DIAGNOSTICS.store(enabled, Ordering::SeqCst);
+}
+
+pub(crate) fn show_diagnostics() -> bool {
+    SHOW_DIAGNOSTICS.load(Ordering::SeqCst)
+}
+
+pub fn set_app_metadata(
+    name: &'static str,
+    version: &'static str,
+    authors: &'static str,
+    repository: Option<&'static str>,
+) {
+    let _ = APP_METADATA.set(AppMetadata {
+        name,
+        version,
+        authors,
+        repository: repository.filter(|value| !value.is_empty()),
+    });
+}
+
+pub(crate) fn app_metadata() -> AppMetadata {
+    APP_METADATA.get().cloned().unwrap_or_else(AppMetadata::default_for_tui_crate)
+}
+
+pub(crate) fn mark_tui_initialized() {
+    TUI_INITIALIZED.store(true, Ordering::SeqCst);
+    RESTORE_DONE.store(false, Ordering::SeqCst);
+}
+
+pub(crate) fn mark_tui_deinitialized() {
+    TUI_INITIALIZED.store(false, Ordering::SeqCst);
+}
+
+pub(crate) fn is_tui_initialized() -> bool {
+    TUI_INITIALIZED.load(Ordering::SeqCst)
+}
+
+pub(crate) fn mark_keyboard_enhancements_pushed(pushed: bool) {
+    KEYBOARD_ENHANCEMENTS_PUSHED.store(pushed, Ordering::SeqCst);
+}
+
+pub(crate) fn try_claim_restore() -> bool {
+    !RESTORE_DONE.swap(true, Ordering::SeqCst)
+}
+
+/// Install color-eyre's eyre hook for richer top-level error rendering in dev/debug mode.
+#[cfg(debug_assertions)]
+pub(crate) fn maybe_prepare_color_eyre_hooks() {
+    if !is_color_eyre_enabled() {
+        return;
+    }
+
+    COLOR_EYRE_SETUP_ONCE.call_once(|| {
+        let hooks = color_eyre::config::HookBuilder::default().try_into_hooks();
+        match hooks {
+            Ok((panic_hook, eyre_hook)) => {
+                let _ = COLOR_EYRE_PANIC_HOOK.set(panic_hook);
+                if let Err(error) = eyre_hook.install() {
+                    eprintln!("warning: failed to install color-eyre hook: {error}");
+                }
+            }
+            Err(error) => {
+                eprintln!("warning: failed to prepare color-eyre hook: {error}");
+            }
+        }
+    });
+}
+
+#[cfg(not(debug_assertions))]
+pub(crate) fn maybe_prepare_color_eyre_hooks() {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_color_eyre_toggle() {
+        COLOR_EYRE_ENABLED.store(false, Ordering::SeqCst);
+        assert!(!is_color_eyre_enabled());
+
+        set_color_eyre_enabled(true);
+        assert!(is_color_eyre_enabled());
+
+        COLOR_EYRE_ENABLED.store(false, Ordering::SeqCst);
+    }
+}

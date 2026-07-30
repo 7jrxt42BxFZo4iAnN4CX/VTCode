@@ -61,12 +61,7 @@ pub(crate) async fn finalize_model_selection(
     let auth_cfg = vt_cfg.as_ref().cloned().unwrap_or_default();
     let (api_key, openai_chatgpt_auth) = resolve_runtime_api_key(&workspace, Some(&auth_cfg), &selection).await?;
     let using_chatgpt_auth = selection.provider_enum == Some(Provider::OpenAI) && openai_chatgpt_auth.is_some();
-    let updated_cfg = picker.persist_selection(&workspace, &selection).await?;
-    *vt_cfg = Some(updated_cfg);
-    let custom_provider_enabled = vt_cfg
-        .as_ref()
-        .and_then(|cfg| cfg.custom_provider(&selection.provider))
-        .is_some();
+    let custom_provider_enabled = auth_cfg.custom_provider(&selection.provider).is_some();
     let client_installed = selection.provider_enum.is_some() || custom_provider_enabled;
 
     if client_installed {
@@ -76,12 +71,18 @@ pub(crate) async fn finalize_model_selection(
             ProviderConfig {
                 api_key: Some(api_key.clone()),
                 openai_chatgpt_auth: openai_chatgpt_auth.clone(),
-                copilot_auth: vt_cfg.as_ref().map(|cfg| cfg.auth.copilot.clone()),
+                copilot_auth: Some(auth_cfg.auth.copilot.clone()),
                 base_url: None,
                 model: Some(selection.model.clone()),
                 prompt_cache: Some(config.prompt_cache.clone()),
                 timeouts: None,
-                openai: vt_cfg.as_ref().map(|cfg| cfg.provider.openai.clone()),
+                openai: Some({
+                    let mut openai = auth_cfg.provider.openai.clone();
+                    if selection.provider_enum == Some(Provider::OpenAI) && selection.service_tier_supported {
+                        openai.service_tier = selection.service_tier;
+                    }
+                    openai
+                }),
                 anthropic: None,
                 model_behavior: config.model_behavior.clone(),
                 workspace_root: Some(config.workspace.clone()),
@@ -97,6 +98,11 @@ pub(crate) async fn finalize_model_selection(
         )?;
         config.provider = selection.provider.clone();
     }
+
+    // Persist to disk only after provider creation succeeds, so a failure
+    // cannot leave vtcode.toml with a partially-updated provider config.
+    let updated_cfg = picker.persist_selection(&workspace, &selection).await?;
+    *vt_cfg = Some(updated_cfg);
 
     config.model = selection.model.clone();
     config.api_key = api_key;
@@ -301,6 +307,10 @@ async fn resolve_runtime_api_key(
     selection: &ModelSelectionResult,
 ) -> Result<(String, Option<vtcode_config::auth::OpenAIChatGptAuthHandle>)> {
     if let Some(key) = selection.api_key.as_ref() {
+        tracing::debug!(
+            "resolve_runtime_api_key: using pending_api_key from selection result for provider '{}'",
+            selection.provider
+        );
         return Ok((key.clone(), None));
     }
 
@@ -338,6 +348,11 @@ async fn resolve_runtime_api_key(
     }
 
     if let Some(key) = read_workspace_api_key(workspace, &selection.env_key)? {
+        tracing::debug!(
+            "resolve_runtime_api_key: resolved key from workspace .env for '{}' via {}",
+            selection.provider,
+            selection.env_key
+        );
         return Ok((key, None));
     }
 
@@ -366,19 +381,64 @@ async fn resolve_runtime_api_key(
 
     if selection.provider_enum.is_some() {
         let storage_mode = vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default();
-        return get_api_key_with_mode(&selection.provider, &ApiKeySources::default(), storage_mode)
-            .with_context(|| format!("API key not found for provider '{}'", selection.provider))
-            .map(|key| (key, None));
+
+        // Try direct secure-storage lookup first. When process_model_selection
+        // found a StoredCredential it should have loaded the key into
+        // selection.api_key (early return above), but if anything went wrong
+        // we still resolve the stored key here instead of falling through to
+        // get_api_key_with_mode which might return a stale env-var value.
+        if let Ok(Some(key)) = load_stored_api_key_with_mode(&selection.provider, storage_mode) {
+            tracing::debug!(
+                "resolve_runtime_api_key: resolved key from secure storage for '{}' (len={})",
+                selection.provider,
+                key.len()
+            );
+            return Ok((key, None));
+        }
+
+        tracing::debug!(
+            "resolve_runtime_api_key: resolving from get_api_key_with_mode for provider '{}' (env -> provider-specific -> storage)",
+            selection.provider
+        );
+        let resolved = get_api_key_with_mode(&selection.provider, &ApiKeySources::default(), storage_mode)
+            .with_context(|| format!("API key not found for provider '{}'", selection.provider));
+        if let Ok(ref key) = resolved {
+            tracing::debug!(
+                "resolve_runtime_api_key: resolved key from get_api_key_with_mode for '{}' (len={})",
+                selection.provider,
+                key.len()
+            );
+        }
+        return resolved.map(|key| (key, None));
     }
 
     match std::env::var(&selection.env_key) {
-        Ok(value) if !value.trim().is_empty() => Ok((value, None)),
-        _ if selection.requires_api_key => Err(anyhow!(
-            "API key not found for provider '{}'. Set {} or enter a key to continue.",
-            selection.provider,
-            selection.env_key
-        )),
-        _ => Ok((String::new(), None)),
+        Ok(value) if !value.trim().is_empty() => {
+            tracing::debug!(
+                "resolve_runtime_api_key: resolved key from env var {} for unknown provider '{}'",
+                selection.env_key,
+                selection.provider
+            );
+            Ok((value, None))
+        }
+        _ if selection.requires_api_key => {
+            tracing::debug!(
+                "resolve_runtime_api_key: no key found for provider '{}' (requires_api_key=true)",
+                selection.provider
+            );
+            Err(anyhow!(
+                "API key not found for provider '{}'. Set {} or enter a key to continue.",
+                selection.provider,
+                selection.env_key
+            ))
+        }
+        _ => {
+            tracing::debug!(
+                "resolve_runtime_api_key: no key found for provider '{}' (requires_api_key=false), returning empty",
+                selection.provider
+            );
+            Ok((String::new(), None))
+        }
     }
 }
 

@@ -14,10 +14,10 @@ use super::provider::LLMProvider;
 use super::provider_config::{
     AnthropicProviderConfig, CopilotProviderConfig, DeepSeekProviderConfig, EvolinkProviderConfig,
     GeminiProviderConfig, HuggingFaceProviderConfig, LlamaCppProviderConfig, LmStudioProviderConfig,
-    MiMoProviderConfig, MinimaxProviderConfig, MistralProviderConfig, MoonshotProviderConfig, OllamaProviderConfig,
-    OpenAIProviderConfig, OpenCodeGoProviderConfig, OpenCodeZenProviderConfig, OpenResponsesProviderConfig,
-    OpenRouterProviderConfig, PoolsideProviderConfig, QwenProviderConfig, StepFunProviderConfig, XAIProviderConfig,
-    ZAIProviderConfig,
+    MiMoProviderConfig, MinimaxProviderConfig, MistralProviderConfig, MoonshotProviderConfig,
+    OllamaCloudProviderConfig, OllamaProviderConfig, OpenAIProviderConfig, OpenCodeGoProviderConfig,
+    OpenCodeZenProviderConfig, OpenResponsesProviderConfig, OpenRouterProviderConfig, PoolsideProviderConfig,
+    QwenProviderConfig, StepFunProviderConfig, XAIProviderConfig, ZAIProviderConfig,
 };
 use super::providers::{
     AnthropicProvider, CopilotProvider, DeepSeekProvider, EvolinkProvider, GeminiProvider, HuggingFaceProvider,
@@ -312,6 +312,10 @@ crate::delegate_components!(OllamaProviderConfig {
     ProviderMetadataComponent => OllamaProviderConfig,
     ProviderBuildComponent => StandardProviderBuild<OllamaProvider>,
 });
+crate::delegate_components!(OllamaCloudProviderConfig {
+    ProviderMetadataComponent => OllamaCloudProviderConfig,
+    ProviderBuildComponent => StandardProviderBuild<OllamaProvider>,
+});
 crate::delegate_components!(LmStudioProviderConfig {
     ProviderMetadataComponent => LmStudioProviderConfig,
     ProviderBuildComponent => StandardProviderBuild<LmStudioProvider>,
@@ -371,6 +375,7 @@ pub fn register_builtin_cgp_providers(factory: &mut LLMFactory) {
     factory.register_cgp_provider::<OpenResponsesProviderConfig>();
     factory.register_cgp_provider::<MoonshotProviderConfig>();
     factory.register_cgp_provider::<OllamaProviderConfig>();
+    factory.register_cgp_provider::<OllamaCloudProviderConfig>();
     factory.register_cgp_provider::<LmStudioProviderConfig>();
     factory.register_cgp_provider::<LlamaCppProviderConfig>();
     factory.register_cgp_provider::<ZAIProviderConfig>();
@@ -483,6 +488,7 @@ mod tests {
                 "mistral",
                 "moonshot",
                 "ollama",
+                "ollama-cloud",
                 "openai",
                 "opencode-go",
                 "opencode-zen",

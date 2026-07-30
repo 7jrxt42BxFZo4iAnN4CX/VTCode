@@ -19,3 +19,21 @@ read through this project's agent config. that includes mcp settings, skills, pl
 5. is any permission or approval policy written into a tool description
 
 trace each one: pass or fail, the exact file or entry, and the one thing to change. if you can't find it, say you can't find it. don't make it up.
+
+If you’re an API developer trying to maximize performance, we recommend using the same settings that we deploy in our own products:
+
+- Use our Responses API, not our legacy Chat Completions API
+- Retain reasoning
+- Use compaction
+
+===
+
+check and fix Preflight validation circuit breaker reached after 3 consecutive failures for tool 'code_search'.
+
+on plan mode, after confirmation approval to build. the agent can't continue and build the plan.
+
+/Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/checkpoints/turn_874.json
+
+====
+
+IMPORTANT: change keyboard short to switch mode/agent by single tab to shift+TAB. IMPORTANT

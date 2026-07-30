@@ -50,10 +50,15 @@ use rate_limit::acquire_adaptive_rate_limit_slot;
 use recovery::try_interactive_circuit_recovery;
 pub(crate) use types::{PreparedToolCall, ToolOutcomeContext, ValidationResult};
 
-/// Record a malformed or preflight-invalid tool call and return a terminal
-/// outcome when the independent preflight circuit breaker reaches its cap.
-/// Policy denials intentionally do not use this path; they remain governed by
-/// the existing blocked-call fuse.
+/// Record a malformed or preflight-invalid tool call. When the independent
+/// preflight circuit breaker reaches its cap, arm a bounded tool-free
+/// recovery pass (mirroring budget-exhaustion and interview-denial) so the
+/// model can synthesize a plain-text response instead of the turn
+/// hard-blocking. A hard `Blocked` outcome silently dropped approved-plan
+/// builds: `plan_approved_execution_pending` only derives from `Completed`,
+/// so a blocked build turn was never re-queued and the agent could not
+/// continue (checkpoint turn_874). Policy denials intentionally do not use
+/// this path; they remain governed by the existing blocked-call fuse.
 pub(crate) fn handle_preflight_failure(
     ctx: &mut TurnProcessingContext<'_>,
     tool_call_id: &str,
@@ -66,7 +71,7 @@ pub(crate) fn handle_preflight_failure(
     let circuit_tripped = failure_count >= max_failures;
     let schema_correction = preflight_schema_correction(tool_name);
     let next_action = if circuit_tripped {
-        "Stop retrying this malformed call. End the turn and report the schema correction to the user."
+        "Stop retrying this malformed call. Tools are disabled for the next pass — synthesize a plain-text response reporting the failure to the user."
     } else {
         "Correct the arguments using schema_correction, then retry this tool once."
     };
@@ -93,10 +98,20 @@ pub(crate) fn handle_preflight_failure(
     ctx.push_tool_response(tool_call_id, Some(tool_name), payload.to_string());
 
     circuit_tripped.then(|| {
-        let reason = format!(
-            "Preflight validation circuit breaker reached after {failure_count} consecutive failures for tool '{tool_name}'."
+        // Arm a tool-free recovery pass instead of hard-blocking. The flush
+        // (called by the tool batch after all responses land) pushes the
+        // synthesis directive and strips tools at the API level. Returning
+        // `Continue` lets the turn loop proceed to that pass rather than
+        // terminating as `Blocked`.
+        ctx.harness_state.arm_preflight_circuit_recovery();
+        tracing::warn!(
+            target: "vtcode.turn.metrics",
+            tool = tool_name,
+            failure_count,
+            max_failures,
+            "Preflight validation circuit breaker tripped; arming tool-free recovery"
         );
-        TurnHandlerOutcome::Break(TurnLoopResult::Blocked { reason: Some(reason) })
+        TurnHandlerOutcome::Continue
     })
 }
 
@@ -125,7 +140,7 @@ pub(crate) fn drain_preflight_circuit_responses(
             "tool_name": tool_name,
             "failure_count": failure_count,
             "schema_correction": preflight_schema_correction(tool_name),
-            "next_action": "Stop retrying this batch. End the turn and report the schema correction to the user.",
+            "next_action": "Stop retrying this batch. Tools are disabled for the next pass — synthesize a plain-text response reporting the failure to the user.",
             "retryable": false,
         });
         ctx.push_tool_response(tool_call.call_id(), Some(tool_name), payload.to_string());
@@ -137,6 +152,8 @@ fn build_failure_error_content(error: String, failure_kind: &'static str) -> Str
 }
 
 const INTERVIEW_DENIAL_RECOVERY_DIRECTIVE: &str = "Planning recovery: the interactive interview is unavailable in this runtime. Tools are disabled for the next pass. If you have a clarifying question, present it to the user in plain text and end your turn — the user's next message will answer it and you can continue planning. Otherwise, synthesize exactly one completed `<proposed_plan>` from the research already gathered. Do not emit tool calls or request approval until the plan is present.";
+
+const PREFLIGHT_CIRCUIT_RECOVERY_DIRECTIVE: &str = "Recovery: repeated tool preflight validation failures tripped the circuit breaker, so tools are disabled for this pass. Do not emit tool calls. Summarize what you were trying to do and the validation errors above, then tell the user in plain text what you need to proceed (e.g. re-state the request so the next turn retries with correct arguments). End your turn after this response.";
 
 /// Convert a permanent interview denial into a bounded, tool-free planning
 /// pass. This is flushed after the current tool batch so the directive follows
@@ -155,6 +172,27 @@ pub(crate) fn flush_interview_denial_recovery(ctx: &mut TurnProcessingContext<'_
     tracing::info!(
         target: "vtcode.planning_workflow",
         "interactive interview denied; scheduling bounded tool-free plan synthesis"
+    );
+}
+
+/// Convert a preflight circuit-breaker trip into a bounded, tool-free
+/// synthesis pass. Flushed after the current tool batch (including drained
+/// skipped-call responses) so the directive never lands between tool
+/// responses. Without this, the breaker hard-blocked the turn as `Blocked`,
+/// silently dropping approved-plan builds that the user had already approved.
+pub(crate) fn flush_preflight_circuit_recovery(ctx: &mut TurnProcessingContext<'_>) {
+    if !ctx.harness_state.take_preflight_circuit_recovery() {
+        return;
+    }
+
+    ctx.push_system_message(PREFLIGHT_CIRCUIT_RECOVERY_DIRECTIVE);
+    if ctx.harness_state.recovery_reason.is_none() {
+        ctx.harness_state.recovery_reason = Some("preflight validation circuit breaker".to_string());
+    }
+    ctx.harness_state.switch_to_tool_free_recovery();
+    tracing::info!(
+        target: "vtcode.turn.metrics",
+        "preflight circuit breaker tripped; scheduling bounded tool-free synthesis"
     );
 }
 
