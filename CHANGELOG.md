@@ -2,6 +2,16 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.141.8 - 2026-07-30
+
+### Highlights
+#### Bug Fixes
+
+- Reorder credential discovery and add test isolation for storage (f8b95e6c) 
+#### Features
+
+- Generate checksums manifest excluding compatibility assets (fae96abb) 
+### Other Changes
 ## 0.141.7 - 2026-07-29
 
 ### Highlights
