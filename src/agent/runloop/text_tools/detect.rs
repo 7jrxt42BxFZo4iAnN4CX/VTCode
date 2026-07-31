@@ -66,6 +66,7 @@ pub(crate) fn contains_pseudo_tool_call_markers(text: &str) -> bool {
         "<function=",
         "<parameter=",
         "<invoke name=",
+        "<tools:call",
         "<minimax:tool_call>",
     ];
     let lowered = text.to_ascii_lowercase();

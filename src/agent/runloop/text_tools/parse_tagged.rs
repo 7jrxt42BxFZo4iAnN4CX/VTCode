@@ -150,20 +150,33 @@ fn parse_standard_tagged_tool_call(text: &str) -> Option<(String, Value)> {
     Some((name.to_string(), Value::Object(object)))
 }
 
-fn parse_minimax_tool_call(text: &str) -> Option<(String, Value)> {
-    const INVOKE_TAG: &str = "<invoke name=\"";
-    const INVOKE_CLOSE: &str = "</invoke>";
-    const PARAMETER_TAG: &str = "<parameter name=\"";
-    const PARAMETER_CLOSE: &str = "</parameter>";
+/// Open/close tag pair for the `<tools:call name="NAME">` dialect.
+///
+/// Some checkpoints (e.g. minimax-m3 served through OpenAI-compatible
+/// providers with no tool schemas on the wire) wrap `<tools:call>` blocks in
+/// a `<tool_call>` envelope instead of using `<invoke>`; without a parser for
+/// this variant the raw XML leaked into the transcript as a final answer in
+/// plan mode (turn_887/turn_888).
+const TOOLS_CALL_TAG: &str = "<tools:call name=\"";
+const TOOLS_CALL_CLOSE: &str = "</tools:call>";
 
+fn parse_minimax_tool_call(text: &str) -> Option<(String, Value)> {
     // Strip provider noise (e.g. MiniMax `]<]minimax[>[`) so tag boundaries
     // parse cleanly. Delegates to the centralized provider-noise module so the
     // noise vocabulary stays in one place.
     let cleaned_text = crate::agent::runloop::unified::turn::provider_noise::strip_provider_noise(text);
     let working_text = cleaned_text.as_str();
 
-    let invoke_start = working_text.find(INVOKE_TAG)?;
-    let invoke_rest = &working_text[invoke_start + INVOKE_TAG.len()..];
+    parse_invoke_style_tool_call(working_text, "<invoke name=\"", "</invoke>")
+        .or_else(|| parse_invoke_style_tool_call(working_text, TOOLS_CALL_TAG, TOOLS_CALL_CLOSE))
+}
+
+fn parse_invoke_style_tool_call(working_text: &str, invoke_tag: &str, invoke_close: &str) -> Option<(String, Value)> {
+    const PARAMETER_TAG: &str = "<parameter name=\"";
+    const PARAMETER_CLOSE: &str = "</parameter>";
+
+    let invoke_start = working_text.find(invoke_tag)?;
+    let invoke_rest = &working_text[invoke_start + invoke_tag.len()..];
     let name_end = invoke_rest.find('"')?;
     let name = invoke_rest[..name_end].trim().to_string();
     if name.is_empty() {
@@ -173,7 +186,7 @@ fn parse_minimax_tool_call(text: &str) -> Option<(String, Value)> {
     let after_name = &invoke_rest[name_end + 1..];
     let body_start = after_name.find('>')?;
     let after_invoke_tag = &after_name[body_start + 1..];
-    let invoke_body_end = after_invoke_tag.find(INVOKE_CLOSE).unwrap_or(after_invoke_tag.len());
+    let invoke_body_end = after_invoke_tag.find(invoke_close).unwrap_or(after_invoke_tag.len());
     let mut rest = &after_invoke_tag[..invoke_body_end];
 
     let mut object = Map::new();
@@ -444,6 +457,7 @@ fn finalize_indexed_and_command(
 pub(super) fn collect_tagged_regions(text: &str, regions: &mut Vec<(usize, usize)>) {
     collect_enclosed_regions(text, "<tool_call>", "</tool_call>", regions);
     collect_enclosed_regions(text, "<invoke name=\"", "</invoke>", regions);
+    collect_enclosed_regions(text, TOOLS_CALL_TAG, TOOLS_CALL_CLOSE, regions);
     // <function=...> blocks may use either </function> or </function=NAME>
     // as the close tag. Match the </function prefix and extend to the next >.
     collect_function_equals_regions(text, regions);

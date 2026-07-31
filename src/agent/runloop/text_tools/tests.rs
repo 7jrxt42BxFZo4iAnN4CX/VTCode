@@ -34,6 +34,11 @@ fn pseudo_markers_detect_minimax_tool_call() {
 }
 
 #[test]
+fn pseudo_markers_detect_tools_call_dialect() {
+    assert!(contains_pseudo_tool_call_markers(r#"<tools:call name="exec_command">...</tools:call>"#));
+}
+
+#[test]
 fn pseudo_markers_detect_closing_tool_call_tag_alone() {
     assert!(contains_pseudo_tool_call_markers("</tool_call>"));
 }
@@ -318,6 +323,70 @@ fn test_detect_tagged_tool_call_parses_minimax_xml_invocation_without_parameters
     let (name, args) = detect_textual_tool_call(message).expect("should parse");
     assert_eq!(name, tools::EXEC_COMMAND);
     assert_eq!(args, serde_json::json!({ "action": "list" }));
+}
+
+#[test]
+fn test_detect_tagged_tool_call_parses_tools_call_dialect_inside_tool_call_wrapper() {
+    // Regression: minimax-m3:cloud (ollama-cloud, no tool schemas on the wire)
+    // emitted `<tools:call>` blocks inside a `<tool_call>` envelope in plan
+    // mode; the payload previously leaked as a raw-XML final answer (turn_887).
+    let message = r#"I'll research the codebase to understand current launch flow, then draft a focused plan.
+<tool_call>
+<tools:call name="exec_command">
+<parameter name="cmd">ls -la /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode</parameter>
+</tools:call>
+<tools:call name="code_search">
+<parameter name="pattern">fn main</parameter>
+<parameter name="path">/Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode</parameter>
+<parameter name="max_results">30</parameter>
+<parameter name="lang">rust</parameter>
+</tools:call>
+</tool_call>"#;
+    let (name, args) = detect_textual_tool_call(message).expect("should parse");
+    assert_eq!(name, tools::EXEC_COMMAND);
+    assert_eq!(
+        args,
+        serde_json::json!({
+            "cmd": "ls -la /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode",
+            "action": "run"
+        })
+    );
+}
+
+#[test]
+fn test_detect_tagged_tool_call_parses_bare_tools_call_dialect() {
+    // Second <tools:call> block from the turn_887 payload, without the wrapper.
+    let message = r#"<tools:call name="code_search">
+<parameter name="pattern">async fn main|fn main()</parameter>
+<parameter name="path">/Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode</parameter>
+<parameter name="max_results">30</parameter>
+</tools:call>"#;
+    let (name, args) = detect_textual_tool_call(message).expect("should parse");
+    assert_eq!(name, tools::CODE_SEARCH);
+    assert_eq!(
+        args,
+        serde_json::json!({
+            "pattern": "async fn main|fn main()",
+            "path": "/Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode",
+            "max_results": 30
+        })
+    );
+}
+
+#[test]
+fn test_strip_textual_tool_call_regions_removes_tools_call_markup() {
+    let message = r#"Researching the launch flow.
+<tools:call name="code_search">
+<parameter name="pattern">fn main</parameter>
+</tools:call>
+Now drafting the plan."#;
+
+    let stripped = strip_textual_tool_call_regions(message);
+
+    assert!(stripped.contains("Researching the launch flow."));
+    assert!(stripped.contains("Now drafting the plan."));
+    assert!(!stripped.contains("<tools:call"));
+    assert!(detect_textual_tool_call(&stripped).is_none());
 }
 
 #[test]
