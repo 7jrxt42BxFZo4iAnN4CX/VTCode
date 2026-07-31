@@ -467,7 +467,18 @@ impl SessionToolCatalog {
         let has_mcp_tools = filtered_entries
             .iter()
             .any(|entry| matches!(entry.source, ToolCatalogSource::Mcp));
-        let expose_tools_directly = !config.deferred_tool_policy.is_enabled();
+        // Hosted policies (Anthropic/OpenAI) rely on `defer_loading` markers in
+        // the wire payload, so they defer whenever the policy is enabled. The
+        // client-local policy instead OMITS deferred definitions from the wire;
+        // applying it to a small builtin-only catalog (e.g. the plan-mode
+        // read-only filter) can leave zero tools on the wire, which makes
+        // models improvise textual XML tool calls. Below the exposure
+        // threshold, eager exposure is cheaper and simpler -- exactly the gate
+        // documented on `DIRECT_TOOL_EXPOSURE_THRESHOLD` and the
+        // `deferred_tool_policy_for_runtime` fallback arm.
+        let expose_tools_directly = !config.deferred_tool_policy.is_enabled()
+            || (config.deferred_tool_policy.is_client_local()
+                && !catalog_would_benefit_from_deferral(has_mcp_tools, deferable_tool_count, estimated_schema_tokens));
 
         // Advisory one-shot: if deferred loading is disabled but this catalog
         // is large enough that deferral would engage, the user is paying the
@@ -1627,6 +1638,89 @@ mod tests {
             .find(|tool| tool.function_name() == tools::MCP_SEARCH_TOOLS)
             .expect("client-local MCP search should remain available");
         assert_eq!(search_definition.defer_loading, None);
+    }
+
+    #[test]
+    fn client_local_policy_exposes_small_builtin_catalog_directly() {
+        // Plan-mode policy filtering shrinks the visible catalog to a handful
+        // of read-only builtins. Deferring that tiny set drops every tool from
+        // the wire payload (on_wire_tools = 0), so the model improvises
+        // textual XML tool calls instead of native ones (turn_887/turn_888).
+        // Small catalogs must stay eager: deferral exists to shed schema tax,
+        // not to hide the whole catalog.
+        let exec_command = registration(tools::EXEC_COMMAND)
+            .with_description("Run command")
+            .with_parameter_schema(empty_object_schema());
+        let code_search = registration(tools::CODE_SEARCH)
+            .with_description("Search code")
+            .with_parameter_schema(empty_object_schema());
+        let read_file = registration(tools::READ_FILE)
+            .with_description("Read file")
+            .with_parameter_schema(empty_object_schema());
+
+        let catalog = SessionToolCatalog::rebuild_from_registrations(vec![exec_command, code_search, read_file]);
+        let definitions = catalog.model_tools(
+            SessionToolsConfig::full_public(
+                SessionSurface::Interactive,
+                CapabilityLevel::CodeSearch,
+                ToolDocumentationMode::Full,
+                ToolModelCapabilities::default(),
+            )
+            .with_tool_profile(ToolProfile::AdvancedVtCode)
+            .with_deferred_tool_policy(DeferredToolPolicy::client_local(Vec::new())),
+        );
+
+        assert!(
+            definitions.iter().all(|tool| tool.defer_loading.is_none()),
+            "a small builtin-only catalog gains nothing from client-local deferral; every tool must stay on the wire"
+        );
+    }
+
+    #[test]
+    fn client_local_policy_defers_large_builtin_catalog() {
+        let exec_command = registration(tools::EXEC_COMMAND)
+            .with_description("Run command")
+            .with_parameter_schema(empty_object_schema());
+        let code_search = registration(tools::CODE_SEARCH)
+            .with_description("Search code")
+            .with_parameter_schema(empty_object_schema());
+
+        let mut registrations = vec![exec_command, code_search];
+        for index in 0..DIRECT_TOOL_EXPOSURE_THRESHOLD {
+            let name: &'static str = Box::leak(format!("extra_builtin_{index}").into_boxed_str());
+            registrations.push(
+                registration(name)
+                    .with_description(format!("extra builtin {index}"))
+                    .with_parameter_schema(empty_object_schema()),
+            );
+        }
+
+        let catalog = SessionToolCatalog::rebuild_from_registrations(registrations);
+        let definitions = catalog.model_tools(
+            SessionToolsConfig::full_public(
+                SessionSurface::Interactive,
+                CapabilityLevel::CodeSearch,
+                ToolDocumentationMode::Full,
+                ToolModelCapabilities::default(),
+            )
+            .with_tool_profile(ToolProfile::AdvancedVtCode)
+            .with_deferred_tool_policy(DeferredToolPolicy::client_local(Vec::new())),
+        );
+
+        let exec_tool = definitions
+            .iter()
+            .find(|tool| tool.function_name() == tools::EXEC_COMMAND)
+            .expect("exec_command should be present");
+        assert_eq!(exec_tool.defer_loading, None, "core tools stay eager even in large catalogs");
+        let search_tool = definitions
+            .iter()
+            .find(|tool| tool.function_name() == tools::CODE_SEARCH)
+            .expect("code_search should be present");
+        assert_eq!(
+            search_tool.defer_loading,
+            Some(true),
+            "large builtin catalogs still defer non-core tools under client-local policy"
+        );
     }
 
     /// Serialize the on-wire tool schemas (the definitions the model actually

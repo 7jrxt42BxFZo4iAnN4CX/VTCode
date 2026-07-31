@@ -234,6 +234,10 @@ impl TestTurnProcessingBacking {
         self._temp.path()
     }
 
+    pub(crate) fn enable_planning(&self) {
+        self.tool_registry.enable_planning();
+    }
+
     pub(crate) fn select_primary_agent_from_specs(&mut self, specs: &[vtcode_config::SubagentSpec], requested: &str) {
         self.active_primary_agent
             .select_from_specs(specs, requested)

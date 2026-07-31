@@ -37,6 +37,11 @@ pub(crate) struct PlanningWorkflowSessionState {
     /// from the research already gathered instead of ending with an approval
     /// hint that has no draft behind it.
     plan_synthesis_retry_used: bool,
+    /// Counts re-prompts issued after the model emitted pseudo-tool-call
+    /// markup (XML-ish tool-call text no parser could execute) as a plan-mode
+    /// text response. Bounded so a checkpoint that keeps emitting the same
+    /// markup cannot loop the turn forever (turn_887/turn_888).
+    pseudo_tool_call_reprompts: u32,
     /// Primary agent that was active before the planning workflow began.
     /// Used to restore execution to the prior mode when planning was entered
     /// by selecting the dedicated plan agent.
@@ -47,6 +52,12 @@ pub(crate) struct PlanningWorkflowSessionState {
     /// Telemetry identity for the latest unresolved plan approval request.
     pending_approval: Option<PendingPlanApproval>,
 }
+
+/// Maximum number of pseudo-tool-call-markup re-prompts per planning session.
+/// One re-prompt usually teaches the model to use the real tool-call channel;
+/// two covers a repeat offense. Beyond that the turn ends with the cleaned
+/// text so the user can steer.
+pub(crate) const MAX_PLAN_PSEUDO_TOOL_CALL_REPROMPTS: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PendingPlanApproval {
@@ -66,6 +77,7 @@ impl PlanningWorkflowSessionState {
         self.recovery_exhausted = false;
         self.interview_denied = false;
         self.plan_synthesis_retry_used = false;
+        self.pseudo_tool_call_reprompts = 0;
         self.previous_primary_agent = None;
         self.fallback_primary_agent = None;
         self.pending_approval = None;
@@ -77,6 +89,7 @@ impl PlanningWorkflowSessionState {
         self.recovery_exhausted = false;
         self.interview_denied = false;
         self.plan_synthesis_retry_used = false;
+        self.pseudo_tool_call_reprompts = 0;
         self.previous_primary_agent = None;
         self.fallback_primary_agent = None;
         self.pending_approval = None;
@@ -174,6 +187,14 @@ impl PlanningWorkflowSessionState {
 
     pub(crate) fn mark_plan_synthesis_retry_used(&mut self) {
         self.plan_synthesis_retry_used = true;
+    }
+
+    pub(crate) fn plan_pseudo_tool_call_reprompt_allowed(&self) -> bool {
+        self.pseudo_tool_call_reprompts < MAX_PLAN_PSEUDO_TOOL_CALL_REPROMPTS
+    }
+
+    pub(crate) fn mark_plan_pseudo_tool_call_reprompt_used(&mut self) {
+        self.pseudo_tool_call_reprompts += 1;
     }
 
     pub(crate) fn interview_forcing_allowed(&self) -> bool {
@@ -299,7 +320,7 @@ pub(crate) async fn finish_planning_workflow(
 
 #[cfg(test)]
 mod tests {
-    use super::PlanningWorkflowSessionState;
+    use super::{PlanningWorkflowSessionState, MAX_PLAN_PSEUDO_TOOL_CALL_REPROMPTS};
     use vtcode_core::core::interfaces::session::PlanningEntrySource;
 
     #[test]
@@ -362,6 +383,28 @@ mod tests {
         state.enter(PlanningEntrySource::UserRequest);
         assert!(!state.is_interview_denied());
         assert!(!state.plan_synthesis_retry_allowed());
+    }
+
+    #[test]
+    fn pseudo_tool_call_reprompts_are_bounded_and_reset_by_enter() {
+        let mut state = PlanningWorkflowSessionState::default();
+        state.enter(PlanningEntrySource::UserRequest);
+
+        for attempt in 0..MAX_PLAN_PSEUDO_TOOL_CALL_REPROMPTS {
+            assert!(
+                state.plan_pseudo_tool_call_reprompt_allowed(),
+                "reprompt attempt {attempt} should be allowed before the bound is reached"
+            );
+            state.mark_plan_pseudo_tool_call_reprompt_used();
+        }
+        assert!(
+            !state.plan_pseudo_tool_call_reprompt_allowed(),
+            "reprompts must stop once the bound is exhausted so a checkpoint that keeps emitting markup cannot loop the turn"
+        );
+
+        state.exit();
+        state.enter(PlanningEntrySource::UserRequest);
+        assert!(state.plan_pseudo_tool_call_reprompt_allowed());
     }
 
     #[test]

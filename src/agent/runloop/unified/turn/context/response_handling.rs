@@ -3,6 +3,8 @@ use crate::agent::runloop::unified::ui_interaction_stream_helpers::render_compac
 
 const DENIED_INTERVIEW_PLAN_SYNTHESIS_RETRY_DIRECTIVE: &str = "Planning recovery: the interactive interview is unavailable, and the previous response did not contain a completed plan. Do not ask another question or offer approval yet. Emit exactly one compact `<proposed_plan>` now from the repository evidence already in this conversation; include Summary, numbered `Action -> files/symbols -> verify:` steps, Validation, and short Assumptions. Do not emit tool calls.";
 
+const PLAN_PSEUDO_TOOL_CALL_REPROMPT_DIRECTIVE: &str = "Planning: the previous response contained tool-call markup that was not executed — XML tool-call text is not a tool call. If you need more repository evidence, invoke tools through the tool-call channel now. Otherwise present the completed plan as one compact `<proposed_plan>` (Summary, numbered `Action -> files/symbols -> verify:` steps, Validation, short Assumptions). Do not emit XML tool-call markup as text.";
+
 /// Detect whether a planning-mode text response is a clarifying question
 /// posed to the user rather than a plan or research prose. The deterministic
 /// interview-denial recovery must NOT force plan synthesis when the model is
@@ -177,6 +179,25 @@ impl<'a> TurnProcessingContext<'a> {
         } else {
             crate::agent::runloop::unified::turn::provider_noise::strip_provider_noise(&text)
         };
+        // Plan-mode salvage: a model with no tool schemas on the wire (or a
+        // confused checkpoint) sometimes answers with XML-ish tool-call markup
+        // as text. No textual parser could execute it, and in plan mode any
+        // text ends the turn, so the raw markup became the user-visible final
+        // answer and leaked into history, ATIF, and harness logs
+        // (turn_887/turn_888). Strip the markup from the stored/visible text;
+        // a bounded re-prompt below gives the model a chance to call tools
+        // natively or present the plan instead.
+        let pseudo_tool_call_markup_detected = self.is_planning_active()
+            && !tool_free_recovery_pass
+            && proposed_plan.is_none()
+            && crate::agent::runloop::text_tools::contains_pseudo_tool_call_markers(&text);
+        let text = if pseudo_tool_call_markup_detected {
+            crate::agent::runloop::text_tools::strip_textual_tool_call_regions(&text)
+                .trim()
+                .to_string()
+        } else {
+            text
+        };
         let final_text = text.clone();
         let denied_interview_plan_retry = self.is_planning_active()
             && !tool_free_recovery_pass
@@ -299,6 +320,29 @@ impl<'a> TurnProcessingContext<'a> {
             tracing::info!(
                 target: "vtcode.planning_workflow",
                 "retrying denied interview response as a bounded plan synthesis"
+            );
+            return Ok(TurnHandlerOutcome::Continue);
+        }
+
+        // Plan-mode pseudo-tool-call reprompt: a model with no tool schemas on
+        // the wire (or a confused checkpoint) sometimes emits XML-ish
+        // tool-call markup as text. No textual parser could execute it, and in
+        // plan mode any text ends the turn, so the raw markup previously
+        // became the user-visible final answer and leaked into history, ATIF,
+        // and harness logs (turn_887/turn_888). The markup was already stripped
+        // from the stored text above; give the model a bounded chance to call
+        // tools natively or present the plan instead of ending mid-turn with
+        // cleaned-up prose. When the reprompt budget is exhausted, fall through
+        // to normal turn completion — the already-stripped text guarantees raw
+        // markup never reaches the user.
+        if pseudo_tool_call_markup_detected
+            && self.plan_session.plan_pseudo_tool_call_reprompt_allowed()
+        {
+            self.plan_session.mark_plan_pseudo_tool_call_reprompt_used();
+            self.push_system_message(PLAN_PSEUDO_TOOL_CALL_REPROMPT_DIRECTIVE);
+            tracing::info!(
+                target: "vtcode.planning_workflow",
+                "re-prompting after pseudo-tool-call markup in plan mode"
             );
             return Ok(TurnHandlerOutcome::Continue);
         }
@@ -502,3 +546,99 @@ impl<'a> TurnProcessingContext<'a> {
 // response handling, and the live stream renderer — delegate to
 // `strip_provider_noise` / `sanitize_recovery_answer` there. See that module
 // for the canonical noise vocabulary and comprehensive tests.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::runloop::unified::turn::turn_processing::test_support::TestTurnProcessingBacking;
+
+    /// Unparseable pseudo-tool-call markup: the `<tools:call>` name is empty,
+    /// so every textual parser rejects it, but the pseudo-marker scan still
+    /// sees `<tool_call`. Mirrors the raw-XML leak from turn_887/turn_888.
+    const BROKEN_MARKUP_RESPONSE: &str =
+        "I need to inspect the workspace.\n<tool_call>\n<tools:call name=\"\">\n</tools:call>\n</tool_call>";
+
+    #[tokio::test]
+    async fn plan_mode_pseudo_tool_call_markup_is_stripped_and_reprompts_once() {
+        let mut backing = TestTurnProcessingBacking::new(4).await;
+        backing.enable_planning();
+        let mut ctx = backing.turn_processing_context();
+
+        let outcome = ctx
+            .handle_text_response(BROKEN_MARKUP_RESPONSE.to_string(), Vec::new(), None, None, false)
+            .await
+            .expect("text response should be handled");
+
+        assert!(
+            matches!(outcome, TurnHandlerOutcome::Continue),
+            "plan-mode pseudo-tool-call markup should re-prompt instead of ending the turn"
+        );
+
+        let assistant_texts: Vec<String> = ctx
+            .working_history
+            .iter()
+            .filter(|message| message.role == uni::MessageRole::Assistant)
+            .map(|message| message.content.as_text().into_owned())
+            .collect();
+        assert!(
+            assistant_texts.iter().any(|text| text.contains("I need to inspect the workspace.")),
+            "the prose part of the response should be preserved: {assistant_texts:?}"
+        );
+        assert!(
+            assistant_texts.iter().all(|text| !text.contains("<tool_call")),
+            "raw tool-call markup must never be stored in history: {assistant_texts:?}"
+        );
+
+        let directive_present = ctx
+            .working_history
+            .iter()
+            .any(|message| message.role == uni::MessageRole::System && message.content.as_text().contains("not executed"));
+        assert!(directive_present, "a re-prompt directive should be pushed into history");
+    }
+
+    #[tokio::test]
+    async fn plan_mode_pseudo_tool_call_reprompt_is_bounded() {
+        let mut backing = TestTurnProcessingBacking::new(4).await;
+        backing.enable_planning();
+        let mut ctx = backing.turn_processing_context();
+        for _ in 0..crate::agent::runloop::unified::planning_workflow_state::MAX_PLAN_PSEUDO_TOOL_CALL_REPROMPTS {
+            ctx.plan_session.mark_plan_pseudo_tool_call_reprompt_used();
+        }
+
+        let outcome = ctx
+            .handle_text_response(BROKEN_MARKUP_RESPONSE.to_string(), Vec::new(), None, None, false)
+            .await
+            .expect("text response should be handled");
+
+        assert!(
+            matches!(outcome, TurnHandlerOutcome::Break(_)),
+            "an exhausted reprompt budget must end the turn instead of looping"
+        );
+        let assistant_texts: Vec<String> = ctx
+            .working_history
+            .iter()
+            .filter(|message| message.role == uni::MessageRole::Assistant)
+            .map(|message| message.content.as_text().into_owned())
+            .collect();
+        assert!(
+            assistant_texts.iter().all(|text| !text.contains("<tool_call")),
+            "even with the budget exhausted, raw markup must be stripped from the final answer: {assistant_texts:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_mode_pseudo_tool_call_markup_keeps_existing_behavior() {
+        let mut backing = TestTurnProcessingBacking::new(4).await;
+        let mut ctx = backing.turn_processing_context();
+
+        let outcome = ctx
+            .handle_text_response(BROKEN_MARKUP_RESPONSE.to_string(), Vec::new(), None, None, false)
+            .await
+            .expect("text response should be handled");
+
+        assert!(
+            matches!(outcome, TurnHandlerOutcome::Break(_)),
+            "outside planning, text responses still end the turn (no new reprompt path)"
+        );
+    }
+}
