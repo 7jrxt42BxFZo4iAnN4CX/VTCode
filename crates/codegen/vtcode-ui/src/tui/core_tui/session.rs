@@ -18,8 +18,8 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use super::{
     style::{measure_text_width, ratatui_color_from_ansi, ratatui_style_from_inline},
     types::{
-        InlineCommand, InlineEvent, InlineHeaderContext, InlineListSelection, InlineMessageKind, InlineTextStyle,
-        InlineTheme, OverlayRequest,
+        ActivityState, InlineCommand, InlineEvent, InlineHeaderContext, InlineListSelection, InlineMessageKind,
+        InlineTextStyle, InlineTheme, OverlayRequest,
     },
 };
 use crate::tui::config::constants::ui;
@@ -232,6 +232,7 @@ pub struct Session {
     #[expect(dead_code)]
     navigation_state: ListState,
     input_enabled: bool,
+    pub(crate) activity_state: ActivityState,
     image_input_enabled: bool,
     cursor_visible: bool,
     needs_redraw: bool,

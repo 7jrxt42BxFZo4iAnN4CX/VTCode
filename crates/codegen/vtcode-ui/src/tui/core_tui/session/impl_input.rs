@@ -99,6 +99,19 @@ impl Session {
                 }
                 self.needs_redraw = true;
             }
+            InlineCommand::SetActivityState(state) => {
+                self.activity_state = state;
+                if let Some(status) = state.status() {
+                    self.input_status_left = Some(status.to_string());
+                    self.input_enabled = false;
+                    self.cursor_visible = false;
+                } else {
+                    self.input_status_left = None;
+                    self.input_enabled = true;
+                    self.cursor_visible = true;
+                }
+                self.needs_redraw = true;
+            }
             InlineCommand::SetTerminalTitleItems { items } => {
                 self.terminal_title_items = items;
                 self.needs_redraw = true;

@@ -128,11 +128,11 @@ const PLANNING_RECOVERY_SYNTHESIS_FALLBACK: &str = "Planning research completed,
 ///   - `yes`/`implement` → exit plan mode and start implementation
 ///   - `no` → abandon the plan
 ///   - `edit`/`keep planning` → refine the plan (user re-states what to revise)
-const PLANNING_RECOVERY_SYNTHESIS_FALLBACK_NO_INTERVIEW: &str = "Plan draft ready (interactive questions are unavailable in this runtime, so the plan was finalized from the research already gathered). Review the plan above, then choose one of:\n  • type `yes` (or `implement`) to start implementation\n  • type `no` to abandon this plan\n  • type `edit` (or `keep planning`) to refine — describe what to revise";
+const PLANNING_RECOVERY_SYNTHESIS_FALLBACK_NO_INTERVIEW: &str = "Plan draft ready (interactive questions are unavailable in this runtime, so the plan was finalized from the research already gathered). Review the plan below. For long research sessions, choose `Yes, clear context and implement` to preserve the plan while starting execution with a fresh context and tool budget. Choose `Yes, implement this plan` when the recent planning details are still useful. Type `no` to abandon or `edit` to revise.";
 /// User-facing final answer for the budget-exhausted plan-mode dead end. The
 /// the planning session stays alive so `implement` / `keep planning` still
 /// work.
-const PLANNING_BUDGET_EXHAUSTED_USER_NOTICE: &str = "Budget exhausted before the plan synthesis could complete. The research gathered and the current plan draft are preserved in the session plan file (.vtcode/plans/).";
+const PLANNING_BUDGET_EXHAUSTED_USER_NOTICE: &str = "Planning research reached its safe budget before synthesis completed. The evidence and current plan draft are preserved in the session plan file (.vtcode/plans/); retry approval or revision from the preserved plan.";
 /// User-facing final answer for the recovery-exhausted plan-mode dead end.
 /// See [`PLANNING_BUDGET_EXHAUSTED_USER_NOTICE`].
 const PLANNING_RECOVERY_EXHAUSTED_USER_NOTICE: &str = "Plan synthesis failed after repeated recovery attempts (provider errors or saturated context). The research gathered and the current plan draft are preserved in the session plan file (.vtcode/plans/).";
@@ -208,6 +208,7 @@ pub(crate) struct TurnLoopOutcome {
     /// agent fallback from `plan` to `build`; inferring it from the agent name
     /// loses the user's confirmation choice.
     pub pending_plan_auto_accept: bool,
+    pub pending_plan_execution_context: crate::agent::runloop::unified::planning_workflow::PlanExecutionContext,
     /// When true, the plan was approved via the inline confirmation overlay
     /// inside the turn loop and the session loop must push an execution
     /// directive before starting the next turn so the model begins
@@ -476,6 +477,8 @@ pub(crate) async fn run_turn_loop(
     let mut turn_modified_files = BTreeSet::new();
     let mut pending_primary_agent: Option<String> = None;
     let mut pending_plan_auto_accept = false;
+    let mut pending_plan_execution_context =
+        crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Current;
     *ctx.auto_finish_planning_attempted = false;
 
     ctx.set_phase(TurnPhase::Preparing);
@@ -573,6 +576,11 @@ pub(crate) async fn run_turn_loop(
                 vt_cfg: ctx.vt_cfg,
                 skip_confirmations: ctx.skip_confirmations,
                 full_auto: ctx.full_auto,
+                context_usage_percent: ctx.context_manager.context_usage_percent(
+                    ctx.vt_cfg
+                        .map(|cfg| cfg.context.max_context_tokens)
+                        .unwrap_or_else(vtcode_config::context::default_max_context_tokens),
+                ),
                 telemetry: crate::agent::runloop::unified::planning_workflow::PlanApprovalTelemetryContext {
                     emitter: ctx.harness_emitter,
                     thread_id: &ctx.harness_state.run_id.0,
@@ -583,10 +591,11 @@ pub(crate) async fn run_turn_loop(
         .await?;
 
         if transition.should_break() {
-            let (loop_result, agent, auto_accept) = transition.into_result_and_agent();
+            let (loop_result, agent, auto_accept, execution_context) = transition.into_result_and_agent();
             result = loop_result;
             pending_primary_agent = agent;
             pending_plan_auto_accept = auto_accept;
+            pending_plan_execution_context = execution_context;
             break;
         }
 
@@ -1126,14 +1135,20 @@ pub(crate) async fn run_turn_loop(
                 result = TurnLoopResult::Completed { plan_approved_execution_pending: true };
                 break;
             }
-            TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy { agent, skip_confirmations } => {
+            TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy { agent, skip_confirmations, execution_context } => {
                 pending_primary_agent = Some(agent);
                 pending_plan_auto_accept = skip_confirmations;
+                pending_plan_execution_context = execution_context;
                 result = TurnLoopResult::Completed { plan_approved_execution_pending: true };
                 break;
             }
-            TurnHandlerOutcome::BreakWithPolicy { result: outcome_result, skip_confirmations } => {
+            TurnHandlerOutcome::BreakWithPolicy {
+                result: outcome_result,
+                skip_confirmations,
+                execution_context,
+            } => {
                 pending_plan_auto_accept = skip_confirmations;
+                pending_plan_execution_context = execution_context;
                 result = outcome_result;
                 break;
             }
@@ -1212,6 +1227,7 @@ pub(crate) async fn run_turn_loop(
         turn_modified_files,
         pending_primary_agent,
         pending_plan_auto_accept,
+        pending_plan_execution_context,
         plan_approved_execution_pending,
     })
 }

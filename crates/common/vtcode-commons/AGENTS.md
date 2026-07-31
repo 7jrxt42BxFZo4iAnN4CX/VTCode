@@ -7,7 +7,7 @@
 - Traits: `paths/`, `errors/`, `telemetry/`.
 - Display: `ansi/`, `colors/`, `styling/`, `diff_preview/`, `color256_theme/`, `color_policy/`; LLM: `llm/`.
 - Filesystem: `fs/`, `diff/`, `diff_paths/`, `vtcodegitignore/`, `workspace_snapshot/`; text: `tokens/`, `unicode/`, `sanitizer/`, `slug/`, `formatting/`.
-- Async: `async_utils/`, `thread_safety/`; interjection: `interjection/`; other: `editor/`, `http/`, `project/`, `validation/`, `serde_helpers/`, `env_lock/`.
+- Async: `async_utils/`, `thread_safety/`; interjection: `interjection/`; UI protocol: `ui_protocol/` (including global activity state); other: `editor/`, `http/`, `project/`, `validation/`, `serde_helpers/`, `env_lock/`.
 
 ## Rules
 

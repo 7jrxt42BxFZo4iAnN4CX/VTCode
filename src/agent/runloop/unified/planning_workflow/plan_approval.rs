@@ -17,14 +17,17 @@ use vtcode_ui::tui::app::{
 
 use crate::agent::runloop::unified::inline_events::harness::HarnessEventEmitter;
 use crate::agent::runloop::unified::overlay_prompt::{OverlayWaitOutcome, show_overlay_and_wait};
+use crate::agent::runloop::unified::planning_workflow::PlanExecutionContext;
 use crate::agent::runloop::unified::state::CtrlCState;
 
 /// Result of the plan confirmation flow
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PlanConfirmationOutcome {
-    /// User approved execution with manual edit approvals
+    /// User approved execution in the current context.
     Execute,
-    /// User approved with auto-accept enabled for future confirmations
+    /// User approved execution after clearing transient context.
+    FreshContext,
+    /// Legacy selection retained for replay compatibility.
     AutoAccept,
     /// User wants to edit the plan
     EditPlan,
@@ -68,6 +71,13 @@ pub(crate) struct PlanApprovalTelemetryContext<'a> {
     pub(crate) turn_id: &'a str,
 }
 
+pub(crate) struct PlanApprovalRequestContext<'a> {
+    pub(crate) plan_text: &'a str,
+    pub(crate) active_agent_name: &'a str,
+    pub(crate) skip_confirmations: bool,
+    pub(crate) context_usage_percent: u8,
+}
+
 fn line_count(text: &str) -> usize {
     text.lines().count().max(1)
 }
@@ -109,7 +119,7 @@ fn render_confirmation_prompt(handle: &InlineHandle, plan: &PlanContent) {
     append_message(
         handle,
         InlineMessageKind::Info,
-        "Use the confirmation list to choose auto-accept, manual approve, or revise.",
+        "Use the confirmation list to continue here, start a fresh thread, or stay in Plan mode.",
     );
 }
 
@@ -256,7 +266,11 @@ pub(crate) fn render_plan_summary(plan: &PlanContent) -> Vec<String> {
     lines
 }
 
-pub(crate) fn build_plan_confirmation_request(plan: &PlanContent, draft_incomplete: bool) -> TransientRequest {
+pub(crate) fn build_plan_confirmation_request_with_context(
+    plan: &PlanContent,
+    draft_incomplete: bool,
+    context_usage_percent: u8,
+) -> TransientRequest {
     tracing::info!(
         target: "vtcode.planning_workflow",
         draft_incomplete,
@@ -269,55 +283,40 @@ pub(crate) fn build_plan_confirmation_request(plan: &PlanContent, draft_incomple
         .file_path
         .as_ref()
         .map(|path| format!("ctrl-g to edit in VS Code · {path}"));
+    let fresh_recommended = context_usage_percent >= 50;
     let items = vec![
         InlineListItem {
-            title: "Yes, auto-accept edits".to_string(),
-            subtitle: Some("Execute with auto-approval.".to_string()),
-            badge: Some("Recommended".to_string()),
-            indent: 0,
-            selection: Some(InlineListSelection::PlanApprovalAutoAccept),
-            search_value: None,
-        },
-        InlineListItem {
-            title: "Yes, manually approve edits".to_string(),
-            subtitle: Some("Keep context and confirm each edit before applying.".to_string()),
-            badge: None,
+            title: "Yes, implement this plan".to_string(),
+            subtitle: Some("Continue with the current context and confirmation policy.".to_string()),
+            badge: (!fresh_recommended).then(|| "Recommended".to_string()),
             indent: 0,
             selection: Some(InlineListSelection::PlanApprovalExecute),
             search_value: None,
         },
         InlineListItem {
-            title: "Type feedback to revise the plan".to_string(),
-            subtitle: Some("Return to planning workflow and refine the plan.".to_string()),
+            title: "Yes, clear context and implement".to_string(),
+            subtitle: Some(format!("Fresh thread. Context: {context_usage_percent}% used.")),
+            badge: fresh_recommended.then(|| "Recommended".to_string()),
+            indent: 0,
+            selection: Some(InlineListSelection::PlanApprovalFreshContext),
+            search_value: None,
+        },
+        InlineListItem {
+            title: "No, stay in Plan mode".to_string(),
+            subtitle: Some("Return to planning and revise the plan.".to_string()),
             badge: None,
             indent: 0,
             selection: Some(InlineListSelection::PlanApprovalEditPlan),
-            search_value: None,
-        },
-        InlineListItem {
-            title: "Switch to build agent".to_string(),
-            subtitle: Some("Hand off to the build agent to execute the plan with manual edit approvals.".to_string()),
-            badge: None,
-            indent: 0,
-            selection: Some(InlineListSelection::PlanApprovalSwitchBuild),
-            search_value: None,
-        },
-        InlineListItem {
-            title: "Switch to auto agent".to_string(),
-            subtitle: Some(
-                "Hand off to the auto agent to auto-execute the plan (skip per-step confirmations).".to_string(),
-            ),
-            badge: None,
-            indent: 0,
-            selection: Some(InlineListSelection::PlanApprovalSwitchAuto),
             search_value: None,
         },
     ];
 
     let selected = if draft_incomplete {
         InlineListSelection::PlanApprovalEditPlan
+    } else if fresh_recommended {
+        InlineListSelection::PlanApprovalFreshContext
     } else {
-        InlineListSelection::PlanApprovalAutoAccept
+        InlineListSelection::PlanApprovalExecute
     };
 
     TransientRequest::List(ListOverlayRequest {
@@ -347,6 +346,9 @@ pub(crate) fn plan_confirmation_submission_to_outcome(
         TransientSubmission::Selection(InlineListSelection::PlanApprovalExecute) => {
             Some(PlanConfirmationOutcome::Execute)
         }
+        TransientSubmission::Selection(InlineListSelection::PlanApprovalFreshContext) => {
+            Some(PlanConfirmationOutcome::FreshContext)
+        }
         TransientSubmission::Selection(InlineListSelection::PlanApprovalAutoAccept) => {
             Some(PlanConfirmationOutcome::AutoAccept)
         }
@@ -368,11 +370,33 @@ pub(crate) fn plan_confirmation_submission_to_outcome(
 /// Execute the plan confirmation HITL flow.
 ///
 /// The plan is rendered as static transcript markdown plus an inline confirmation list.
+#[cfg(test)]
 pub(crate) async fn execute_plan_confirmation(
     handle: &InlineHandle,
     session: &mut InlineSession,
     plan_content: PlanContent,
     draft_incomplete: bool,
+    ctrl_c_state: &Arc<CtrlCState>,
+    ctrl_c_notify: &Arc<Notify>,
+) -> Result<PlanConfirmationOutcome> {
+    execute_plan_confirmation_with_context(
+        handle,
+        session,
+        plan_content,
+        draft_incomplete,
+        0,
+        ctrl_c_state,
+        ctrl_c_notify,
+    )
+    .await
+}
+
+pub(crate) async fn execute_plan_confirmation_with_context(
+    handle: &InlineHandle,
+    session: &mut InlineSession,
+    plan_content: PlanContent,
+    draft_incomplete: bool,
+    context_usage_percent: u8,
     ctrl_c_state: &Arc<CtrlCState>,
     ctrl_c_notify: &Arc<Notify>,
 ) -> Result<PlanConfirmationOutcome> {
@@ -384,7 +408,7 @@ pub(crate) async fn execute_plan_confirmation(
     let outcome = show_overlay_and_wait(
         handle,
         session,
-        build_plan_confirmation_request(&plan_content, draft_incomplete),
+        build_plan_confirmation_request_with_context(&plan_content, draft_incomplete, context_usage_percent),
         ctrl_c_state,
         ctrl_c_notify,
         |submission| {
@@ -443,8 +467,7 @@ pub(crate) async fn execute_plan_approval(
     session: &mut InlineSession,
     ctrl_c_state: &Arc<CtrlCState>,
     ctrl_c_notify: &Arc<Notify>,
-    plan_text: &str,
-    active_agent_name: &str,
+    request: PlanApprovalRequestContext<'_>,
     telemetry: PlanApprovalTelemetryContext<'_>,
 ) -> Result<TurnHandlerOutcome> {
     tracing::info!(
@@ -457,8 +480,17 @@ pub(crate) async fn execute_plan_approval(
         .get_plan_file()
         .await
         .map(|path| path.to_string_lossy().into_owned());
-    let plan_content = PlanContent::from_markdown("Implementation Plan".to_string(), plan_text, plan_file);
-    let outcome = execute_plan_confirmation(handle, session, plan_content, false, ctrl_c_state, ctrl_c_notify).await;
+    let plan_content = PlanContent::from_markdown("Implementation Plan".to_string(), request.plan_text, plan_file);
+    let outcome = execute_plan_confirmation_with_context(
+        handle,
+        session,
+        plan_content,
+        false,
+        request.context_usage_percent,
+        ctrl_c_state,
+        ctrl_c_notify,
+    )
+    .await;
 
     tracing::info!(
         target: "vtcode.planning_workflow",
@@ -468,6 +500,7 @@ pub(crate) async fn execute_plan_approval(
 
     let (decision, automatic) = match outcome.as_ref() {
         Ok(PlanConfirmationOutcome::Execute) => (PlanApprovalDecision::Execute, false),
+        Ok(PlanConfirmationOutcome::FreshContext) => (PlanApprovalDecision::FreshContext, false),
         Ok(PlanConfirmationOutcome::AutoAccept) => (PlanApprovalDecision::AutoAccept, false),
         Ok(PlanConfirmationOutcome::EditPlan) => (PlanApprovalDecision::Revise, false),
         Ok(PlanConfirmationOutcome::SwitchBuild) => (PlanApprovalDecision::SwitchBuild, false),
@@ -485,9 +518,9 @@ pub(crate) async fn execute_plan_approval(
 
     match outcome {
         Ok(PlanConfirmationOutcome::Execute) => {
-            let execution_agent = plan_session.execution_agent_after_approval(active_agent_name);
+            let execution_agent = plan_session.execution_agent_after_approval(request.active_agent_name);
             finish_planning_workflow(tool_registry, plan_session, handle, false).await;
-            handle.set_skip_confirmations(false);
+            handle.set_skip_confirmations(request.skip_confirmations);
             tracing::info!(
                 target: "vtcode.planning_workflow",
                 "User approved plan via inline overlay (manual edit approvals); enabling mutating tools"
@@ -495,13 +528,39 @@ pub(crate) async fn execute_plan_approval(
             Ok(execution_agent.map_or(
                 TurnHandlerOutcome::BreakWithPolicy {
                     result: TurnLoopResult::Completed { plan_approved_execution_pending: true },
-                    skip_confirmations: false,
+                    skip_confirmations: request.skip_confirmations,
+                    execution_context: PlanExecutionContext::Current,
                 },
-                |agent| TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy { agent, skip_confirmations: false },
+                |agent| TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy {
+                    agent,
+                    skip_confirmations: request.skip_confirmations,
+                    execution_context: PlanExecutionContext::Current,
+                },
+            ))
+        }
+        Ok(PlanConfirmationOutcome::FreshContext) => {
+            let execution_agent = plan_session.execution_agent_after_approval(request.active_agent_name);
+            finish_planning_workflow(tool_registry, plan_session, handle, false).await;
+            handle.set_skip_confirmations(request.skip_confirmations);
+            tracing::info!(
+                target: "vtcode.planning_workflow",
+                "User approved plan via inline overlay and requested a fresh execution context"
+            );
+            Ok(execution_agent.map_or(
+                TurnHandlerOutcome::BreakWithPolicy {
+                    result: TurnLoopResult::Completed { plan_approved_execution_pending: true },
+                    skip_confirmations: request.skip_confirmations,
+                    execution_context: PlanExecutionContext::Fresh,
+                },
+                |agent| TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy {
+                    agent,
+                    skip_confirmations: request.skip_confirmations,
+                    execution_context: PlanExecutionContext::Fresh,
+                },
             ))
         }
         Ok(PlanConfirmationOutcome::AutoAccept) => {
-            let execution_agent = plan_session.execution_agent_after_approval(active_agent_name);
+            let execution_agent = plan_session.execution_agent_after_approval(request.active_agent_name);
             finish_planning_workflow(tool_registry, plan_session, handle, false).await;
             handle.set_skip_confirmations(true);
             tracing::info!(
@@ -512,8 +571,13 @@ pub(crate) async fn execute_plan_approval(
                 TurnHandlerOutcome::BreakWithPolicy {
                     result: TurnLoopResult::Completed { plan_approved_execution_pending: true },
                     skip_confirmations: true,
+                    execution_context: PlanExecutionContext::Current,
                 },
-                |agent| TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy { agent, skip_confirmations: true },
+                |agent| TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy {
+                    agent,
+                    skip_confirmations: true,
+                    execution_context: PlanExecutionContext::Current,
+                },
             ))
         }
         Ok(PlanConfirmationOutcome::SwitchBuild) => {
@@ -526,6 +590,7 @@ pub(crate) async fn execute_plan_approval(
             Ok(TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy {
                 agent: builtin_primary_build_agent().name,
                 skip_confirmations: false,
+                execution_context: PlanExecutionContext::Current,
             })
         }
         Ok(PlanConfirmationOutcome::SwitchAuto) => {
@@ -538,6 +603,7 @@ pub(crate) async fn execute_plan_approval(
             Ok(TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy {
                 agent: builtin_primary_auto_agent().name,
                 skip_confirmations: true,
+                execution_context: PlanExecutionContext::Current,
             })
         }
         Ok(PlanConfirmationOutcome::EditPlan) => {
@@ -564,8 +630,9 @@ mod tests {
     use tokio::sync::{Notify, mpsc};
 
     use super::{
-        PlanApprovalRoute, PlanConfirmationOutcome, build_plan_confirmation_request, execute_plan_confirmation,
-        plan_approval_route, plan_confirmation_submission_to_outcome, render_plan_summary, render_structured_plan,
+        PlanApprovalRoute, PlanConfirmationOutcome, build_plan_confirmation_request_with_context,
+        execute_plan_confirmation, plan_approval_route, plan_confirmation_submission_to_outcome, render_plan_summary,
+        render_structured_plan,
     };
     use crate::agent::runloop::unified::state::CtrlCState;
     use vtcode_ui::tui::app::{
@@ -672,7 +739,7 @@ mod tests {
         assert!(!lines.iter().any(|line| line == "Summary"));
     }
 
-    // --- C: switch outcomes (submission mapping, request items) ------
+    // --- C: approval outcomes (submission mapping, request items) ------
 
     #[test]
     fn plan_confirmation_submission_maps_switch_outcomes() {
@@ -693,6 +760,12 @@ mod tests {
                 InlineListSelection::PlanApprovalExecute
             )),
             Some(PlanConfirmationOutcome::Execute)
+        );
+        assert_eq!(
+            plan_confirmation_submission_to_outcome(&TransientSubmission::Selection(
+                InlineListSelection::PlanApprovalFreshContext
+            )),
+            Some(PlanConfirmationOutcome::FreshContext)
         );
         assert_eq!(
             plan_confirmation_submission_to_outcome(&TransientSubmission::Selection(
@@ -720,24 +793,30 @@ mod tests {
     }
 
     #[test]
-    fn plan_confirmation_request_includes_switch_items() {
-        let req = build_plan_confirmation_request(&sample_plan(), false);
+    fn plan_confirmation_request_has_three_choices_and_dynamic_context() {
+        let req = build_plan_confirmation_request_with_context(&sample_plan(), false, 7);
         let ListOverlayRequest { items, .. } = match req {
             TransientRequest::List(list) => list,
             _ => panic!("expected a list overlay request"),
         };
         let selections: Vec<InlineListSelection> = items.into_iter().filter_map(|item| item.selection).collect();
-        assert!(
-            selections
-                .iter()
-                .any(|s| matches!(s, InlineListSelection::PlanApprovalSwitchBuild))
-        );
-        assert!(
-            selections
-                .iter()
-                .any(|s| matches!(s, InlineListSelection::PlanApprovalSwitchAuto))
-        );
         assert!(selections.iter().any(|s| matches!(s, InlineListSelection::PlanApprovalExecute)));
+        assert!(
+            selections
+                .iter()
+                .any(|s| matches!(s, InlineListSelection::PlanApprovalFreshContext))
+        );
+        assert!(
+            selections
+                .iter()
+                .any(|s| matches!(s, InlineListSelection::PlanApprovalEditPlan))
+        );
+        assert_eq!(selections.len(), 3);
+        let TransientRequest::List(request) = build_plan_confirmation_request_with_context(&sample_plan(), false, 7)
+        else {
+            panic!("expected list request");
+        };
+        assert_eq!(request.items[1].subtitle.as_deref(), Some("Fresh thread. Context: 7% used."));
     }
 
     #[tokio::test]
@@ -751,7 +830,7 @@ mod tests {
 
         event_tx
             .send(InlineEvent::Transient(TransientEvent::Submitted(TransientSubmission::Selection(
-                InlineListSelection::PlanApprovalAutoAccept,
+                InlineListSelection::PlanApprovalFreshContext,
             ))))
             .expect("send confirmation selection");
 
@@ -759,7 +838,7 @@ mod tests {
             execute_plan_confirmation(&handle, &mut session, sample_plan(), false, &ctrl_c_state, &ctrl_c_notify)
                 .await
                 .expect("confirmation overlay result");
-        assert_eq!(outcome, PlanConfirmationOutcome::AutoAccept);
+        assert_eq!(outcome, PlanConfirmationOutcome::FreshContext);
 
         let mut transcript_messages = Vec::new();
         let request = loop {
@@ -782,7 +861,7 @@ mod tests {
                     request
                         .items
                         .iter()
-                        .any(|item| { item.selection == Some(InlineListSelection::PlanApprovalAutoAccept) })
+                        .any(|item| { item.selection == Some(InlineListSelection::PlanApprovalFreshContext) })
                 );
             }
             other => panic!("expected plan confirmation list, got {other:?}"),

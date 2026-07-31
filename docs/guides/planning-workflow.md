@@ -212,23 +212,19 @@ runtime plan events; long previews are elided with an explicit count rather than
 
 Approval options:
 
-- **Approve (Auto-accept edits)** — approve and execute the plan automatically (Recommended).
-- **Approve (Manual review)** — approve and execute the plan with per-step edit approvals.
-- **Edit Plan** — open the plan file (`.vtcode/plans/...`) in your editor to make direct changes (or press `ctrl-g`).
-- **Discuss & Revise** — return to chat to provide feedback, ask clarifying questions, or revise the plan with the agent.
-- **Switch to build agent** — hand off execution to the `build` primary agent (manual per-step edit confirmations).
-- **Switch to auto agent** — hand off execution to the `auto` primary agent (auto-execute).
+- **Yes, implement this plan** — execute in the current context while preserving the session's existing confirmation policy.
+- **Yes, clear context and implement** — preserve the approved plan and task tracker, then rebuild a fresh execution thread. The subtitle reports the pre-reset context usage (for example, `Fresh thread. Context: 7% used.`). This is recommended after long research sessions.
+- **No, stay in Plan mode** — return to planning and revise the plan.
 
-Handoff options perform a true primary-agent switch: the chosen agent becomes active and
-executes the approved plan. The planning workflow is disabled and mutating tools are enabled
-once the user approves the plan.
+The existing manual or auto-accept policy selected by the session remains attached to both
+approval paths. A fresh handoff clears only transient transcript, continuation, cache-lineage,
+recovery, and tool-budget state; the plan file, task tracker, working tree, configuration,
+provider, permissions, and aggregate usage remain intact. The UI shows `Preparing fresh execution
+thread...`, `Restoring approved plan...`, and `Starting build...` while the handoff is active and
+guards input and mode switches until it completes.
 
-The confirmation choice is preserved as explicit handoff state. **Approve (Auto-accept edits)**
-and **Switch to auto agent** bypass subsequent confirmations; **Approve (Manual review)** and
-**Switch to build agent** retain per-action confirmation prompts. This policy remains attached
-when a read-only `plan` agent falls back to `build`, and is not inferred from the destination
-agent's name. Textual approvals use the same rule: only an automatic/full-auto route enables
-the bypass.
+The confirmation policy is explicit handoff state and is not inferred from the destination
+agent's name. Textual approvals use the same policy already selected by the session.
 
 The approved execution turn ends with a concise summary of the outcome, changed
 files, verification performed, and remaining blockers. In interactive sessions
@@ -244,19 +240,20 @@ All clients can reconstruct the approval lifecycle from the authoritative
 `ThreadEvent` stream. A plan turn emits `plan.delta` and the completed plan item,
 then `plan.approval.requested` with the producing turn and plan file. The
 terminal decision is emitted as `plan.approval.resolved` with one of
-`execute`, `auto_accept`, `revise`, `cancel`, `switch_build`, or `switch_auto`,
-plus an `automatic` flag. Interactive and headless clients therefore observe
-the same pending, revision, and implementation handoff states. The Open
-Responses bridge forwards these as `vtcode.plan_approval_requested` and
-`vtcode.plan_approval_resolved` custom events.
+`execute`, `fresh_context`, `revise`, `cancel`, or a legacy handoff decision,
+plus an `automatic` flag. A successful fresh handoff then emits `context.reset`
+with the trigger, plan-preserved status, previous context usage, and tool-budget
+reset status. The Open Responses bridge forwards this as `vtcode.context_reset`.
 
 ## Budget Exhaustion
 
-If the session budget or wall-clock limit is reached while planning, the
-runloop does **not** force another interview or loop (no further LLM calls are
-possible). Instead it preserves the current plan draft, reports the limit, and
-leaves the planning session available for a text approval or revision command
-on the next turn.
+If the configured planning tool-loop limit is reached, the runloop stops
+research and enters the tool-free recovery path. It asks for one compact
+decision-ready plan from the evidence already gathered rather than ending with
+only a loop-limit message. After synthesis, review the plan and choose the
+current-context implementation or the fresh-thread handoff. Session budget and
+wall-clock hard caps remain enforced; when those caps prevent synthesis, the
+draft and research are preserved for a later approval or revision command.
 
 ## Plan File Persistence
 

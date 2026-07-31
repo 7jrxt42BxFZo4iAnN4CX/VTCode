@@ -274,12 +274,12 @@ pub use error::{
     ErrorCategory as VtCodeErrorCategory, ErrorCode as VtCodeErrorCode, Result as VtCodeResult, VtCodeError,
 };
 pub use exec::events::{
-    AgentMessageItem, CommandExecutionItem, CommandExecutionStatus, EVENT_SCHEMA_VERSION, ErrorItem, FileChangeItem,
-    FileUpdateChange, ItemCompletedEvent, ItemStartedEvent, ItemUpdatedEvent, McpToolCallItem, McpToolCallStatus,
-    PatchApplyStatus, PatchChangeKind, PlanApprovalDecision, PlanApprovalRequestedEvent, PlanApprovalResolvedEvent,
-    PlanDeltaEvent, PlanItem, ReasoningItem, ThreadEvent, ThreadItem, ThreadItemDetails, ThreadStartedEvent,
-    ToolCallStatus, ToolInvocationItem, ToolOutputItem, TurnCompletedEvent, TurnFailedEvent, TurnStartedEvent, Usage,
-    VersionedThreadEvent, WebSearchItem,
+    AgentMessageItem, CommandExecutionItem, CommandExecutionStatus, ContextResetEvent, ContextResetTrigger,
+    EVENT_SCHEMA_VERSION, ErrorItem, FileChangeItem, FileUpdateChange, ItemCompletedEvent, ItemStartedEvent,
+    ItemUpdatedEvent, McpToolCallItem, McpToolCallStatus, PatchApplyStatus, PatchChangeKind, PlanApprovalDecision,
+    PlanApprovalRequestedEvent, PlanApprovalResolvedEvent, PlanDeltaEvent, PlanItem, ReasoningItem, ThreadEvent,
+    ThreadItem, ThreadItemDetails, ThreadStartedEvent, ToolCallStatus, ToolInvocationItem, ToolOutputItem,
+    TurnCompletedEvent, TurnFailedEvent, TurnStartedEvent, Usage, VersionedThreadEvent, WebSearchItem,
 };
 pub use exec::{CodeExecutor, ExecutionConfig, ExecutionResult, Language};
 pub use llm::providers::gemini::wire::{Content, FunctionDeclaration, Part};

@@ -12,8 +12,8 @@ pub use overlay::{
     OverlayRequest, OverlaySelectionChange, OverlaySubmission, WizardOverlayRequest,
 };
 pub use protocol::{
-    FocusChangeCallback, InlineCommand, InlineEvent, InlineEventCallback, InlineHandle, InlineMessageKind,
-    InlineSession, PreviewCallback, SubmittedInput,
+    ActivityState, FocusChangeCallback, InlineCommand, InlineEvent, InlineEventCallback, InlineHandle,
+    InlineMessageKind, InlineSession, PreviewCallback, SubmittedInput,
 };
 pub use selection::{
     InlineListItem, InlineListSearchConfig, InlineListSelection, OpenAIServiceTierChoice, RewindAction,

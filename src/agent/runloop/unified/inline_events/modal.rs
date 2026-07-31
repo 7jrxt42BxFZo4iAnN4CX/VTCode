@@ -20,6 +20,7 @@ use crate::agent::runloop::unified::palettes::{
     handle_palette_selection, show_fork_mode_palette, show_lightweight_model_palette, show_model_target_palette,
     show_sessions_palette, show_theme_palette,
 };
+use crate::agent::runloop::unified::planning_workflow::PlanExecutionContext;
 use crate::agent::runloop::unified::settings_interactive::{
     ACTION_CONFIGURE_EDITOR, ACTION_PICK_LIGHTWEIGHT_MODEL, ACTION_PICK_MAIN_MODEL, show_settings_palette,
 };
@@ -103,10 +104,13 @@ impl<'a> InlineModalProcessor<'a> {
         // Handle plan approval selections (Claude Code style HITL)
         match &selection {
             InlineListSelection::PlanApprovalExecute => {
-                return Ok(InlineLoopAction::PlanApproved { auto_accept: false });
+                return Ok(InlineLoopAction::PlanApproved { execution_context: PlanExecutionContext::Current });
+            }
+            InlineListSelection::PlanApprovalFreshContext => {
+                return Ok(InlineLoopAction::PlanApproved { execution_context: PlanExecutionContext::Fresh });
             }
             InlineListSelection::PlanApprovalAutoAccept => {
-                return Ok(InlineLoopAction::PlanApproved { auto_accept: true });
+                return Ok(InlineLoopAction::PlanApproved { execution_context: PlanExecutionContext::Current });
             }
             InlineListSelection::PlanApprovalEditPlan | InlineListSelection::PlanApprovalDiscuss => {
                 return Ok(InlineLoopAction::PlanEditRequested);

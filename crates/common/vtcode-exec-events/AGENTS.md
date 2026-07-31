@@ -8,7 +8,7 @@
 
 ## ThreadEvent Variants
 
-`thread.started` | `thread.completed` | `thread.compact_boundary` | `turn.started` | `turn.completed` | `turn.failed` | `item.started` | `item.updated` | `item.completed` | `plan.delta` | `plan.approval.requested` | `plan.approval.resolved` | `error`
+`thread.started` | `thread.completed` | `thread.compact_boundary` | `context.reset` | `turn.started` | `turn.completed` | `turn.failed` | `item.started` | `item.updated` | `item.completed` | `plan.delta` | `plan.approval.requested` | `plan.approval.resolved` | `error`
 
 ## Rules
 
@@ -26,4 +26,4 @@
   `PlanApprovalResolvedEvent`; keep `PlanApprovalDecision` stable because it is
   consumed by headless clients and Open Responses adapters.
 - `HarnessEventItem` uses `HarnessEventKind` enum — adding variants requires schema version bump.
-- Schema `0.10.0` adds optional segment and prefix/catalog hashes to compact boundaries; keep legacy payloads readable and ATIF output stable.
+- Schema `0.11.0` adds `context.reset` for plan-to-build fresh-thread handoffs; keep legacy payloads readable and ATIF output stable.

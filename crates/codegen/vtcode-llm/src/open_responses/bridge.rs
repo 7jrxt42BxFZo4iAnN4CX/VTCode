@@ -170,6 +170,21 @@ impl ResponseBuilder {
                 );
             }
 
+            ThreadEvent::ContextReset(evt) => {
+                self.emit_custom_event(
+                    emitter,
+                    "vtcode.context_reset",
+                    json!({
+                        "thread_id": evt.thread_id,
+                        "turn_id": evt.turn_id,
+                        "trigger": evt.trigger,
+                        "plan_preserved": evt.plan_preserved,
+                        "previous_context_usage_percent": evt.previous_context_usage_percent,
+                        "tool_budget_reset": evt.tool_budget_reset,
+                    }),
+                );
+            }
+
             ThreadEvent::ItemStarted(evt) => {
                 self.handle_item_started(&evt.item, emitter);
             }

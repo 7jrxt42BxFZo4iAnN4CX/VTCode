@@ -1,3 +1,4 @@
+use crate::agent::runloop::unified::planning_workflow::PlanExecutionContext;
 use vtcode_core::hooks::SessionEndReason;
 use vtcode_ui::tui::app::SubmittedInput;
 
@@ -21,8 +22,7 @@ pub(crate) enum InlineLoopAction {
     },
     /// Plan approved (Claude Code style HITL) - continue with implementation
     PlanApproved {
-        /// If true, auto-accept file edits without prompting
-        auto_accept: bool,
+        execution_context: PlanExecutionContext,
     },
     /// User wants to return to planning workflow to edit the plan
     PlanEditRequested,

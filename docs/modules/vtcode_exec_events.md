@@ -26,9 +26,10 @@ variant captures a specific moment in the lifecycle of an execution thread:
     for audit trails.F:crates/common/vtcode-exec-events/src/lib.rs†L202-L240
 -   **Plan approval lifecycle** – `plan.delta` and the completed plan item carry plan
     content; `plan.approval.requested` marks the pending review gate and
-    `plan.approval.resolved` records the decision (`execute`, `auto_accept`, `revise`,
-    `cancel`, `switch_build`, or `switch_auto`) and whether policy resolved it
-    automatically.
+    `plan.approval.resolved` records the decision (`execute`, `fresh_context`,
+    `auto_accept`, `revise`, `cancel`, `switch_build`, or `switch_auto`) and whether
+    policy resolved it automatically. A `context.reset` event records the successful
+    fresh-thread handoff and its preserved-plan, context-usage, and tool-budget status.
 -   **Errors** – `ThreadErrorEvent` and `ErrorItem` record terminal failures alongside the
     human-readable messages surfaced to operators.F:crates/common/vtcode-exec-events/src/lib.rs†L41-L44F:crates/common/vtcode-exec-events/src/lib.rs†L242-L248
 

@@ -480,6 +480,17 @@ impl SafetyGateway {
         state.calls_per_minute.clear();
     }
 
+    /// Reset all transient tool-budget state for a newly reconstructed
+    /// execution context and restore the limits supplied by the build mode.
+    pub fn reset_for_fresh_execution(&self, max_per_turn: usize, max_per_session: usize) {
+        self.set_limits(max_per_turn, max_per_session);
+        let mut state = self.rate_state.lock();
+        state.current_turn_count = 0;
+        state.session_count = 0;
+        state.calls_per_second.clear();
+        state.calls_per_minute.clear();
+    }
+
     /// Preapprove a tool for this session
     pub fn preapprove(&self, tool_name: &str) {
         let mut preapproved = self.preapproved.lock();

@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent::runloop::unified::planning_workflow::PlanExecutionContext;
 
 /// Result of processing a single turn
 pub(crate) enum TurnProcessingResult {
@@ -31,12 +32,14 @@ pub(crate) enum TurnHandlerOutcome {
     SwitchPrimaryAgentWithPolicy {
         agent: String,
         skip_confirmations: bool,
+        execution_context: PlanExecutionContext,
     },
     /// Finish the turn while preserving the plan approval's confirmation
     /// policy when there is no primary-agent switch to apply.
     BreakWithPolicy {
         result: TurnLoopResult,
         skip_confirmations: bool,
+        execution_context: PlanExecutionContext,
     },
 }
 

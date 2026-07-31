@@ -198,6 +198,22 @@ impl ContextManager {
         self.cached_stats.total_token_usage
     }
 
+    pub(crate) fn context_usage_percent(&self, max_context_tokens: usize) -> u8 {
+        if max_context_tokens == 0 {
+            return 0;
+        }
+        self.current_token_usage()
+            .saturating_mul(100)
+            .checked_div(max_context_tokens)
+            .unwrap_or(0)
+            .min(100) as u8
+    }
+
+    pub(crate) fn reset_for_fresh_execution(&mut self) {
+        self.cached_stats = ContextStats::default();
+        self.incremental_prompt_builder = IncrementalSystemPrompt::new();
+    }
+
     /// Cap prompt-pressure tracking after local history compaction.
     pub(crate) fn cap_token_usage_after_compaction(&mut self, threshold: Option<usize>) {
         self.cached_stats.total_token_usage = match threshold {

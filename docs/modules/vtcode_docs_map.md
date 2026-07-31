@@ -284,7 +284,7 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/guides/agent-loop-contract.md`
   - **Content**: Agent Loop Contract
-  - **Topics**: Message and Event Mapping, Terminal Thread Result, Compaction Boundary, Budget and Limits, Hooks
+  - **Topics**: Message and Event Mapping, Terminal Thread Result, Compaction Boundary, Fresh Plan Execution Context, Budget and Limits
   - **User Questions**: "What can you tell me about Agent Loop Contract?", "How does Message and Event Mapping work?", "How does Terminal Thread Result work?"
 
 - **File**: `docs/guides/cargo-unmaintained.md`

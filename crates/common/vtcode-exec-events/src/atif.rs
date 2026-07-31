@@ -415,6 +415,23 @@ impl AtifTrajectoryBuilder {
                 step.timestamp = Some(ts_str);
                 self.push_step(step);
             }
+            ThreadEvent::ContextReset(e) => {
+                let msg = format!(
+                    "context_reset: {}% context used; plan preserved: {}; tool budget reset: {}",
+                    e.previous_context_usage_percent, e.plan_preserved, e.tool_budget_reset
+                );
+                let mut step = Step::system(self.next_step_id, msg);
+                step.timestamp = Some(ts_str);
+                step.extra = Some(serde_json::json!({
+                    "thread_id": e.thread_id,
+                    "turn_id": e.turn_id,
+                    "trigger": e.trigger,
+                    "plan_preserved": e.plan_preserved,
+                    "previous_context_usage_percent": e.previous_context_usage_percent,
+                    "tool_budget_reset": e.tool_budget_reset,
+                }));
+                self.push_step(step);
+            }
             ThreadEvent::Error(e) => {
                 let mut step = Step::system(self.next_step_id, &e.message);
                 step.timestamp = Some(ts_str);

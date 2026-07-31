@@ -335,9 +335,7 @@ impl<'a> TurnProcessingContext<'a> {
         // cleaned-up prose. When the reprompt budget is exhausted, fall through
         // to normal turn completion — the already-stripped text guarantees raw
         // markup never reaches the user.
-        if pseudo_tool_call_markup_detected
-            && self.plan_session.plan_pseudo_tool_call_reprompt_allowed()
-        {
+        if pseudo_tool_call_markup_detected && self.plan_session.plan_pseudo_tool_call_reprompt_allowed() {
             self.plan_session.mark_plan_pseudo_tool_call_reprompt_used();
             self.push_system_message(PLAN_PSEUDO_TOOL_CALL_REPROMPT_DIRECTIVE);
             tracing::info!(
@@ -418,7 +416,7 @@ impl<'a> TurnProcessingContext<'a> {
             );
             if approval_route == crate::agent::runloop::unified::planning_workflow::PlanApprovalRoute::Inline {
                 use crate::agent::runloop::unified::planning_workflow::{
-                    PlanApprovalTelemetryContext, execute_plan_approval,
+                    PlanApprovalRequestContext, PlanApprovalTelemetryContext, execute_plan_approval,
                 };
                 return execute_plan_approval(
                     self.tool_registry,
@@ -427,8 +425,16 @@ impl<'a> TurnProcessingContext<'a> {
                     self.session,
                     self.ctrl_c_state,
                     self.ctrl_c_notify,
-                    &plan_text,
-                    self.active_primary_agent.active().name(),
+                    PlanApprovalRequestContext {
+                        plan_text: &plan_text,
+                        active_agent_name: self.active_primary_agent.active().name(),
+                        skip_confirmations: self.skip_confirmations,
+                        context_usage_percent: self.context_manager.context_usage_percent(
+                            self.vt_cfg
+                                .map(|cfg| cfg.context.max_context_tokens)
+                                .unwrap_or_else(vtcode_config::context::default_max_context_tokens),
+                        ),
+                    },
                     PlanApprovalTelemetryContext {
                         emitter: self.harness_emitter,
                         thread_id: &self.harness_state.run_id.0,
@@ -473,11 +479,16 @@ impl<'a> TurnProcessingContext<'a> {
             .await;
             self.handle.set_skip_confirmations(true);
             if let Some(agent) = execution_agent {
-                return Ok(TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy { agent, skip_confirmations: true });
+                return Ok(TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy {
+                    agent,
+                    skip_confirmations: self.skip_confirmations,
+                    execution_context: crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Current,
+                });
             }
             return Ok(TurnHandlerOutcome::BreakWithPolicy {
                 result: TurnLoopResult::Completed { plan_approved_execution_pending: true },
-                skip_confirmations: true,
+                skip_confirmations: self.skip_confirmations,
+                execution_context: crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Current,
             });
         }
 
@@ -581,7 +592,9 @@ mod tests {
             .map(|message| message.content.as_text().into_owned())
             .collect();
         assert!(
-            assistant_texts.iter().any(|text| text.contains("I need to inspect the workspace.")),
+            assistant_texts
+                .iter()
+                .any(|text| text.contains("I need to inspect the workspace.")),
             "the prose part of the response should be preserved: {assistant_texts:?}"
         );
         assert!(
@@ -589,10 +602,9 @@ mod tests {
             "raw tool-call markup must never be stored in history: {assistant_texts:?}"
         );
 
-        let directive_present = ctx
-            .working_history
-            .iter()
-            .any(|message| message.role == uni::MessageRole::System && message.content.as_text().contains("not executed"));
+        let directive_present = ctx.working_history.iter().any(|message| {
+            message.role == uni::MessageRole::System && message.content.as_text().contains("not executed")
+        });
         assert!(directive_present, "a re-prompt directive should be pushed into history");
     }
 

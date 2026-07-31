@@ -517,6 +517,11 @@ impl AppSession {
     }
 
     fn sync_transient_focus(&mut self) {
+        if self.core.activity_state.is_busy() {
+            self.core.set_input_enabled(false);
+            self.core.set_cursor_visible(false);
+            return;
+        }
         let Some(surface) = self.visible_transient_surface() else {
             self.core.set_input_enabled(true);
             self.core.set_cursor_visible(true);
@@ -679,6 +684,7 @@ fn to_core_command(command: &InlineCommand) -> Option<crate::tui::core_tui::type
         InlineCommand::SetInputStatus { left, right } => {
             CoreCommand::SetInputStatus { left: left.clone(), right: right.clone() }
         }
+        InlineCommand::SetActivityState(state) => CoreCommand::SetActivityState(*state),
         InlineCommand::SetTerminalTitleItems { items } => CoreCommand::SetTerminalTitleItems { items: items.clone() },
         InlineCommand::SetTerminalTitleThreadLabel { label } => {
             CoreCommand::SetTerminalTitleThreadLabel { label: label.clone() }

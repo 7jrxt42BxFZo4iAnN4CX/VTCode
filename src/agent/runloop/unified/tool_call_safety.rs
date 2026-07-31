@@ -103,6 +103,12 @@ impl ToolCallSafetyValidator {
         self.safety_gateway.start_turn();
     }
 
+    /// Rebuild the shared gateway budget for a fresh approved-plan execution
+    /// context. This clears both per-turn and accumulated session counters.
+    pub(crate) fn reset_for_fresh_execution(&self, max_per_turn: usize, max_per_session: usize) {
+        self.safety_gateway.reset_for_fresh_execution(max_per_turn, max_per_session);
+    }
+
     /// Override per-turn and session limits based on runtime config
     pub(crate) fn set_limits(&self, max_per_turn: usize, max_per_session: usize) {
         self.safety_gateway.set_limits(max_per_turn, max_per_session);
@@ -256,5 +262,18 @@ mod tests {
         validator.start_turn();
         validator.validate_call("read_file", &json!({})).await.unwrap();
         assert!(validator.validate_call("read_file", &json!({})).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn fresh_execution_resets_turn_and_session_budgets() {
+        let validator = ToolCallSafetyValidator::new();
+        validator.set_limits(1, 1);
+        validator.start_turn();
+
+        validator.validate_call("read_file", &json!({})).await.unwrap();
+        assert!(validator.validate_call("read_file", &json!({})).await.is_err());
+
+        validator.reset_for_fresh_execution(1, 1);
+        validator.validate_call("read_file", &json!({})).await.unwrap();
     }
 }

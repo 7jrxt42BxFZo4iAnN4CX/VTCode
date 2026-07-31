@@ -320,7 +320,7 @@ pub(crate) async fn finish_planning_workflow(
 
 #[cfg(test)]
 mod tests {
-    use super::{PlanningWorkflowSessionState, MAX_PLAN_PSEUDO_TOOL_CALL_REPROMPTS};
+    use super::{MAX_PLAN_PSEUDO_TOOL_CALL_REPROMPTS, PlanningWorkflowSessionState};
     use vtcode_core::core::interfaces::session::PlanningEntrySource;
 
     #[test]

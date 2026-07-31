@@ -485,8 +485,18 @@ impl AgentSessionState {
         self.cached_total_tokens = 0;
         self.last_processed_message_idx = 0;
         self.previous_response_chains.clear();
+        self.consecutive_tool_loops = 0;
+        self.tool_loop_limit_hit = false;
+        self.consecutive_escalations = 0;
         self.progress_hashes.clear();
         self.stagnant_turns = 0;
+        self.pending_actions = PendingActions::new(100);
+        self.consecutive_idle_turns = 0;
+        self.max_tool_loop_streak = 0;
+        self.turn_tool_latencies.clear();
+        self.current_stage = None;
+        self.auto_compact_suppressed = crate::compaction::SUPPRESS_NONE;
+        self.error_recovery.lock().reset();
     }
 
     pub fn into_results(

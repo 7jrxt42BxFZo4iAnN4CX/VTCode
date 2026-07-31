@@ -9,6 +9,7 @@ use super::selection::{InlineListItem, InlineListSearchConfig, InlineListSelecti
 use super::style::{InlineHeaderContext, InlineLinkRange, InlineSegment, InlineTextStyle, InlineTheme};
 use crate::tui::core_tui::session::config::AppearanceConfig;
 
+pub use vtcode_commons::ui_protocol::ActivityState;
 pub use vtcode_commons::ui_protocol::InlineMessageKind;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,6 +126,7 @@ pub enum InlineCommand {
         left: Option<String>,
         right: Option<String>,
     },
+    SetActivityState(ActivityState),
     SetTerminalTitleItems {
         items: Option<Vec<String>>,
     },
@@ -309,6 +311,10 @@ impl InlineHandle {
 
     pub fn set_input_status(&self, left: Option<String>, right: Option<String>) {
         self.send_command(InlineCommand::SetInputStatus { left, right });
+    }
+
+    pub fn set_activity_state(&self, state: ActivityState) {
+        self.send_command(InlineCommand::SetActivityState(state));
     }
 
     pub fn set_terminal_title_items(&self, items: Option<Vec<String>>) {

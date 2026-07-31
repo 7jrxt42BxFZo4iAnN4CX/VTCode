@@ -1,7 +1,8 @@
 //! Shared planning approval events for interactive and headless runtimes.
 
 use vtcode_core::exec::events::{
-    PlanApprovalDecision, PlanApprovalRequestedEvent, PlanApprovalResolvedEvent, ThreadEvent,
+    ContextResetEvent, ContextResetTrigger, PlanApprovalDecision, PlanApprovalRequestedEvent,
+    PlanApprovalResolvedEvent, ThreadEvent,
 };
 
 use crate::agent::runloop::unified::inline_events::harness::HarnessEventEmitter;
@@ -22,6 +23,28 @@ pub(crate) fn emit_plan_approval_requested(
         plan_file,
     })) {
         tracing::debug!(error = %err, "failed to emit plan approval request event");
+    }
+}
+
+pub(crate) fn emit_context_reset(
+    emitter: Option<&HarnessEventEmitter>,
+    thread_id: impl Into<String>,
+    turn_id: impl Into<String>,
+    previous_context_usage_percent: u8,
+) {
+    let Some(emitter) = emitter else {
+        return;
+    };
+
+    if let Err(err) = emitter.emit(ThreadEvent::ContextReset(ContextResetEvent {
+        thread_id: thread_id.into(),
+        turn_id: turn_id.into(),
+        trigger: ContextResetTrigger::PlanApproval,
+        plan_preserved: true,
+        previous_context_usage_percent,
+        tool_budget_reset: true,
+    })) {
+        tracing::debug!(error = %err, "failed to emit context reset event");
     }
 }
 

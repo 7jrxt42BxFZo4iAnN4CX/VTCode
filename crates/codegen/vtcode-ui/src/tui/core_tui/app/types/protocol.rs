@@ -10,7 +10,7 @@ use super::overlay::{
 use crate::tui::core_tui::session::config::AppearanceConfig;
 pub use crate::tui::core_tui::types::SubmittedInput;
 use crate::tui::core_tui::types::{
-    InlineHeaderContext, InlineLinkRange, InlineListItem, InlineListSearchConfig, InlineListSelection,
+    ActivityState, InlineHeaderContext, InlineLinkRange, InlineListItem, InlineListSearchConfig, InlineListSelection,
     InlineMessageKind, InlineSegment, InlineTextStyle, InlineTheme, LocalAgentEntry, SecurePromptConfig,
 };
 
@@ -61,6 +61,7 @@ pub enum InlineCommand {
         left: Option<String>,
         right: Option<String>,
     },
+    SetActivityState(ActivityState),
     SetTerminalTitleItems {
         items: Option<Vec<String>>,
     },
@@ -293,6 +294,10 @@ impl InlineHandle {
 
     pub fn set_input_status(&self, left: Option<String>, right: Option<String>) {
         self.send_command(InlineCommand::SetInputStatus { left, right });
+    }
+
+    pub fn set_activity_state(&self, state: ActivityState) {
+        self.send_command(InlineCommand::SetActivityState(state));
     }
 
     pub fn set_terminal_title_items(&self, items: Option<Vec<String>>) {

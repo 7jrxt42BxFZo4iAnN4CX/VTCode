@@ -831,18 +831,24 @@ pub(super) async fn resolve_inline_loop_action(
             InlineLoopActionResolution::ContinueLoop
         }
         InlineLoopAction::Exit(reason) => InlineLoopActionResolution::Outcome(InteractionOutcome::Exit { reason }),
-        InlineLoopAction::PlanApproved { auto_accept } => {
-            let mode = if auto_accept {
-                "auto-accept edits"
-            } else {
-                "manual edit approvals"
+        InlineLoopAction::PlanApproved { execution_context } => {
+            let message = match execution_context {
+                crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Current => {
+                    "Plan approved. Starting execution in the current context."
+                }
+                crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Fresh => {
+                    "Plan approved. Preparing a fresh execution thread."
+                }
             };
-            let message = format!("Plan approved. Starting execution ({mode}).");
-            ctx.renderer.line(MessageStyle::Info, &message)?;
+            ctx.renderer.line(MessageStyle::Info, message)?;
             let execution_agent = ctx
                 .plan_session
                 .execution_agent_after_approval(ctx.active_primary_agent.active().name());
-            InlineLoopActionResolution::Outcome(InteractionOutcome::PlanApproved { auto_accept, execution_agent })
+            InlineLoopActionResolution::Outcome(InteractionOutcome::PlanApproved {
+                execution_context,
+                skip_confirmations: ctx.skip_confirmations,
+                execution_agent,
+            })
         }
         InlineLoopAction::PlanEditRequested => {
             ctx.renderer

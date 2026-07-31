@@ -205,6 +205,7 @@ fn generate_runtime_tool_guidelines_for_profile(
     let has_task_tracker = available_tools.iter().any(|tool| matches!(tool.as_str(), TOOL_TASK_TRACKER));
 
     let mut lines = vec!["- Planning workflow active: stay within the read-safe tool list.".to_string()];
+    lines.push("- Monitor the available planning tool-loop budget; stop research when the plan is specified or the limit is near, then synthesize one compact decision-ready plan from existing evidence.".to_string());
     if let Some(browse_guidance) =
         browse_tool_guidance(has_exec, has_search, has_list_files, has_read_file, shell_profile)
     {

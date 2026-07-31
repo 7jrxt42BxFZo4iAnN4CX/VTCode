@@ -32,7 +32,6 @@ use vtcode_core::utils::session_archive::{SessionMessage, SessionProgressArgs};
 
 use crate::agent::runloop::ResumeSession;
 use crate::agent::runloop::model_picker::ModelPickerState;
-use crate::agent::runloop::unified::planning_workflow_state::transition_to_planning_workflow;
 
 use super::super::context::TurnLoopResult as RunLoopTurnLoopResult;
 use super::super::finalization::finalize_session;

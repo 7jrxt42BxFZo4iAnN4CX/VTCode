@@ -460,6 +460,7 @@ impl ModelPickerState {
                 | InlineListSelection::AskUserChoice { .. }
                 | InlineListSelection::RequestUserInputAnswer { .. }
                 | InlineListSelection::PlanApprovalExecute
+                | InlineListSelection::PlanApprovalFreshContext
                 | InlineListSelection::PlanApprovalEditPlan
                 | InlineListSelection::PlanApprovalDiscuss
                 | InlineListSelection::PlanApprovalAutoAccept
@@ -574,6 +575,7 @@ impl ModelPickerState {
                 | InlineListSelection::AskUserChoice { .. }
                 | InlineListSelection::RequestUserInputAnswer { .. }
                 | InlineListSelection::PlanApprovalExecute
+                | InlineListSelection::PlanApprovalFreshContext
                 | InlineListSelection::PlanApprovalEditPlan
                 | InlineListSelection::PlanApprovalDiscuss
                 | InlineListSelection::PlanApprovalAutoAccept

@@ -317,6 +317,38 @@ impl SessionStats {
         self.clear_previous_response_chain();
     }
 
+    pub(crate) fn reset_for_fresh_execution(&mut self) {
+        // Preserve aggregate usage/cost and the configured cache profile, but
+        // discard every lineage, fingerprint, request-envelope, and response
+        // diagnostic that belongs to the cleared conversational context.
+        self.tools.clear();
+        self.reset_auto_permission_review_state();
+        self.follow_up_prompt_streak = 0;
+        self.suppress_next_follow_up_prompt = false;
+        self.turn_stalled = false;
+        self.turn_stall_reason = None;
+        self.clear_previous_response_chain();
+        self.prompt_cache_lineage_id = None;
+        self.last_prompt_cache_model = None;
+        self.last_stable_prefix_hash = None;
+        self.last_tool_catalog_hash = None;
+        self.last_prompt_cache_change_reason = None;
+        self.prompt_cache_observations = 0;
+        self.prompt_cache_model_changes = 0;
+        self.prompt_cache_unchanged = 0;
+        self.prompt_cache_stable_prefix_changes = 0;
+        self.prompt_cache_tool_catalog_changes = 0;
+        self.prompt_cache_combined_changes = 0;
+        self.request_envelope = None;
+        self.request_envelope_identity = None;
+        self.pending_request_segment_id = None;
+        self.recent_touched_files.clear();
+        self.stop_reason = None;
+        self.request_gap = RequestGapTracker::default();
+        self.prefire = PrefireState::default();
+        self.auto_compact_suppressed = vtcode_core::compaction::SUPPRESS_NONE;
+    }
+
     pub(crate) fn register_follow_up_prompt(&mut self, input: &str) -> FollowUpPromptAction {
         let suppression_active = self.consume_follow_up_prompt_suppression();
         let is_follow_up = is_follow_up_prompt_like(input);
@@ -1015,6 +1047,26 @@ mod tests {
                 last_tool_catalog_hash: Some(66),
             }
         );
+    }
+
+    #[test]
+    fn fresh_execution_reset_clears_context_lineage_and_diagnostics() {
+        let mut stats = SessionStats::default();
+        stats.set_prompt_cache_lineage_id(Some("lineage-1".to_string()));
+        stats.record_prompt_cache_fingerprint("gpt-5", 11, Some(22));
+        stats.request_envelope("model", "provider", "build", "fixed".to_string(), vec![], 7);
+        stats.note_request_sent();
+        stats.set_stop_reason(Some("length".to_string()));
+
+        stats.reset_for_fresh_execution();
+
+        assert_eq!(stats.prompt_cache_lineage_id(), None);
+        assert_eq!(stats.prompt_cache_diagnostics(), PromptCacheDiagnostics::default());
+        assert!(!stats.has_sent_request());
+        assert_eq!(stats.stop_reason(), None);
+        assert!(stats.request_envelope.is_none());
+        assert!(stats.request_envelope_identity.is_none());
+        assert!(stats.pending_request_segment_id.is_none());
     }
 
     #[test]

@@ -68,6 +68,8 @@ pub enum InlineListSelection {
 
     /// Plan confirmation dialog result (human-in-the-loop flow).
     PlanApprovalExecute,
+    /// Execute the approved plan after clearing transient context.
+    PlanApprovalFreshContext,
     /// Return to planning to edit the plan file.
     PlanApprovalEditPlan,
     /// Return to planning to discuss and revise the plan in chat.

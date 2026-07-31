@@ -21,18 +21,26 @@ pub(crate) mod recovery;
 pub(crate) mod start_confirmation;
 pub(crate) mod task_tracker;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum PlanExecutionContext {
+    #[default]
+    Current,
+    Fresh,
+}
+
 // --- Stable interface (the only planning symbols the runloop should name) ---
 
 pub(crate) use super::planning_workflow_state::finish_planning_workflow;
 pub(crate) use confirmation::{StartPlanningDecision, execute_plan_approval, present_start_planning_confirmation};
-pub(crate) use events::{emit_plan_approval_requested, emit_plan_approval_resolved};
+pub(crate) use events::{emit_context_reset, emit_plan_approval_requested, emit_plan_approval_resolved};
 pub(crate) use execution::handle_start_planning;
 pub(crate) use exit_trigger::{PlanningExitContext, maybe_handle_planning_exit_trigger};
 pub(crate) use intent::{
     PlanningIntent, assistant_recently_prompted_implementation, detect_enter_planning_intent, detect_planning_intent,
 };
 pub(crate) use plan_approval::{
-    PlanApprovalRoute, PlanApprovalTelemetryContext, load_plan_text_for_approval, plan_approval_route,
+    PlanApprovalRequestContext, PlanApprovalRoute, PlanApprovalTelemetryContext, load_plan_text_for_approval,
+    plan_approval_route,
 };
 pub(crate) use recovery::maybe_condense_truncated_plan;
 pub(crate) use task_tracker::create_task_tracker_from_active_plan;

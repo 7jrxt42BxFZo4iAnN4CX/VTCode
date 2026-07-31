@@ -187,6 +187,8 @@ mod tests {
             turn_modified_files: BTreeSet::new(),
             pending_primary_agent: None,
             pending_plan_auto_accept: false,
+            pending_plan_execution_context:
+                crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Current,
             plan_approved_execution_pending: false,
         };
         conversation_history.push(uni::Message::assistant("done".to_string()));
@@ -231,6 +233,8 @@ mod tests {
             turn_modified_files: BTreeSet::new(),
             pending_primary_agent: None,
             pending_plan_auto_accept: false,
+            pending_plan_execution_context:
+                crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Current,
             plan_approved_execution_pending: false,
         };
         conversation_history.push(uni::Message::assistant("done".to_string()));
@@ -275,6 +279,8 @@ mod tests {
             turn_modified_files: BTreeSet::new(),
             pending_primary_agent: None,
             pending_plan_auto_accept: false,
+            pending_plan_execution_context:
+                crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Current,
             plan_approved_execution_pending: false,
         };
         conversation_history.push(uni::Message::assistant("done".to_string()));

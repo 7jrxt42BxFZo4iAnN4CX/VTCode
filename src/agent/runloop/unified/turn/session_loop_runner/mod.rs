@@ -6,7 +6,9 @@ mod support;
 use super::*;
 use crate::agent::runloop::git::{compute_session_code_change_delta, normalize_workspace_path};
 use crate::agent::runloop::unified::inline_events::harness::{HARNESS_LOG_MAX_AGE_DAYS, prune_old_harness_logs};
-use crate::agent::runloop::unified::planning_workflow_state::render_planning_workflow_next_step_hint;
+use crate::agent::runloop::unified::planning_workflow_state::{
+    render_planning_workflow_next_step_hint, transition_to_planning_workflow,
+};
 use crate::agent::runloop::unified::postamble::{ExitData, print_exit_summary};
 use crate::agent::runloop::unified::turn::turn_loop::TurnLoopOutcome;
 use crate::updater::{InlineUpdateOutcome, display_update_notice, run_inline_update_prompt};
@@ -80,6 +82,7 @@ use crate::agent::runloop::unified::turn::primary_agent_runtime::{
 };
 use crate::agent::runloop::unified::turn::turn_loop_helpers::{
     effective_max_tool_calls_for_approved_plan_execution, effective_max_tool_calls_for_turn,
+    resolve_safety_tool_call_limits,
 };
 use archive::{create_session_archive, refresh_runtime_debug_context_for_next_session, workspace_archive_label};
 use metrics::{
@@ -92,6 +95,7 @@ use support::{
     prompt_startup_planning_workflow, remove_transient_system_notes, take_pending_resumed_user_prompt,
 };
 use tokio::sync::{Notify, mpsc};
+use vtcode_commons::ui_protocol::ActivityState;
 use vtcode_core::llm::provider::MessageRole;
 use vtcode_core::utils::session_archive;
 use vtcode_ui::tui::app::ArchivedPromptEntry;
@@ -715,14 +719,45 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                         turn_id = next_turn_id;
                         (input, prompt_message_index)
                     }
-                    InteractionOutcome::PlanApproved { auto_accept, execution_agent } => {
+                    InteractionOutcome::PlanApproved {
+                        execution_context,
+                        skip_confirmations,
+                        execution_agent,
+                    } => {
                         // This approval path starts the implementation turn in
                         // the same outer iteration, so mark it before the
                         // HarnessTurnState is constructed below. The queued
                         // approval path sets the equivalent flag on the next
                         // iteration.
                         executing_approved_plan = true;
+                        let fresh_context = matches!(
+                            execution_context,
+                            crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Fresh
+                        );
+                        if fresh_context {
+                            handle.set_activity_state(ActivityState::PreparingFreshExecutionThread);
+                        }
                         let plan_seed = load_active_plan_seed(&tool_registry).await;
+                        if fresh_context && plan_seed.is_none() {
+                            handle.set_activity_state(ActivityState::Idle);
+                            renderer.line(
+                                MessageStyle::Error,
+                                "Fresh execution could not start because the approved plan was not found. The plan was retained; please retry approval.",
+                            )?;
+                            transition_to_planning_workflow(
+                                &tool_registry,
+                                &mut session_stats,
+                                &mut plan_session,
+                                &handle,
+                                vtcode_core::core::interfaces::session::PlanningEntrySource::AgentSelection,
+                                Some(active_primary_agent.active().name().to_string()),
+                                vt_cfg.as_ref().map(|cfg| cfg.default_primary_agent.clone()),
+                                false,
+                                false,
+                            )
+                            .await;
+                            continue;
+                        }
                         // This direct approval route clears the plan file below,
                         // so create the persistent task checklist before the
                         // planning state is torn down.
@@ -736,22 +771,75 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                             &tool_registry,
                             &mut plan_session,
                             &handle,
-                            true,
+                            !fresh_context,
                         )
                         .await;
+                        let plan_seed = if fresh_context {
+                            load_active_plan_seed(&tool_registry).await.or(plan_seed)
+                        } else {
+                            plan_seed
+                        };
+                        let previous_context_usage_percent = context_manager.context_usage_percent(max_context_tokens);
+                        if fresh_context {
+                            handle.set_activity_state(ActivityState::RestoringApprovedPlan);
+                            runtime.clear_pending_follow_up_inputs();
+                            runtime.state.clear_conversation_history();
+                            context_manager.reset_for_fresh_execution();
+                            session_stats.reset_for_fresh_execution();
+                            let build_tool_limit = effective_max_tool_calls_for_approved_plan_execution(
+                                harness_config.max_tool_calls_per_turn,
+                            );
+                            let max_session_turns = vt_cfg
+                                .as_ref()
+                                .map(|cfg| cfg.agent.max_conversation_turns)
+                                .unwrap_or(vtcode_config::constants::defaults::DEFAULT_MAX_CONVERSATION_TURNS);
+                            let (max_per_turn, max_per_session) =
+                                resolve_safety_tool_call_limits(build_tool_limit, max_session_turns, false);
+                            safety_validator.reset_for_fresh_execution(max_per_turn, max_per_session);
+                            crate::agent::runloop::unified::planning_workflow::emit_context_reset(
+                                harness_emitter.as_ref(),
+                                turn_run_id.0.clone(),
+                                turn_id.clone(),
+                                previous_context_usage_percent,
+                            );
+                        }
                         let configured_default = vt_cfg
                             .as_ref()
                             .map(|cfg| cfg.default_primary_agent.as_str())
                             .filter(|name| !name.trim().is_empty());
                         let requested_agent = execution_agent.as_deref();
-                        let resolved_execution_agent = select_approved_plan_execution_agent(
+                        let resolved_execution_agent = match select_approved_plan_execution_agent(
                             &mut active_primary_agent,
                             &tool_registry,
                             &config.workspace,
                             requested_agent,
                             configured_default,
                         )
-                        .await?;
+                        .await
+                        {
+                            Ok(agent) => agent,
+                            Err(err) if fresh_context => {
+                                handle.set_activity_state(ActivityState::Idle);
+                                renderer.line(
+                                    MessageStyle::Error,
+                                    &format!("Fresh execution could not select a build agent: {err}"),
+                                )?;
+                                transition_to_planning_workflow(
+                                    &tool_registry,
+                                    &mut session_stats,
+                                    &mut plan_session,
+                                    &handle,
+                                    PlanningEntrySource::AgentSelection,
+                                    Some(active_primary_agent.active().name().to_string()),
+                                    vt_cfg.as_ref().map(|cfg| cfg.default_primary_agent.clone()),
+                                    false,
+                                    false,
+                                )
+                                .await;
+                                continue;
+                            }
+                            Err(err) => return Err(err),
+                        };
                         if requested_agent != Some(resolved_execution_agent.as_str()) {
                             tracing::warn!(
                                 requested_agent = ?requested_agent,
@@ -795,13 +883,38 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                             pending_mcp_refresh: &mut pending_mcp_refresh,
                             provider_client: &*provider_client,
                         };
-                        sync_primary_agent_runtime(&mut runtime_sync).await?;
+                        if let Err(err) = sync_primary_agent_runtime(&mut runtime_sync).await {
+                            if fresh_context {
+                                handle.set_activity_state(ActivityState::Idle);
+                                renderer.line(
+                                    MessageStyle::Error,
+                                    &format!("Fresh execution could not restore the build runtime: {err}"),
+                                )?;
+                                transition_to_planning_workflow(
+                                    &tool_registry,
+                                    &mut session_stats,
+                                    &mut plan_session,
+                                    &handle,
+                                    PlanningEntrySource::AgentSelection,
+                                    Some(active_primary_agent.active().name().to_string()),
+                                    vt_cfg.as_ref().map(|cfg| cfg.default_primary_agent.clone()),
+                                    false,
+                                    false,
+                                )
+                                .await;
+                                continue;
+                            }
+                            return Err(err);
+                        }
                         let execution_display = active_primary_agent.active().display_name.clone();
                         let execution_color =
                             active_primary_agent.active().color.clone().filter(|c| !c.trim().is_empty());
                         handle.set_primary_agent(Some(execution_display), execution_color);
-                        session_skip_confirmations = auto_accept;
-                        handle.set_skip_confirmations(auto_accept);
+                        session_skip_confirmations = skip_confirmations;
+                        handle.set_skip_confirmations(skip_confirmations);
+                        if fresh_context {
+                            handle.set_activity_state(ActivityState::StartingBuild);
+                        }
                         renderer.line(MessageStyle::Info, "Executing approved plan...")?;
 
                         let mut execution_directive = PLAN_APPROVED_EXECUTION_DIRECTIVE.to_string();
@@ -813,6 +926,9 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                             .state
                             .messages_mut()
                             .push(vtcode_core::llm::provider::Message::system(execution_directive));
+                        if fresh_context {
+                            handle.set_activity_state(ActivityState::Idle);
+                        }
                         (PLAN_APPROVED_EXECUTION_INPUT.to_string(), None)
                     }
                 };
@@ -913,6 +1029,7 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                     Ok(outcome) => outcome,
                     Err(err) => {
                         handle.set_input_status(None, None);
+                        handle.set_activity_state(ActivityState::Idle);
                         let _ = renderer.line_if_not_empty(MessageStyle::Output);
                         tracing::error!("Turn execution error: {}", err);
                         let _ = renderer.line(MessageStyle::Error, &format!("Error: {err}"));
@@ -921,6 +1038,8 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                             turn_modified_files: std::collections::BTreeSet::new(),
                             pending_primary_agent: None,
                             pending_plan_auto_accept: false,
+                            pending_plan_execution_context:
+                                crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Current,
                             plan_approved_execution_pending: false,
                         }
                     }
@@ -951,6 +1070,7 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                 let switch_primary_agent = outcome.pending_primary_agent.clone();
                 let has_primary_agent_switch = switch_primary_agent.is_some();
                 let plan_auto_accept = outcome.pending_plan_auto_accept;
+                let plan_execution_context = outcome.pending_plan_execution_context;
                 let plan_approved_execution_pending = outcome.plan_approved_execution_pending;
                 let turn_elapsed = turn_started_at.elapsed();
                 let show_turn_timer = vt_cfg.as_ref().map(|cfg| cfg.ui.show_turn_timer).unwrap_or(true);
@@ -1051,8 +1171,62 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                     handle.set_skip_confirmations(session_skip_confirmations);
                 }
                 if plan_approved_execution_pending {
+                    let fresh_context = matches!(
+                        plan_execution_context,
+                        crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Fresh
+                    );
+                    if fresh_context {
+                        handle.set_activity_state(ActivityState::PreparingFreshExecutionThread);
+                    }
+                    let mut plan_seed = load_active_plan_seed(&tool_registry).await;
+                    if fresh_context && plan_seed.is_none() {
+                        handle.set_activity_state(ActivityState::Idle);
+                        renderer.line(
+                            MessageStyle::Error,
+                            "Fresh execution could not start because the approved plan was not found. The plan was retained; please retry approval.",
+                        )?;
+                        continue;
+                    }
+                    if fresh_context {
+                        let previous_context_usage_percent = context_manager.context_usage_percent(max_context_tokens);
+                        let _ =
+                            crate::agent::runloop::unified::planning_workflow::create_task_tracker_from_active_plan(
+                                &tool_registry,
+                                &handle,
+                            )
+                            .await;
+                        crate::agent::runloop::unified::planning_workflow::finish_planning_workflow(
+                            &tool_registry,
+                            &mut plan_session,
+                            &handle,
+                            false,
+                        )
+                        .await;
+                        plan_seed = load_active_plan_seed(&tool_registry).await.or(plan_seed.take());
+                        handle.set_activity_state(ActivityState::RestoringApprovedPlan);
+                        runtime.clear_pending_follow_up_inputs();
+                        runtime.state.clear_conversation_history();
+                        context_manager.reset_for_fresh_execution();
+                        session_stats.reset_for_fresh_execution();
+                        let build_tool_limit = effective_max_tool_calls_for_approved_plan_execution(
+                            harness_config.max_tool_calls_per_turn,
+                        );
+                        let max_session_turns = vt_cfg
+                            .as_ref()
+                            .map(|cfg| cfg.agent.max_conversation_turns)
+                            .unwrap_or(vtcode_config::constants::defaults::DEFAULT_MAX_CONVERSATION_TURNS);
+                        let (max_per_turn, max_per_session) =
+                            resolve_safety_tool_call_limits(build_tool_limit, max_session_turns, false);
+                        safety_validator.reset_for_fresh_execution(max_per_turn, max_per_session);
+                        crate::agent::runloop::unified::planning_workflow::emit_context_reset(
+                            harness_emitter.as_ref(),
+                            turn_run_id.0.clone(),
+                            turn_id.clone(),
+                            previous_context_usage_percent,
+                        );
+                        handle.set_activity_state(ActivityState::StartingBuild);
+                    }
                     approved_plan_execution_turn = true;
-                    let plan_seed = load_active_plan_seed(&tool_registry).await;
                     let mut execution_directive = PLAN_APPROVED_EXECUTION_DIRECTIVE.to_string();
                     if let Some(seed) = plan_seed {
                         execution_directive.push_str("\n\nApproved plan context:\n");
@@ -1063,6 +1237,9 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                         .messages_mut()
                         .push(vtcode_core::llm::provider::Message::system(execution_directive));
                     runtime.queue_follow_up_input(PLAN_APPROVED_EXECUTION_INPUT.to_string());
+                    if fresh_context {
+                        handle.set_activity_state(ActivityState::Idle);
+                    }
                 }
                 if executing_approved_plan {
                     let status = match &outcome_result {

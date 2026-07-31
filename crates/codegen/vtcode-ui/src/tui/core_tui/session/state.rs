@@ -330,10 +330,11 @@ impl Session {
     }
 
     pub(crate) fn status_left_text(&self) -> Option<&str> {
-        self.input_status_left
-            .as_deref()
+        self.activity_state
+            .status()
+            .or(self.input_status_left.as_deref())
             .map(str::trim)
-            .filter(|value| !value.is_empty())
+            .filter(|value: &&str| !value.is_empty())
             .or_else(|| self.overlay_attention_status_text())
     }
 
@@ -345,6 +346,9 @@ impl Session {
     }
 
     pub(crate) fn is_running_activity(&self) -> bool {
+        if self.activity_state.is_busy() {
+            return true;
+        }
         let left = self.status_left_text().unwrap_or("");
         let running_status = self.appearance.should_animate_progress_status()
             && (left.contains("Running command:")
@@ -363,6 +367,9 @@ impl Session {
     }
 
     pub(crate) fn has_status_spinner(&self) -> bool {
+        if self.activity_state.is_busy() {
+            return true;
+        }
         if !self.appearance.should_animate_progress_status() {
             return false;
         }

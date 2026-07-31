@@ -19,7 +19,7 @@ pub mod atif;
 pub mod trace;
 
 /// Semantic version of the serialized event schema exported by this crate.
-pub const EVENT_SCHEMA_VERSION: &str = "0.10.0";
+pub const EVENT_SCHEMA_VERSION: &str = "0.11.0";
 
 /// Wraps a [`ThreadEvent`] with schema metadata so downstream consumers can
 /// negotiate compatibility before processing an event stream.
@@ -252,6 +252,7 @@ mod otel_support {
             let span_name = match event {
                 ThreadEvent::ThreadStarted(_) => "thread.started",
                 ThreadEvent::ThreadCompleted(_) => "thread.completed",
+                ThreadEvent::ContextReset(_) => "context.reset",
                 ThreadEvent::TurnStarted(_) => "turn.started",
                 ThreadEvent::TurnCompleted(_) => "turn.completed",
                 ThreadEvent::TurnFailed(_) => "turn.failed",
@@ -275,6 +276,16 @@ mod otel_support {
                     span.set_attribute(KeyValue::new("input_tokens", e.usage.input_tokens as i64));
                     span.set_attribute(KeyValue::new("output_tokens", e.usage.output_tokens as i64));
                     span.set_attribute(KeyValue::new("completion_subtype", e.subtype.as_str().to_string()));
+                }
+                ThreadEvent::ContextReset(e) => {
+                    span.set_attribute(KeyValue::new("thread_id", e.thread_id.clone()));
+                    span.set_attribute(KeyValue::new("turn_id", e.turn_id.clone()));
+                    span.set_attribute(KeyValue::new("plan_preserved", e.plan_preserved));
+                    span.set_attribute(KeyValue::new(
+                        "previous_context_usage_percent",
+                        e.previous_context_usage_percent as i64,
+                    ));
+                    span.set_attribute(KeyValue::new("tool_budget_reset", e.tool_budget_reset));
                 }
                 ThreadEvent::TurnCompleted(e) => {
                     span.set_attribute(KeyValue::new("turn_input_tokens", e.usage.input_tokens as i64));
@@ -347,6 +358,9 @@ pub enum ThreadEvent {
     /// Indicates that conversation compaction replaced older history with a boundary.
     #[serde(rename = "thread.compact_boundary")]
     ThreadCompactBoundary(ThreadCompactBoundaryEvent),
+    /// Indicates that the approved plan handoff rebuilt a fresh execution context.
+    #[serde(rename = "context.reset")]
+    ContextReset(ContextResetEvent),
     /// Marks the beginning of an execution turn.
     #[serde(rename = "turn.started")]
     TurnStarted(TurnStartedEvent),
@@ -540,6 +554,34 @@ pub struct ThreadCompactBoundaryEvent {
     pub new_catalog_hash: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ContextResetTrigger {
+    /// The user selected the fresh-context plan approval path.
+    PlanApproval,
+    /// Catch-all for triggers introduced by newer schema versions.
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+pub struct ContextResetEvent {
+    /// Stable thread identifier for the session.
+    pub thread_id: String,
+    /// Identifier of the turn that approved the plan.
+    pub turn_id: String,
+    /// What initiated the context reset.
+    pub trigger: ContextResetTrigger,
+    /// Whether the approved plan and task tracker survived the reset.
+    pub plan_preserved: bool,
+    /// Context pressure reported before the reset, expressed as a percentage.
+    pub previous_context_usage_percent: u8,
+    /// Whether the per-turn and per-session tool budgets were reset.
+    pub tool_budget_reset: bool,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
 pub struct TurnStartedEvent {
@@ -713,6 +755,8 @@ pub enum PlanApprovalDecision {
     Execute,
     /// Execute with automatic edit approval enabled.
     AutoAccept,
+    /// Execute the plan after rebuilding a fresh context.
+    FreshContext,
     /// Keep planning and revise the proposed plan.
     Revise,
     /// Dismiss the approval request without implementing.
@@ -1286,6 +1330,23 @@ mod tests {
             let restored: ThreadEvent = serde_json::from_str(&serialized).expect("deserialize plan approval event");
             assert_eq!(restored, event);
         }
+    }
+
+    #[test]
+    fn context_reset_event_round_trips_with_handoff_metadata() {
+        let event = ThreadEvent::ContextReset(ContextResetEvent {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-3".to_string(),
+            trigger: ContextResetTrigger::PlanApproval,
+            plan_preserved: true,
+            previous_context_usage_percent: 7,
+            tool_budget_reset: true,
+        });
+
+        let serialized = serde_json::to_string(&event).expect("serialize context reset event");
+        let restored: ThreadEvent = serde_json::from_str(&serialized).expect("deserialize context reset event");
+        assert_eq!(restored, event);
+        assert_eq!(serde_json::to_value(event).expect("wire value")["type"], "context.reset");
     }
 
     #[test]

@@ -177,6 +177,13 @@ fn describe_event(event: &vtcode_core::exec::events::ThreadEvent) -> (&'static s
         vtcode_core::exec::events::ThreadEvent::ThreadCompactBoundary(e) => {
             ("thread.compact_boundary", format!("trigger={:?}", e.trigger))
         }
+        vtcode_core::exec::events::ThreadEvent::ContextReset(e) => (
+            "context.reset",
+            format!(
+                "trigger={:?}, plan_preserved={}, previous_context={}%, tool_budget_reset={}",
+                e.trigger, e.plan_preserved, e.previous_context_usage_percent, e.tool_budget_reset
+            ),
+        ),
         vtcode_core::exec::events::ThreadEvent::TurnStarted(_) => ("turn.started", String::new()),
         vtcode_core::exec::events::ThreadEvent::TurnCompleted(_) => ("turn.completed", String::new()),
         vtcode_core::exec::events::ThreadEvent::TurnFailed(e) => {

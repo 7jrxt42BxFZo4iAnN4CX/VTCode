@@ -21,6 +21,7 @@ The closest concept mapping is:
 | `StreamEvent` | `item.updated` plus Open Responses stream events |
 | `ResultMessage` | `thread.completed` |
 | `compact_boundary` | `thread.compact_boundary` |
+| Fresh plan execution handoff | `context.reset` |
 
 `turn.started`, `turn.completed`, and `turn.failed` remain VT Code turn
 wrappers around the inner item lifecycle.
@@ -72,6 +73,18 @@ This is emitted for manual `/compact` flows, for automatic compaction, and for
 automatic local fallback compaction. When Open Responses is enabled, VT Code
 surfaces these as VT Code custom extension events without changing the core Open
 Responses response model.
+
+## Fresh Plan Execution Context
+
+Selecting “Yes, clear context and implement” is a plan-to-build handoff inside the same user
+session. The runtime preserves the approved plan, task tracker, working tree, configuration,
+permissions, authentication, and aggregate usage. It clears only the live transcript and other
+transient continuation, recovery, cache-lineage, request-segment, and tool-budget state, then
+starts a normal build turn with a compact handoff directive.
+
+The successful handoff emits `context.reset` with `trigger`, `plan_preserved`,
+`previous_context_usage_percent`, and `tool_budget_reset`. The event is also written to the normal
+JSONL/log stream and forwarded by the Open Responses bridge as `vtcode.context_reset`.
 
 ### Unified auto-compaction
 

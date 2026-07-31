@@ -722,10 +722,10 @@ async fn plan_confirmation_events_map_to_expected_actions() {
         )
         .await
         .expect("process execute");
-    let auto = context
+    let fresh = context
         .process_event(
             InlineEvent::Transient(TransientEvent::Submitted(TransientSubmission::Selection(
-                InlineListSelection::PlanApprovalAutoAccept,
+                InlineListSelection::PlanApprovalFreshContext,
             ))),
             &mut queue,
         )
@@ -745,8 +745,18 @@ async fn plan_confirmation_events_map_to_expected_actions() {
         .await
         .expect("process cancel");
 
-    assert!(matches!(execute, InlineLoopAction::PlanApproved { auto_accept: false }));
-    assert!(matches!(auto, InlineLoopAction::PlanApproved { auto_accept: true }));
+    assert!(matches!(
+        execute,
+        InlineLoopAction::PlanApproved {
+            execution_context: crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Current
+        }
+    ));
+    assert!(matches!(
+        fresh,
+        InlineLoopAction::PlanApproved {
+            execution_context: crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Fresh
+        }
+    ));
     assert!(matches!(edit, InlineLoopAction::PlanEditRequested));
     assert!(matches!(cancel, InlineLoopAction::Continue));
 }
@@ -1112,6 +1122,7 @@ fn other_name(command: &InlineCommand) -> &'static str {
         InlineCommand::SetMessageLabels { .. } => "SetMessageLabels",
         InlineCommand::SetHeaderContext { .. } => "SetHeaderContext",
         InlineCommand::SetInputStatus { .. } => "SetInputStatus",
+        InlineCommand::SetActivityState(_) => "SetActivityState",
         InlineCommand::SetTerminalTitleItems { .. } => "SetTerminalTitleItems",
         InlineCommand::SetTerminalTitleThreadLabel { .. } => "SetTerminalTitleThreadLabel",
         InlineCommand::SetTerminalTitleGitBranch { .. } => "SetTerminalTitleGitBranch",

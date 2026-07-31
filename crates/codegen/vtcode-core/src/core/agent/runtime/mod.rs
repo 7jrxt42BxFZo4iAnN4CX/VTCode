@@ -227,6 +227,10 @@ impl RuntimeSteering {
         self.queued_follow_up_inputs.push_back(input);
     }
 
+    pub fn clear_pending_follow_up_inputs(&mut self) {
+        self.queued_follow_up_inputs.clear();
+    }
+
     /// Poll the steering channel for control signals during the current turn.
     pub async fn poll_turn_control(&mut self) -> RuntimeControl {
         self.poll_control().await
@@ -559,6 +563,11 @@ impl AgentRuntime {
     /// without waiting for the user to type anything.
     pub fn queue_follow_up_input(&mut self, input: String) {
         self.steering.queue_follow_up_input(input);
+    }
+
+    /// Drop follow-up inputs belonging to the discarded execution context.
+    pub fn clear_pending_follow_up_inputs(&mut self) {
+        self.steering.clear_pending_follow_up_inputs();
     }
 
     /// Poll the steering channel for control signals during the current turn.

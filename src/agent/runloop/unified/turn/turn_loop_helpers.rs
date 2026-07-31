@@ -450,9 +450,20 @@ pub(super) async fn maybe_handle_tool_loop_limit(
         return Ok(ToolLoopLimitAction::Proceed);
     }
 
+    let planning_active = ctx.is_planning_active();
+    if planning_active {
+        ctx.plan_session.mark_budget_exhausted();
+        ctx.harness_state.switch_to_tool_free_recovery();
+        *current_max_tool_loops = UNLIMITED_TOOL_LOOPS;
+        display_status(
+            ctx.renderer,
+            "Planning research has reached its safe limit. I’m stopping research and synthesizing a plan from the evidence already collected.",
+        )?;
+        return Ok(ToolLoopLimitAction::ContinueLoop);
+    }
+
     display_status(ctx.renderer, &format!("Reached maximum tool loops ({})", *current_max_tool_loops))?;
 
-    let planning_active = ctx.is_planning_active();
     let base_limit = configured_tool_loop_base_limit(ctx);
     let hard_cap = tool_loop_hard_cap(base_limit, planning_active);
     if *current_max_tool_loops >= hard_cap {

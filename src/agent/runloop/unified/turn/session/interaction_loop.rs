@@ -22,6 +22,7 @@ use vtcode_core::hooks::{LifecycleHookEngine, SessionEndReason};
 use crate::agent::runloop::unified::async_mcp_manager::AsyncMcpManager;
 use crate::agent::runloop::unified::inline_events::QueuedInput;
 use crate::agent::runloop::unified::palettes::ActivePalette;
+use crate::agent::runloop::unified::planning_workflow::PlanExecutionContext;
 use crate::agent::runloop::unified::planning_workflow_state::PlanningWorkflowSessionState;
 use crate::agent::runloop::unified::session_setup::IdeContextBridge;
 use crate::agent::runloop::unified::state::{CtrlCState, SessionStats};
@@ -184,8 +185,9 @@ pub(crate) enum InteractionOutcome {
     },
     /// Plan approved by user (Claude Code style HITL) - continue with implementation
     PlanApproved {
-        /// If true, auto-accept file edits without prompting
-        auto_accept: bool,
+        execution_context: PlanExecutionContext,
+        /// Preserve the session's existing confirmation policy.
+        skip_confirmations: bool,
         /// Primary agent selected by the planning state for approved-plan
         /// execution. This already includes prior-agent restoration and the
         /// configured fallback when planning started from the plan agent.
