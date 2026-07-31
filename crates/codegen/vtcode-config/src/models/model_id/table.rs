@@ -303,7 +303,7 @@ model_id_table! {
         id: models::deepseek::DEEPSEEK_V4_FLASH,
         parse: [models::deepseek::DEEPSEEK_V4_FLASH],
         display: "DeepSeek V4 Flash",
-        description: "Fast inference model for cost-effective reasoning",
+        description: "Official release with significantly enhanced agent capabilities for coding and tool use (Terminal Bench 2.1: 82.7, DeepSWE: 54.4)",
     },
     // Mistral models
     MistralLarge3 {

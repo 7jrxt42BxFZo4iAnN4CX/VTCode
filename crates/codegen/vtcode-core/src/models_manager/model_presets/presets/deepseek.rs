@@ -32,7 +32,8 @@ pub(crate) fn deepseek_presets() -> Vec<ModelPreset> {
             id: "deepseek-v4-flash".to_string(),
             model: "deepseek-v4-flash".to_string(),
             display_name: "DeepSeek V4 Flash".to_string(),
-            description: "Fast inference model for cost-effective reasoning tasks".to_string(),
+            description: "Official DeepSeek V4 Flash release with enhanced agent capabilities for coding and tool use"
+                .to_string(),
             provider: Provider::DeepSeek,
             default_reasoning_effort: ReasoningEffortLevel::High,
             supported_reasoning_efforts: vec![

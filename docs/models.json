@@ -1811,7 +1811,7 @@
         },
         "context": 1000000,
         "max_output_tokens": 384000,
-        "description": "Fast inference model for cost-effective reasoning tasks"
+        "description": "Official release with significantly enhanced agent capabilities for coding and tool use"
       },
       "deepseek-v4-pro": {
         "id": "deepseek-v4-pro",
