@@ -2,6 +2,28 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.141.9 - 2026-08-01
+
+### Highlights
+#### Bug Fixes
+
+- Add <tools:call> marker to prevent plan mode text leak (2f3e2152) 
+- Client-local policy exposes small builtin catalogs directly to avoid zero tools on wire (03d4d784) 
+- Clear pending follow-up inputs on context reset (3d2f71ec) 
+- Restrict planning profile to exec, search, and input tools (7b27e1ce) 
+- Deduplicate repeated steps in plan tracker markdown (6d4bb048) 
+#### Features
+
+- Add Ollama Cloud provider and refactor terminal mode restoration (b8888064) 
+- Implement turn-limit recovery for per-turn tool limit (a2fd970f) 
+- Update DeepSeek V4 Flash description with enhanced agent capabilities (53c40963) 
+- Add recovery boundary and sanitize model tool serialization (4932ebcc) 
+- Add show_task_panel config and Alt+G toggle (5e258670) 
+### Other Changes
+#### Other
+
+- Revert "feat(agent): implement turn-limit recovery for per-turn tool limit" (12935f6f) 
+- Update TODO (8e9a24d2) 
 ## 0.141.8 - 2026-07-30
 
 ### Highlights
