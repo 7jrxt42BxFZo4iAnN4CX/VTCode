@@ -621,6 +621,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn preflight_uses_default_output_limit_when_omitted() {
+        let (_temp, registry) = new_test_registry().await;
+        let outcome = preflight_validate_call(&registry, tool_names::CODE_SEARCH, &json!({"query": "ToolRegistry"}))
+            .expect("omitted output limits should remain dispatchable");
+
+        assert_eq!(
+            crate::tools::output_limits::max_output_tokens(&outcome.effective_args)
+                .expect("default output limit should be valid"),
+            vtcode_utility_tool_specs::DEFAULT_MAX_OUTPUT_TOKENS
+        );
+    }
+
+    #[tokio::test]
     async fn preflight_rejects_invalid_output_limits_before_dispatch() {
         let (_temp, registry) = new_test_registry().await;
         let error = preflight_validate_call(

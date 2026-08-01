@@ -129,6 +129,24 @@ pub(super) async fn build_turn_request(
         selected_tools.as_deref().map_or_else(Vec::new, |tools| tools.clone()),
         assembled_prefix_hash,
     );
+    let ordered_wire_tools = request_envelope.ordered_tools();
+    let ordered_wire_tool_names: Vec<String> =
+        ordered_wire_tools.iter().map(|tool| tool.function_name().to_string()).collect();
+    let catalog_tool_count = prompt_output.tool_snapshot.catalog_tools();
+    let wire_tool_count = ordered_wire_tools.len();
+    let deferred_tool_count = prompt_output
+        .tool_snapshot
+        .snapshot
+        .as_deref()
+        .map_or(0, |tools| tools.iter().filter(|tool| tool.defer_loading == Some(true)).count());
+    let active_loaded_skill_names = ctx.context_manager.active_loaded_skill_names().await;
+    let catalog_details_changed = ctx.session_stats.note_tool_catalog_observability_change(
+        &ordered_wire_tool_names,
+        catalog_tool_count,
+        wire_tool_count,
+        deferred_tool_count,
+        &active_loaded_skill_names,
+    );
     let stable_prefix_hash = request_envelope.prefix_hash();
     let tool_catalog_hash = request_envelope.catalog_hash();
     let prefix_change_reason =
@@ -146,6 +164,11 @@ pub(super) async fn build_turn_request(
             stable_prefix_hash,
             tool_catalog_hash,
             prefix_change_reason,
+            ordered_wire_tool_names: catalog_details_changed.then_some(ordered_wire_tool_names.as_slice()),
+            catalog_tool_count: catalog_details_changed.then_some(catalog_tool_count),
+            wire_tool_count: catalog_details_changed.then_some(wire_tool_count),
+            deferred_tool_count: catalog_details_changed.then_some(deferred_tool_count),
+            active_loaded_skill_names: catalog_details_changed.then_some(active_loaded_skill_names.as_slice()),
         },
     );
     let context_management = resolve_context_management(ctx, turn_snapshot, request_model);

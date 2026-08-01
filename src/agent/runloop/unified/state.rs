@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use vtcode_core::compaction::PrefireState;
 use vtcode_core::config::WorkspaceTrustLevel;
-use vtcode_core::core::agent::request_envelope::SessionRequestEnvelope;
+use vtcode_core::core::agent::request_envelope::{SegmentBoundaryReason, SessionRequestEnvelope};
 use vtcode_core::exec::events::Usage as HarnessUsage;
 use vtcode_core::llm::provider::{
     Message, PromptCacheProfile, ResponsesContinuationState, ToolDefinition, responses_continuation_key,
@@ -103,6 +103,7 @@ pub(crate) struct SessionStats {
     request_envelope_identity: Option<RequestEnvelopeIdentity>,
     request_segment_sequence: u64,
     pending_request_segment_id: Option<String>,
+    last_tool_catalog_observability: Option<ToolCatalogObservabilityIdentity>,
     recent_touched_files: VecDeque<String>,
     total_usage: HarnessUsage,
     total_cost_usd: Option<f64>,
@@ -135,7 +136,17 @@ struct RequestEnvelopeIdentity {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct ToolCatalogObservabilityIdentity {
+    ordered_wire_tool_names: Vec<String>,
+    catalog_tool_count: usize,
+    wire_tool_count: usize,
+    deferred_tool_count: usize,
+    active_loaded_skill_names: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RequestSegmentTransition {
+    pub boundary_reason: SegmentBoundaryReason,
     pub previous_segment_id: Option<String>,
     pub new_segment_id: String,
     pub previous_prefix_hash: Option<String>,
@@ -143,7 +154,7 @@ pub(crate) struct RequestSegmentTransition {
 }
 
 impl SessionStats {
-    pub(crate) fn begin_request_segment(&mut self) -> RequestSegmentTransition {
+    pub(crate) fn begin_request_segment(&mut self, boundary_reason: SegmentBoundaryReason) -> RequestSegmentTransition {
         let previous_segment_id = self.request_envelope.as_ref().map(|envelope| envelope.segment_id().to_string());
         let previous_prefix_hash = self
             .request_envelope
@@ -160,6 +171,7 @@ impl SessionStats {
         self.request_envelope = None;
         self.request_envelope_identity = None;
         RequestSegmentTransition {
+            boundary_reason,
             previous_segment_id,
             new_segment_id,
             previous_prefix_hash,
@@ -191,6 +203,11 @@ impl SessionStats {
             return envelope.clone();
         }
 
+        if let Some(previous_identity) = self.request_envelope_identity.as_ref() {
+            let boundary_reason = request_identity_boundary_reason(previous_identity, &identity);
+            self.begin_request_segment(boundary_reason);
+        }
+
         let segment_id = if let Some(pending_segment_id) = self.pending_request_segment_id.take() {
             pending_segment_id
         } else {
@@ -206,6 +223,28 @@ impl SessionStats {
         self.request_envelope_identity = Some(identity);
         self.request_envelope = Some(envelope.clone());
         envelope
+    }
+
+    pub(crate) fn note_tool_catalog_observability_change(
+        &mut self,
+        ordered_wire_tool_names: &[String],
+        catalog_tool_count: usize,
+        wire_tool_count: usize,
+        deferred_tool_count: usize,
+        active_loaded_skill_names: &[String],
+    ) -> bool {
+        let identity = ToolCatalogObservabilityIdentity {
+            ordered_wire_tool_names: ordered_wire_tool_names.to_vec(),
+            catalog_tool_count,
+            wire_tool_count,
+            deferred_tool_count,
+            active_loaded_skill_names: active_loaded_skill_names.to_vec(),
+        };
+        if self.last_tool_catalog_observability.as_ref() == Some(&identity) {
+            return false;
+        }
+        self.last_tool_catalog_observability = Some(identity);
+        true
     }
 
     pub(crate) fn record_tool(&mut self, name: &str) {
@@ -342,6 +381,7 @@ impl SessionStats {
         self.request_envelope = None;
         self.request_envelope_identity = None;
         self.pending_request_segment_id = None;
+        self.last_tool_catalog_observability = None;
         self.recent_touched_files.clear();
         self.stop_reason = None;
         self.request_gap = RequestGapTracker::default();
@@ -580,6 +620,25 @@ impl SessionStats {
             >= max_consecutive_denials.max(1)
             || self.auto_permission_total_denials >= max_total_denials.max(1);
         self.auto_permission_prompt_fallback
+    }
+}
+
+fn request_identity_boundary_reason(
+    previous: &RequestEnvelopeIdentity,
+    current: &RequestEnvelopeIdentity,
+) -> SegmentBoundaryReason {
+    if previous.model != current.model {
+        SegmentBoundaryReason::Model
+    } else if previous.provider != current.provider {
+        SegmentBoundaryReason::Provider
+    } else if previous.mode != current.mode {
+        SegmentBoundaryReason::Mode
+    } else if previous.instruction_digest != current.instruction_digest || previous.prefix_hash != current.prefix_hash {
+        SegmentBoundaryReason::Instructions
+    } else if previous.catalog_hash != current.catalog_hash {
+        SegmentBoundaryReason::ToolCatalogEpoch
+    } else {
+        SegmentBoundaryReason::PrimaryAgent
     }
 }
 
@@ -829,6 +888,7 @@ mod tests {
     };
     use vtcode_core::config::WorkspaceTrustLevel;
     use vtcode_core::config::constants::tools;
+    use vtcode_core::core::agent::request_envelope::SegmentBoundaryReason;
     use vtcode_core::llm::provider::ToolDefinition;
 
     fn function_tool(name: &str) -> ToolDefinition {
@@ -864,12 +924,37 @@ mod tests {
     fn compaction_reserves_exactly_one_new_segment() {
         let mut stats = SessionStats::default();
         let first = stats.request_envelope("model", "provider", "build", "fixed".to_string(), vec![], 7);
-        let transition = stats.begin_request_segment();
+        let before_bytes = serde_json::to_vec(&(
+            first.system_prompt().to_string(),
+            first.ordered_tools().as_ref().clone(),
+            first.instruction_digest(),
+        ))
+        .expect("serialize request envelope");
+        let transition = stats.begin_request_segment(SegmentBoundaryReason::Compaction);
         let second = stats.request_envelope("model", "provider", "build", "fixed".to_string(), vec![], 7);
+        let after_bytes = serde_json::to_vec(&(
+            first.system_prompt().to_string(),
+            first.ordered_tools().as_ref().clone(),
+            first.instruction_digest(),
+        ))
+        .expect("serialize request envelope");
 
+        assert_eq!(transition.boundary_reason, SegmentBoundaryReason::Compaction);
         assert_eq!(transition.previous_segment_id.as_deref(), Some(first.segment_id()));
         assert_eq!(transition.new_segment_id, second.segment_id());
         assert_ne!(first.segment_id(), second.segment_id());
+        assert_eq!(before_bytes, after_bytes);
+    }
+
+    #[test]
+    fn tool_catalog_observability_is_change_only() {
+        let mut stats = SessionStats::default();
+        let tools = vec!["exec_command".to_string(), "search_tools".to_string()];
+        let skills = vec!["rust".to_string()];
+
+        assert!(stats.note_tool_catalog_observability_change(&tools, 5, 2, 3, &skills));
+        assert!(!stats.note_tool_catalog_observability_change(&tools, 5, 2, 3, &skills));
+        assert!(stats.note_tool_catalog_observability_change(&tools, 6, 2, 4, &skills));
     }
 
     #[test]

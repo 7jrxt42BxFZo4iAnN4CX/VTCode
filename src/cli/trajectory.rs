@@ -51,6 +51,16 @@ enum Rec {
         _turn: usize,
         model: String,
         prefix_change_reason: String,
+        #[serde(default)]
+        ordered_wire_tool_names: Option<Vec<String>>,
+        #[serde(default)]
+        catalog_tool_count: Option<usize>,
+        #[serde(default)]
+        wire_tool_count: Option<usize>,
+        #[serde(default)]
+        deferred_tool_count: Option<usize>,
+        #[serde(default)]
+        active_loaded_skill_names: Option<Vec<String>>,
         ts: i64,
     },
 }
@@ -72,6 +82,17 @@ struct PromptCacheChurnStats {
     combined_changes: usize,
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ToolCatalogOrderStats {
+    snapshots: usize,
+    order_changes: usize,
+    last_order: Option<Vec<String>>,
+    last_catalog_tool_count: Option<usize>,
+    last_wire_tool_count: Option<usize>,
+    last_deferred_tool_count: Option<usize>,
+    active_skill_snapshots: usize,
+}
+
 #[derive(Debug, Default)]
 struct TrajectorySummary {
     class_counts: HashMap<String, usize>,
@@ -80,6 +101,7 @@ struct TrajectorySummary {
     tool_err: HashMap<String, usize>,
     prompt_cache: HashMap<String, PromptCacheModelStats>,
     prompt_cache_churn: HashMap<String, PromptCacheChurnStats>,
+    tool_catalog_orders: HashMap<String, ToolCatalogOrderStats>,
     total_routes: usize,
     total_tools: usize,
     total_prompt_cache_records: usize,
@@ -130,8 +152,18 @@ fn summarize_trajectory<R: BufRead>(reader: R) -> Result<TrajectorySummary> {
                     summary.total_prompt_cache_records += 1;
                     summary.recent_timestamps.push(ts);
                 }
-                Rec::ToolCatalogCacheMetrics { model, prefix_change_reason, ts, .. } => {
-                    let stats = summary.prompt_cache_churn.entry(model).or_default();
+                Rec::ToolCatalogCacheMetrics {
+                    model,
+                    prefix_change_reason,
+                    ordered_wire_tool_names,
+                    catalog_tool_count,
+                    wire_tool_count,
+                    deferred_tool_count,
+                    active_loaded_skill_names,
+                    ts,
+                    ..
+                } => {
+                    let stats = summary.prompt_cache_churn.entry(model.clone()).or_default();
                     match prefix_change_reason.as_str() {
                         "model" => stats.model_changes += 1,
                         "unchanged" => stats.unchanged += 1,
@@ -139,6 +171,22 @@ fn summarize_trajectory<R: BufRead>(reader: R) -> Result<TrajectorySummary> {
                         "tool_catalog" => stats.tool_catalog_changes += 1,
                         "stable_prefix+tool_catalog" => stats.combined_changes += 1,
                         _ => {}
+                    }
+                    if let Some(ordered_wire_tool_names) = ordered_wire_tool_names {
+                        let catalog_stats = summary.tool_catalog_orders.entry(model.clone()).or_default();
+                        if catalog_stats.last_order.as_ref() != Some(&ordered_wire_tool_names)
+                            && catalog_stats.last_order.is_some()
+                        {
+                            catalog_stats.order_changes += 1;
+                        }
+                        catalog_stats.last_order = Some(ordered_wire_tool_names);
+                        catalog_stats.snapshots += 1;
+                        catalog_stats.last_catalog_tool_count = catalog_tool_count;
+                        catalog_stats.last_wire_tool_count = wire_tool_count;
+                        catalog_stats.last_deferred_tool_count = deferred_tool_count;
+                        if active_loaded_skill_names.is_some() {
+                            catalog_stats.active_skill_snapshots += 1;
+                        }
                     }
                     summary.total_prompt_cache_churn_records += 1;
                     summary.recent_timestamps.push(ts);
@@ -286,6 +334,24 @@ pub async fn handle_trajectory_command(_cfg: &CoreAgentConfig, file: Option<Path
         }
     }
 
+    if !summary.tool_catalog_orders.is_empty() {
+        println!("\n{}", style("Tool Catalog Order").bold());
+        let mut catalog_models: Vec<_> = summary.tool_catalog_orders.into_iter().collect();
+        catalog_models.sort_by_key(|(_, stats)| Reverse(stats.order_changes));
+        for (i, (model, stats)) in catalog_models.into_iter().take(top).enumerate() {
+            println!(
+                "{:>2}. {:<25} snapshots: {:<4} order_changes: {:<4} catalog: {:<4} wire: {:<4} deferred: {}",
+                i + 1,
+                model,
+                stats.snapshots,
+                stats.order_changes,
+                stats.last_catalog_tool_count.unwrap_or(0),
+                stats.last_wire_tool_count.unwrap_or(0),
+                stats.last_deferred_tool_count.unwrap_or(0),
+            );
+        }
+    }
+
     Ok(())
 }
 
@@ -309,7 +375,7 @@ fn format_token_count(tokens: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{PromptCacheChurnStats, PromptCacheModelStats, summarize_trajectory};
+    use super::{PromptCacheChurnStats, PromptCacheModelStats, ToolCatalogOrderStats, summarize_trajectory};
     use std::io::Cursor;
 
     #[test]
@@ -352,6 +418,29 @@ mod tests {
                 stable_prefix_changes: 1,
                 tool_catalog_changes: 1,
                 combined_changes: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn summarize_trajectory_compares_change_only_catalog_orders() {
+        let input = r#"
+{"kind":"tool_catalog_cache_metrics","turn":1,"model":"gpt-5","prefix_change_reason":"model","ordered_wire_tool_names":["exec_command","search_tools"],"catalog_tool_count":5,"wire_tool_count":2,"deferred_tool_count":3,"active_loaded_skill_names":["rust"],"ts":1}
+{"kind":"tool_catalog_cache_metrics","turn":2,"model":"gpt-5","prefix_change_reason":"unchanged","ts":2}
+{"kind":"tool_catalog_cache_metrics","turn":3,"model":"gpt-5","prefix_change_reason":"tool_catalog","ordered_wire_tool_names":["search_tools","exec_command"],"catalog_tool_count":5,"wire_tool_count":2,"deferred_tool_count":3,"active_loaded_skill_names":["rust"],"ts":3}
+"#;
+
+        let summary = summarize_trajectory(Cursor::new(input)).expect("summary");
+        assert_eq!(
+            summary.tool_catalog_orders.get("gpt-5"),
+            Some(&ToolCatalogOrderStats {
+                snapshots: 2,
+                order_changes: 1,
+                last_order: Some(vec!["search_tools".to_string(), "exec_command".to_string()]),
+                last_catalog_tool_count: Some(5),
+                last_wire_tool_count: Some(2),
+                last_deferred_tool_count: Some(3),
+                active_skill_snapshots: 2,
             })
         );
     }

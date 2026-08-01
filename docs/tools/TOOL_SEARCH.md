@@ -185,6 +185,13 @@ Each turn emits a `token_budget_breakdown` metric to the `vtcode.turn.metrics` t
 
 Cache read/write/miss counts are not duplicated here — they are surfaced via `SessionStats` prompt-cache diagnostics.
 
+The `tool_catalog_cache_metrics` trajectory records additionally expose the
+cache-stable catalog identity when it changes: `ordered_wire_tool_names`,
+`catalog_tool_count`, `wire_tool_count`, `deferred_tool_count`, and
+`active_loaded_skill_names`. These are telemetry-only fields and are omitted
+from unchanged-turn records to keep the log compact; they are not added to any
+model-visible tool schema.
+
 ### Advisory warnings
 
 Four categories of startup-time warnings flag token-overhead misconfiguration before the first request:

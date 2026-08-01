@@ -79,6 +79,22 @@ VT Code surfaces prompt-cache churn using the same terminology in `vtcode trajec
 
 The share-log HTML overview also reports prompt-cache observations, churn breakdown, and the last visible change reason.
 
+### Request segments and telemetry
+
+Each request prefix is frozen in an immutable `SessionRequestEnvelope` for a
+request segment. Compaction starts the next segment before the compacted
+history is installed; the old envelope, compacted-history artifact, and
+`ThreadCompactBoundary` event remain recoverable. Automatic, manual, recovery,
+and model-switch compaction use the same boundary path. A change to the model,
+provider, mode, instruction snapshot, or tool-catalog epoch starts a new
+segment; unchanged turns reuse the existing envelope byte-for-byte.
+
+The `tool_catalog_cache_metrics` trajectory record includes ordered wire tool
+names, catalog/wire/deferred counts, and active loaded-skill names on startup or
+when that catalog identity changes. Unchanged turns omit those repeated lists.
+`vtcode trajectory` compares the ordered snapshots so a catalog reorder across
+starts is visible instead of being hidden by an unchanged tool count.
+
 ### Anthropic (Claude)
 
 ```toml

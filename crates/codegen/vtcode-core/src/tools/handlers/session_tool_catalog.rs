@@ -1376,6 +1376,55 @@ mod tests {
     }
 
     #[test]
+    fn model_tool_serialization_keeps_output_cap_separate_from_approval_policy() {
+        let registration = registration(tools::EXEC_COMMAND)
+            .with_description("Run the policy surface test")
+            .with_parameter_schema(empty_object_schema())
+            .with_permission(ToolPolicy::Allow);
+        let catalog = SessionToolCatalog::rebuild_from_registrations(vec![registration]);
+        let definitions = catalog.model_tools(
+            SessionToolsConfig::full_public(
+                SessionSurface::Interactive,
+                CapabilityLevel::CodeSearch,
+                ToolDocumentationMode::Full,
+                ToolModelCapabilities::default(),
+            )
+            .with_tool_profile(ToolProfile::AdvancedVtCode),
+        );
+        let tool = definitions.first().expect("model tool definition");
+        let serialized = serde_json::to_value(tool).expect("serialize model tool definition");
+
+        assert_eq!(
+            tool.function.as_ref().map(|function| function.description.as_str()),
+            Some("Run the policy surface test")
+        );
+        assert_eq!(
+            tool.function
+                .as_ref()
+                .map(|function| function.parameters["properties"]["max_output_tokens"]["default"].clone()),
+            Some(json!(vtcode_utility_tool_specs::DEFAULT_MAX_OUTPUT_TOKENS))
+        );
+        for key in [
+            "approval_policy",
+            "default_permission",
+            "permission",
+            "tool_policy",
+            "allow_patterns",
+            "deny_patterns",
+        ] {
+            assert!(!contains_json_key(&serialized, key), "approval metadata leaked into model schema: {key}");
+        }
+    }
+
+    fn contains_json_key(value: &Value, key: &str) -> bool {
+        match value {
+            Value::Object(object) => object.iter().any(|(name, value)| name == key || contains_json_key(value, key)),
+            Value::Array(values) => values.iter().any(|value| contains_json_key(value, key)),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => false,
+        }
+    }
+
+    #[test]
     fn configured_spec_preserves_json_schema_field_names() {
         let registration = registration("schema_contract_tool")
             .with_description("schema contract")

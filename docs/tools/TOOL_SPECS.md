@@ -37,6 +37,13 @@ Every function tool accepts `max_output_tokens`. It defaults to 10,000 and must
 be between 1 and 50,000. VT Code spools the complete output and limits only the
 model-visible preview.
 
+The limit is validated during preflight before dispatch. Omit it to use the
+10,000-token default or provide an integer override in that range; strings,
+fractions, zero, and values above 50,000 are rejected. Execution-only approval
+inputs such as `sandbox_permissions` and `justification` remain explicit
+`exec_command` arguments and are not injected into tool descriptions or hidden
+approval metadata.
+
 Unix-like example:
 
 ```json

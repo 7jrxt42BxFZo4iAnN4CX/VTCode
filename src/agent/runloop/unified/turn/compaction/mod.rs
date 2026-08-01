@@ -36,6 +36,7 @@ use vtcode_core::persistent_memory::normalize_whitespace;
 use crate::agent::runloop::unified::context_manager::ContextManager;
 use crate::agent::runloop::unified::inline_events::harness::{HarnessEventEmitter, compact_boundary_event};
 use crate::agent::runloop::unified::state::SessionStats;
+use vtcode_core::core::agent::request_envelope::SegmentBoundaryReason;
 
 const RECOVERY_PREVIEW_MAX_CHARS: usize = 220;
 const RECOVERY_PREVIEW_MAX_TOOL_OUTPUTS: usize = 3;
@@ -116,7 +117,20 @@ impl<'a> CompactionState<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CompactionPlan {
     trigger: vtcode_core::exec::events::CompactionTrigger,
+    boundary_reason: SegmentBoundaryReason,
     envelope_mode: CompactionEnvelopeMode,
+}
+
+fn boundary_reason_for_compaction_trigger(
+    trigger: vtcode_core::exec::events::CompactionTrigger,
+) -> SegmentBoundaryReason {
+    match trigger {
+        vtcode_core::exec::events::CompactionTrigger::Recovery => SegmentBoundaryReason::Recovery,
+        vtcode_core::exec::events::CompactionTrigger::ModelSwitch => SegmentBoundaryReason::Model,
+        vtcode_core::exec::events::CompactionTrigger::Auto
+        | vtcode_core::exec::events::CompactionTrigger::Manual
+        | vtcode_core::exec::events::CompactionTrigger::Unknown => SegmentBoundaryReason::Compaction,
+    }
 }
 
 #[allow(clippy::cast_sign_loss)] // context_size is usize (non-negative), ratio is positive
@@ -214,6 +228,7 @@ pub(crate) async fn compact_history_in_place_with_events(
         state,
         CompactionPlan {
             trigger,
+            boundary_reason: boundary_reason_for_compaction_trigger(trigger),
             envelope_mode: CompactionEnvelopeMode {
                 persistence: MemoryEnvelopePersistence::PersistToDisk,
                 placement: MemoryEnvelopePlacement::Start,
@@ -309,6 +324,7 @@ async fn run_manual_compaction(
         CompactionState::new(history, session_stats, context_manager),
         CompactionPlan {
             trigger,
+            boundary_reason: boundary_reason_for_compaction_trigger(trigger),
             envelope_mode: CompactionEnvelopeMode {
                 persistence: MemoryEnvelopePersistence::PersistToDisk,
                 placement: MemoryEnvelopePlacement::Start,
@@ -318,6 +334,7 @@ async fn run_manual_compaction(
         previous_response_chain_present,
         compacted,
         compaction_mode,
+        true,
     )
     .await
     .map(Some)
@@ -335,6 +352,7 @@ pub(crate) async fn compact_history_for_recovery_in_place(
         preserve_from_index,
         CompactionPlan {
             trigger: vtcode_core::exec::events::CompactionTrigger::Recovery,
+            boundary_reason: SegmentBoundaryReason::Recovery,
             envelope_mode: CompactionEnvelopeMode {
                 persistence: MemoryEnvelopePersistence::PersistToDisk,
                 placement: MemoryEnvelopePlacement::Start,
@@ -348,6 +366,15 @@ async fn compact_history_segment_in_place(
     context: CompactionContext<'_>,
     state: CompactionState<'_>,
     plan: CompactionPlan,
+) -> Result<Option<CompactionOutcome>> {
+    compact_history_segment_in_place_with_boundary(context, state, plan, true).await
+}
+
+async fn compact_history_segment_in_place_with_boundary(
+    context: CompactionContext<'_>,
+    state: CompactionState<'_>,
+    plan: CompactionPlan,
+    begin_segment: bool,
 ) -> Result<Option<CompactionOutcome>> {
     let CompactionContext {
         provider,
@@ -414,6 +441,7 @@ async fn compact_history_segment_in_place(
         previous_response_chain_present,
         compacted,
         compaction_mode,
+        begin_segment,
     )
     .await
     .map(Some)
@@ -427,6 +455,7 @@ async fn apply_compacted_history(
     previous_response_chain_present: bool,
     compacted: Vec<Message>,
     compaction_mode: vtcode_core::exec::events::CompactionMode,
+    begin_segment: bool,
 ) -> Result<CompactionOutcome> {
     let CompactionContext {
         provider,
@@ -465,6 +494,7 @@ async fn apply_compacted_history(
         None,
     )?;
     let history_artifact_path = envelope.as_ref().and_then(|item| item.history_artifact_path.clone());
+    let segment_transition = begin_segment.then(|| session_stats.begin_request_segment(plan.boundary_reason));
     *history = compacted;
     session_stats.clear_previous_response_chain_for(provider.name(), model);
     context_manager.cap_token_usage_after_compaction(effective_compaction_threshold(vt_cfg, provider, model));
@@ -492,8 +522,9 @@ async fn apply_compacted_history(
         previous_response_chain_present,
         "Applied conversation compaction"
     );
-    let segment_transition = session_stats.begin_request_segment();
-    if let Some(harness_emitter) = harness_emitter {
+    if let Some(harness_emitter) = harness_emitter
+        && let Some(segment_transition) = segment_transition.as_ref()
+    {
         let event = compact_boundary_event(
             thread_id.to_string(),
             plan.trigger,
@@ -501,7 +532,7 @@ async fn apply_compacted_history(
             original_len,
             compacted_len,
             history_artifact_path.clone(),
-            Some(&segment_transition),
+            Some(segment_transition),
         );
         if let Err(err) = harness_emitter.emit(event) {
             tracing::debug!(error = %err, "harness compact boundary event emission failed");
@@ -560,7 +591,7 @@ async fn compact_history_before_index_in_place(
     let original_len = history.len();
     let mut prefix = history[..preserve_from_index].to_vec();
     let suffix = history[preserve_from_index..].to_vec();
-    let Some(prefix_outcome) = compact_history_segment_in_place(
+    let Some(prefix_outcome) = compact_history_segment_in_place_with_boundary(
         CompactionContext {
             provider,
             model,
@@ -573,19 +604,20 @@ async fn compact_history_before_index_in_place(
         },
         CompactionState::new(&mut prefix, session_stats, context_manager),
         plan,
+        false,
     )
     .await?
     else {
         return Ok(None);
     };
 
+    let segment_transition = session_stats.begin_request_segment(plan.boundary_reason);
     history.clear();
     history.extend(prefix);
     history.extend(suffix);
 
     let compacted_len = history.len();
     let history_artifact_path = prefix_outcome.history_artifact_path.clone();
-    let segment_transition = session_stats.begin_request_segment();
     if let Some(harness_emitter) = harness_emitter {
         let event = compact_boundary_event(
             thread_id.to_string(),
@@ -632,6 +664,7 @@ pub(crate) async fn compact_history_from_index_in_place(
             CompactionState::new(history, session_stats, context_manager),
             CompactionPlan {
                 trigger: vtcode_core::exec::events::CompactionTrigger::Manual,
+                boundary_reason: SegmentBoundaryReason::Compaction,
                 envelope_mode: CompactionEnvelopeMode {
                     persistence: MemoryEnvelopePersistence::InMemoryOnly,
                     placement: MemoryEnvelopePlacement::Start,
@@ -643,22 +676,25 @@ pub(crate) async fn compact_history_from_index_in_place(
 
     let prefix = history[..start_index].to_vec();
     let mut suffix = history[start_index..].to_vec();
-    let Some(suffix_outcome) = compact_history_segment_in_place(
+    let Some(suffix_outcome) = compact_history_segment_in_place_with_boundary(
         context,
         CompactionState::new(&mut suffix, session_stats, context_manager),
         CompactionPlan {
             trigger: vtcode_core::exec::events::CompactionTrigger::Manual,
+            boundary_reason: SegmentBoundaryReason::Compaction,
             envelope_mode: CompactionEnvelopeMode {
                 persistence: MemoryEnvelopePersistence::InMemoryOnly,
                 placement: MemoryEnvelopePlacement::Start,
             },
         },
+        false,
     )
     .await?
     else {
         return Ok(None);
     };
 
+    let _segment_transition = session_stats.begin_request_segment(SegmentBoundaryReason::Compaction);
     history.clear();
     history.extend(prefix);
     history.extend(suffix);
@@ -750,6 +786,7 @@ pub(crate) async fn maybe_auto_compact_history(
     // Delegate to the shared compaction orchestrator (used by both runloops).
     // It enforces the `auto_compaction_enabled` gate, the token threshold, and
     // the engine + memory-envelope + artifact compression in one place.
+    let mut compacted_history = history.clone();
     let Some(outcome) = auto_compact_messages(
         AutoCompactionInput {
             provider,
@@ -765,7 +802,7 @@ pub(crate) async fn maybe_auto_compact_history(
             prefire: Some(&session_stats.prefire),
             auto_compact_suppressed: &mut session_stats.auto_compact_suppressed,
         },
-        history,
+        &mut compacted_history,
     )
     .await?
     else {
@@ -776,7 +813,8 @@ pub(crate) async fn maybe_auto_compact_history(
     // emit the canonical `thread.compact_boundary` event.
     session_stats.clear_previous_response_chain_for(provider.name(), model);
     context_manager.cap_token_usage_after_compaction(effective_compaction_threshold(vt_cfg, provider, model));
-    let segment_transition = session_stats.begin_request_segment();
+    let segment_transition = session_stats.begin_request_segment(SegmentBoundaryReason::Compaction);
+    *history = compacted_history;
     if let Some(harness_emitter) = harness_emitter {
         let event = compact_boundary_event(
             thread_id.to_string(),

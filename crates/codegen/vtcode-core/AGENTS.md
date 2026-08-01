@@ -22,7 +22,7 @@
 
 - `RetryPolicyCoreExt` must be imported for domain retry methods.
 - Budget decisions belong to `llm/usage_cost.rs` and `BudgetStatus::classify`; do not re-derive them at call sites.
-- Compaction preserves conversation; `context_reset.rs` intentionally discards it.
+- Compaction preserves conversation and starts a new immutable request segment before replacing history; `context_reset.rs` intentionally discards it. Keep boundary reasons on the shared transition path.
 - `AgentSessionState.messages` is `Arc<Vec<Message>>`; use `messages_mut()`/`Arc::make_mut` for mutations so request and continuation histories stay shared without deep copies.
 - Async plugin, skill, file-tool, planning, persistent-memory, and durable-scheduler paths must use Tokio filesystem APIs or `spawn_blocking` for recursive/synchronous scans, record loading, claim files, persistence, or Git work.
 - `TerminalAppLauncher::launch_editor_target_non_waiting` is for existing-file GUI opens; preserve adapter-specific reuse/location flags and keep temporary-file `/edit` flows on the waiting API.

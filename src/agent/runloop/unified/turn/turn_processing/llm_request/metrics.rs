@@ -12,6 +12,11 @@ pub(super) struct ToolCatalogCacheMetrics<'a> {
     pub stable_prefix_hash: u64,
     pub tool_catalog_hash: Option<u64>,
     pub prefix_change_reason: &'a str,
+    pub ordered_wire_tool_names: Option<&'a [String]>,
+    pub catalog_tool_count: Option<usize>,
+    pub wire_tool_count: Option<usize>,
+    pub deferred_tool_count: Option<usize>,
+    pub active_loaded_skill_names: Option<&'a [String]>,
 }
 
 pub(super) fn emit_tool_catalog_cache_metrics(ctx: &TurnProcessingContext<'_>, metrics: ToolCatalogCacheMetrics<'_>) {
@@ -29,6 +34,11 @@ pub(super) fn emit_tool_catalog_cache_metrics(ctx: &TurnProcessingContext<'_>, m
         stable_prefix_hash = metrics.stable_prefix_hash,
         tool_catalog_hash = metrics.tool_catalog_hash,
         prefix_change_reason = metrics.prefix_change_reason,
+        ordered_wire_tool_names = ?metrics.ordered_wire_tool_names,
+        catalog_tool_count = metrics.catalog_tool_count,
+        wire_tool_count = metrics.wire_tool_count,
+        deferred_tool_count = metrics.deferred_tool_count,
+        active_loaded_skill_names = ?metrics.active_loaded_skill_names,
         "turn metric"
     );
 
@@ -44,6 +54,16 @@ pub(super) fn emit_tool_catalog_cache_metrics(ctx: &TurnProcessingContext<'_>, m
         stable_prefix_hash: u64,
         tool_catalog_hash: Option<u64>,
         prefix_change_reason: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ordered_wire_tool_names: Option<&'a [String]>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        catalog_tool_count: Option<usize>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        wire_tool_count: Option<usize>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        deferred_tool_count: Option<usize>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        active_loaded_skill_names: Option<&'a [String]>,
         ts: i64,
     }
 
@@ -58,6 +78,11 @@ pub(super) fn emit_tool_catalog_cache_metrics(ctx: &TurnProcessingContext<'_>, m
         stable_prefix_hash: metrics.stable_prefix_hash,
         tool_catalog_hash: metrics.tool_catalog_hash,
         prefix_change_reason: metrics.prefix_change_reason,
+        ordered_wire_tool_names: metrics.ordered_wire_tool_names,
+        catalog_tool_count: metrics.catalog_tool_count,
+        wire_tool_count: metrics.wire_tool_count,
+        deferred_tool_count: metrics.deferred_tool_count,
+        active_loaded_skill_names: metrics.active_loaded_skill_names,
         ts: chrono::Utc::now().timestamp(),
     });
 }

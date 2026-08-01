@@ -214,6 +214,12 @@ impl ContextManager {
         self.incremental_prompt_builder = IncrementalSystemPrompt::new();
     }
 
+    pub(crate) async fn active_loaded_skill_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.loaded_skills.read().await.keys().cloned().collect();
+        names.sort_unstable();
+        names
+    }
+
     /// Cap prompt-pressure tracking after local history compaction.
     pub(crate) fn cap_token_usage_after_compaction(&mut self, threshold: Option<usize>) {
         self.cached_stats.total_token_usage = match threshold {

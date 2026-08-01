@@ -11,12 +11,29 @@ use super::hash_utils::{hash_tool_definitions, hash_value};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SegmentBoundaryReason {
     Compaction,
+    Recovery,
     ToolCatalogEpoch,
     PrimaryAgent,
     Model,
     Provider,
     Mode,
     Instructions,
+}
+
+impl SegmentBoundaryReason {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Compaction => "compaction",
+            Self::Recovery => "recovery",
+            Self::ToolCatalogEpoch => "tool_catalog_epoch",
+            Self::PrimaryAgent => "primary_agent",
+            Self::Model => "model",
+            Self::Provider => "provider",
+            Self::Mode => "mode",
+            Self::Instructions => "instructions",
+        }
+    }
 }
 
 /// Immutable request prefix shared by every request in a session segment.

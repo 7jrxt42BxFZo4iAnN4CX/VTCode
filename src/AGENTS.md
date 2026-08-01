@@ -21,7 +21,7 @@
 - Interactive `/secret` storage is isolated behind `turn/session/slash_commands/secrets/storage.rs`; keep provider validation and configured storage-mode selection in that boundary.
 - Batched tool metrics must record every executed status, including sequential groups; route new batch paths through the shared execution helper.
 - PTY command headers are initially rendered live and receive their final success/failure/warning bullet color during stream shutdown; keep that status handoff separate from output rendering.
-- `agent/runloop/unified/turn/compaction/` is a **thin delegator** — all compaction logic (auto/manual orchestration, memory envelope, dedup, thresholds) lives in `vtcode-core::compaction`. Do not re-implement compaction here; call the shared orchestrator.
+- `agent/runloop/unified/turn/compaction/` is a **thin delegator** — all compaction logic (auto/manual orchestration, memory envelope, dedup, thresholds) lives in `vtcode-core::compaction`. Do not re-implement compaction here; call the shared orchestrator. Segment boundaries must be reserved before replacing history and must use the shared transition helper.
 
 ## Gotchas
 
