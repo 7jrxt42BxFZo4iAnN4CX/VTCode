@@ -56,6 +56,11 @@ pub struct AppearanceConfig {
     /// Whether to dim completed todo items (- \[x\] and ~~strikethrough~~)
     pub dim_completed_todos: bool,
 
+    /// Automatically show the plan-mode TODO task tracking panel when a plan
+    /// is approved or the task tracker is updated.
+    #[serde(default)]
+    pub show_task_panel: bool,
+
     /// Number of blank lines between message blocks (0-2)
     pub message_block_spacing: u8,
 
@@ -116,6 +121,7 @@ impl Default for AppearanceConfig {
             navigation_width_percent: 25,
             transcript_bottom_padding: 0,
             dim_completed_todos: true,
+            show_task_panel: false,
             message_block_spacing: 0,
             layout_mode: LayoutModeOverride::Auto,
             reasoning_display_mode: ReasoningDisplayMode::Toggle,
@@ -139,6 +145,11 @@ impl AppearanceConfig {
             UiMode::Full => self.show_sidebar,
             UiMode::Minimal | UiMode::Focused => false,
         }
+    }
+
+    /// Whether the plan-mode TODO task tracking panel may auto-show.
+    pub(crate) fn should_show_task_panel(&self) -> bool {
+        self.show_task_panel
     }
 
     fn reasoning_visible(&self) -> bool {
@@ -373,6 +384,16 @@ mod tests {
         assert!(config.appearance.reasoning_visible());
         assert_eq!(config.appearance.thinking_display, ThinkingBlockState::Collapsed);
         assert!(config.appearance.thinking_collapsed_by_default());
+    }
+
+    #[test]
+    fn test_task_panel_default_hidden() {
+        let mut config = SessionConfig::new();
+        assert!(!config.appearance.show_task_panel);
+        assert!(!config.appearance.should_show_task_panel());
+
+        config.appearance.show_task_panel = true;
+        assert!(config.appearance.should_show_task_panel());
     }
 
     #[test]

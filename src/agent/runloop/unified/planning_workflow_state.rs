@@ -1,5 +1,6 @@
 use crate::agent::runloop::unified::state::SessionStats;
 use anyhow::Result;
+use vtcode_commons::ui_protocol::ActivityState;
 use vtcode_config::builtin_primary_build_agent;
 use vtcode_core::core::interfaces::session::PlanningEntrySource;
 use vtcode_core::tools::registry::ToolRegistry;
@@ -290,6 +291,7 @@ pub(crate) async fn transition_to_planning_workflow(
     plan_session.enter(entry_source);
     plan_session.set_previous_primary_agent(previous_primary_agent);
     plan_session.set_fallback_primary_agent(fallback_primary_agent);
+    handle.set_activity_state(ActivityState::Planning);
     handle.force_redraw();
 }
 
@@ -315,6 +317,7 @@ pub(crate) async fn finish_planning_workflow(
     }
 
     plan_session.exit();
+    handle.set_activity_state(ActivityState::Idle);
     handle.force_redraw();
 }
 

@@ -5,7 +5,7 @@ use ratatui::{
 };
 
 use super::{FooterWidget, HeaderWidget, LayoutMode, SidebarWidget, TranscriptWidget, footer_hints, panel::new_panel};
-use crate::tui::ui::tui::session::Session;
+use crate::tui::ui::tui::session::{Session, pulse_spinner_frame_for_phase};
 
 /// Root compositor widget that orchestrates rendering of the entire session UI
 ///
@@ -346,6 +346,8 @@ impl<'a> SessionWidget<'a> {
 
         if self.session.thinking_spinner.is_active {
             footer = footer.spinner(self.session.thinking_spinner.current_frame());
+        } else if self.session.activity_state.is_stage() && self.session.is_shimmer_active() {
+            footer = footer.spinner(pulse_spinner_frame_for_phase(self.session.shimmer_state.phase()));
         }
 
         if let Some(phase) = shimmer_phase {

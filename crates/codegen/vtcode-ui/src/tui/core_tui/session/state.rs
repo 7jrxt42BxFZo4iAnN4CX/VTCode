@@ -345,16 +345,25 @@ impl Session {
             .filter(|value| !value.is_empty())
     }
 
+    /// Status text used to decide whether the footer should animate.
+    ///
+    /// During a stage state (Planning/Building) the displayed text is the stage
+    /// label, so the raw input status (e.g. "Running tool: ...") is inspected
+    /// instead so the spinner keeps animating while tools execute.
+    fn animation_status_text(&self) -> &str {
+        if self.activity_state.is_stage() {
+            self.input_status_left.as_deref().unwrap_or("")
+        } else {
+            self.status_left_text().unwrap_or("")
+        }
+    }
+
     pub(crate) fn is_running_activity(&self) -> bool {
         if self.activity_state.is_busy() {
             return true;
         }
-        let left = self.status_left_text().unwrap_or("");
-        let running_status = self.appearance.should_animate_progress_status()
-            && (left.contains("Running command:")
-                || left.contains("Running tool:")
-                || left.contains("Running:")
-                || status_requires_shimmer(left));
+        let running_status =
+            self.appearance.should_animate_progress_status() && status_requires_shimmer(self.animation_status_text());
         let active_pty = self.active_pty_session_count() > 0;
         running_status || active_pty
     }
@@ -373,10 +382,7 @@ impl Session {
         if !self.appearance.should_animate_progress_status() {
             return false;
         }
-        let Some(left) = self.status_left_text() else {
-            return false;
-        };
-        status_requires_shimmer(left)
+        status_requires_shimmer(self.animation_status_text())
     }
 
     pub(crate) fn is_shimmer_active(&self) -> bool {

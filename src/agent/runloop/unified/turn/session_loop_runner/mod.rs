@@ -931,9 +931,7 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                             .state
                             .messages_mut()
                             .push(vtcode_core::llm::provider::Message::system(execution_directive));
-                        if fresh_context {
-                            handle.set_activity_state(ActivityState::Idle);
-                        }
+                        handle.set_activity_state(ActivityState::Building);
                         (PLAN_APPROVED_EXECUTION_INPUT.to_string(), None)
                     }
                 };
@@ -1111,6 +1109,9 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                         .line(MessageStyle::Error, &format!("Failed to finalize turn: {err}"))
                         .ok();
                 }
+                if executing_approved_plan {
+                    handle.set_activity_state(ActivityState::Idle);
+                }
                 // Plan-mode "switch to build/auto agent" handoff: perform the
                 // primary-agent switch now so the chosen agent executes the plan.
                 // This mirrors the `PlanApproved` handoff in the interaction loop
@@ -1246,9 +1247,7 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                         .messages_mut()
                         .push(vtcode_core::llm::provider::Message::system(execution_directive));
                     runtime.queue_follow_up_input(PLAN_APPROVED_EXECUTION_INPUT.to_string());
-                    if fresh_context {
-                        handle.set_activity_state(ActivityState::Idle);
-                    }
+                    handle.set_activity_state(ActivityState::Building);
                 }
                 if executing_approved_plan {
                     let summary = approved_plan_execution_summary(

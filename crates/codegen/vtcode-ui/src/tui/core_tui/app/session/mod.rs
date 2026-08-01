@@ -224,6 +224,11 @@ impl AppSession {
         }
     }
 
+    pub(crate) fn toggle_task_panel(&mut self) {
+        let target = !self.show_task_panel;
+        self.set_task_panel_visible(target);
+    }
+
     fn visible_transient_surface(&self) -> Option<TransientSurface> {
         self.transient_host.top()
     }
@@ -443,7 +448,12 @@ impl AppSession {
                 self.core.set_task_panel_lines(lines.clone());
                 self.task_panel_lines = lines;
                 if let Some(visible) = visible {
-                    self.set_task_panel_visible(visible);
+                    let suppressed = visible && !self.core.appearance.should_show_task_panel();
+                    if !suppressed {
+                        self.set_task_panel_visible(visible);
+                    }
+                    // When suppressed, the lines are retained so the manual
+                    // `toggle_task_panel` keybinding can reveal them later.
                 } else {
                     self.core.mark_dirty();
                 }

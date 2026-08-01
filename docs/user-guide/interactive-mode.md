@@ -14,6 +14,7 @@ The VT Code terminal UI includes an interactive mode that combines keyboard-firs
 | `Ctrl+D`                                    | Exit VT Code interactive mode.                                                  | Sends EOF to the shell integration.                                                                                                       |
 | `Ctrl+L`                                    | Clear the terminal screen while keeping the conversation history.               | Useful for refreshing when output is cluttered.                                                                                           |
 | `Ctrl+T`                                    | Toggle verbose tool output and diagnostics.                                     | Reveals detailed tool invocation logs without affecting the TODO panel.                                                                   |
+| `Alt+G`                                     | Toggle the TODO task panel.                                                     | Rebindable via `toggle_task_panel`; works even when `ui.show_task_panel` is off.                                                          |
 | `Ctrl+O`                                    | Copy last agent response as markdown to clipboard.                              | Available after the agent has produced at least one response.                                                                             |
 | `Alt+O`                                     | Open or close fullscreen transcript review.                                     | Available when VT Code is using alternate-screen rendering.                                                                               |
 | `Ctrl+A`                                    | Move cursor to start of input line.                                             | UNIX/readline-style editing.                                                                                                              |
@@ -149,7 +150,7 @@ VT Code supports an optional Vim-style prompt editor.
 - VT Code routes prompt suggestion generation through `agent.prompt_suggestions` and falls back to deterministic local suggestions when the provider, model, or endpoint cannot service the request.
 - LLM-backed prompt suggestions can consume tokens. When `agent.prompt_suggestions.show_cost_notice = true`, VT Code shows a one-time reminder in the session before the first LLM-backed inline suggestion.
 - Picking a suggestion inserts it into the composer. Empty drafts are replaced; non-empty drafts keep their content and append the suggestion after a blank line.
-- `/tasks` toggles the dedicated TODO panel. It is fed directly from `task_tracker` output and remains independent from the `Ctrl+T` log toggle.
+- `/tasks` toggles the dedicated TODO panel. It is fed directly from `task_tracker` output and remains independent from the `Ctrl+T` log toggle. `Alt+G` toggles the panel from anywhere, and `ui.show_task_panel` controls whether it auto-shows when a plan is approved.
 - `/jobs` opens the active/background jobs picker for PTY-backed command sessions.
 - In `/jobs`, `Enter` or `Ctrl+R` focuses the selected job output, `Ctrl+P` previews a snapshot modal, and `Ctrl+X` sends an interrupt to the selected job.
 - Pressing `Enter` on an empty draft opens `/jobs` when active jobs exist; otherwise VT Code keeps the normal empty-enter behavior.
@@ -184,6 +185,7 @@ When a task is already running, VT Code keeps the active turn alive and lets you
 - The agent emits planning output in `<proposed_plan>...</proposed_plan>` blocks.
 - `task_tracker` mirrors checklist state with plan sidecars where planning artefacts are enabled.
 - When you are ready to implement, switch to a build-oriented primary agent such as `build` or `auto`.
+- During the planning workflow the footer shows a `Planning...` stage status, and while an approved plan executes it shows `Building...`. These stage states keep the composer usable so you can queue or steer input between turns; the animated spinner continues while tools execute underneath.
 - Plan approval offers three choices: implement in the current context, clear transient context
   and implement with a fresh thread, or stay in Plan mode. Both implementation choices preserve
   the session's existing confirmation policy. The fresh path preserves the plan and task tracker

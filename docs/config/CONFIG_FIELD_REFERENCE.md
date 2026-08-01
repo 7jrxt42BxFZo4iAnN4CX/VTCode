@@ -779,6 +779,7 @@ python3 scripts/generate_config_field_reference.py
 | `ui.screen_reader_mode` | `boolean` | no | `false` | Screen reader mode: disables animations, uses plain text indicators, and optimizes output for assistive technology compatibility. Can also be enabled via VTCODE_SCREEN_READER=1 environment variable. |
 | `ui.show_diagnostics_in_transcript` | `boolean` | no | `false` | Show warning/error/fatal diagnostic lines in the TUI transcript and log panel. Also controls whether ERROR-level tracing logs appear in the TUI session log. Errors are always captured in the session archive JSON regardless of this setting. |
 | `ui.show_sidebar` | `boolean` | no | `true` | Show the right sidebar (queue, context, tools) |
+| `ui.show_task_panel` | `boolean` | no | `false` | Automatically show the plan-mode TODO task tracking panel when a plan is approved or the task tracker is updated. When disabled, the panel can still be toggled with the `toggle_task_panel` keybinding. |
 | `ui.show_turn_timer` | `boolean` | no | `false` | Show per-turn elapsed timer line after completed turns |
 | `ui.status_line.command` | `null \| string` | no | `null` | - |
 | `ui.status_line.command_timeout_ms` | `integer` | no | `200` | - |

@@ -33,6 +33,8 @@ pub enum Action {
     ToggleLogs,
     /// Toggle compact grouping for tool transition summaries.
     ToggleToolDisplayMode,
+    /// Toggle the task panel visibility.
+    ToggleTaskPanel,
     /// Generate an inline prompt suggestion via the LLM.
     GeneratePromptSuggestion,
 }
@@ -53,6 +55,7 @@ impl Action {
             Action::HistoryNext => "history_next",
             Action::ToggleLogs => "toggle_logs",
             Action::ToggleToolDisplayMode => "toggle_tool_display_mode",
+            Action::ToggleTaskPanel => "toggle_task_panel",
             Action::GeneratePromptSuggestion => "generate_prompt_suggestion",
         }
     }
@@ -72,6 +75,7 @@ impl Action {
             Action::HistoryNext,
             Action::ToggleLogs,
             Action::ToggleToolDisplayMode,
+            Action::ToggleTaskPanel,
             Action::GeneratePromptSuggestion,
         ]
     }
@@ -230,6 +234,13 @@ fn default_bindings() -> HashMap<Action, Vec<(KeyCode, KeyModifiers)>> {
         vec![
             (KeyCode::Char('t'), KeyModifiers::ALT),
             (KeyCode::Char('T'), KeyModifiers::ALT),
+        ],
+    );
+    m.insert(
+        ToggleTaskPanel,
+        vec![
+            (KeyCode::Char('g'), KeyModifiers::ALT),
+            (KeyCode::Char('G'), KeyModifiers::ALT),
         ],
     );
     m.insert(
@@ -424,6 +435,26 @@ mod tests {
         let store = BindingStore::defaults();
         let key = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::ALT);
         assert_eq!(store.resolve(&key), Some(Action::ToggleToolDisplayMode));
+    }
+
+    #[test]
+    fn test_default_task_panel_binding_is_alt_g() {
+        let store = BindingStore::defaults();
+        let key = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::ALT);
+        assert_eq!(store.resolve(&key), Some(Action::ToggleTaskPanel));
+    }
+
+    #[test]
+    fn test_task_panel_binding_can_be_rebound() {
+        let mut overlay = HashMap::new();
+        overlay.insert("toggle_task_panel".to_string(), vec!["ctrl+x".to_string()]);
+        let store = BindingStore::new(overlay);
+
+        assert_eq!(
+            store.resolve(&KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL)),
+            Some(Action::ToggleTaskPanel)
+        );
+        assert_eq!(store.resolve(&KeyEvent::new(KeyCode::Char('g'), KeyModifiers::ALT)), None);
     }
 
     #[test]

@@ -250,6 +250,43 @@ fn task_panel_visibility_is_independent_from_logs() {
 }
 
 #[test]
+fn stage_states_keep_input_enabled() {
+    for state in [ActivityState::Planning, ActivityState::Building] {
+        let mut session = Session::new(InlineTheme::default(), None, VIEW_ROWS);
+        session.handle_command(InlineCommand::SetActivityState(state));
+
+        assert!(session.input_enabled(), "{state:?} should keep input enabled");
+        assert_eq!(session.status_left_text(), state.status());
+        assert!(!session.is_running_activity(), "{state:?} with no tool should not spin");
+    }
+}
+
+#[test]
+fn stage_state_with_running_tool_animates_spinner() {
+    let mut session = Session::new(InlineTheme::default(), None, VIEW_ROWS);
+    session.handle_command(InlineCommand::SetActivityState(ActivityState::Planning));
+    session.handle_command(InlineCommand::SetInputStatus {
+        left: Some("Running tool: edit_file".to_string()),
+        right: None,
+    });
+
+    assert_eq!(session.status_left_text(), Some("Planning..."));
+    assert!(session.has_status_spinner(), "stage label must animate while a tool runs");
+    assert!(session.is_running_activity());
+    assert!(session.input_enabled(), "stage states keep input usable mid-tool");
+}
+
+#[test]
+fn busy_state_disables_input_and_shows_busy_status() {
+    let mut session = Session::new(InlineTheme::default(), None, VIEW_ROWS);
+    session.handle_command(InlineCommand::SetActivityState(ActivityState::StartingBuild));
+
+    assert!(!session.input_enabled(), "busy states must block input");
+    assert!(session.is_running_activity());
+    assert!(session.has_status_spinner());
+}
+
+#[test]
 fn timeline_visible_selects_latest_item() {
     let mut session = Session::new(InlineTheme::default(), None, VIEW_ROWS);
     session.push_line(InlineMessageKind::Agent, vec![make_segment("First")]);

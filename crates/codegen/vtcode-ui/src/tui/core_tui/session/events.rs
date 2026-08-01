@@ -143,6 +143,9 @@ fn dispatch_action(session: &mut Session, action: Action) -> Option<InlineEvent>
             session.mark_dirty();
             Some(InlineEvent::ToggleToolDisplayMode)
         }
+        // Task panel visibility lives on the AppSession layer, which dispatches
+        // `ToggleTaskPanel` before the core action dispatch.
+        Action::ToggleTaskPanel => None,
         Action::GeneratePromptSuggestion => {
             if !session.input_enabled {
                 return None;

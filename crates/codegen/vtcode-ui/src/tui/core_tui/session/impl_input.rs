@@ -101,10 +101,18 @@ impl Session {
             }
             InlineCommand::SetActivityState(state) => {
                 self.activity_state = state;
-                if let Some(status) = state.status() {
-                    self.input_status_left = Some(status.to_string());
+                if state.is_busy() {
+                    self.input_status_left = state.status().map(ToOwned::to_owned);
                     self.input_enabled = false;
                     self.cursor_visible = false;
+                } else if state.is_stage() {
+                    // Stage states (Planning/Building) keep input enabled so the
+                    // user can still steer between turns. The stage text is
+                    // replaced by a running-tool status during tool execution,
+                    // which also drives the footer spinner.
+                    self.input_status_left = state.status().map(ToOwned::to_owned);
+                    self.input_enabled = true;
+                    self.cursor_visible = true;
                 } else {
                     self.input_status_left = None;
                     self.input_enabled = true;

@@ -429,6 +429,15 @@ pub(super) fn process_key_with_clipboard_image_reader(
         return Some(InlineEvent::ToggleToolDisplayMode);
     }
 
+    if session
+        .core
+        .resolve_rebindable_action(&key)
+        .is_some_and(|action| action == Action::ToggleTaskPanel)
+    {
+        session.toggle_task_panel();
+        return None;
+    }
+
     if let Some(wizard) = session.wizard_overlay_mut() {
         let result = wizard.handle_key_event(
             &key,
@@ -1699,6 +1708,18 @@ mod tests {
                 .is_none()
         );
         assert!(session.transcript_review_state().is_none());
+    }
+
+    #[test]
+    fn alt_g_toggles_task_panel() {
+        let mut session = build_session();
+        assert!(!session.show_task_panel);
+
+        let _ = session.process_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::ALT));
+        assert!(session.show_task_panel, "Alt+G should reveal the task panel");
+
+        let _ = session.process_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::ALT));
+        assert!(!session.show_task_panel, "Second Alt+G should hide the task panel");
     }
 
     #[test]

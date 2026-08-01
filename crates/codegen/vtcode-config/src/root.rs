@@ -322,6 +322,12 @@ pub struct UiConfig {
     #[serde(default = "default_dim_completed_todos")]
     pub dim_completed_todos: bool,
 
+    /// Automatically show the plan-mode TODO task tracking panel when a plan
+    /// is approved or the task tracker is updated. When disabled, the panel
+    /// can still be toggled with the `toggle_task_panel` keybinding.
+    #[serde(default = "default_show_task_panel")]
+    pub show_task_panel: bool,
+
     /// Add spacing between message blocks
     #[serde(default = "default_message_block_spacing")]
     pub message_block_spacing: bool,
@@ -557,6 +563,10 @@ fn default_hide_header() -> bool {
     true
 }
 
+fn default_show_task_panel() -> bool {
+    false
+}
+
 fn default_ask_questions_enabled() -> bool {
     true
 }
@@ -582,6 +592,7 @@ impl Default for UiConfig {
             display_mode: UiDisplayMode::default(),
             show_sidebar: default_show_sidebar(),
             dim_completed_todos: default_dim_completed_todos(),
+            show_task_panel: default_show_task_panel(),
             message_block_spacing: default_message_block_spacing(),
             show_turn_timer: default_show_turn_timer(),
             show_diagnostics_in_transcript: default_show_diagnostics_in_transcript(),
@@ -660,6 +671,15 @@ mod tests {
     #[test]
     fn tool_display_mode_defaults_to_expanded() {
         assert_eq!(UiConfig::default().tool_display_mode, ToolDisplayMode::Expanded);
+    }
+
+    #[test]
+    fn task_panel_defaults_to_hidden_and_parses() {
+        assert!(!UiConfig::default().show_task_panel);
+
+        let enabled: UiConfig = toml::from_str("show_task_panel = true").expect("show_task_panel parses");
+        assert!(enabled.show_task_panel);
+        assert!(toml::from_str::<UiConfig>("").expect("empty parses").show_task_panel == false);
     }
 
     #[test]

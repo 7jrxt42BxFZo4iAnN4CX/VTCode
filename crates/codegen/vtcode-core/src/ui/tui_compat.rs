@@ -129,6 +129,7 @@ pub fn to_tui_appearance(config: &VTCodeConfig) -> SessionAppearanceConfig {
         navigation_width_percent: 25,
         transcript_bottom_padding: 0,
         dim_completed_todos: config.ui.dim_completed_todos,
+        show_task_panel: config.ui.show_task_panel,
         message_block_spacing: if config.ui.message_block_spacing { 1 } else { 0 },
         layout_mode: match config.ui.layout_mode {
             crate::config::LayoutModeOverride::Auto | crate::config::LayoutModeOverride::Unknown => {
