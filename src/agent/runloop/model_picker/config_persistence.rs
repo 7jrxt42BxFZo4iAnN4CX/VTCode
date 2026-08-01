@@ -45,15 +45,6 @@ pub(super) async fn persist_selection(
     Ok(config)
 }
 
-pub(crate) async fn persist_lightweight_selection(workspace: &std::path::Path, model: &str) -> Result<VTCodeConfig> {
-    let mut manager = crate::main_helpers::load_workspace_config(workspace)?;
-    let mut config = manager.config().clone();
-    config.agent.small_model.enabled = true;
-    config.agent.small_model.model = model.to_string();
-    manager.save_config(&config)?;
-    Ok(config)
-}
-
 fn apply_api_key_state(config: &mut VTCodeConfig, selection: &ModelSelectionResult) -> Result<()> {
     if selection.provider_enum == Some(Provider::OpenAI) && selection.uses_chatgpt_auth {
         config.agent.api_key_env = selection.env_key.clone();
@@ -121,7 +112,7 @@ fn clear_stored_api_key(config: &mut VTCodeConfig, selection: &ModelSelectionRes
 
 #[cfg(test)]
 mod tests {
-    use super::{persist_lightweight_selection, synced_openai_service_tier, uses_provider_api_key};
+    use super::{synced_openai_service_tier, uses_provider_api_key};
     use crate::agent::runloop::model_picker::ModelSelectionResult;
     use vtcode_config::OpenAIServiceTier;
     use vtcode_config::VTCodeConfig;
@@ -207,29 +198,5 @@ mod tests {
         unsupported_openai.service_tier = Some(OpenAIServiceTier::Priority);
 
         assert_eq!(synced_openai_service_tier(&unsupported_openai), None);
-    }
-
-    #[tokio::test]
-    async fn persist_lightweight_selection_enables_shared_model_and_saves_model() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let mut initial = VTCodeConfig::default();
-        initial.agent.provider = "openai".to_string();
-        initial.agent.default_model = "gpt-5.4".to_string();
-        ConfigManager::save_config_to_path(temp.path().join("vtcode.toml"), &initial).expect("seed config");
-
-        let updated = persist_lightweight_selection(temp.path(), "gpt-5.4-mini")
-            .await
-            .expect("persist lightweight model");
-
-        assert!(updated.agent.small_model.enabled);
-        assert_eq!(updated.agent.small_model.model, "gpt-5.4-mini");
-        assert_eq!(updated.agent.default_model, "gpt-5.4");
-        assert_eq!(updated.agent.provider, "openai");
-
-        let manager = ConfigManager::load_from_workspace(temp.path()).expect("load persisted config");
-        assert!(manager.config().agent.small_model.enabled);
-        assert_eq!(manager.config().agent.small_model.model, "gpt-5.4-mini");
-        assert_eq!(manager.config().agent.default_model, "gpt-5.4");
-        assert_eq!(manager.config().agent.provider, "openai");
     }
 }

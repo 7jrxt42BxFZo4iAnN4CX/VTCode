@@ -13,11 +13,9 @@ use crate::agent::runloop::unified::display::{persist_theme_preference, sync_run
 use crate::agent::runloop::unified::model_selection::{ModelSwitchCompactionTargets, finalize_model_selection};
 use crate::agent::runloop::unified::overlay_prompt::{OverlayWaitOutcome, wait_for_overlay_submission};
 use crate::agent::runloop::unified::palettes::{
-    ActivePalette, apply_prompt_style, build_lightweight_palette_view, show_lightweight_model_palette,
-    show_mode_palette, show_model_target_palette, show_sessions_palette, show_theme_palette,
+    ActivePalette, apply_prompt_style, show_mode_palette, show_sessions_palette, show_theme_palette,
 };
 use crate::agent::runloop::unified::session_setup::{apply_ide_context_snapshot, ide_context_status_label_from_bridge};
-use crate::agent::runloop::unified::state::ModelPickerTarget;
 use crate::agent::runloop::unified::ui_interaction::PlaceholderSpinner;
 
 #[path = "ui/statusline.rs"]
@@ -188,56 +186,11 @@ fn config_action_item(
 }
 
 pub(crate) async fn handle_start_model_selection(mut ctx: SlashCommandContext<'_>) -> Result<SlashCommandControl> {
-    if !ensure_selection_ui_available(&mut ctx, "selecting a model target")? {
+    if !ensure_selection_ui_available(&mut ctx, "selecting a model")? {
         return Ok(SlashCommandControl::Continue);
     }
 
-    if !ctx.renderer.supports_inline_ui() {
-        ctx.renderer
-            .line(MessageStyle::Info, "Inline UI is unavailable; opening the main model picker directly.")?;
-        return start_model_selection_target(ctx, ModelPickerTarget::Main).await;
-    }
-
-    if show_model_target_palette(ctx.renderer)? {
-        *ctx.palette_state = Some(ActivePalette::ModelTarget);
-    }
-    Ok(SlashCommandControl::Continue)
-}
-
-pub(super) async fn start_model_selection_target(
-    ctx: SlashCommandContext<'_>,
-    target: ModelPickerTarget,
-) -> Result<SlashCommandControl> {
-    ctx.session_stats.model_picker_target = target;
-    match target {
-        ModelPickerTarget::Main => start_model_picker(ctx).await,
-        ModelPickerTarget::Lightweight => {
-            let vt_cfg = ctx.vt_cfg.clone();
-            let restore_status_left = ctx.input_status_state.left.clone();
-            let restore_status_right = ctx.input_status_state.right.clone();
-            let view = {
-                let loading_spinner = if ctx.renderer.supports_inline_ui() {
-                    Some(PlaceholderSpinner::new(
-                        ctx.handle,
-                        restore_status_left,
-                        restore_status_right,
-                        "Loading lightweight model lists...",
-                    ))
-                } else {
-                    ctx.renderer.line(MessageStyle::Info, "Loading lightweight model lists...")?;
-                    None
-                };
-                let result = build_lightweight_palette_view(ctx.config, vt_cfg.as_ref()).await;
-                drop(loading_spinner);
-                result
-            };
-            if show_lightweight_model_palette(ctx.renderer, &view, None)? {
-                *ctx.palette_state = Some(ActivePalette::LightweightModel { view: Box::new(view) });
-            }
-            ctx.session_stats.model_picker_target = ModelPickerTarget::Main;
-            Ok(SlashCommandControl::Continue)
-        }
-    }
+    start_model_picker(ctx).await
 }
 
 pub(crate) async fn handle_toggle_ide_context(ctx: SlashCommandContext<'_>) -> Result<SlashCommandControl> {

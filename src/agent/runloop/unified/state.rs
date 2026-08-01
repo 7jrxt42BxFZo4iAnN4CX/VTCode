@@ -13,13 +13,6 @@ use vtcode_core::llm::provider::{
 use vtcode_core::llm::request_gap::RequestGapTracker;
 use vtcode_core::llm::usage_cost;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum ModelPickerTarget {
-    #[default]
-    Main,
-    Lightweight,
-}
-
 #[derive(Debug, Clone, Default)]
 pub(crate) struct AutoPermissionDenial {
     pub stage: &'static str,
@@ -75,8 +68,6 @@ pub(crate) struct SessionStats {
     pub rate_limiter: Arc<vtcode_core::tools::adaptive_rate_limiter::AdaptiveRateLimiter>,
     pub validation_cache: Arc<vtcode_core::tools::validation_cache::ValidationCache>,
 
-    /// Target configuration for the active model picker
-    pub model_picker_target: ModelPickerTarget,
     /// Count of consecutive minimal follow-up prompts (e.g. "continue", "retry")
     follow_up_prompt_streak: usize,
     /// One-shot guard to avoid classifying injected recovery prompts as user follow-ups

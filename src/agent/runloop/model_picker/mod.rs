@@ -12,7 +12,6 @@
 //! | `interaction` | Ratatui interactive list selection for reasoning, service tier, model list | `select_model_with_ratatui_list`, `select_reasoning_with_ratatui`, `select_service_tier_with_ratatui` |
 //! | `state_machine` | Step-transition logic: model → reasoning → MiMo auth → service tier → API key | `process_model_selection`, `handle_reasoning`, `handle_mimo_auth_method`, `handle_service_tier`, `handle_api_key`, `build_result` |
 //! | `config_persistence` | Persisting completed selection to `vtcode.toml` | `persist_selection` |
-//! | `lightweight_palette` | Lightweight model palette view | `LightweightModelPaletteView`, `prepare_lightweight_model_palette_view` |
 //!
 //! ## State machine contract
 //!
@@ -77,7 +76,6 @@ use subagent::{
 mod config_persistence;
 mod dynamic_models;
 mod interaction;
-mod lightweight_palette;
 mod options;
 mod rendering;
 mod selection;
@@ -92,11 +90,7 @@ enum RatatuiOutcome {
     NeedsRefresh,
 }
 
-pub(crate) use self::config_persistence::persist_lightweight_selection;
 pub(crate) use self::dynamic_models::DynamicModelRegistry;
-#[cfg(test)]
-pub(crate) use self::lightweight_palette::build_lightweight_model_palette_view;
-pub(crate) use self::lightweight_palette::{LightweightModelPaletteView, prepare_lightweight_model_palette_view};
 pub(crate) use selection::ModelSelectionResult;
 #[cfg(test)]
 pub(super) use vtcode_config::read_workspace_env_value as read_workspace_env;

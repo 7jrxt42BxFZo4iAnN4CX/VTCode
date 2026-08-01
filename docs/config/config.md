@@ -297,6 +297,8 @@ use_for_memory = true
 - `startup_line_limit` and `startup_byte_limit` cap the scan VT Code uses to build the compact startup summary from `memory_summary.md`.
 - `agent.small_model.use_for_memory` enables lightweight-model routing for memory planning, classification, cleanup, and summary refresh.
 
+> Note: `[agent.small_model]` is not exposed through the `/model` picker or the `/settings` model-config view — those surfaces only edit the main model (`agent.provider` + `agent.default_model`). The lightweight route is auto-selected from the main model's provider, or you can set `[agent.small_model]` directly in `vtcode.toml`.
+
 Memory mutation is LLM-assisted only:
 
 - natural-language `remember` / `forget` requests require a valid structured planner response

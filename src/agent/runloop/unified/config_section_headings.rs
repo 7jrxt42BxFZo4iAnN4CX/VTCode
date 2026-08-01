@@ -109,13 +109,8 @@ static SECTION_HEADINGS: &[(&str, &str, &str)] = &[
     ("mcp.ui", "MCP UI", "How MCP tools and events appear in the interface."),
     ("mcp.ui.renderers", "MCP Renderers", "Presentation rules for specific MCP tool outputs."),
     ("model", "Model Defaults", "Shared model selection and context settings."),
-    ("model_config", "Model Config", "Focused main-model and lightweight-model configuration."),
+    ("model_config", "Model Config", "Focused main-model configuration."),
     ("model_config.main", "Main Model", "Provider and default model for the active conversation model."),
-    (
-        "model_config.lightweight",
-        "Lightweight Model",
-        "Shared lower-cost route for memory, prompt suggestions, and smaller delegated tasks.",
-    ),
     ("optimization", "Performance", "Caching and runtime performance tuning."),
     (
         "optimization.agent_execution",

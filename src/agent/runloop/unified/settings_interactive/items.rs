@@ -10,14 +10,13 @@ use super::render::{
     section_item, section_subtitle, setting_subtitle, summarize_value,
 };
 use super::{
-    ACTION_CONFIGURE_EDITOR, ACTION_PICK_LIGHTWEIGHT_MODEL, ACTION_PICK_MAIN_MODEL, ACTION_PREFIX_ARRAY_ADD,
-    ACTION_PREFIX_ARRAY_POP, ACTION_PREFIX_OPEN, ACTION_PREFIX_SET, OPTIONAL_DOC_FIELDS,
-    SETTINGS_MODEL_CONFIG_LIGHTWEIGHT_PATH, SETTINGS_MODEL_CONFIG_MAIN_PATH, SETTINGS_MODEL_CONFIG_PATH,
-    SettingsPaletteState,
+    ACTION_CONFIGURE_EDITOR, ACTION_PICK_MAIN_MODEL, ACTION_PREFIX_ARRAY_ADD, ACTION_PREFIX_ARRAY_POP,
+    ACTION_PREFIX_OPEN, ACTION_PREFIX_SET, OPTIONAL_DOC_FIELDS, SETTINGS_MODEL_CONFIG_MAIN_PATH,
+    SETTINGS_MODEL_CONFIG_PATH, SettingsPaletteState,
 };
 use crate::agent::runloop::unified::config_section_headings::humanize_identifier;
 
-const HIDDEN_SETTINGS_PATHS: &[&str] = &[];
+const HIDDEN_SETTINGS_PATHS: &[&str] = &["agent.small_model"];
 
 pub(super) fn build_settings_items(state: &SettingsPaletteState, draft: &TomlValue) -> Result<Vec<InlineListItem>> {
     let mut items = Vec::new();
@@ -48,7 +47,7 @@ pub(super) fn build_settings_items(state: &SettingsPaletteState, draft: &TomlVal
         items.push(section_item("Quick Access"));
         items.push(action_item(
             "Model Config",
-            "Edit main and lightweight model settings in one focused tree",
+            "Edit the active provider and default model in one focused view",
             Some("Section"),
             &format!("{ACTION_PREFIX_OPEN}{SETTINGS_MODEL_CONFIG_PATH}"),
         ));
@@ -128,24 +127,12 @@ fn append_synthetic_model_config_items(
                 Some("Section"),
                 &format!("{ACTION_PREFIX_OPEN}{SETTINGS_MODEL_CONFIG_MAIN_PATH}"),
             ));
-            items.push(action_item(
-                "Lightweight Model",
-                "Shared lower-cost route for memory, prompt suggestions, and smaller delegated tasks",
-                Some("Section"),
-                &format!("{ACTION_PREFIX_OPEN}{SETTINGS_MODEL_CONFIG_LIGHTWEIGHT_PATH}"),
-            ));
             Ok(true)
         }
         SETTINGS_MODEL_CONFIG_MAIN_PATH => {
             items.push(section_item("Settings"));
             append_mapped_setting_item(items, draft_root, "agent.provider");
             append_mapped_setting_item(items, draft_root, "agent.default_model");
-            Ok(true)
-        }
-        SETTINGS_MODEL_CONFIG_LIGHTWEIGHT_PATH => {
-            let node = get_node(draft_root, "agent.small_model")
-                .ok_or_else(|| anyhow!("Could not resolve settings path agent.small_model"))?;
-            append_node_items(items, "agent.small_model", node, draft_root)?;
             Ok(true)
         }
         _ => Ok(false),
@@ -231,26 +218,17 @@ fn item_for_value(label: &str, path: &str, value: &TomlValue, draft_root: &TomlV
         })
         .unwrap_or_default();
 
-    let summary = if path == "agent.small_model.model" && value.as_str().is_some_and(|current| current.is_empty()) {
-        "Automatic".to_string()
-    } else {
-        summarize_value(value)
-    };
+    let summary = summarize_value(value);
     let subtitle = setting_subtitle(&summary, &description, false);
     let search_value = search_value_with_content(path, label, value, doc);
 
-    if path == "agent.default_model" || path == "agent.small_model.model" {
-        let action = if path == "agent.default_model" {
-            ACTION_PICK_MAIN_MODEL
-        } else {
-            ACTION_PICK_LIGHTWEIGHT_MODEL
-        };
+    if path == "agent.default_model" {
         return InlineListItem {
             title,
             subtitle: Some(subtitle),
             badge: Some("Pick".to_string()),
             indent: 0,
-            selection: Some(InlineListSelection::ConfigAction(action.to_string())),
+            selection: Some(InlineListSelection::ConfigAction(ACTION_PICK_MAIN_MODEL.to_string())),
             search_value: Some(search_value),
         };
     }

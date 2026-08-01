@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::agent::runloop::model_picker::ModelPickerState;
+use crate::agent::runloop::slash_commands::ThemePaletteMode;
 use crate::agent::runloop::unified::context_manager::ContextManager;
 use crate::agent::runloop::unified::inline_events::{
     InlineEventContext, InlineInterruptCoordinator, InlineLoopAction, InlineQueueState, QueuedInput,
@@ -23,6 +24,7 @@ use vtcode_core::config::types::{
 };
 use vtcode_core::core::agent::snapshots::{DEFAULT_CHECKPOINTS_ENABLED, DEFAULT_MAX_AGE_DAYS, DEFAULT_MAX_SNAPSHOTS};
 use vtcode_core::llm::provider::{self as uni, LLMRequest, LLMResponse};
+use vtcode_core::ui::theme;
 use vtcode_core::utils::ansi::AnsiRenderer;
 use vtcode_ui::tui::app::{
     ContentPart, InlineCommand, InlineEvent, InlineHandle, InlineListSelection, SubmittedInput, TransientEvent,
@@ -416,7 +418,10 @@ async fn cancelling_url_guard_restores_previous_palette() {
     let interrupts = InlineInterruptCoordinator::new(ctrl_c_state.as_ref());
     let mut ctrl_c_notice_displayed = false;
     let mut model_picker_state: Option<ModelPickerState> = None;
-    let mut palette_state: Option<ActivePalette> = Some(ActivePalette::ModelTarget);
+    let mut palette_state: Option<ActivePalette> = Some(ActivePalette::Theme {
+        mode: ThemePaletteMode::Select,
+        original_theme_id: theme::DEFAULT_THEME_ID.to_string(),
+    });
     let mut config = runtime_config();
     let mut vt_cfg = None;
     let mut provider_client: Box<dyn uni::LLMProvider> = Box::new(DummyProvider);
@@ -480,7 +485,7 @@ async fn cancelling_url_guard_restores_previous_palette() {
     let restored_command = commands.recv().await.expect("restored palette command");
     match restored_command {
         InlineCommand::ShowTransient { request } => match *request {
-            TransientRequest::List(request) => assert_eq!(request.title, "Model"),
+            TransientRequest::List(request) => assert_eq!(request.title, "Theme"),
             other => panic!("expected list transient, got {other:?}"),
         },
         other => {
@@ -488,7 +493,7 @@ async fn cancelling_url_guard_restores_previous_palette() {
         }
     }
 
-    assert!(matches!(palette_state, Some(ActivePalette::ModelTarget)));
+    assert!(matches!(palette_state, Some(ActivePalette::Theme { mode: ThemePaletteMode::Select, .. })));
 }
 
 #[tokio::test]

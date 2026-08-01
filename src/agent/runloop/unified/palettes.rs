@@ -1,4 +1,3 @@
-use std::future::Future;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -12,14 +11,11 @@ use vtcode_core::utils::session_archive::SessionListing;
 use vtcode_ui::tui::app::{InlineHandle, InlineListItem, InlineListSearchConfig, InlineListSelection};
 use vtcode_ui::tui::core::convert_style;
 
-use crate::agent::runloop::model_picker::{LightweightModelPaletteView, prepare_lightweight_model_palette_view};
 use crate::agent::runloop::slash_commands::{SessionPaletteMode, ThemePaletteMode};
 use crate::agent::runloop::ui::build_inline_header_context;
-use crate::agent::runloop::unified::model_selection::finalize_lightweight_model_selection;
 use crate::agent::runloop::unified::settings_interactive::{
     SettingsPaletteState, apply_settings_action, parent_view_path, show_settings_palette,
 };
-use crate::agent::runloop::unified::state::ModelPickerTarget;
 use crate::agent::runloop::unified::url_guard::UrlGuardPrompt;
 use crate::agent::runloop::welcome::SessionBootstrap;
 
@@ -34,11 +30,6 @@ const SESSION_FORK_MODE_PALETTE_TITLE: &str = "Fork mode";
 const SESSION_RESUME_PALETTE_TITLE: &str = "Resume session";
 const SESSIONS_LATEST_BADGE: &str = "Latest";
 const SESSIONS_SEARCH_PLACEHOLDER: &str = "workspace, provider, model, date";
-const MODEL_TARGET_PALETTE_TITLE: &str = "Model";
-const LIGHTWEIGHT_MODEL_PALETTE_TITLE: &str = "Lightweight model";
-pub(crate) const MODEL_TARGET_ACTION_MAIN: &str = "model_target:main";
-pub(crate) const MODEL_TARGET_ACTION_LIGHTWEIGHT: &str = "model_target:lightweight";
-pub(crate) const LIGHTWEIGHT_MODEL_ACTION_PREFIX: &str = "lightweight_model:";
 const MODE_PALETTE_TITLE: &str = "Agent mode";
 const MODE_SELECT_HINT: &str = "↑/↓ choose • Enter select • Esc cancel";
 const MODE_SEARCH_PLACEHOLDER: &str = "name or description";
@@ -66,11 +57,7 @@ pub(crate) enum ActivePalette {
         state: Box<SettingsPaletteState>,
         esc_armed: bool,
     },
-    ModelTarget,
     Mode,
-    LightweightModel {
-        view: Box<LightweightModelPaletteView>,
-    },
     UrlGuard {
         prompt: UrlGuardPrompt,
         previous: Option<Box<ActivePalette>>,
@@ -322,79 +309,6 @@ pub(crate) fn show_fork_mode_palette(renderer: &mut AnsiRenderer, session_id: &s
     Ok(true)
 }
 
-pub(crate) fn show_model_target_palette(renderer: &mut AnsiRenderer) -> Result<bool> {
-    let items = [ModelPickerTarget::Main, ModelPickerTarget::Lightweight]
-        .into_iter()
-        .map(|target| {
-            match target {
-            ModelPickerTarget::Main => InlineListItem {
-                title: "Main model".to_string(),
-                subtitle: Some(
-                    "Change the active provider/model for the current conversation session."
-                        .to_string(),
-                ),
-                badge: Some("Active".to_string()),
-                indent: 0,
-                selection: Some(InlineListSelection::ConfigAction(
-                    MODEL_TARGET_ACTION_MAIN.to_string(),
-                )),
-                search_value: Some("model main active conversation provider default".to_string()),
-            },
-            ModelPickerTarget::Lightweight => InlineListItem {
-                title: "Lightweight model".to_string(),
-                subtitle: Some(
-                    "Configure the shared lower-cost route for memory, prompt suggestions, and smaller delegated tasks."
-                        .to_string(),
-                ),
-                badge: Some("Shared".to_string()),
-                indent: 0,
-                selection: Some(InlineListSelection::ConfigAction(
-                    MODEL_TARGET_ACTION_LIGHTWEIGHT.to_string(),
-                )),
-                search_value: Some(
-                    "model lightweight memory prompt suggestions subagent".to_string(),
-                ),
-            },
-        }
-        })
-        .collect();
-
-    renderer.show_list_modal(
-        MODEL_TARGET_PALETTE_TITLE,
-        vec!["Choose model target • Main = conversation • Lightweight = side tasks".to_string()],
-        items,
-        Some(InlineListSelection::ConfigAction(MODEL_TARGET_ACTION_MAIN.to_string())),
-        None,
-    );
-
-    Ok(true)
-}
-
-pub(crate) fn show_lightweight_model_palette(
-    renderer: &mut AnsiRenderer,
-    view: &LightweightModelPaletteView,
-    selected: Option<InlineListSelection>,
-) -> Result<bool> {
-    renderer.show_list_modal(
-        LIGHTWEIGHT_MODEL_PALETTE_TITLE,
-        view.lines.clone(),
-        view.items.clone(),
-        selected.or_else(|| view.selected.clone()),
-        Some(InlineListSearchConfig {
-            label: String::new(),
-            placeholder: Some("name, id, or capability".to_string()),
-        }),
-    );
-    Ok(true)
-}
-
-pub(crate) fn build_lightweight_palette_view<'a>(
-    config: &'a vtcode_core::config::types::AgentConfig,
-    vt_cfg: Option<&'a VTCodeConfig>,
-) -> impl Future<Output = LightweightModelPaletteView> + 'a {
-    prepare_lightweight_model_palette_view(LIGHTWEIGHT_MODEL_ACTION_PREFIX, config, vt_cfg)
-}
-
 pub(crate) async fn refresh_runtime_config_from_manager(
     renderer: &mut AnsiRenderer,
     handle: &InlineHandle,
@@ -524,43 +438,6 @@ pub(crate) async fn handle_palette_selection(
                 Ok(None)
             }
         }
-        ActivePalette::ModelTarget => {
-            if show_model_target_palette(renderer)? {
-                Ok(Some(ActivePalette::ModelTarget))
-            } else {
-                Ok(None)
-            }
-        }
-        ActivePalette::LightweightModel { view } => {
-            let Some(action) = (match &selection {
-                InlineListSelection::ConfigAction(action) => Some(action.clone()),
-                _ => None,
-            }) else {
-                if show_lightweight_model_palette(renderer, view.as_ref(), Some(selection))? {
-                    return Ok(Some(ActivePalette::LightweightModel { view }));
-                }
-                return Ok(None);
-            };
-
-            let Some(choice) = action.strip_prefix(LIGHTWEIGHT_MODEL_ACTION_PREFIX) else {
-                if show_lightweight_model_palette(
-                    renderer,
-                    view.as_ref(),
-                    Some(InlineListSelection::ConfigAction(action)),
-                )? {
-                    return Ok(Some(ActivePalette::LightweightModel { view }));
-                }
-                return Ok(None);
-            };
-
-            let selected_model = match choice {
-                "auto" => String::new(),
-                "main" => config.model.clone(),
-                explicit => explicit.to_string(),
-            };
-            finalize_lightweight_model_selection(renderer, config, vt_cfg, selected_model).await?;
-            Ok(None)
-        }
         ActivePalette::UrlGuard { prompt, previous } => Ok(Some(ActivePalette::UrlGuard { prompt, previous })),
         ActivePalette::Mode => Ok(None),
     }
@@ -590,8 +467,6 @@ pub(crate) fn handle_palette_preview(
             }
             Ok(Some(ActivePalette::Theme { mode, original_theme_id }))
         }
-        ActivePalette::ModelTarget => Ok(Some(ActivePalette::ModelTarget)),
-        ActivePalette::LightweightModel { view } => Ok(Some(ActivePalette::LightweightModel { view })),
         ActivePalette::UrlGuard { prompt, previous } => Ok(Some(ActivePalette::UrlGuard { prompt, previous })),
         ActivePalette::Settings { state, .. } => Ok(Some(ActivePalette::Settings { state, esc_armed: false })),
         other => Ok(Some(other)),
@@ -670,7 +545,7 @@ pub(crate) fn handle_palette_cancel(
                 Ok(None)
             }
         }
-        ActivePalette::ModelTarget | ActivePalette::LightweightModel { .. } | ActivePalette::Mode => Ok(None),
+        ActivePalette::Mode => Ok(None),
         ActivePalette::UrlGuard { previous, .. } => Ok(previous.map(|palette| *palette)),
     }
 }
@@ -701,9 +576,7 @@ pub(crate) fn apply_prompt_style(handle: &InlineHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::runloop::model_picker::{DynamicModelRegistry, build_lightweight_model_palette_view};
     use chrono::{TimeZone, Utc};
-    use vtcode_core::config::constants::models;
     use vtcode_core::config::core::PromptCachingConfig;
     use vtcode_core::config::models::Provider;
     use vtcode_core::config::types::{
@@ -784,75 +657,5 @@ mod tests {
         assert!(value.contains("5m 0s"));
         assert!(value.contains("12 messages"));
         assert!(value.contains("2 tools"));
-    }
-
-    #[test]
-    fn lightweight_model_palette_includes_automatic_main_and_explicit_choices() {
-        let config = runtime_config("openai", models::openai::GPT_5_4);
-
-        let mut vt_cfg = VTCodeConfig::default();
-        vt_cfg.agent.small_model.model.clear();
-
-        let view = build_lightweight_model_palette_view(
-            LIGHTWEIGHT_MODEL_ACTION_PREFIX,
-            &config,
-            Some(&vt_cfg),
-            &DynamicModelRegistry::default(),
-        );
-        assert!(view.items.iter().any(|item| item.title == "Automatic (recommended)"));
-        assert!(view.items.iter().any(|item| item.title == "Use main model"));
-        assert_eq!(
-            view.selected,
-            Some(InlineListSelection::ConfigAction(format!("{LIGHTWEIGHT_MODEL_ACTION_PREFIX}auto")))
-        );
-        assert!(view.lines.iter().any(|line| line.contains("gpt-5.4-mini -> fallback gpt-5.4")));
-    }
-
-    #[test]
-    fn lightweight_model_palette_marks_main_model_choice_when_configured() {
-        let config = runtime_config("openai", models::openai::GPT_5_4);
-
-        let mut vt_cfg = VTCodeConfig::default();
-        vt_cfg.agent.small_model.model = "gpt-5.4".to_string();
-
-        let view = build_lightweight_model_palette_view(
-            LIGHTWEIGHT_MODEL_ACTION_PREFIX,
-            &config,
-            Some(&vt_cfg),
-            &DynamicModelRegistry::default(),
-        );
-        assert_eq!(
-            view.selected,
-            Some(InlineListSelection::ConfigAction(format!("{LIGHTWEIGHT_MODEL_ACTION_PREFIX}main")))
-        );
-    }
-
-    #[test]
-    fn lightweight_model_palette_is_searchable() {
-        let config = runtime_config("openai", models::openai::GPT_5_4);
-        let vt_cfg = VTCodeConfig::default();
-
-        let view = build_lightweight_model_palette_view(
-            LIGHTWEIGHT_MODEL_ACTION_PREFIX,
-            &config,
-            Some(&vt_cfg),
-            &DynamicModelRegistry::default(),
-        );
-
-        let explicit_model = view
-            .items
-            .iter()
-            .find(|item| {
-                item.selection == Some(InlineListSelection::ConfigAction("lightweight_model:gpt-5.5".to_string()))
-            })
-            .expect("gpt-5.5 entry");
-
-        let search = explicit_model
-            .search_value
-            .as_deref()
-            .expect("search value")
-            .to_ascii_lowercase();
-        assert!(search.contains("openai"));
-        assert!(search.contains("gpt-5.5"));
     }
 }

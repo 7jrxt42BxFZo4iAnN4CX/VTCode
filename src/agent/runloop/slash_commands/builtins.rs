@@ -78,9 +78,7 @@ pub(in crate::agent::runloop::slash_commands) async fn execute_built_in_command_
                 match args.to_ascii_lowercase().as_str() {
                     "memory" | "agent.persistent_memory" => Ok(SlashCommandOutcome::ShowMemoryConfig),
                     "permissions" => Ok(SlashCommandOutcome::ShowPermissions),
-                    "model" | "model.main" | "model.lightweight" => {
-                        Ok(SlashCommandOutcome::ShowSettingsAtPath { path: args.to_string() })
-                    }
+                    "model" | "model.main" => Ok(SlashCommandOutcome::ShowSettingsAtPath { path: args.to_string() }),
                     _ => Ok(SlashCommandOutcome::ShowSettingsAtPath { path: args.to_string() }),
                 }
             }

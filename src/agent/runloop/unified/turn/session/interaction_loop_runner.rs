@@ -17,7 +17,6 @@ use crate::agent::runloop::unified::inline_events::{
 };
 use crate::agent::runloop::unified::model_selection::{ModelSwitchCompactionTargets, finalize_model_selection};
 use crate::agent::runloop::unified::session_setup::{apply_ide_context_snapshot, ide_context_status_label_from_bridge};
-use crate::agent::runloop::unified::state::ModelPickerTarget;
 use crate::agent::runloop::unified::state::is_follow_up_prompt_like;
 use crate::agent::runloop::unified::turn::session::{
     mcp_lifecycle, memory_prompt, slash_command_handler, tool_dispatch,
@@ -496,37 +495,30 @@ pub(super) async fn run_interaction_loop_impl(
                         tracing::warn!("Model picker completed but state was missing; skipping completion flow");
                         continue;
                     };
-                    let target = ctx.session_stats.model_picker_target;
-                    ctx.session_stats.model_picker_target = ModelPickerTarget::Main;
-                    let env_key_for_recovery = if target == ModelPickerTarget::Main {
-                        Some(selection.env_key.clone())
-                    } else {
-                        None
-                    };
+                    let env_key_for_recovery = Some(selection.env_key.clone());
                     let harness_snapshot = ctx.tool_registry.harness_context_snapshot();
-                    if target == ModelPickerTarget::Main
-                        && let Err(err) = finalize_model_selection(
-                            ctx.renderer,
-                            &picker_state,
-                            selection,
-                            ctx.config,
-                            ctx.vt_cfg,
-                            ctx.provider_client,
-                            ctx.session_bootstrap,
-                            ctx.handle,
-                            ctx.header_context,
-                            ctx.full_auto,
-                            ModelSwitchCompactionTargets {
-                                history: ctx.conversation_history,
-                                session_stats: ctx.session_stats,
-                                context_manager: ctx.context_manager,
-                                session_id: &harness_snapshot.session_id,
-                                thread_id: ctx.thread_id,
-                                lifecycle_hooks: ctx.lifecycle_hooks.as_ref(),
-                                harness_emitter: ctx.harness_emitter,
-                            },
-                        )
-                        .await
+                    if let Err(err) = finalize_model_selection(
+                        ctx.renderer,
+                        &picker_state,
+                        selection,
+                        ctx.config,
+                        ctx.vt_cfg,
+                        ctx.provider_client,
+                        ctx.session_bootstrap,
+                        ctx.handle,
+                        ctx.header_context,
+                        ctx.full_auto,
+                        ModelSwitchCompactionTargets {
+                            history: ctx.conversation_history,
+                            session_stats: ctx.session_stats,
+                            context_manager: ctx.context_manager,
+                            session_id: &harness_snapshot.session_id,
+                            thread_id: ctx.thread_id,
+                            lifecycle_hooks: ctx.lifecycle_hooks.as_ref(),
+                            harness_emitter: ctx.harness_emitter,
+                        },
+                    )
+                    .await
                     {
                         ctx.renderer
                             .line(MessageStyle::Error, &format!("Failed to apply model selection: {err}"))?;
