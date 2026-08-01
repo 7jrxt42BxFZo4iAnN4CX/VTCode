@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
 
-use crate::auth::migrate_custom_api_keys;
+use crate::api_keys::{api_key_env_var, credential_metadata_key, store_credential_with_mode};
 use crate::defaults::{self};
 use crate::loader::config::VTCodeConfig;
 use crate::loader::layers::{
@@ -728,8 +728,9 @@ impl ConfigManager {
 /// Migrate plain-text API keys from config to secure storage.
 ///
 /// This function checks if there are any API keys stored in plain-text in the config
-/// and migrates them to secure storage (keyring). After successful migration, the
-/// keys are cleared from the config (kept as empty strings for tracking).
+/// and migrates them to secure storage (keyring). After successful migration,
+/// the key material is cleared and a normalized provider/key metadata marker is
+/// retained for configuration introspection.
 ///
 /// # Arguments
 /// * `config` - The configuration to migrate
@@ -742,15 +743,23 @@ fn migrate_custom_api_keys_if_needed(config: &mut VTCodeConfig) -> Result<()> {
     if has_plain_text_keys {
         tracing::info!("Detected plain-text API keys in config, migrating to secure storage...");
 
-        // Migrate keys to secure storage
-        let migration_results = migrate_custom_api_keys(&config.agent.custom_api_keys, storage_mode)?;
-
-        // Clear keys from config (keep provider names for tracking)
         let mut migrated_count = 0;
-        for (provider, success) in migration_results {
-            if success {
-                // Replace with empty string to track that this provider has a stored key
-                config.agent.custom_api_keys.insert(provider, String::new());
+        let pending = config
+            .agent
+            .custom_api_keys
+            .iter()
+            .filter(|(_, key)| !key.is_empty())
+            .map(|(provider, key)| (provider.clone(), key.clone()))
+            .collect::<Vec<_>>();
+        for (provider, api_key) in pending {
+            let key_name = config
+                .configured_api_key_env(&provider)
+                .unwrap_or_else(|| api_key_env_var(&provider));
+            if let Some(identity) = store_credential_with_mode(&provider, &key_name, &api_key, storage_mode)? {
+                config.agent.custom_api_keys.remove(&provider);
+                if let Some(metadata_key) = credential_metadata_key(identity.provider(), identity.key_name())? {
+                    config.agent.custom_api_keys.insert(metadata_key, String::new());
+                }
                 migrated_count += 1;
             }
         }

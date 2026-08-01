@@ -330,6 +330,10 @@ fn api_key_hint(provider: Provider, storage_mode: AuthCredentialsStoreMode) -> S
                 let var = detail.env_var.unwrap_or_else(|| provider.default_api_key_env());
                 format!("Using {var} from your environment.")
             }
+            CredentialSource::Workspace => {
+                let var = detail.env_var.unwrap_or_else(|| provider.default_api_key_env());
+                format!("Using {var} from the workspace .env.")
+            }
             CredentialSource::SecureStorage => {
                 format!("Using the {} key from your OS keyring.", provider.label())
             }
@@ -347,13 +351,19 @@ fn api_key_hint(provider: Provider, storage_mode: AuthCredentialsStoreMode) -> S
 /// Print a one-line summary of which providers already have a usable credential,
 /// so the user knows they can pick any of them without re-entering a key.
 fn render_discovery_summary(renderer: &mut AnsiRenderer, discovered: &[DiscoveredProvider]) -> Result<()> {
-    // Only "real" credentials (env/keyring/OAuth) are worth advertising — local
+    // Only "real" credentials (env/workspace/keyring/OAuth) are worth advertising — local
     // and managed-auth providers are always nominally ready but not what most
     // users are choosing between on first run.
     let ready: Vec<&DiscoveredProvider> = discovered
         .iter()
         .filter(|d| {
-            matches!(d.source, CredentialSource::Env | CredentialSource::SecureStorage | CredentialSource::OAuth)
+            matches!(
+                d.source,
+                CredentialSource::Env
+                    | CredentialSource::Workspace
+                    | CredentialSource::SecureStorage
+                    | CredentialSource::OAuth
+            )
         })
         .collect();
 

@@ -416,6 +416,23 @@ impl VTCodeConfig {
         self.custom_providers.iter().find(|cp| cp.name.to_lowercase() == lower)
     }
 
+    /// Return the explicitly configured credential key for a provider.
+    ///
+    /// Custom-provider identities take precedence over built-in provider
+    /// overrides. A missing result means callers should use the provider's
+    /// built-in default or the agent-wide fallback.
+    pub fn configured_api_key_env(&self, name: &str) -> Option<String> {
+        if let Some(custom_provider) = self.custom_provider(name) {
+            return Some(custom_provider.resolved_api_key_env());
+        }
+
+        self.provider_overrides
+            .iter()
+            .find(|(provider, _)| provider.eq_ignore_ascii_case(name))
+            .and_then(|(_, provider_override)| provider_override.api_key_env.clone())
+            .filter(|api_key_env| !api_key_env.trim().is_empty())
+    }
+
     /// Get the display name for any provider key, falling back to the raw key
     /// if no custom provider matches.
     pub fn provider_display_name(&self, provider_key: &str) -> String {

@@ -10,6 +10,7 @@
 
 - **Canonical home** for all provider code. Core's `llm/` is a thin re-export layer + factory/CGP.
 - `ModelResolver::resolve_with_mode` and `availability_with_mode` must receive the loaded config's credential storage mode; compatibility wrappers are only for callers without workspace config.
+- `ResolvedModel.api_key_env` carries provider-override credential identity through availability and picker selection; do not infer availability from provider alone.
 - `system_prompt.rs` provides stub getters with `OnceLock` setters; vtcode-core overrides at init.
 - Uses `compact_str::CompactString` (aliased `CompactStr` from `vtcode_core::types`) for small string fields.
 

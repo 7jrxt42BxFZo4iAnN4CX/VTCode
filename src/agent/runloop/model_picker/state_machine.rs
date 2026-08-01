@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use super::selection::supports_gpt5_none_reasoning;
 use super::*;
 use crate::agent::runloop::unified::external_url_guard::{
@@ -176,10 +174,23 @@ impl ModelPickerState {
 
         self.selected_mimo_auth = Some(auth_method);
 
-        if let Some(ref mut selection) = self.selection {
-            selection.mimo_auth_method = Some(auth_method);
-            selection.env_key = auth_method.env_key().to_string();
+        let Some(current) = self.selection.clone() else {
+            return Err(anyhow!("MiMo auth method requested before selecting a model"));
+        };
+        let mut selection = current;
+        selection.mimo_auth_method = Some(auth_method);
+        selection.env_key = auth_method.env_key().to_string();
+        self.pending_api_key = None;
+        self.pending_credential_source = None;
+        if let Some(resolved) = self.resolve_selection_credential(&selection)? {
+            let message = existing_credential_message(&selection, &resolved);
+            self.apply_resolved_credential(&mut selection, resolved);
+            renderer.line(MessageStyle::Info, &message)?;
+        } else {
+            selection.requires_api_key = true;
+            selection.uses_chatgpt_auth = false;
         }
+        self.selection = Some(selection);
 
         self.finish_after_mimo_auth_method(renderer)
     }
@@ -313,6 +324,7 @@ impl ModelPickerState {
             service_tier: chosen_service_tier,
             service_tier_changed,
             api_key: self.pending_api_key.clone(),
+            credential_source: self.pending_credential_source,
             env_key: selection.env_key.clone(),
             requires_api_key: selection.requires_api_key,
             uses_chatgpt_auth: selection.uses_chatgpt_auth,
@@ -342,38 +354,41 @@ impl ModelPickerState {
             }
         }
 
-        // Only clear the API key when switching to a different provider
+        // A pending key belongs to the provider/key identity, not merely the
+        // provider. Changing a configured key name must invalidate it.
         let provider_changed = self
             .selection
             .as_ref()
             .map(|prev| prev.provider_key != selection.provider_key)
             .unwrap_or(true);
-        if provider_changed {
+        let credential_target_changed = self
+            .selection
+            .as_ref()
+            .map(|prev| prev.provider_key != selection.provider_key || prev.env_key != selection.env_key)
+            .unwrap_or(true);
+        if credential_target_changed {
             self.pending_api_key = None;
+            self.pending_credential_source = None;
+        }
+        if provider_changed {
             self.selected_service_tier = None;
             self.selected_mimo_auth = None;
         }
         let mut selection = selection;
+        if !selection.env_key.trim().is_empty()
+            && let Some(resolved) = self.resolve_selection_credential(&selection)?
+        {
+            let message = existing_credential_message(&selection, &resolved);
+            self.apply_resolved_credential(&mut selection, resolved);
+            renderer.line(MessageStyle::Info, &message)?;
+        }
+
+        if selection.requires_api_key && self.pending_api_key.is_some() {
+            selection.requires_api_key = false;
+        }
+
         if selection.requires_api_key {
-            match self.find_existing_api_key(&selection.provider_key, &selection.env_key) {
-                Ok(Some(existing)) => {
-                    finalize_existing_api_key(&mut selection, &existing);
-                    // Load the actual key value so build_result() carries it and
-                    // resolve_runtime_api_key() takes the early return at
-                    // model_selection.rs:303 instead of re-resolving through a different
-                    // code path (env var -> provider-specific -> storage fallback).
-                    self.pending_api_key = load_existing_key_value(
-                        &existing,
-                        &selection.provider_key,
-                        &selection.env_key,
-                        self.settings.workspace.as_deref(),
-                        self.storage_mode(),
-                    );
-                    renderer.line(MessageStyle::Info, &existing_api_key_message(&selection, &existing))?;
-                }
-                Ok(None) => {}
-                Err(err) => return Err(err),
-            }
+            self.pending_credential_source = None;
         }
 
         self.selection = Some(selection);
@@ -447,21 +462,9 @@ impl ModelPickerState {
             return self.handle_skip_api_key(renderer, selection.clone()).await;
         }
 
-        self.pending_api_key = Some(input.to_string());
+        self.pending_api_key = Some(input.trim().to_string());
+        self.pending_credential_source = None;
         renderer.close_modal();
-
-        // Eagerly persist to secure storage so the key survives even if
-        // finalize_model_selection() fails before calling persist_selection().
-        // Use pending_api_key (already set above) to stay consistent with build_result.
-        if let Some(selection) = self.selection.as_ref() {
-            if let Some(key) = self.pending_api_key.as_deref() {
-                if let Err(err) = vtcode_config::auth::CustomApiKeyStorage::new(&selection.provider_key)
-                    .store(key, self.storage_mode())
-                {
-                    tracing::warn!("Failed to eagerly persist API key: {:#}", err);
-                }
-            }
-        }
 
         let result = self.build_result();
         Ok(ModelPickerProgress::Completed(result?))
@@ -531,6 +534,7 @@ impl ModelPickerState {
         }
         renderer.line(MessageStyle::Info, "Using ChatGPT subscription for OpenAI.")?;
         self.pending_api_key = None;
+        self.pending_credential_source = Some(vtcode_config::api_keys::CredentialSource::OAuth);
         if let Some(current) = self.selection.as_mut() {
             current.requires_api_key = false;
             current.uses_chatgpt_auth = true;
@@ -547,26 +551,17 @@ impl ModelPickerState {
         if self.settings.inline_enabled {
             renderer.close_modal();
         }
-        match self.find_existing_api_key(&selection.provider_key, &selection.env_key) {
-            Ok(Some(existing)) => {
-                let mut selection = selection.clone();
-                finalize_existing_api_key(&mut selection, &existing);
-                renderer.line(MessageStyle::Info, &existing_api_key_message(&selection, &existing))?;
-                self.pending_api_key = load_existing_key_value(
-                    &existing,
-                    &selection.provider_key,
-                    &selection.env_key,
-                    self.settings.workspace.as_deref(),
-                    self.storage_mode(),
-                );
-                if let Some(current) = self.selection.as_mut() {
-                    current.requires_api_key = selection.requires_api_key;
-                    current.uses_chatgpt_auth = selection.uses_chatgpt_auth;
-                }
+        let mut selection = selection;
+        match self.resolve_selection_credential(&selection)? {
+            Some(resolved) => {
+                let message = existing_credential_message(&selection, &resolved);
+                self.apply_resolved_credential(&mut selection, resolved);
+                renderer.line(MessageStyle::Info, &message)?;
+                self.selection = Some(selection);
                 let result = self.build_result();
                 Ok(ModelPickerProgress::Completed(result?))
             }
-            Ok(None) => {
+            None => {
                 renderer.line(
                     MessageStyle::Error,
                     &format!(
@@ -577,87 +572,60 @@ impl ModelPickerState {
                 prompt_api_key_plain(renderer, &selection, self.settings.workspace.as_deref())?;
                 Ok(ModelPickerProgress::InProgress)
             }
-            Err(err) => Err(err),
         }
     }
 
-    fn find_existing_api_key(&self, provider: &str, env_key: &str) -> Result<Option<ExistingKey>> {
-        // For OpenRouter, check OAuth token first
-        let storage_mode = self.storage_mode();
+    fn resolve_selection_credential(
+        &self,
+        selection: &SelectionDetail,
+    ) -> Result<Option<vtcode_config::api_keys::ResolvedCredential>> {
+        vtcode_config::api_keys::resolve_credential_with_mode(
+            &selection.provider_key,
+            &selection.env_key,
+            self.settings.workspace.as_deref(),
+            self.storage_mode(),
+        )
+    }
 
-        if env_key == "OPENROUTER_API_KEY" && vtcode_config::auth::load_oauth_token_with_mode(storage_mode)?.is_some() {
-            return Ok(Some(ExistingKey::OAuthToken));
-        }
-
-        if env_key == "OPENAI_API_KEY"
-            && vtcode_config::auth::load_openai_chatgpt_session_with_mode(storage_mode)?.is_some()
-        {
-            return Ok(Some(ExistingKey::OAuthToken));
-        }
-
-        if let Ok(value) = std::env::var(env_key)
-            && !value.trim().is_empty()
-        {
-            return Ok(Some(ExistingKey::Environment));
-        }
-
-        if let Some(workspace) = self.settings.workspace.as_deref()
-            && let Some(value) = read_workspace_env(workspace, env_key)?
-            && !value.trim().is_empty()
-        {
-            return Ok(Some(ExistingKey::WorkspaceDotenv));
-        }
-
-        vtcode_config::api_keys::load_stored_api_key_with_mode(provider, storage_mode)
-            .map(|stored| stored.map(|_| ExistingKey::StoredCredential))
+    fn apply_resolved_credential(
+        &mut self,
+        selection: &mut SelectionDetail,
+        resolved: vtcode_config::api_keys::ResolvedCredential,
+    ) {
+        selection.env_key = resolved.identity.key_name().to_owned();
+        selection.requires_api_key = false;
+        selection.uses_chatgpt_auth = resolved.source == vtcode_config::api_keys::CredentialSource::OAuth
+            && matches!(selection.provider_enum, Some(Provider::OpenAI))
+            && resolved.secret.is_none();
+        self.pending_api_key = resolved.secret;
+        self.pending_credential_source = Some(resolved.source);
     }
 }
 
-fn load_existing_key_value(
-    existing: &ExistingKey,
-    provider_key: &str,
-    env_key: &str,
-    workspace: Option<&Path>,
-    storage_mode: vtcode_config::auth::AuthCredentialsStoreMode,
-) -> Option<String> {
-    match existing {
-        ExistingKey::StoredCredential => {
-            vtcode_config::api_keys::load_stored_api_key_with_mode(provider_key, storage_mode)
-                .ok()
-                .flatten()
-        }
-        ExistingKey::Environment => std::env::var(env_key).ok().filter(|v| !v.trim().is_empty()),
-        ExistingKey::WorkspaceDotenv => workspace
-            .and_then(|w| read_workspace_env(w, env_key).ok())
-            .flatten()
-            .filter(|v| !v.trim().is_empty()),
-        ExistingKey::OAuthToken => None,
-    }
-}
-
-fn finalize_existing_api_key(selection: &mut SelectionDetail, existing: &ExistingKey) {
-    selection.requires_api_key = false;
-    match existing {
-        ExistingKey::OAuthToken => {
-            if matches!(selection.provider_enum, Some(Provider::OpenAI)) {
-                selection.uses_chatgpt_auth = true;
-            }
-        }
-        ExistingKey::Environment | ExistingKey::WorkspaceDotenv | ExistingKey::StoredCredential => {}
-    }
-}
-
-fn existing_api_key_message(selection: &SelectionDetail, existing: &ExistingKey) -> String {
-    match existing {
-        ExistingKey::OAuthToken => oauth_auth_message(selection),
-        ExistingKey::Environment => {
-            format!("Using existing environment variable {} for {}.", selection.env_key, selection.provider_label)
-        }
-        ExistingKey::WorkspaceDotenv => {
-            format!("Loaded {} from environment for {}.", selection.env_key, selection.provider_label)
-        }
-        ExistingKey::StoredCredential => {
+fn existing_credential_message(
+    selection: &SelectionDetail,
+    resolved: &vtcode_config::api_keys::ResolvedCredential,
+) -> String {
+    match resolved.source {
+        vtcode_config::api_keys::CredentialSource::OAuth => oauth_auth_message(selection),
+        vtcode_config::api_keys::CredentialSource::Env => format!(
+            "Using existing environment variable {} for {}.",
+            resolved.env_var.as_deref().unwrap_or(&selection.env_key),
+            selection.provider_label
+        ),
+        vtcode_config::api_keys::CredentialSource::Workspace => format!(
+            "Loaded {} from the workspace environment for {}.",
+            resolved.env_var.as_deref().unwrap_or(&selection.env_key),
+            selection.provider_label
+        ),
+        vtcode_config::api_keys::CredentialSource::SecureStorage => {
             format!("Using stored API key for {}.", selection.provider_label)
+        }
+        vtcode_config::api_keys::CredentialSource::ManagedAuth => {
+            format!("Using managed authentication for {}.", selection.provider_label)
+        }
+        vtcode_config::api_keys::CredentialSource::Local => {
+            format!("Using local authentication for {}.", selection.provider_label)
         }
     }
 }

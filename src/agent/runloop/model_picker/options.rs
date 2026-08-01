@@ -6,6 +6,7 @@ use tracing::warn;
 
 use vtcode_config::VTCodeConfig;
 use vtcode_config::core::ProviderOverrideConfig;
+use vtcode_core::config::constants::defaults;
 use vtcode_core::config::models::{ModelId, Provider};
 
 #[derive(Clone)]
@@ -17,6 +18,7 @@ pub(super) struct ModelOption {
     pub(super) description: String,
     pub(super) supports_reasoning: bool,
     pub(super) reasoning_alternative: Option<ModelId>,
+    pub(super) api_key_env: String,
 }
 
 fn should_filter_model(provider: Provider, model: &ModelId) -> bool {
@@ -37,6 +39,7 @@ pub(super) static MODEL_OPTIONS: Lazy<Vec<ModelOption>> = Lazy::new(|| {
             description: model.description().into_owned(),
             supports_reasoning: model.supports_reasoning_effort(),
             reasoning_alternative: model.non_reasoning_variant(),
+            api_key_env: provider.default_api_key_env().to_string(),
             model: model.clone(),
             provider,
         });
@@ -84,12 +87,25 @@ pub(super) fn build_model_options_with_overrides(
         if should_filter_model(provider, &model) {
             continue;
         }
+        let api_key_env = match &model {
+            ModelId::Custom(provider_key, _) => overrides
+                .get(provider_key)
+                .and_then(|config| config.api_key_env.as_deref())
+                .map(str::to_owned),
+            _ => overrides
+                .get(provider.as_ref())
+                .and_then(|config| config.api_key_env.as_deref())
+                .map(str::to_owned),
+        }
+        .filter(|env_key| !env_key.trim().is_empty())
+        .unwrap_or_else(|| provider.default_api_key_env().to_string());
         options.push(ModelOption {
             id: model.as_str().into_owned(),
             display: model.display_name().into_owned(),
             description: model.description().into_owned(),
             supports_reasoning: model.supports_reasoning_effort(),
             reasoning_alternative: model.non_reasoning_variant(),
+            api_key_env,
             model: model.clone(),
             provider,
         });
@@ -120,7 +136,33 @@ pub(super) fn build_filtered_options(vt_cfg: Option<&VTCodeConfig>) -> Cow<'stat
     } else {
         Cow::Borrowed(MODEL_OPTIONS.as_slice())
     };
+    let opts = apply_persisted_api_key_env(opts, cfg);
     filter_options_by_whitelist(opts, &cfg.providers_whitelist)
+}
+
+fn apply_persisted_api_key_env(
+    options: Cow<'static, [ModelOption]>,
+    cfg: &VTCodeConfig,
+) -> Cow<'static, [ModelOption]> {
+    let Some(provider) = Provider::from_str(&cfg.agent.provider).ok() else {
+        return options;
+    };
+    let configured_env = cfg.agent.api_key_env.trim();
+    if configured_env.is_empty()
+        || configured_env.eq_ignore_ascii_case(defaults::DEFAULT_API_KEY_ENV)
+        || configured_env.eq_ignore_ascii_case(provider.default_api_key_env())
+        || cfg.configured_api_key_env(&cfg.agent.provider).is_some()
+    {
+        return options;
+    }
+
+    let mut options = options.into_owned();
+    for option in &mut options {
+        if option.provider == provider {
+            option.api_key_env = configured_env.to_owned();
+        }
+    }
+    Cow::Owned(options)
 }
 
 pub(super) fn picker_provider_order() -> &'static [Provider] {

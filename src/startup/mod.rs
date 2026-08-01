@@ -23,14 +23,13 @@ use vtcode_config::auth::{OpenAIChatGptAuthHandle, resolve_openai_auth};
 use vtcode_config::workspace_env::read_workspace_env_value;
 use vtcode_config::{OpenAIPreferredMethod, PromptCacheRetention};
 use vtcode_core::cli::args::{Cli, Commands};
-use vtcode_core::config::api_keys::{ApiKeySources, get_api_key_with_mode, resolve_openai_api_key_for_auth};
 use vtcode_core::config::loader::VTCodeConfig;
 use vtcode_core::config::models::{Provider, ProviderModelSupport, model_catalog_entry};
 use vtcode_core::config::types::AgentConfig as CoreAgentConfig;
 use vtcode_core::config::validator::{check_openai_hosted_shell_compat, check_prompt_cache_retention_compat};
 use vtcode_core::copilot::{CopilotAuthStatusKind, probe_auth_status};
 use vtcode_core::core::agent::config::{
-    RuntimeModelSelection, api_key_env_var, build_runtime_agent_config, provider_label, resolve_runtime_model_selection,
+    RuntimeModelSelection, build_runtime_agent_config, provider_label, resolve_runtime_model_selection,
 };
 use vtcode_core::core::interfaces::session::PlanningEntrySource;
 use vtcode_core::{initialize_dot_folder, update_model_preference, update_theme_preference};
@@ -279,11 +278,13 @@ async fn resolve_codex_fallback_selection(
     let openai_candidate = RuntimeModelSelection {
         model: openai_fallback_model(&selection.model),
         provider: "openai".to_string(),
+        api_key_env: Provider::OpenAI.default_api_key_env().to_string(),
         model_source: selection.model_source,
     };
     let copilot_candidate = RuntimeModelSelection {
         model: vtcode_core::config::constants::models::copilot::DEFAULT_MODEL.to_string(),
         provider: "copilot".to_string(),
+        api_key_env: Provider::Copilot.default_api_key_env().to_string(),
         model_source: selection.model_source,
     };
 
@@ -319,7 +320,7 @@ async fn persist_runtime_selection(
 ) -> Result<()> {
     config.agent.provider = selection.provider.clone();
     config.agent.default_model = selection.model.clone();
-    config.agent.api_key_env = api_key_env_var(&selection.provider);
+    config.agent.api_key_env = selection.api_key_env.clone();
     if !selection.provider.eq_ignore_ascii_case("openai") || !Provider::OpenAI.supports_service_tier(&selection.model) {
         config.provider.openai.service_tier = None;
     }
@@ -342,11 +343,38 @@ async fn resolve_runtime_provider_auth(
     }
 
     if selection.provider.eq_ignore_ascii_case("openai") {
-        let api_key = resolve_openai_api_key_for_auth(
-            config.agent.credential_storage_mode,
-            !matches!(config.auth.openai.preferred_method, OpenAIPreferredMethod::ApiKey),
-        )
-        .with_context(|| missing_api_key_message(config, selection, first_run_occurred, command, workspace))?;
+        if !selection
+            .api_key_env
+            .eq_ignore_ascii_case(Provider::OpenAI.default_api_key_env())
+        {
+            let resolved = vtcode_config::api_keys::resolve_credential_with_mode(
+                &selection.provider,
+                &selection.api_key_env,
+                Some(workspace),
+                config.agent.credential_storage_mode,
+            )?;
+            let api_key = resolved.and_then(|credential| credential.secret).ok_or_else(|| {
+                anyhow!("{}", missing_api_key_message(config, selection, first_run_occurred, command, workspace))
+            })?;
+            let mut auth_config = config.auth.openai.clone();
+            auth_config.preferred_method = OpenAIPreferredMethod::ApiKey;
+            let auth = resolve_openai_auth(&auth_config, config.agent.credential_storage_mode, Some(api_key))?;
+            return Ok((auth.api_key().to_string(), auth.handle()));
+        }
+        let storage_mode = config.agent.credential_storage_mode;
+        let resolved = vtcode_config::api_keys::resolve_credential_with_mode(
+            &selection.provider,
+            &selection.api_key_env,
+            Some(workspace),
+            storage_mode,
+        )?;
+        let api_key = match resolved.and_then(|credential| credential.secret) {
+            Some(api_key) => Some(api_key),
+            None if config.auth.openai.preferred_method == OpenAIPreferredMethod::ApiKey => {
+                vtcode_config::api_keys::load_stored_api_key_with_mode("openai", storage_mode)?
+            }
+            None => None,
+        };
         let resolved = resolve_openai_auth(&config.auth.openai, config.agent.credential_storage_mode, api_key)
             .with_context(|| missing_api_key_message(config, selection, first_run_occurred, command, workspace))?;
         return Ok((resolved.api_key().to_string(), resolved.handle()));
@@ -370,22 +398,41 @@ async fn resolve_runtime_provider_auth(
         };
     }
 
+    if is_local_model_without_remote_auth(selection) {
+        return Ok((String::new(), None));
+    }
+
     if let Some(custom_provider) = config.custom_provider(&selection.provider) {
         if custom_provider.uses_command_auth() {
             return Ok((String::new(), None));
         }
-        let api_key_env = custom_provider.resolved_api_key_env();
-        if let Ok(api_key) = std::env::var(&api_key_env)
-            && !api_key.trim().is_empty()
-        {
-            return Ok((api_key, None));
+        if let Some(credential) = vtcode_config::api_keys::resolve_credential_with_mode(
+            &selection.provider,
+            &selection.api_key_env,
+            Some(workspace),
+            config.agent.credential_storage_mode,
+        )? {
+            if let Some(api_key) = credential.secret {
+                return Ok((api_key, None));
+            }
         }
     }
 
-    let api_key =
-        get_api_key_with_mode(&selection.provider, &ApiKeySources::default(), config.agent.credential_storage_mode)
-            .with_context(|| missing_api_key_message(config, selection, first_run_occurred, command, workspace))?;
+    let api_key = vtcode_config::api_keys::resolve_credential_with_mode(
+        &selection.provider,
+        &selection.api_key_env,
+        Some(workspace),
+        config.agent.credential_storage_mode,
+    )?
+    .and_then(|credential| credential.secret)
+    .ok_or_else(|| anyhow!("{}", missing_api_key_message(config, selection, first_run_occurred, command, workspace)))?;
     Ok((api_key, None))
+}
+
+fn is_local_model_without_remote_auth(selection: &RuntimeModelSelection) -> bool {
+    let provider = selection.provider.trim().to_ascii_lowercase();
+    matches!(provider.as_str(), "ollama" | "lmstudio" | "llamacpp" | "llama.cpp" | "llama-cpp")
+        && !selection.model.to_ascii_lowercase().contains("cloud")
 }
 
 fn missing_api_key_message(
@@ -404,13 +451,7 @@ fn missing_api_key_message(
         format!("Run `vtcode secret add {provider_name}` to store it in secure storage (recommended).")
     };
 
-    let env_var = selection
-        .provider
-        .parse::<Provider>()
-        .ok()
-        .filter(|provider| !provider.uses_managed_auth())
-        .map(|provider| provider.default_api_key_env().to_string())
-        .unwrap_or_else(|| api_key_env_var(&selection.provider));
+    let env_var = selection.api_key_env.clone();
 
     let env_hint = format!("Set {env_var} environment variable,");
     let config_hint = "configure it in vtcode.toml";
@@ -736,6 +777,7 @@ mod validation_tests {
         let selection = RuntimeModelSelection {
             model: "gpt-5-mini".to_string(),
             provider: "mycorp".to_string(),
+            api_key_env: "MYCORP_API_KEY".to_string(),
             model_source: vtcode_core::config::types::ModelSelectionSource::WorkspaceConfig,
         };
 
@@ -752,6 +794,7 @@ mod validation_tests {
         let selection = RuntimeModelSelection {
             model: "gpt-5-codex".to_string(),
             provider: "codex".to_string(),
+            api_key_env: String::new(),
             model_source: vtcode_core::config::types::ModelSelectionSource::WorkspaceConfig,
         };
 
@@ -773,6 +816,7 @@ mod validation_tests {
         let selection = RuntimeModelSelection {
             model: "gpt-4o".to_string(),
             provider: "openai".to_string(),
+            api_key_env: "OPENAI_API_KEY".to_string(),
             model_source: vtcode_core::config::types::ModelSelectionSource::WorkspaceConfig,
         };
 

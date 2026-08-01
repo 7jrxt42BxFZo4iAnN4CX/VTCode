@@ -2,11 +2,12 @@ use std::str::FromStr;
 
 use anyhow::Result;
 use vtcode_auth::AuthCredentialsStoreMode;
+use vtcode_config::VTCodeConfig;
 use vtcode_config::api_keys::CredentialSource;
-use vtcode_config::workspace_env::{MigrationOutcome, migrate_workspace_env_keys, workspace_env_path};
+use vtcode_config::workspace_env::workspace_env_path;
 use vtcode_core::config::models::Provider;
 use vtcode_core::llm::factory::{ProviderConfig, create_provider_with_config};
-use vtcode_core::utils::ansi::{AnsiRenderer, MessageStyle};
+use vtcode_core::utils::ansi::MessageStyle;
 use vtcode_ui::tui::app::{InlineEvent, InlineListItem, InlineListSelection, TransientEvent};
 
 use super::{SlashCommandContext, SlashCommandControl};
@@ -14,6 +15,16 @@ use crate::agent::runloop::slash_commands::SecretCommandAction;
 
 mod storage;
 use storage::SecretStorage;
+
+#[derive(Clone)]
+struct SecretTarget {
+    provider_name: String,
+    label: String,
+    provider: Option<Provider>,
+    env_key: String,
+    local: bool,
+    managed_auth: bool,
+}
 
 pub(crate) async fn handle_manage_secrets(
     mut ctx: SlashCommandContext<'_>,
@@ -23,7 +34,7 @@ pub(crate) async fn handle_manage_secrets(
         SecretCommandAction::Interactive => {
             if !ctx.renderer.supports_inline_ui() {
                 let mode = storage_mode(&ctx);
-                render_secret_status_table(ctx.renderer, None, mode)?;
+                render_secret_status_table(&mut ctx, None, None, mode)?;
                 return Ok(SlashCommandControl::Continue);
             }
             run_interactive_secret_manager(&mut ctx).await?;
@@ -31,49 +42,39 @@ pub(crate) async fn handle_manage_secrets(
         }
         SecretCommandAction::List => {
             let mode = storage_mode(&ctx);
-            render_secret_status_table(ctx.renderer, None, mode)?;
+            render_secret_status_table(&mut ctx, None, None, mode)?;
             Ok(SlashCommandControl::Continue)
         }
-        SecretCommandAction::Status { provider } => {
-            let provider = match provider {
-                Some(name) => match resolve_provider(&name) {
-                    Ok(p) => Some(p),
-                    Err(err) => {
-                        ctx.renderer.line(MessageStyle::Error, &err)?;
-                        return Ok(SlashCommandControl::Continue);
-                    }
-                },
-                None => None,
-            };
+        SecretCommandAction::Status { provider, key_name } => {
             let mode = storage_mode(&ctx);
-            render_secret_status_table(ctx.renderer, provider, mode)?;
+            render_secret_status_table(&mut ctx, provider.as_deref(), key_name.as_deref(), mode)?;
             Ok(SlashCommandControl::Continue)
         }
-        SecretCommandAction::Add { provider } => {
-            let provider = match resolve_provider(&provider) {
+        SecretCommandAction::Add { provider, key_name } => {
+            let target = match resolve_secret_target(ctx.vt_cfg.as_ref(), &provider, key_name.as_deref()) {
                 Ok(p) => p,
                 Err(err) => {
                     ctx.renderer.line(MessageStyle::Error, &err)?;
                     return Ok(SlashCommandControl::Continue);
                 }
             };
-            let _ = handle_add_secret(&mut ctx, provider).await?;
+            let _ = handle_add_secret(&mut ctx, target).await?;
             Ok(SlashCommandControl::Continue)
         }
-        SecretCommandAction::Delete { provider } => {
-            let provider = match resolve_provider(&provider) {
+        SecretCommandAction::Delete { provider, key_name } => {
+            let target = match resolve_secret_target(ctx.vt_cfg.as_ref(), &provider, key_name.as_deref()) {
                 Ok(p) => p,
                 Err(err) => {
                     ctx.renderer.line(MessageStyle::Error, &err)?;
                     return Ok(SlashCommandControl::Continue);
                 }
             };
-            handle_delete_secret(&mut ctx, provider).await?;
+            handle_delete_secret(&mut ctx, target).await?;
             Ok(SlashCommandControl::Continue)
         }
         SecretCommandAction::Migrate { provider } => {
-            let provider = match provider {
-                Some(name) => match resolve_provider(&name) {
+            let target = match provider {
+                Some(name) => match resolve_secret_target(ctx.vt_cfg.as_ref(), &name, None) {
                     Ok(p) => Some(p),
                     Err(err) => {
                         ctx.renderer.line(MessageStyle::Error, &err)?;
@@ -82,13 +83,13 @@ pub(crate) async fn handle_manage_secrets(
                 },
                 None => None,
             };
-            handle_migrate_secrets(&mut ctx, provider).await?;
+            handle_migrate_secrets(&mut ctx, target).await?;
             Ok(SlashCommandControl::Continue)
         }
         SecretCommandAction::Help => {
             ctx.renderer.line(
                 MessageStyle::Info,
-                "Usage: /secret [list|status [provider]|add <provider>|delete <provider>|migrate [provider]|help]",
+                "Usage: /secret [list|status [provider] [key-name]|add <provider> [key-name]|delete <provider> [key-name]|migrate [provider]|help]",
             )?;
             ctx.renderer.line(
                 MessageStyle::Output,
@@ -99,17 +100,97 @@ pub(crate) async fn handle_manage_secrets(
     }
 }
 
-fn resolve_provider(name: &str) -> Result<Provider, String> {
-    Provider::from_str(name)
-        .map_err(|_err| format!("Unknown provider: {name}. Use one of: {}", ALL_PROVIDER_NAMES.as_str()))
+fn resolve_secret_target(
+    vt_cfg: Option<&VTCodeConfig>,
+    name: &str,
+    key_name: Option<&str>,
+) -> Result<SecretTarget, String> {
+    let provider_name = name.trim().to_ascii_lowercase();
+    if provider_name.is_empty() {
+        return Err("Provider name cannot be empty.".to_string());
+    }
+    if let Ok(provider) = Provider::from_str(&provider_name) {
+        return Ok(SecretTarget {
+            provider_name: provider_name.clone(),
+            label: provider.label().to_string(),
+            provider: Some(provider),
+            env_key: key_name
+                .filter(|key| !key.trim().is_empty())
+                .map(ToOwned::to_owned)
+                .or_else(|| vt_cfg.and_then(|cfg| cfg.configured_api_key_env(&provider_name)))
+                .unwrap_or_else(|| provider.default_api_key_env().to_string()),
+            local: provider.is_local(),
+            managed_auth: provider.uses_managed_auth(),
+        });
+    }
+    let Some(custom) = vt_cfg.and_then(|cfg| cfg.custom_provider(&provider_name)) else {
+        let configured = vt_cfg
+            .map(|cfg| {
+                cfg.custom_providers
+                    .iter()
+                    .map(|provider| provider.name.as_str())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let suffix = if configured.is_empty() {
+            String::new()
+        } else {
+            format!(" Configured custom providers: {}.", configured.join(", "))
+        };
+        return Err(format!("Unknown provider: {name}.{suffix}"));
+    };
+    Ok(SecretTarget {
+        provider_name,
+        label: custom.display_name.clone(),
+        provider: None,
+        env_key: if custom.uses_command_auth() {
+            String::new()
+        } else {
+            key_name
+                .filter(|key| !key.trim().is_empty())
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| custom.resolved_api_key_env())
+        },
+        local: false,
+        managed_auth: custom.uses_command_auth(),
+    })
 }
 
-fn should_show_secret_items(provider: Provider, storage_mode: AuthCredentialsStoreMode) -> bool {
-    if provider.is_local() || provider.uses_managed_auth() {
+fn all_secret_targets(vt_cfg: Option<&VTCodeConfig>) -> Vec<SecretTarget> {
+    let mut targets = Provider::all_providers()
+        .into_iter()
+        .filter_map(|provider| resolve_secret_target(vt_cfg, provider.as_ref(), None).ok())
+        .collect::<Vec<_>>();
+    if let Some(cfg) = vt_cfg {
+        targets.extend(
+            cfg.custom_providers
+                .iter()
+                .filter_map(|provider| resolve_secret_target(Some(cfg), &provider.name, None).ok()),
+        );
+    }
+    targets
+}
+
+fn should_show_secret_items(
+    target: &SecretTarget,
+    workspace: &std::path::Path,
+    storage_mode: AuthCredentialsStoreMode,
+) -> bool {
+    if target.local || target.managed_auth || target.env_key.is_empty() {
         return false;
     }
-    let detail = vtcode_config::api_keys::provider_credential_detail_with_mode(provider, storage_mode);
-    !matches!(detail.map(|d| d.source), Some(CredentialSource::OAuth))
+    !matches!(
+        vtcode_config::api_keys::resolve_credential_with_mode(
+            &target.provider_name,
+            &target.env_key,
+            Some(workspace),
+            storage_mode,
+        )
+        .ok()
+        .flatten()
+        .map(|resolved| resolved.source),
+        Some(CredentialSource::OAuth)
+    )
 }
 
 async fn run_interactive_secret_manager(ctx: &mut SlashCommandContext<'_>) -> Result<()> {
@@ -133,24 +214,21 @@ async fn run_interactive_secret_manager(ctx: &mut SlashCommandContext<'_>) -> Re
         match action_key {
             "list" | "status" => {
                 let mode = storage_mode(ctx);
-                render_secret_status_table(ctx.renderer, None, mode)?;
+                render_secret_status_table(ctx, None, None, mode)?;
             }
             "migrate" => {
                 handle_migrate_secrets(ctx, None).await?;
             }
             _ => {
                 if let Some(provider_name) = action_key.strip_prefix("add:") {
-                    let provider = match Provider::from_str(provider_name) {
-                        Ok(provider) => provider,
-                        Err(_) => {
-                            ctx.renderer.line(
-                                MessageStyle::Error,
-                                &format!("Unknown provider: {provider_name}. Use /secret to see available providers."),
-                            )?;
+                    let target = match resolve_secret_target(ctx.vt_cfg.as_ref(), provider_name, None) {
+                        Ok(target) => target,
+                        Err(err) => {
+                            ctx.renderer.line(MessageStyle::Error, &err)?;
                             continue;
                         }
                     };
-                    match handle_add_secret(ctx, provider).await? {
+                    match handle_add_secret(ctx, target).await? {
                         SecretEntryOutcome::Continue => {}
                         SecretEntryOutcome::CloseManager => {
                             // `wait_for_secure_prompt_input` already dismisses
@@ -161,17 +239,14 @@ async fn run_interactive_secret_manager(ctx: &mut SlashCommandContext<'_>) -> Re
                         }
                     }
                 } else if let Some(provider_name) = action_key.strip_prefix("delete:") {
-                    let provider = match Provider::from_str(provider_name) {
-                        Ok(provider) => provider,
-                        Err(_) => {
-                            ctx.renderer.line(
-                                MessageStyle::Error,
-                                &format!("Unknown provider: {provider_name}. Use /secret to see available providers."),
-                            )?;
+                    let target = match resolve_secret_target(ctx.vt_cfg.as_ref(), provider_name, None) {
+                        Ok(target) => target,
+                        Err(err) => {
+                            ctx.renderer.line(MessageStyle::Error, &err)?;
                             continue;
                         }
                     };
-                    handle_delete_secret(ctx, provider).await?;
+                    handle_delete_secret(ctx, target).await?;
                 }
             }
         }
@@ -186,17 +261,27 @@ enum SecretEntryOutcome {
     CloseManager,
 }
 
-async fn handle_add_secret(ctx: &mut SlashCommandContext<'_>, provider: Provider) -> Result<SecretEntryOutcome> {
-    if let Err(err) = SecretStorage::validate_provider(provider) {
-        ctx.renderer.line(MessageStyle::Info, &err.to_string())?;
+#[derive(Clone, Copy)]
+enum CredentialReadback {
+    Stored,
+    Resolved,
+}
+
+async fn handle_add_secret(ctx: &mut SlashCommandContext<'_>, target: SecretTarget) -> Result<SecretEntryOutcome> {
+    if target.local || target.managed_auth || target.env_key.is_empty() {
+        ctx.renderer.line(
+            MessageStyle::Info,
+            &format!("{} does not use a static API key; use its configured authentication flow instead.", target.label),
+        )?;
         return Ok(SecretEntryOutcome::Continue);
     }
-    let label = provider.label();
-    let env_key = provider.default_api_key_env();
+    let label = target.label.as_str();
+    let env_key = target.env_key.as_str();
     let prompt_label = format!("{} API key ({})", label, env_key);
 
-    let platform_hint = provider
-        .platform_url()
+    let platform_hint = target
+        .provider
+        .and_then(|provider| provider.platform_url())
         .map(|url| format!("Get your key at {url}"))
         .unwrap_or_else(|| format!("Get your {} API key from the provider's platform.", label));
     let lines = vec![
@@ -223,12 +308,19 @@ async fn handle_add_secret(ctx: &mut SlashCommandContext<'_>, provider: Provider
     }
 
     let storage = SecretStorage::new(storage_mode(ctx));
-    match storage.store(provider, trimmed) {
+    match storage.store(&target.provider_name, env_key, trimmed) {
         Ok(()) => {
             ctx.renderer
                 .line(MessageStyle::Info, &format!("API key for {label} stored in secure storage."))?;
             ctx.renderer.line(MessageStyle::Output, "The key will be used automatically.")?;
-            if let Err(err) = reload_provider_client_if_matching(ctx, provider) {
+            if vtcode_config::read_workspace_env_value(&ctx.config.workspace, env_key)?.is_some() {
+                vtcode_config::remove_workspace_env_value(&ctx.config.workspace, env_key)?;
+                ctx.renderer.line(
+                    MessageStyle::Info,
+                    &format!("Removed stale {env_key} from workspace .env to avoid conflicts."),
+                )?;
+            }
+            if let Err(err) = reload_provider_client_if_matching(ctx, &target, CredentialReadback::Stored) {
                 ctx.renderer.line(MessageStyle::Warning, &err)?;
             }
             return Ok(SecretEntryOutcome::CloseManager);
@@ -247,22 +339,15 @@ async fn handle_add_secret(ctx: &mut SlashCommandContext<'_>, provider: Provider
 
 async fn handle_migrate_secrets(
     ctx: &mut SlashCommandContext<'_>,
-    provider: Option<Provider>,
+    target: Option<SecretTarget>,
 ) -> Result<SlashCommandControl> {
-    if let Some(p) = provider {
-        if p.uses_managed_auth() {
-            ctx.renderer.line(
-                MessageStyle::Info,
-                &format!("{} uses managed auth (GitHub Copilot CLI). Run `/login {}` instead.", p.label(), p.as_ref()),
-            )?;
-            return Ok(SlashCommandControl::Continue);
-        }
+    let targets = match target {
+        Some(target) => vec![target],
+        None => all_secret_targets(ctx.vt_cfg.as_ref()),
     }
-
-    let targets: Vec<Provider> = match provider {
-        Some(p) => vec![p],
-        None => Provider::all_providers(),
-    };
+    .into_iter()
+    .filter(|target| !target.local && !target.managed_auth && !target.env_key.is_empty())
+    .collect::<Vec<_>>();
 
     let env_path = workspace_env_path(&ctx.config.workspace);
     let env_path_display = env_path.display().to_string();
@@ -273,21 +358,27 @@ async fn handle_migrate_secrets(
         return Ok(SlashCommandControl::Continue);
     }
 
-    let (summary, outcomes) = migrate_workspace_env_keys(&ctx.config.workspace, &targets, storage_mode(ctx))?;
-
-    for (provider, outcome) in outcomes {
-        let env_key = provider.default_api_key_env();
-        match outcome {
-            MigrationOutcome::Migrated => {
+    let storage = SecretStorage::new(storage_mode(ctx));
+    let mut migrated = 0usize;
+    let mut skipped = 0usize;
+    let mut failed = 0usize;
+    for target in targets {
+        let env_key = target.env_key.as_str();
+        let Some(value) = vtcode_config::read_workspace_env_value(&ctx.config.workspace, env_key)? else {
+            skipped += 1;
+            continue;
+        };
+        match storage.store(&target.provider_name, env_key, value.trim()) {
+            Ok(()) => {
+                vtcode_config::remove_workspace_env_value(&ctx.config.workspace, env_key)?;
                 ctx.renderer
-                    .line(MessageStyle::Info, &format!("Migrated {} API key to secure storage.", provider.label()))?;
+                    .line(MessageStyle::Info, &format!("Migrated {} API key to secure storage.", target.label))?;
+                migrated += 1;
             }
-            MigrationOutcome::Skipped => {}
-            MigrationOutcome::Failed => {
-                ctx.renderer.line(
-                    MessageStyle::Error,
-                    &format!("Failed to migrate {} API key: {}", provider.label(), env_key),
-                )?;
+            Err(err) => {
+                ctx.renderer
+                    .line(MessageStyle::Error, &format!("Failed to migrate {} API key: {}", target.label, err))?;
+                failed += 1;
             }
         }
     }
@@ -295,13 +386,10 @@ async fn handle_migrate_secrets(
     ctx.renderer.line(MessageStyle::Output, "")?;
     ctx.renderer.line(
         MessageStyle::Info,
-        &format!(
-            "Migration complete: {} migrated, {} skipped, {} failed.",
-            summary.migrated, summary.skipped, summary.failed
-        ),
+        &format!("Migration complete: {} migrated, {} skipped, {} failed.", migrated, skipped, failed),
     )?;
 
-    if summary.migrated > 0 {
+    if migrated > 0 {
         ctx.renderer
             .line(MessageStyle::Output, "Keys moved from .env to secure storage (OS keyring or encrypted file).")?;
         ctx.renderer
@@ -311,15 +399,18 @@ async fn handle_migrate_secrets(
     Ok(SlashCommandControl::Continue)
 }
 
-async fn handle_delete_secret(ctx: &mut SlashCommandContext<'_>, provider: Provider) -> Result<SlashCommandControl> {
-    if let Err(err) = SecretStorage::validate_provider(provider) {
-        ctx.renderer.line(MessageStyle::Info, &err.to_string())?;
+async fn handle_delete_secret(ctx: &mut SlashCommandContext<'_>, target: SecretTarget) -> Result<SlashCommandControl> {
+    if target.local || target.managed_auth || target.env_key.is_empty() {
+        ctx.renderer.line(
+            MessageStyle::Info,
+            &format!("{} does not use a static API key; use its configured authentication flow instead.", target.label),
+        )?;
         return Ok(SlashCommandControl::Continue);
     }
-    let label = provider.label();
+    let label = target.label.as_str();
 
     let storage = SecretStorage::new(storage_mode(ctx));
-    match storage.load(provider) {
+    match storage.load_stored(&target.provider_name, &target.env_key) {
         Ok(None) => {
             ctx.renderer
                 .line(MessageStyle::Info, &format!("No stored API key found for {label}."))?;
@@ -350,13 +441,13 @@ async fn handle_delete_secret(ctx: &mut SlashCommandContext<'_>, provider: Provi
         return Ok(SlashCommandControl::Continue);
     }
 
-    match storage.clear(provider) {
+    match storage.clear(&target.provider_name, &target.env_key) {
         Ok(()) => {
             ctx.renderer
                 .line(MessageStyle::Info, &format!("API key for {label} deleted from secure storage."))?;
             ctx.renderer
                 .line(MessageStyle::Output, "The change takes effect immediately.")?;
-            if let Err(err) = reload_provider_client_if_matching(ctx, provider) {
+            if let Err(err) = reload_provider_client_if_matching(ctx, &target, CredentialReadback::Resolved) {
                 ctx.renderer.line(MessageStyle::Warning, &err)?;
             }
         }
@@ -371,30 +462,41 @@ async fn handle_delete_secret(ctx: &mut SlashCommandContext<'_>, provider: Provi
 
 // --- Storage ---
 
-fn reload_provider_client_if_matching(ctx: &mut SlashCommandContext<'_>, provider: Provider) -> Result<(), String> {
+fn reload_provider_client_if_matching(
+    ctx: &mut SlashCommandContext<'_>,
+    target: &SecretTarget,
+    readback: CredentialReadback,
+) -> Result<(), String> {
     let current_provider = ctx.config.provider.trim().to_lowercase();
-    if !provider.as_ref().eq_ignore_ascii_case(&current_provider) {
+    if !target.provider_name.eq_ignore_ascii_case(&current_provider) {
         return Ok(());
     }
 
     let storage = SecretStorage::new(storage_mode(ctx));
-    let new_api_key = match storage.load(provider) {
+    let new_api_key = match match readback {
+        CredentialReadback::Stored => storage.load_stored(&target.provider_name, &target.env_key),
+        CredentialReadback::Resolved => {
+            storage.load_resolved(&target.provider_name, &target.env_key, &ctx.config.workspace)
+        }
+    } {
         Ok(Some(key)) => key,
         Ok(None) => {
             return Err(format!(
-                "Secure storage read-back failed: no key found for {provider} after store. The key may not have persisted."
+                "Secure storage read-back failed: no key found for {} after store. The key may not have persisted.",
+                target.provider_name
             ));
         }
         Err(err) => {
             return Err(format!(
-                "Secure storage read-back failed for {provider}: {err}. The key is stored but the running session may need a restart."
+                "Secure storage read-back failed for {}: {err}. The key is stored but the running session may need a restart.",
+                target.provider_name
             ));
         }
     };
 
     ctx.config.api_key = new_api_key;
     let new_provider = match create_provider_with_config(
-        provider.as_ref(),
+        &target.provider_name,
         ProviderConfig {
             api_key: Some(ctx.config.api_key.clone()),
             openai_chatgpt_auth: ctx.config.openai_chatgpt_auth.clone(),
@@ -412,7 +514,8 @@ fn reload_provider_client_if_matching(ctx: &mut SlashCommandContext<'_>, provide
         Ok(provider) => provider,
         Err(err) => {
             return Err(format!(
-                "Failed to recreate provider client for {provider}: {err}. The key is stored but the running session may need a restart."
+                "Failed to recreate provider client for {}: {err}. The key is stored but the running session may need a restart.",
+                target.provider_name
             ));
         }
     };
@@ -497,8 +600,9 @@ const SECRET_ACTION_BACK: &str = "secret:back";
 const CURRENT_BADGE: &str = "Current";
 
 fn show_secret_actions_modal(ctx: &mut SlashCommandContext<'_>) {
-    let current_provider = ctx.config.provider.trim().parse::<Provider>().ok();
-    let (items, selected) = build_secret_action_items(current_provider, storage_mode(ctx));
+    let current_provider = ctx.config.provider.trim().to_ascii_lowercase();
+    let (items, selected) =
+        build_secret_action_items(&current_provider, ctx.vt_cfg.as_ref(), &ctx.config.workspace, storage_mode(ctx));
     ctx.renderer.show_list_modal(
         "Secrets",
         vec![
@@ -512,10 +616,11 @@ fn show_secret_actions_modal(ctx: &mut SlashCommandContext<'_>) {
 }
 
 fn build_secret_action_items(
-    current_provider: Option<Provider>,
+    current_provider: &str,
+    vt_cfg: Option<&VTCodeConfig>,
+    workspace: &std::path::Path,
     storage_mode: AuthCredentialsStoreMode,
 ) -> (Vec<InlineListItem>, InlineListSelection) {
-    let providers = Provider::all_providers();
     let mut items = vec![
         list_item(
             "List all secrets",
@@ -544,60 +649,36 @@ fn build_secret_action_items(
     ];
 
     let mut current_selection = None;
-
-    if let Some(provider) = current_provider {
-        if should_show_secret_items(provider, storage_mode) {
-            let key = provider.as_ref();
-            let label = provider.label();
-            let add_action = format!("{SECRET_ACTION_PREFIX}add:{key}");
-            let delete_action = format!("{SECRET_ACTION_PREFIX}delete:{key}");
-            current_selection = Some(InlineListSelection::ConfigAction(add_action.clone()));
-            items.push(InlineListItem {
-                title: format!("Add {label} key"),
-                subtitle: Some(format!("{CURRENT_BADGE} \u{2022} Store {label} API key in secure storage")),
-                badge: Some(CURRENT_BADGE.to_string()),
-                indent: 1,
-                selection: Some(InlineListSelection::ConfigAction(add_action)),
-                search_value: Some(format!("add {} api key", label.to_lowercase())),
-            });
-            items.push(InlineListItem {
-                title: format!("Delete {label} key"),
-                subtitle: Some(format!("{CURRENT_BADGE} \u{2022} Remove stored {label} API key")),
-                badge: Some(CURRENT_BADGE.to_string()),
-                indent: 1,
-                selection: Some(InlineListSelection::ConfigAction(delete_action)),
-                search_value: Some(format!("delete {} api key", label.to_lowercase())),
-            });
-        }
-    }
-
-    for provider in providers {
-        if let Some(current) = current_provider {
-            if provider == current {
-                continue;
-            }
-        }
-        if !should_show_secret_items(provider, storage_mode) {
+    for target in all_secret_targets(vt_cfg) {
+        if !should_show_secret_items(&target, workspace, storage_mode) {
             continue;
         }
-        let label = provider.label();
-        let key = provider.as_ref();
+        let is_current = target.provider_name.eq_ignore_ascii_case(current_provider);
+        let label = target.label.as_str();
+        let key = target.provider_name.as_str();
+        let badge = is_current.then(|| CURRENT_BADGE.to_string());
+        let prefix = if is_current { "Current • " } else { "" };
+        let add_action = format!("{SECRET_ACTION_PREFIX}add:{key}");
+        let delete_action = format!("{SECRET_ACTION_PREFIX}delete:{key}");
         items.push(InlineListItem {
             title: format!("Add {label} key"),
-            subtitle: Some(format!("Store {} API key in secure storage", label)),
-            badge: None,
+            subtitle: Some(format!("{prefix}Store {label} API key in secure storage")),
+            badge: badge.clone(),
             indent: 1,
-            selection: Some(InlineListSelection::ConfigAction(format!("{SECRET_ACTION_PREFIX}add:{key}"))),
+            selection: Some(InlineListSelection::ConfigAction(add_action.clone())),
             search_value: Some(format!("add {} api key", label.to_lowercase())),
         });
         items.push(InlineListItem {
             title: format!("Delete {label} key"),
-            subtitle: Some(format!("Remove stored {} API key", label)),
-            badge: None,
+            subtitle: Some(format!("{prefix}Remove stored {label} API key")),
+            badge,
             indent: 1,
-            selection: Some(InlineListSelection::ConfigAction(format!("{SECRET_ACTION_PREFIX}delete:{key}"))),
+            selection: Some(InlineListSelection::ConfigAction(delete_action)),
             search_value: Some(format!("delete {} api key", label.to_lowercase())),
         });
+        if is_current {
+            current_selection = Some(InlineListSelection::ConfigAction(add_action));
+        }
     }
 
     items.push(InlineListItem {
@@ -616,62 +697,81 @@ fn build_secret_action_items(
 }
 
 fn render_secret_status_table(
-    renderer: &mut AnsiRenderer,
-    filter: Option<Provider>,
+    ctx: &mut SlashCommandContext<'_>,
+    filter: Option<&str>,
+    key_name: Option<&str>,
     storage_mode: AuthCredentialsStoreMode,
 ) -> Result<()> {
-    renderer.line(MessageStyle::Info, "API Key Status")?;
-    renderer.line(MessageStyle::Output, "")?;
+    ctx.renderer.line(MessageStyle::Info, "API Key Status")?;
+    ctx.renderer.line(MessageStyle::Output, "")?;
 
-    let providers: Vec<Provider> = match filter {
-        Some(p) => vec![p],
-        None => Provider::all_providers(),
+    let targets = match filter {
+        Some(name) => {
+            vec![resolve_secret_target(ctx.vt_cfg.as_ref(), name, key_name).map_err(|err| anyhow::anyhow!(err))?]
+        }
+        None => all_secret_targets(ctx.vt_cfg.as_ref()),
     };
 
-    for &provider in &providers {
-        let detail = vtcode_config::api_keys::provider_credential_detail_with_mode(provider, storage_mode);
-        let source = detail.map(|d| d.source);
+    let mut has_oauth_or_managed = false;
+    for target in &targets {
+        let source = if target.local {
+            Some(CredentialSource::Local)
+        } else if target.managed_auth {
+            Some(CredentialSource::ManagedAuth)
+        } else {
+            vtcode_config::api_keys::resolve_credential_with_mode(
+                &target.provider_name,
+                &target.env_key,
+                Some(&ctx.config.workspace),
+                storage_mode,
+            )?
+            .map(|resolved| resolved.source)
+        };
         let source_label = match source {
             Some(CredentialSource::Env) => "Environment variable",
+            Some(CredentialSource::Workspace) => "Workspace .env",
             Some(CredentialSource::SecureStorage) => "OS keyring / encrypted file",
             Some(CredentialSource::OAuth) => "OAuth session",
             Some(CredentialSource::ManagedAuth) => "Managed auth (external CLI)",
             Some(CredentialSource::Local) => "Local \u{2014} no key required",
             None => "Not configured",
         };
-        let status = match source {
-            Some(CredentialSource::Local) | Some(CredentialSource::ManagedAuth) => "Ready",
-            Some(_) => "Ready",
-            None => "Missing",
-        };
-
-        renderer.line(MessageStyle::Output, &format!("  {} ({})", provider.label(), provider.as_ref()))?;
-        renderer.line(MessageStyle::Output, &format!("    Status: {}", status))?;
-        renderer.line(MessageStyle::Output, &format!("    Source: {}", source_label))?;
-
-        if let Some(env_key) = detail.and_then(|d| d.env_var) {
-            renderer.line(MessageStyle::Output, &format!("    Env var: {}", env_key))?;
-        }
-        if let Some(url) = provider.platform_url() {
-            renderer.line(MessageStyle::Output, &format!("    Platform: {}", url))?;
+        let status = if source.is_some() { "Ready" } else { "Missing" };
+        if matches!(source, Some(CredentialSource::OAuth | CredentialSource::ManagedAuth)) {
+            has_oauth_or_managed = true;
         }
 
-        renderer.line(MessageStyle::Output, "")?;
+        ctx.renderer
+            .line(MessageStyle::Output, &format!("  {} ({})", target.label, target.provider_name))?;
+        ctx.renderer.line(MessageStyle::Output, &format!("    Status: {}", status))?;
+        ctx.renderer
+            .line(MessageStyle::Output, &format!("    Source: {}", source_label))?;
+
+        if !target.env_key.is_empty() {
+            ctx.renderer
+                .line(MessageStyle::Output, &format!("    Env var: {}", target.env_key))?;
+        }
+        if let Some(url) = target.provider.and_then(|provider| provider.platform_url()) {
+            ctx.renderer.line(MessageStyle::Output, &format!("    Platform: {}", url))?;
+        }
+
+        ctx.renderer.line(MessageStyle::Output, "")?;
     }
 
-    let has_oauth_or_managed = providers.iter().any(|&p| !should_show_secret_items(p, storage_mode));
-
-    renderer.line(MessageStyle::Info, "Use /secret add <provider> to store a key.")?;
+    ctx.renderer
+        .line(MessageStyle::Info, "Use /secret add <provider> [key-name] to store a key.")?;
     if !has_oauth_or_managed {
-        renderer.line(MessageStyle::Info, "Use /secret delete <provider> to remove a stored key.")?;
+        ctx.renderer
+            .line(MessageStyle::Info, "Use /secret delete <provider> [key-name] to remove a stored key.")?;
     }
-    renderer.line(MessageStyle::Info, "Use /secret migrate to move keys from workspace .env to secure storage.")?;
+    ctx.renderer
+        .line(MessageStyle::Info, "Use /secret migrate to move keys from workspace .env to secure storage.")?;
     if has_oauth_or_managed {
-        renderer.line(
+        ctx.renderer.line(
             MessageStyle::Info,
             "OAuth / managed-auth providers (copilot, openai, openrouter) use their own login flows.",
         )?;
-        renderer.line(MessageStyle::Info, "Run `/login <provider>` for those.")?;
+        ctx.renderer.line(MessageStyle::Info, "Run `/login <provider>` for those.")?;
     }
 
     Ok(())
@@ -685,30 +785,5 @@ fn list_item(title: &str, subtitle: &str, action: String, search: &str) -> Inlin
         indent: 0,
         selection: Some(InlineListSelection::ConfigAction(action)),
         search_value: Some(search.to_string()),
-    }
-}
-
-static ALL_PROVIDER_NAMES: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-    Provider::all_providers()
-        .iter()
-        .map(|p| p.to_string())
-        .collect::<Vec<_>>()
-        .join(", ")
-});
-
-#[cfg(test)]
-mod tests {
-    use vtcode_auth::AuthCredentialsStoreMode;
-
-    #[test]
-    fn secure_storage_round_trip_returns_just_stored_key() {
-        let provider = "stepfun";
-        let stored_key = "round-trip-key-123";
-        let storage = vtcode_auth::CustomApiKeyStorage::new(provider);
-
-        storage.store(stored_key, AuthCredentialsStoreMode::default()).unwrap();
-
-        let loaded = storage.load(AuthCredentialsStoreMode::default()).unwrap();
-        assert_eq!(loaded.as_deref(), Some(stored_key));
     }
 }

@@ -757,6 +757,7 @@ mod tests {
             RuntimeModelSelection {
                 model: "gpt-5".to_string(),
                 provider: "openai".to_string(),
+                api_key_env: "OPENAI_API_KEY".to_string(),
                 model_source: ModelSelectionSource::WorkspaceConfig,
             },
             "test-key".to_string(),

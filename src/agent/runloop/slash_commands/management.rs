@@ -203,7 +203,10 @@ pub(super) fn handle_secret_command(args: &str, renderer: &mut AnsiRenderer) -> 
         "list" | "ls" => Ok(SlashCommandOutcome::ManageSecrets { action: SecretCommandAction::List }),
         "status" | "info" => {
             let provider = tokens.get(1).map(|s| s.to_ascii_lowercase());
-            Ok(SlashCommandOutcome::ManageSecrets { action: SecretCommandAction::Status { provider } })
+            let key_name = parse_secret_key_name(&tokens, 2);
+            Ok(SlashCommandOutcome::ManageSecrets {
+                action: SecretCommandAction::Status { provider, key_name },
+            })
         }
         "add" | "set" | "replace" | "update" => {
             let Some(provider) = tokens.get(1) else {
@@ -212,7 +215,10 @@ pub(super) fn handle_secret_command(args: &str, renderer: &mut AnsiRenderer) -> 
                 return Ok(SlashCommandOutcome::Handled);
             };
             Ok(SlashCommandOutcome::ManageSecrets {
-                action: SecretCommandAction::Add { provider: provider.to_ascii_lowercase() },
+                action: SecretCommandAction::Add {
+                    provider: provider.to_ascii_lowercase(),
+                    key_name: parse_secret_key_name(&tokens, 2),
+                },
             })
         }
         "delete" | "remove" | "rm" | "clear" => {
@@ -222,7 +228,10 @@ pub(super) fn handle_secret_command(args: &str, renderer: &mut AnsiRenderer) -> 
                 return Ok(SlashCommandOutcome::Handled);
             };
             Ok(SlashCommandOutcome::ManageSecrets {
-                action: SecretCommandAction::Delete { provider: provider.to_ascii_lowercase() },
+                action: SecretCommandAction::Delete {
+                    provider: provider.to_ascii_lowercase(),
+                    key_name: parse_secret_key_name(&tokens, 2),
+                },
             })
         }
         "migrate" => {
@@ -238,4 +247,19 @@ pub(super) fn handle_secret_command(args: &str, renderer: &mut AnsiRenderer) -> 
             Ok(SlashCommandOutcome::Handled)
         }
     }
+}
+
+fn parse_secret_key_name(tokens: &[String], start: usize) -> Option<String> {
+    for (index, token) in tokens.iter().enumerate().skip(start) {
+        if matches!(token.as_str(), "--key-name" | "--env") {
+            return tokens.get(index + 1).cloned();
+        }
+        if let Some(value) = token.strip_prefix("--key-name=").or_else(|| token.strip_prefix("--env=")) {
+            return (!value.trim().is_empty()).then(|| value.to_ascii_uppercase());
+        }
+        if !token.starts_with('-') {
+            return Some(token.to_ascii_uppercase());
+        }
+    }
+    None
 }

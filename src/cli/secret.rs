@@ -3,78 +3,167 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::enable_raw_mode;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
+use std::str::FromStr;
 use unicode_width::UnicodeWidthChar;
-use vtcode_config::api_keys::{CredentialSource, DiscoveredProvider, has_oauth_or_managed_auth};
-use vtcode_config::auth::{AuthCredentialsStoreMode, CustomApiKeyStorage};
-use vtcode_config::workspace_env::{
-    MigrationOutcome, migrate_single_env_key, read_workspace_env_value, read_workspace_env_values,
-    remove_workspace_env_value, workspace_env_path,
+use vtcode_config::VTCodeConfig;
+use vtcode_config::api_keys::{
+    CredentialSource, clear_credential_with_mode, load_stored_credential_with_mode, resolve_credential_with_mode,
+    store_credential_with_mode,
 };
-use vtcode_core::cli::args::{MigrateArgs, SecretProvider, SecretSubcommand};
+use vtcode_config::auth::AuthCredentialsStoreMode;
+use vtcode_config::workspace_env::{read_workspace_env_value, remove_workspace_env_value, workspace_env_path};
+use vtcode_core::cli::args::{MigrateArgs, SecretSubcommand};
 use vtcode_core::config::models::Provider;
+
+#[derive(Clone)]
+struct SecretTarget {
+    provider_name: String,
+    label: String,
+    env_key: String,
+    local: bool,
+    managed_auth: bool,
+}
 
 pub async fn handle_secret_command(
     command: SecretSubcommand,
+    config: &VTCodeConfig,
     workspace: &Path,
     storage_mode: AuthCredentialsStoreMode,
 ) -> Result<()> {
     match command {
-        SecretSubcommand::List => render_secret_status_table(None, storage_mode),
-        SecretSubcommand::Status { provider_name } => {
-            render_secret_status_table(provider_name.map(secret_provider_to_provider), storage_mode)
+        SecretSubcommand::List => render_secret_status_table(config, workspace, None, None, storage_mode),
+        SecretSubcommand::Status { provider_name, key_name } => {
+            render_secret_status_table(config, workspace, provider_name.as_deref(), key_name.as_deref(), storage_mode)
         }
-        SecretSubcommand::Add { provider_name } => {
-            handle_add(secret_provider_to_provider(provider_name), workspace, storage_mode).await
+        SecretSubcommand::Add { provider_name, key_name } => {
+            let target = secret_target(config, &provider_name, key_name.as_deref())?;
+            handle_add(target, workspace, storage_mode).await
         }
-        SecretSubcommand::Delete { provider_name } => {
-            handle_delete(secret_provider_to_provider(provider_name), workspace, storage_mode).await
+        SecretSubcommand::Delete { provider_name, key_name } => {
+            let target = secret_target(config, &provider_name, key_name.as_deref())?;
+            handle_delete(target, workspace, storage_mode).await
         }
-        SecretSubcommand::Migrate(args) => handle_migrate(args, workspace, storage_mode).await,
+        SecretSubcommand::Migrate(args) => handle_migrate(args, config, workspace, storage_mode).await,
     }
 }
 
-fn render_secret_status_table(filter: Option<Provider>, storage_mode: AuthCredentialsStoreMode) -> Result<()> {
+fn secret_target(config: &VTCodeConfig, name: &str, key_name: Option<&str>) -> Result<SecretTarget> {
+    let provider_name = name.trim().to_ascii_lowercase();
+    if provider_name.is_empty() {
+        anyhow::bail!("Provider name cannot be empty.");
+    }
+
+    if let Ok(provider) = Provider::from_str(&provider_name) {
+        let env_key = key_name
+            .filter(|key| !key.trim().is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| config.configured_api_key_env(&provider_name))
+            .unwrap_or_else(|| provider.default_api_key_env().to_string());
+        return Ok(SecretTarget {
+            provider_name,
+            label: provider.label().to_string(),
+            env_key,
+            local: provider.is_local(),
+            managed_auth: provider.uses_managed_auth(),
+        });
+    }
+
+    let Some(custom) = config.custom_provider(&provider_name) else {
+        let configured = config
+            .custom_providers
+            .iter()
+            .map(|provider| provider.name.as_str())
+            .collect::<Vec<_>>();
+        let suffix = if configured.is_empty() {
+            String::new()
+        } else {
+            format!(" Configured custom providers: {}.", configured.join(", "))
+        };
+        anyhow::bail!("Unknown provider: {name}.{suffix}");
+    };
+
+    let env_key = if custom.uses_command_auth() {
+        String::new()
+    } else {
+        key_name
+            .filter(|key| !key.trim().is_empty())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| custom.resolved_api_key_env())
+    };
+    Ok(SecretTarget {
+        provider_name,
+        label: custom.display_name.clone(),
+        env_key,
+        local: false,
+        managed_auth: custom.uses_command_auth(),
+    })
+}
+
+fn all_secret_targets(config: &VTCodeConfig) -> Vec<SecretTarget> {
+    let mut targets = Provider::all_providers()
+        .into_iter()
+        .filter_map(|provider| secret_target(config, provider.as_ref(), None).ok())
+        .collect::<Vec<_>>();
+    targets.extend(
+        config
+            .custom_providers
+            .iter()
+            .filter_map(|provider| secret_target(config, &provider.name, None).ok()),
+    );
+    targets
+}
+
+fn render_secret_status_table(
+    config: &VTCodeConfig,
+    workspace: &Path,
+    filter: Option<&str>,
+    key_name: Option<&str>,
+    storage_mode: AuthCredentialsStoreMode,
+) -> Result<()> {
     println!("API Key Status");
     println!();
 
-    let providers: Vec<Provider> = match filter {
-        Some(p) => vec![p],
-        None => Provider::all_providers(),
+    let targets = match filter {
+        Some(name) => vec![secret_target(config, name, key_name)?],
+        None => all_secret_targets(config),
     };
 
-    let details: Vec<DiscoveredProvider> = providers
-        .iter()
-        .filter_map(|&p| vtcode_config::api_keys::provider_credential_detail_with_mode(p, storage_mode))
-        .collect();
-
-    for detail in &details {
-        let source = detail.source;
+    let mut has_oauth_or_managed = false;
+    for target in &targets {
+        let source = if target.local {
+            Some(CredentialSource::Local)
+        } else if target.managed_auth {
+            Some(CredentialSource::ManagedAuth)
+        } else {
+            resolve_credential_with_mode(&target.provider_name, &target.env_key, Some(workspace), storage_mode)?
+                .map(|resolved| resolved.source)
+        };
         let source_label = match source {
-            CredentialSource::Env => "Environment variable",
-            CredentialSource::SecureStorage => "OS keyring / encrypted file",
-            CredentialSource::OAuth => "OAuth session",
-            CredentialSource::ManagedAuth => "Managed auth (external CLI)",
-            CredentialSource::Local => "Local — no key required",
+            Some(CredentialSource::Env) => "Environment variable",
+            Some(CredentialSource::Workspace) => "Workspace .env",
+            Some(CredentialSource::SecureStorage) => "OS keyring / encrypted file",
+            Some(CredentialSource::OAuth) => "OAuth session",
+            Some(CredentialSource::ManagedAuth) => "Managed auth (external CLI)",
+            Some(CredentialSource::Local) => "Local — no key required",
+            None => "Not configured",
         };
-        let status = match source {
-            CredentialSource::Local | CredentialSource::ManagedAuth => "Ready",
-            CredentialSource::OAuth | CredentialSource::SecureStorage | CredentialSource::Env => "Ready",
+        let status = if source.is_some() { "Ready" } else { "Missing" };
+        if matches!(source, Some(CredentialSource::OAuth | CredentialSource::ManagedAuth)) {
+            has_oauth_or_managed = true;
         };
 
-        println!("  {} ({})", detail.provider.label(), detail.provider.as_ref());
+        println!("  {} ({})", target.label, target.provider_name);
         println!("    Status: {}", status);
         println!("    Source: {}", source_label);
 
-        if let Some(env_key) = detail.env_var {
-            println!("    Env var: {}", env_key);
+        if !target.env_key.is_empty() {
+            println!("    Env var: {}", target.env_key);
         }
 
         println!();
     }
 
-    let has_oauth_or_managed = has_oauth_or_managed_auth(&details);
-
-    println!("Use `vtcode secret add <provider>` to store a key.");
+    println!("Use `vtcode secret add <provider> [--key-name NAME]` to store a key.");
     if !has_oauth_or_managed {
         println!("Use `vtcode secret delete <provider>` to remove a stored key.");
     }
@@ -85,17 +174,13 @@ fn render_secret_status_table(filter: Option<Provider>, storage_mode: AuthCreden
     Ok(())
 }
 
-async fn handle_add(provider: Provider, workspace: &Path, storage_mode: AuthCredentialsStoreMode) -> Result<()> {
-    if provider.uses_managed_auth() {
-        println!(
-            "{} uses managed auth (GitHub Copilot CLI). Run `vtcode login {}` instead.",
-            provider.label(),
-            provider.as_ref()
-        );
+async fn handle_add(target: SecretTarget, workspace: &Path, storage_mode: AuthCredentialsStoreMode) -> Result<()> {
+    if target.local || target.managed_auth || target.env_key.is_empty() {
+        println!("{} does not use a static API key. Use its configured authentication flow instead.", target.label);
         return Ok(());
     }
-    let label = provider.label();
-    let env_key = provider.default_api_key_env();
+    let label = target.label.as_str();
+    let env_key = target.env_key.as_str();
 
     println!("Bring your own key (BYOK) for {label}.");
     println!("Expected env: {}", env_key);
@@ -119,13 +204,12 @@ async fn handle_add(provider: Provider, workspace: &Path, storage_mode: AuthCred
         anyhow::bail!("API key cannot be empty.");
     }
 
-    let storage = CustomApiKeyStorage::new(provider.as_ref());
-    storage.store(&key, storage_mode)?;
+    store_credential_with_mode(&target.provider_name, env_key, &key, storage_mode)?;
 
     // Purge stale entry from workspace .env so it doesn't shadow the
     // keyring entry (env var takes priority in get_api_key resolution).
     if !env_key.is_empty() {
-        if let Ok(Some(_)) = read_workspace_env_value(workspace, env_key) {
+        if read_workspace_env_value(workspace, env_key)?.is_some() {
             remove_workspace_env_value(workspace, env_key)?;
             println!("Removed stale {env_key} from workspace .env to avoid conflicts.");
         }
@@ -137,28 +221,19 @@ async fn handle_add(provider: Provider, workspace: &Path, storage_mode: AuthCred
     Ok(())
 }
 
-async fn handle_delete(provider: Provider, workspace: &Path, storage_mode: AuthCredentialsStoreMode) -> Result<()> {
-    if provider.uses_managed_auth() {
-        println!(
-            "{} uses managed auth (GitHub Copilot CLI). Run `vtcode login {}` instead.",
-            provider.label(),
-            provider.as_ref()
-        );
+async fn handle_delete(target: SecretTarget, workspace: &Path, storage_mode: AuthCredentialsStoreMode) -> Result<()> {
+    if target.local || target.managed_auth || target.env_key.is_empty() {
+        println!("{} does not use a static API key. Use its configured authentication flow instead.", target.label);
         return Ok(());
     }
-    let label = provider.label();
-    let env_key = provider.default_api_key_env();
+    let label = target.label.as_str();
+    let env_key = target.env_key.as_str();
 
-    let storage = CustomApiKeyStorage::new(provider.as_ref());
-    match storage.load(storage_mode) {
-        Ok(None) => {
-            println!("No stored API key found for {label}.");
-            return Ok(());
-        }
-        Ok(Some(_)) => {}
-        Err(err) => {
-            eprintln!("Warning: Could not inspect stored key for {label}: {err}");
-        }
+    let stored = load_stored_credential_with_mode(&target.provider_name, env_key, storage_mode)?;
+    let workspace_value = read_workspace_env_value(workspace, env_key)?;
+    if stored.is_none() && workspace_value.is_none() {
+        println!("No stored API key found for {label}.");
+        return Ok(());
     }
 
     print!("Type 'confirm' to delete the stored API key for {label}, or press Enter to cancel: ");
@@ -173,23 +248,32 @@ async fn handle_delete(provider: Provider, workspace: &Path, storage_mode: AuthC
         return Ok(());
     }
 
-    storage.clear(storage_mode)?;
+    if stored.is_some() {
+        clear_credential_with_mode(&target.provider_name, env_key, storage_mode)?;
+    }
 
     // Also purge the env var from workspace .env to prevent stale entries.
-    if !env_key.is_empty() {
-        if let Ok(Some(_)) = read_workspace_env_value(workspace, env_key) {
-            remove_workspace_env_value(workspace, env_key)?;
-            println!("Also removed {env_key} from workspace .env.");
-        }
+    if workspace_value.is_some() {
+        remove_workspace_env_value(workspace, env_key)?;
+        println!("Also removed {env_key} from workspace .env.");
     }
 
     println!();
-    println!("API key for {label} deleted from secure storage.");
+    if stored.is_some() {
+        println!("API key for {label} deleted from secure storage.");
+    } else {
+        println!("API key for {label} removed from workspace environment.");
+    }
     println!("The change takes effect immediately.");
     Ok(())
 }
 
-async fn handle_migrate(args: MigrateArgs, workspace: &Path, storage_mode: AuthCredentialsStoreMode) -> Result<()> {
+async fn handle_migrate(
+    args: MigrateArgs,
+    config: &VTCodeConfig,
+    workspace: &Path,
+    storage_mode: AuthCredentialsStoreMode,
+) -> Result<()> {
     let env_path = workspace_env_path(workspace);
     if !env_path.exists() {
         println!("No .env file found at {}. Nothing to migrate.", env_path.display());
@@ -199,42 +283,25 @@ async fn handle_migrate(args: MigrateArgs, workspace: &Path, storage_mode: AuthC
     println!("Scanning {} for API keys to migrate...", env_path.display());
     println!();
 
-    let providers: Vec<Provider> = if let Some(p) = args.provider_name {
-        let provider = secret_provider_to_provider(p);
-        if provider.uses_managed_auth() {
-            println!(
-                "{} uses managed auth (GitHub Copilot CLI). Run `vtcode login {}` instead.",
-                provider.label(),
-                provider.as_ref()
-            );
-            return Ok(());
-        }
-        vec![provider]
+    let targets = if let Some(name) = args.provider_name {
+        vec![secret_target(config, &name, None)?]
     } else {
-        Provider::all_providers()
+        all_secret_targets(config)
             .into_iter()
-            .filter(|p| !p.is_local() && !p.uses_managed_auth())
-            .collect()
+            .filter(|target| !target.local && !target.managed_auth && !target.env_key.is_empty())
+            .collect::<Vec<_>>()
     };
+    let targets = targets
+        .into_iter()
+        .filter(|target| !target.local && !target.managed_auth && !target.env_key.is_empty())
+        .collect::<Vec<_>>();
 
     if args.dry_run {
         println!("[dry-run] Would migrate the following keys from .env to secure storage:");
         println!();
-        let env_keys: Vec<&str> = providers
-            .iter()
-            .filter_map(|p| {
-                let key = p.default_api_key_env();
-                if key.is_empty() { None } else { Some(key) }
-            })
-            .collect();
-        let found = read_workspace_env_values(workspace, &env_keys)?;
-        for provider in &providers {
-            let env_key = provider.default_api_key_env();
-            if env_key.is_empty() {
-                continue;
-            }
-            if found.contains_key(env_key) {
-                println!("  {} ({})", provider.label(), env_key);
+        for target in &targets {
+            if read_workspace_env_value(workspace, &target.env_key)?.is_some() {
+                println!("  {} ({})", target.label, target.env_key);
             }
         }
         println!();
@@ -246,17 +313,8 @@ async fn handle_migrate(args: MigrateArgs, workspace: &Path, storage_mode: AuthC
     let mut skipped = 0u32;
     let mut failed = 0u32;
 
-    let env_keys: Vec<&str> = providers
-        .iter()
-        .filter_map(|p| {
-            let key = p.default_api_key_env();
-            if key.is_empty() { None } else { Some(key) }
-        })
-        .collect();
-    let env_values = read_workspace_env_values(workspace, &env_keys)?;
-
-    for provider in providers {
-        let env_key = provider.default_api_key_env();
+    for target in targets {
+        let env_key = target.env_key.as_str();
 
         if !args.force && !args.all && io::stdin().is_terminal() {
             print!("Migrate {} from .env to secure storage? [Y/n] ", env_key);
@@ -271,17 +329,21 @@ async fn handle_migrate(args: MigrateArgs, workspace: &Path, storage_mode: AuthC
             }
         }
 
-        let value = env_values.get(env_key).map(|s| s.as_str());
-        match migrate_single_env_key(workspace, provider, storage_mode, value)? {
-            MigrationOutcome::Migrated => {
+        let Some(value) = read_workspace_env_value(workspace, env_key)? else {
+            skipped += 1;
+            continue;
+        };
+        match store_credential_with_mode(&target.provider_name, env_key, value.trim(), storage_mode) {
+            Ok(Some(_)) => {
+                remove_workspace_env_value(workspace, env_key)?;
                 println!("Migrated {} to secure storage.", env_key);
                 migrated += 1;
             }
-            MigrationOutcome::Skipped => {
+            Ok(None) => {
                 skipped += 1;
             }
-            MigrationOutcome::Failed => {
-                eprintln!("Failed to migrate {}.", env_key);
+            Err(err) => {
+                eprintln!("Failed to migrate {}: {}", env_key, err);
                 failed += 1;
             }
         }
@@ -385,31 +447,5 @@ fn handle_key(event: Event, buffer: &mut String) -> Result<KeyAction> {
             Ok(KeyAction::Continue)
         }
         _ => Ok(KeyAction::Continue),
-    }
-}
-
-fn secret_provider_to_provider(p: SecretProvider) -> Provider {
-    match p {
-        SecretProvider::OpenAI => Provider::OpenAI,
-        SecretProvider::Anthropic => Provider::Anthropic,
-        SecretProvider::Gemini => Provider::Gemini,
-        SecretProvider::DeepSeek => Provider::DeepSeek,
-        SecretProvider::OpenRouter => Provider::OpenRouter,
-        SecretProvider::StepFun => Provider::StepFun,
-        SecretProvider::Zai => Provider::ZAI,
-        SecretProvider::Moonshot => Provider::Moonshot,
-        SecretProvider::MiniMax => Provider::Minimax,
-        SecretProvider::Mistral => Provider::Mistral,
-        SecretProvider::HuggingFace => Provider::HuggingFace,
-        SecretProvider::MiMo => Provider::MiMo,
-        SecretProvider::OpenCodeZen => Provider::OpenCodeZen,
-        SecretProvider::OpenCodeGo => Provider::OpenCodeGo,
-        SecretProvider::Qwen => Provider::Qwen,
-        SecretProvider::Evolink => Provider::Evolink,
-        SecretProvider::Poolside => Provider::Poolside,
-        SecretProvider::Ollama => Provider::Ollama,
-        SecretProvider::OllamaCloud => Provider::OllamaCloud,
-        SecretProvider::LMStudio => Provider::LmStudio,
-        SecretProvider::Copilot => Provider::Copilot,
     }
 }

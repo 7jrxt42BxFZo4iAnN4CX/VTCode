@@ -6,7 +6,7 @@ Canonical local setup for contributing to VT Code.
 
 - Rust toolchain (stable) via [rustup](https://rustup.rs/)
 - Git
-- An LLM provider credential: either (a) a shell env var like `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `ZAI_API_KEY`, `MOONSHOT_API_KEY`, `STEPFUN_API_KEY`, or `MINIMAX_API_KEY`, or (b) an OAuth session for an auth-managed provider, or (c) a key stored via `vtcode secret add <provider>`.
+- An LLM provider credential: either (a) a shell/workspace env var like `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `ZAI_API_KEY`, `MOONSHOT_API_KEY`, `STEPFUN_API_KEY`, or `MINIMAX_API_KEY`, (b) an OAuth session for an auth-managed provider, or (c) a key stored via `vtcode secret add <provider>`.
 
 ## One-Time Setup
 
@@ -17,6 +17,24 @@ cd vtcode
 ```
 
 `./scripts/setup.sh` verifies `rustfmt`/`clippy`, installs `cargo-nextest` when missing, and runs `cargo check`.
+
+## Credential identities
+
+Secure API-key storage is scoped by `(provider, key name)`, where the key name is
+the environment variable used for that credential. This keeps multiple profiles
+for one provider independent:
+
+```bash
+vtcode secret add mimo --key-name MIMO_API_KEY
+vtcode secret add mimo --key-name MIMO_TOKEN_PLAN_KEY
+vtcode secret status mimo --key-name MIMO_TOKEN_PLAN_KEY
+```
+
+Environment variables and workspace `.env` values take precedence over secure
+storage. Existing provider-only entries are migrated lazily only when the
+requested key is the provider default; non-default profiles require an explicit
+key name. Configured `[[custom_providers]]` and `[providers.<name>]` overrides
+use the same identity rules.
 
 For debug or release launches:
 
@@ -68,6 +86,7 @@ cargo doc --workspace --no-deps --document-private-items
   - Run `cargo install cargo-nextest --locked`
 - No provider credential found:
   - Run `vtcode secret add <provider>` to store a key in your OS keyring (recommended), or
+  - Use `vtcode secret add <provider> --key-name <ENV_VAR>` for a non-default provider profile, or
   - `export OPENAI_API_KEY="sk-..."` (or the equivalent env var for your provider) in your shell, or
   - Run `vtcode login <provider>` for OAuth/managed-auth providers (copilot, openai, openrouter).
 - Script permissions:

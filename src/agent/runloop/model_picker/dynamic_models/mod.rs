@@ -13,7 +13,7 @@ use serde::Deserialize;
 use tracing::warn;
 use vtcode_config::VTCodeConfig;
 use vtcode_config::auth::AuthCredentialsStoreMode;
-use vtcode_core::config::api_keys::{ApiKeySources, get_api_key_with_mode};
+use vtcode_core::config::constants::defaults;
 use vtcode_core::config::models::Provider;
 use vtcode_core::copilot::{CopilotAuthStatusKind, list_available_models, probe_auth_status};
 use vtcode_core::llm::providers::llamacpp::fetch_llamacpp_models;
@@ -24,7 +24,7 @@ use self::cache::CachedDynamicModelStore;
 use self::endpoints::ProviderEndpointConfig;
 
 use super::options::ModelOption;
-use super::selection::{SelectionDetail, selection_from_dynamic_with_mode};
+use super::selection::{SelectionDetail, selection_from_dynamic_with_api_key_env};
 
 type StaticModelIndex = HashMap<Provider, HashSet<String>>;
 
@@ -55,7 +55,8 @@ impl DynamicModelRegistry {
         );
 
         let openai_base_url = endpoints.resolved_base_url(Provider::OpenAI);
-        let openai_auth = resolve_openai_dynamic_auth(vt_cfg);
+        let openai_api_key_env = configured_openai_api_key_env(vt_cfg);
+        let openai_auth = resolve_openai_dynamic_auth(vt_cfg, workspace, openai_api_key_env.as_deref());
         let openai_fetch = if let Some(openai_api_key) = openai_auth {
             let (result, warning) = cache_store
                 .fetch_with_cache(Provider::OpenAI, endpoints.base_url(Provider::OpenAI), {
@@ -113,21 +114,36 @@ impl DynamicModelRegistry {
                 openai_base_url,
                 &static_index,
                 vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default(),
+                openai_api_key_env.as_deref(),
             );
             if let Some(warning) = openai_warning {
                 registry.record_warning(Provider::OpenAI, warning);
             }
         }
         let storage_mode = vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default();
-        registry.process_fetch(Provider::Ollama, ollama_result, ollama_base_url, &static_index, storage_mode);
+        registry.process_fetch(Provider::Ollama, ollama_result, ollama_base_url, &static_index, storage_mode, None);
         if let Some(warning) = ollama_warning {
             registry.record_warning(Provider::Ollama, warning);
         }
-        registry.process_fetch(Provider::LlamaCpp, llamacpp_result, llamacpp_base_url, &static_index, storage_mode);
+        registry.process_fetch(
+            Provider::LlamaCpp,
+            llamacpp_result,
+            llamacpp_base_url,
+            &static_index,
+            storage_mode,
+            None,
+        );
         if let Some(warning) = llamacpp_warning {
             registry.record_warning(Provider::LlamaCpp, warning);
         }
-        registry.process_fetch(Provider::LmStudio, lmstudio_result, lmstudio_base_url, &static_index, storage_mode);
+        registry.process_fetch(
+            Provider::LmStudio,
+            lmstudio_result,
+            lmstudio_base_url,
+            &static_index,
+            storage_mode,
+            None,
+        );
         if let Some(warning) = lmstudio_warning {
             registry.record_warning(Provider::LmStudio, warning);
         }
@@ -138,6 +154,7 @@ impl DynamicModelRegistry {
                 "copilot-cli".to_string(),
                 &static_index,
                 storage_mode,
+                None,
             );
             if let Some(warning) = copilot_warning {
                 registry.record_warning(Provider::Copilot, warning);
@@ -193,9 +210,10 @@ impl DynamicModelRegistry {
         base_url: String,
         static_index: &StaticModelIndex,
         storage_mode: AuthCredentialsStoreMode,
+        api_key_env: Option<&str>,
     ) {
         match result {
-            Ok(models) => self.register_provider_models(provider, models, static_index, storage_mode),
+            Ok(models) => self.register_provider_models(provider, models, static_index, storage_mode, api_key_env),
             Err(err) => {
                 self.record_error(provider, format!("Failed to query {} at {} ({})", provider.label(), base_url, err));
             }
@@ -208,6 +226,7 @@ impl DynamicModelRegistry {
         models: Vec<String>,
         static_index: &StaticModelIndex,
         storage_mode: AuthCredentialsStoreMode,
+        api_key_env: Option<&str>,
     ) {
         if !models.is_empty() {
             self.provider_errors.remove(&provider);
@@ -233,7 +252,15 @@ impl DynamicModelRegistry {
 
             self.register_model(
                 provider,
-                selection_from_dynamic_with_mode(provider, trimmed, trimmed, None, None, storage_mode),
+                selection_from_dynamic_with_api_key_env(
+                    provider,
+                    trimmed,
+                    trimmed,
+                    None,
+                    None,
+                    api_key_env,
+                    storage_mode,
+                ),
             );
         }
     }
@@ -264,14 +291,54 @@ fn build_static_model_index(options: &[ModelOption]) -> StaticModelIndex {
     index
 }
 
-fn resolve_openai_dynamic_auth(vt_cfg: Option<&VTCodeConfig>) -> Option<String> {
+fn resolve_openai_dynamic_auth(
+    vt_cfg: Option<&VTCodeConfig>,
+    workspace: Option<&Path>,
+    api_key_env: Option<&str>,
+) -> Option<String> {
     let auth_config = vt_cfg.map(|cfg| cfg.auth.openai.clone()).unwrap_or_default();
     let storage_mode = vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default();
-    let api_key = get_api_key_with_mode("openai", &ApiKeySources::default(), storage_mode).ok();
+    let default_api_key_env = Provider::OpenAI.default_api_key_env();
+    let requested_api_key_env = api_key_env.unwrap_or(default_api_key_env);
+    let is_default_key = requested_api_key_env.eq_ignore_ascii_case(default_api_key_env);
+    let api_key =
+        vtcode_config::api_keys::resolve_credential_with_mode("openai", requested_api_key_env, workspace, storage_mode)
+            .ok()
+            .flatten()
+            .and_then(|resolved| resolved.secret);
 
+    if !is_default_key && api_key.is_none() {
+        return None;
+    }
+
+    let auth_config = if is_default_key {
+        auth_config
+    } else {
+        let mut api_key_auth_config = auth_config;
+        api_key_auth_config.preferred_method = vtcode_config::OpenAIPreferredMethod::ApiKey;
+        api_key_auth_config
+    };
     vtcode_config::resolve_openai_auth(&auth_config, storage_mode, api_key)
         .ok()
         .map(|resolved| resolved.api_key().to_string())
+}
+
+fn configured_openai_api_key_env(vt_cfg: Option<&VTCodeConfig>) -> Option<String> {
+    let cfg = vt_cfg?;
+    cfg.configured_api_key_env(Provider::OpenAI.as_ref()).or_else(|| {
+        if !cfg.agent.provider.eq_ignore_ascii_case(Provider::OpenAI.as_ref()) {
+            return None;
+        }
+        let configured = cfg.agent.api_key_env.trim();
+        if configured.is_empty()
+            || configured.eq_ignore_ascii_case(defaults::DEFAULT_API_KEY_ENV)
+            || configured.eq_ignore_ascii_case(Provider::OpenAI.default_api_key_env())
+        {
+            None
+        } else {
+            Some(configured.to_owned())
+        }
+    })
 }
 
 fn copilot_cache_base(config: &vtcode_config::auth::CopilotAuthConfig) -> String {
@@ -351,6 +418,7 @@ mod tests {
             vec!["custom-local-model".to_string()],
             &static_index,
             AuthCredentialsStoreMode::default(),
+            None,
         );
 
         let indexes = registry.indexes_for(Provider::Ollama);
@@ -381,6 +449,7 @@ mod tests {
             ],
             &static_index,
             AuthCredentialsStoreMode::default(),
+            None,
         );
 
         let indexes = registry.indexes_for(Provider::Ollama);
@@ -400,6 +469,7 @@ mod tests {
             "http://localhost:11434/api".to_string(),
             &static_index,
             AuthCredentialsStoreMode::default(),
+            None,
         );
 
         assert!(
@@ -413,5 +483,23 @@ mod tests {
     #[test]
     fn copilot_cache_base_defaults_to_github_com() {
         assert_eq!(copilot_cache_base(&vtcode_config::auth::CopilotAuthConfig::default()), "copilot-cli://github.com");
+    }
+
+    #[test]
+    fn register_provider_models_carries_api_key_override() {
+        let static_index = build_static_model_index(MODEL_OPTIONS.as_slice());
+        let mut registry = DynamicModelRegistry::default();
+
+        registry.register_provider_models(
+            Provider::OpenAI,
+            vec!["gpt-corporate".to_string()],
+            &static_index,
+            AuthCredentialsStoreMode::File,
+            Some("CORPORATE_OPENAI_KEY"),
+        );
+
+        let index = registry.indexes_for(Provider::OpenAI)[0];
+        let detail = registry.detail(index).expect("dynamic selection detail");
+        assert_eq!(detail.env_key, "CORPORATE_OPENAI_KEY");
     }
 }

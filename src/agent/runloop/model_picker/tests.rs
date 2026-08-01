@@ -1,18 +1,21 @@
 use super::*;
 use crate::agent::runloop::unified::state::CtrlCState;
 use anyhow::Result;
+use std::collections::BTreeMap;
 use std::fs;
 use std::sync::Arc;
 use tempfile::tempdir;
 use tokio::sync::{Notify, mpsc};
 use vtcode_config::OpenAIServiceTier;
+use vtcode_config::auth::AuthCredentialsStoreMode;
 use vtcode_config::core::CustomProviderConfig;
+use vtcode_config::core::ProviderOverrideConfig;
 use vtcode_config::loader::VTCodeConfig;
 use vtcode_core::config::models::ModelId;
 use vtcode_core::utils::ansi::AnsiRenderer;
 use vtcode_ui::tui::app::{InlineHandle, InlineSession};
 
-use self::options::{MODEL_OPTIONS, find_option_index, option_indexes_for_provider};
+use self::options::{MODEL_OPTIONS, build_filtered_options, find_option_index, option_indexes_for_provider};
 
 fn has_model(options: &[ModelOption], model: ModelId) -> bool {
     let id = model.as_str();
@@ -202,6 +205,44 @@ fn parse_model_selection_marks_command_auth_custom_provider_as_keyless() {
 }
 
 #[test]
+fn provider_override_key_name_reaches_picker_selection() {
+    let mut overrides = BTreeMap::new();
+    overrides.insert(
+        "openai".to_string(),
+        ProviderOverrideConfig {
+            models: vec!["gpt-5.4".to_string()],
+            base_url: None,
+            api_key_env: Some("CORPORATE_OPENAI_KEY".to_string()),
+        },
+    );
+
+    let options = options::build_model_options_with_overrides(&overrides);
+    let option = options
+        .iter()
+        .find(|option| option.provider == Provider::OpenAI && option.id == "gpt-5.4")
+        .expect("overridden OpenAI model should be listed");
+    let detail = selection::selection_from_option_with_mode(option, AuthCredentialsStoreMode::File);
+
+    assert_eq!(option.api_key_env, "CORPORATE_OPENAI_KEY");
+    assert_eq!(detail.env_key, "CORPORATE_OPENAI_KEY");
+}
+
+#[test]
+fn picker_reuses_persisted_key_name_for_active_provider() {
+    let mut cfg = VTCodeConfig::default();
+    cfg.agent.provider = "openai".to_string();
+    cfg.agent.api_key_env = "CORPORATE_OPENAI_KEY".to_string();
+
+    let options = build_filtered_options(Some(&cfg));
+    let option = options
+        .iter()
+        .find(|option| option.provider == Provider::OpenAI && option.id == "gpt-5.4")
+        .expect("OpenAI model should be listed");
+
+    assert_eq!(option.api_key_env, "CORPORATE_OPENAI_KEY");
+}
+
+#[test]
 fn static_model_subtitle_formats_current_capabilities() {
     let option = MODEL_OPTIONS
         .iter()
@@ -274,6 +315,7 @@ fn base_picker_state(current_provider: &str, current_model: &str) -> ModelPicker
         selected_service_tier: None,
         selected_mimo_auth: None,
         pending_api_key: None,
+        pending_credential_source: None,
         plain_mode_active: false,
     }
 }

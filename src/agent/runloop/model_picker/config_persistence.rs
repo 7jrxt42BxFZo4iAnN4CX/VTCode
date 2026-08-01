@@ -1,6 +1,6 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 
-use vtcode_config::auth::CustomApiKeyStorage;
+use vtcode_config::api_keys::{clear_credential_with_mode, credential_metadata_key, store_credential_with_mode};
 use vtcode_core::config::loader::VTCodeConfig;
 use vtcode_core::config::models::Provider;
 use vtcode_core::utils::dot_config::update_model_preference;
@@ -58,20 +58,23 @@ fn apply_api_key_state(config: &mut VTCodeConfig, selection: &ModelSelectionResu
     if selection.provider_enum == Some(Provider::OpenAI) && selection.uses_chatgpt_auth {
         config.agent.api_key_env = selection.env_key.clone();
         config.agent.custom_api_keys.remove(&selection.provider);
+        if let Some(metadata_key) = credential_metadata_key(&selection.provider, &selection.env_key)? {
+            config.agent.custom_api_keys.remove(&metadata_key);
+        }
         return Ok(());
     }
 
     if uses_provider_api_key(selection) {
         config.agent.api_key_env = selection.env_key.clone();
-        if selection.api_key.is_some() {
+        if selection.api_key.is_some() && selection.credential_source.is_none() {
             sync_stored_api_key(config, selection)?;
         }
         return Ok(());
     }
 
     config.agent.api_key_env.clear();
-    if selection.api_key.is_some() {
-        clear_stored_api_key(config, &selection.provider)?;
+    if selection.api_key.is_some() && selection.credential_source.is_none() {
+        clear_stored_api_key(config, selection)?;
     }
     Ok(())
 }
@@ -95,24 +98,25 @@ fn sync_stored_api_key(config: &mut VTCodeConfig, selection: &ModelSelectionResu
 
     if let Some(api_key) = selection.api_key.as_deref() {
         let storage_mode = config.agent.credential_storage_mode;
-        let key_storage = CustomApiKeyStorage::new(&selection.provider);
-        key_storage
-            .store(api_key, storage_mode)
-            .with_context(|| format!("failed to persist API key for provider '{}' securely", selection.provider))?;
+        store_credential_with_mode(&selection.provider, &selection.env_key, api_key, storage_mode)?;
         config.agent.custom_api_keys.remove(&selection.provider);
+        if let Some(metadata_key) = credential_metadata_key(&selection.provider, &selection.env_key)? {
+            config.agent.custom_api_keys.insert(metadata_key, String::new());
+        }
         return Ok(());
     }
 
-    clear_stored_api_key(config, &selection.provider)
+    clear_stored_api_key(config, selection)
 }
 
-fn clear_stored_api_key(config: &mut VTCodeConfig, provider: &str) -> Result<()> {
-    config.agent.custom_api_keys.remove(provider);
+fn clear_stored_api_key(config: &mut VTCodeConfig, selection: &ModelSelectionResult) -> Result<()> {
+    config.agent.custom_api_keys.remove(&selection.provider);
+    if let Some(metadata_key) = credential_metadata_key(&selection.provider, &selection.env_key)? {
+        config.agent.custom_api_keys.remove(&metadata_key);
+    }
     let storage_mode = config.agent.credential_storage_mode;
-    let key_storage = CustomApiKeyStorage::new(provider);
-    key_storage
-        .clear(storage_mode)
-        .with_context(|| format!("failed to clear API key for provider '{provider}' securely"))
+    clear_credential_with_mode(&selection.provider, &selection.env_key, storage_mode)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -140,6 +144,7 @@ mod tests {
             service_tier: None,
             service_tier_changed: false,
             api_key: None,
+            credential_source: None,
             env_key: "TEST_API_KEY".to_string(),
             requires_api_key: false,
             uses_chatgpt_auth: false,

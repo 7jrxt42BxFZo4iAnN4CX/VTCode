@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
-use vtcode_config::api_keys::CredentialSource;
-use vtcode_config::auth::{AuthCredentialsStoreMode, CustomApiKeyStorage};
+use vtcode_config::api_keys::{CredentialSource, store_credential_with_mode};
+use vtcode_config::auth::AuthCredentialsStoreMode;
 use vtcode_core::config::models::Provider;
 use vtcode_core::utils::ansi::{AnsiRenderer, MessageStyle};
 
@@ -18,10 +18,10 @@ use super::secret_input::{mask_key, read_secret_line};
 /// 4. Otherwise → prompt to paste. The pasted key is read with terminal echo
 ///    disabled (so it does not appear in scrollback), shown back as a masked
 ///    preview for confirmation, and stored in secure storage via
-///    `CustomApiKeyStorage` (with encrypted-file fallback) — **not** the
-///    workspace `.env`. Whitespace paste mistakes re-prompt instead of
-///    silently skipping. The env var name is surfaced as the preferred,
-///    no-duplication alternative.
+///    the central credential resolver/storage boundary (with encrypted-file
+///    fallback) — **not** the workspace `.env`. Whitespace paste mistakes
+///    re-prompt instead of silently skipping. The env var name is surfaced as
+///    the preferred, no-duplication alternative.
 pub(crate) fn prompt_api_key_interactive(
     renderer: &mut AnsiRenderer,
     provider: Provider,
@@ -64,6 +64,13 @@ pub(crate) fn prompt_api_key_interactive(
             CredentialSource::Env => {
                 let var_name = discovered.env_var.unwrap_or(env_key);
                 renderer.line(MessageStyle::Status, &format!("Found {var_name} in your environment — using it."))?;
+                renderer
+                    .line(MessageStyle::Info, "No key was written anywhere — switch providers anytime with /model.")?;
+                return Ok(());
+            }
+            CredentialSource::Workspace => {
+                let var_name = discovered.env_var.unwrap_or(env_key);
+                renderer.line(MessageStyle::Status, &format!("Found {var_name} in the workspace .env — using it."))?;
                 renderer
                     .line(MessageStyle::Info, "No key was written anywhere — switch providers anytime with /model.")?;
                 return Ok(());
@@ -182,9 +189,7 @@ fn prompt_paste_flow(
 
         // Store in the configured secure backend (the auth layer handles any
         // platform-specific keyring or encrypted-file fallback).
-        let storage = CustomApiKeyStorage::new(provider.as_ref());
-        storage
-            .store(&key, storage_mode)
+        store_credential_with_mode(provider.as_ref(), env_key, &key, storage_mode)
             .map_err(|e| anyhow::anyhow!("Failed to store {} API key securely: {e}", provider.label()))?;
 
         renderer.line(MessageStyle::Status, "API key saved to secure storage (not workspace environment files).")?;

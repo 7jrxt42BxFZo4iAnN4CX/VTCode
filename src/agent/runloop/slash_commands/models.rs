@@ -239,12 +239,11 @@ pub(crate) enum SlashCommandOutcome {
 /// Actions for the `/secret` API-key controller.
 ///
 /// `/secret` (no args) and `/secret list` both render the status table of all
-/// providers and where their credential comes from (env var / OS keyring /
-/// OAuth / local / managed auth / none). `/secret add` and `/secret delete`
-/// operate on the OS keyring entry for a single provider — they do not touch
-/// environment variables (which the user controls in their shell) or the
-/// workspace `.env`. `/secret migrate` moves keys from the workspace `.env`
-/// into secure storage.
+/// providers and where their credential comes from (env var / workspace `.env`
+/// / OS keyring / OAuth / local / managed auth / none). `/secret add` and
+/// `/secret delete` operate on a `(provider, key-name)` storage identity for a
+/// single provider — they do not touch shell environment variables. `/secret
+/// migrate` moves keys from the workspace `.env` into secure storage.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SecretCommandAction {
     /// `/secret` with no args — render the status table (text mode) or open
@@ -252,14 +251,17 @@ pub(crate) enum SecretCommandAction {
     Interactive,
     /// `/secret list` — render the status table of all providers.
     List,
-    /// `/secret status [provider]` — detailed status for one provider, or all
-    /// when no provider is given.
-    Status { provider: Option<String> },
-    /// `/secret add <provider>` (also replaces) — paste a key via the secure
-    /// prompt modal and store it in the OS keyring.
-    Add { provider: String },
-    /// `/secret delete <provider>` — clear the keyring entry for a provider.
-    Delete { provider: String },
+    /// `/secret status [provider] [key-name]` — detailed status for one
+    /// provider/key identity, or all providers when no provider is given.
+    Status {
+        provider: Option<String>,
+        key_name: Option<String>,
+    },
+    /// `/secret add <provider> [key-name]` (also replaces) — paste a key via
+    /// the secure prompt modal and store it in the OS keyring.
+    Add { provider: String, key_name: Option<String> },
+    /// `/secret delete <provider> [key-name]` — clear one keyring identity.
+    Delete { provider: String, key_name: Option<String> },
     /// `/secret migrate [provider]` — move API keys from workspace `.env` to
     /// secure storage.
     Migrate { provider: Option<String> },

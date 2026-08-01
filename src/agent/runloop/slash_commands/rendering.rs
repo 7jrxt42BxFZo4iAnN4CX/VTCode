@@ -30,14 +30,17 @@ pub(super) fn render_mcp_usage(renderer: &mut AnsiRenderer) -> Result<()> {
 pub(super) fn render_secret_usage(renderer: &mut AnsiRenderer) -> Result<()> {
     renderer.line(
         MessageStyle::Info,
-        "Usage: /secret [list|status [provider]|add <provider>|delete <provider>|migrate [provider]|help]",
+        "Usage: /secret [list|status [provider] [key-name]|add <provider> [key-name]|delete <provider> [key-name]|migrate [provider]|help]",
     )?;
     renderer.line(MessageStyle::Info, "  (no args)        – Show every provider and where its key comes from")?;
     renderer.line(MessageStyle::Info, "  list             – Same as above (status table of all providers)")?;
-    renderer.line(MessageStyle::Info, "  status [provider]– Detailed status for one provider, or all")?;
     renderer
-        .line(MessageStyle::Info, "  add <provider>   – Paste a key into the secure prompt (stored in OS keyring)")?;
-    renderer.line(MessageStyle::Info, "  delete <provider>– Clear the keyring entry for a provider")?;
+        .line(MessageStyle::Info, "  status [provider] [key-name]– Detailed status for one provider/key, or all")?;
+    renderer.line(
+        MessageStyle::Info,
+        "  add <provider> [key-name] – Paste a key into the secure prompt (stored in OS keyring)",
+    )?;
+    renderer.line(MessageStyle::Info, "  delete <provider> [key-name]– Clear one keyring entry")?;
     renderer.line(MessageStyle::Info, "  migrate [provider]– Move API keys from workspace .env to secure storage")?;
     renderer.line(MessageStyle::Info, "  help             – Show this help")?;
     renderer.line(MessageStyle::Info, "")?;

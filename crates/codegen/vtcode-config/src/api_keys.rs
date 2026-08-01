@@ -4,13 +4,25 @@
 //! This module provides a unified interface for retrieving API keys for different providers,
 //! prioritizing security by checking environment variables first, then .env files, and finally
 //! falling back to configuration file values.
+//!
+//! The facade owns provider/key identity and discovery. Source precedence,
+//! storage migration, and credential material stay behind the private
+//! `credential_resolution` boundary.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::str::FromStr;
 
-use crate::auth::CustomApiKeyStorage;
+use crate::auth::CredentialIdentity;
 use crate::constants::defaults;
 use crate::models::Provider;
+
+mod credential_resolution;
+
+pub use credential_resolution::{
+    CredentialSource, ResolvedCredential, clear_credential_with_mode, get_api_key, get_api_key_with_mode,
+    load_stored_api_key_with_mode, load_stored_credential_with_mode, resolve_credential, resolve_credential_with_mode,
+    resolve_openai_api_key_for_auth, store_credential_with_mode,
+};
 
 /// API key sources for different providers
 ///
@@ -54,7 +66,26 @@ pub fn api_key_env_var(provider: &str) -> String {
 
     Provider::from_str(trimmed)
         .map(|resolved| resolved.default_api_key_env().to_owned())
-        .unwrap_or_else(|_| format!("{}_API_KEY", trimmed.to_ascii_uppercase()))
+        .unwrap_or_else(|_| {
+            let mut key = String::new();
+            for ch in trimmed.chars() {
+                if ch.is_ascii_alphanumeric() {
+                    key.push(ch.to_ascii_uppercase());
+                } else if !key.ends_with('_') {
+                    key.push('_');
+                }
+            }
+            if key.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
+                key.insert(0, '_');
+            }
+            if !key.ends_with("_API_KEY") {
+                if !key.ends_with('_') {
+                    key.push('_');
+                }
+                key.push_str("API_KEY");
+            }
+            key
+        })
 }
 
 pub fn resolve_api_key_env(provider: &str, configured_env: &str) -> String {
@@ -64,6 +95,27 @@ pub fn resolve_api_key_env(provider: &str, configured_env: &str) -> String {
     } else {
         trimmed.to_owned()
     }
+}
+
+/// Build the normalized identity used by credential storage for a provider
+/// and an optional configured environment-variable name.
+pub fn credential_identity(provider: &str, key_name: &str) -> Result<Option<CredentialIdentity>> {
+    let default_key_name = api_key_env_var(provider);
+    let requested_key_name = if key_name.trim().is_empty() {
+        default_key_name
+    } else {
+        key_name.trim().to_owned()
+    };
+    if requested_key_name.is_empty() {
+        return Ok(None);
+    }
+    CredentialIdentity::new(provider, &requested_key_name).map(Some)
+}
+
+/// Return the stable configuration metadata key for a provider/key identity.
+pub fn credential_metadata_key(provider: &str, key_name: &str) -> Result<Option<String>> {
+    Ok(credential_identity(provider, key_name)?
+        .map(|identity| format!("{}/{}", identity.provider(), identity.key_name())))
 }
 
 fn read_env_var(key: &str) -> Option<String> {
@@ -91,193 +143,6 @@ pub fn load_dotenv() -> Result<()> {
         Err(e) => {
             tracing::warn!("Failed to load .env file: {}", e);
             Ok(())
-        }
-    }
-}
-
-/// Get API key for a specific provider.
-///
-/// Resolution order:
-/// 1. Environment variable inferred from the provider name (e.g. `POOLSIDE_API_KEY`)
-/// 2. Provider-specific fallbacks (OAuth tokens, alternate env vars, etc.)
-/// 3. OS keyring / encrypted file storage
-///
-/// Adding a new built-in provider only requires:
-/// - A `Provider` variant with `default_api_key_env()` returning the env var name
-/// - (Optional) a match arm here only if the provider needs special fallback logic
-pub fn get_api_key(provider: &str, sources: &ApiKeySources) -> Result<String> {
-    get_api_key_with_mode(provider, sources, crate::auth::AuthCredentialsStoreMode::default())
-}
-
-/// Get an API key using the configured secure-storage backend.
-///
-/// Environment variables remain the highest-priority source. Secure storage
-/// is read with `storage_mode` so a key written to an explicitly configured
-/// backend is resolved from that same backend on every startup.
-pub fn get_api_key_with_mode(
-    provider: &str,
-    _sources: &ApiKeySources,
-    storage_mode: crate::auth::AuthCredentialsStoreMode,
-) -> Result<String> {
-    let normalized_provider = provider.trim().to_lowercase();
-    let inferred_env = api_key_env_var(&normalized_provider);
-
-    // Generic path: read the inferred env var for any provider.
-    if let Some(key) = read_env_var(&inferred_env)
-        && !key.trim().is_empty()
-    {
-        return Ok(key.trim().to_owned());
-    }
-
-    // Provider-specific fallback logic. Most providers are handled by the generic
-    // env-var lookup above. Only providers with special behavior (alternate env vars,
-    // OAuth tokens, optional keys, or managed-auth error messages) need a match arm.
-    let provider_result = match normalized_provider.as_str() {
-        // Gemini falls back to GOOGLE_API_KEY for backward compatibility
-        "gemini" => {
-            if let Some(key) = read_env_var("GOOGLE_API_KEY").filter(|k| !k.trim().is_empty()) {
-                return Ok(key.trim().to_owned());
-            }
-            Err(anyhow::anyhow!("GEMINI_API_KEY or GOOGLE_API_KEY not set"))
-        }
-        // OpenRouter tries OAuth token from encrypted storage first
-        "openrouter" => {
-            match crate::auth::load_oauth_token_with_mode(storage_mode) {
-                Ok(Some(token)) => {
-                    tracing::debug!("Using OAuth token for OpenRouter authentication");
-                    return Ok(token.api_key);
-                }
-                Ok(None) => {}
-                Err(err) => {
-                    return Err(err).with_context(|| "failed to read OpenRouter OAuth credential".to_string());
-                }
-            }
-            Err(anyhow::anyhow!("OPENROUTER_API_KEY not set"))
-        }
-        // Qwen has an alternate env var name
-        "qwen" => {
-            if let Some(key) = read_env_var("DASHSCOPE_API_KEY").filter(|k| !k.trim().is_empty()) {
-                return Ok(key.trim().to_owned());
-            }
-            Err(anyhow::anyhow!("QWEN_API_KEY or DASHSCOPE_API_KEY not set"))
-        }
-        // Ollama and LM Studio allow empty keys (local deployment).
-        // Ollama Cloud (ollama-cloud) falls through to the `_` arm below and
-        // checks secure storage / env var properly via the generic path.
-        "ollama" | "lmstudio" | "llamacpp" | "llama.cpp" | "llama-cpp" => Ok(String::new()),
-        // Managed-auth providers show a specific error message
-        "copilot" => Err(anyhow::anyhow!(
-            "GitHub Copilot authentication is managed by the official `copilot` CLI. Run `vtcode login copilot`."
-        )),
-        "codex" => Err(anyhow::anyhow!(
-            "Codex authentication is managed by the official `codex app-server`. Run `vtcode login codex`."
-        )),
-        // All other providers: env var was already checked above, nothing more to do
-        _ => Err(anyhow::anyhow!(
-            "{normalized_provider} API key not found. Export {inferred_env} in your shell, or store it with `/secret add {normalized_provider}` (it is kept in secure storage, not a workspace .env).",
-        )),
-    };
-
-    if provider_result.is_ok() {
-        return provider_result;
-    }
-
-    // Try secure storage only after env/config lookup fails. Preserve storage
-    // errors: callers must not turn an unreadable encrypted credential into a
-    // misleading "paste a new key" prompt.
-    // Tests explicitly override an environment variable to `None` to model an
-    // unset variable. Do not let credentials from the developer's keyring or
-    // home directory make those tests depend on host state.
-    #[cfg(test)]
-    if test_storage_lookup_is_overridden(&normalized_provider) {
-        return provider_result;
-    }
-
-    match load_stored_api_key_with_mode(&normalized_provider, storage_mode) {
-        Ok(Some(key)) => Ok(key),
-        Ok(None) => provider_result,
-        Err(err) => {
-            Err(err).with_context(|| format!("failed to read secure credential for provider '{normalized_provider}'"))
-        }
-    }
-}
-
-/// Resolve the API-key input for OpenAI account authentication.
-///
-/// ChatGPT authentication does not require an API key. When the caller allows
-/// that fallback and a persisted ChatGPT session exists, a missing API key is
-/// represented as `Ok(None)`. All other lookup and secure-storage failures are
-/// preserved so runtime model switching cannot turn them into a paste prompt.
-pub fn resolve_openai_api_key_for_auth(
-    storage_mode: crate::auth::AuthCredentialsStoreMode,
-    allow_chatgpt_fallback: bool,
-) -> Result<Option<String>> {
-    match get_api_key_with_mode("openai", &ApiKeySources::default(), storage_mode) {
-        Ok(api_key) => Ok(Some(api_key)),
-        Err(_err)
-            if allow_chatgpt_fallback
-                && crate::auth::load_openai_chatgpt_session_with_mode(storage_mode)?.is_some() =>
-        {
-            Ok(None)
-        }
-        Err(err) => Err(err),
-    }
-}
-
-/// Load a custom API key from secure storage.
-///
-/// This function retrieves API keys that were stored securely via the model picker
-/// or interactive configuration flows. When the OS keyring is unavailable, the
-/// auth layer falls back to encrypted file storage automatically.
-///
-/// Returns `Ok(None)` when no key exists and preserves backend/decryption
-/// failures as errors.
-pub fn load_stored_api_key_with_mode(
-    provider: &str,
-    storage_mode: crate::auth::AuthCredentialsStoreMode,
-) -> Result<Option<String>> {
-    let storage = CustomApiKeyStorage::new(provider);
-    // The auth layer handles keyring-to-file fallback internally when the
-    // configured mode permits it.
-    storage
-        .load(storage_mode)
-        .map(|value| value.filter(|key| !key.trim().is_empty()))
-}
-
-/// Where a provider's credential was discovered.
-///
-/// Used by the first-run wizard and model picker to show *why* a provider is
-/// ready without re-prompting for a key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CredentialSource {
-    /// Process environment variable — covers shell exports (e.g. `~/.zshrc`)
-    /// and values loaded from a workspace `.env` by `load_dotenv()`.
-    Env,
-    /// OS keyring / encrypted file storage (`CustomApiKeyStorage`).
-    SecureStorage,
-    /// Active OAuth session (OpenRouter or OpenAI ChatGPT).
-    OAuth,
-    /// Auth is managed by an external CLI (e.g. GitHub Copilot via `copilot`).
-    ManagedAuth,
-    /// Local server — no key required (Ollama, LM Studio, llama.cpp).
-    Local,
-}
-
-impl CredentialSource {
-    /// One-line, user-facing description of where the credential came from.
-    pub fn describe(self, provider: Provider) -> &'static str {
-        match self {
-            CredentialSource::Env => "found in environment",
-            CredentialSource::SecureStorage => "stored in secure storage",
-            CredentialSource::OAuth => "OAuth session active",
-            CredentialSource::ManagedAuth => "managed by external CLI",
-            CredentialSource::Local => {
-                if provider.is_local() {
-                    "local — no key required"
-                } else {
-                    "ready"
-                }
-            }
         }
     }
 }
@@ -332,63 +197,15 @@ pub fn provider_credential_detail_with_mode(
         });
     }
 
-    // Primary env var for the provider.
-    let env_key = provider.default_api_key_env();
-    if !env_key.is_empty() && env_value_present(env_key) {
-        return Some(DiscoveredProvider {
-            provider,
-            source: CredentialSource::Env,
-            env_var: Some(env_key),
-        });
-    }
-
-    // OAuth-backed providers: an active session counts as ready after env vars
-    // have been considered, preserving the documented resolution order.
-    if matches!(provider, Provider::OpenRouter)
-        && crate::auth::load_oauth_token_with_mode(storage_mode).ok().flatten().is_some()
+    let resolved =
+        resolve_credential_with_mode(provider.as_ref(), provider.default_api_key_env(), None, storage_mode).ok()??;
+    if matches!(resolved.source, CredentialSource::SecureStorage)
+        || matches!(resolved.source, CredentialSource::Env | CredentialSource::Workspace | CredentialSource::OAuth)
     {
         return Some(DiscoveredProvider {
             provider,
-            source: CredentialSource::OAuth,
-            env_var: None,
-        });
-    }
-    if matches!(provider, Provider::OpenAI)
-        && crate::auth::load_openai_chatgpt_session_with_mode(storage_mode)
-            .ok()
-            .flatten()
-            .is_some()
-    {
-        return Some(DiscoveredProvider {
-            provider,
-            source: CredentialSource::OAuth,
-            env_var: None,
-        });
-    }
-
-    // Provider-specific alternate env vars (kept in sync with get_api_key).
-    let alt = alternate_env_var(provider);
-    if let Some(alt_key) = alt
-        && env_value_present(alt_key)
-    {
-        return Some(DiscoveredProvider {
-            provider,
-            source: CredentialSource::Env,
-            env_var: Some(alt_key),
-        });
-    }
-
-    // Secure storage (OS keyring with encrypted-file fallback).
-    #[cfg(test)]
-    if test_storage_lookup_is_overridden(provider.as_ref()) {
-        return None;
-    }
-
-    if has_stored_credential(provider, storage_mode) {
-        return Some(DiscoveredProvider {
-            provider,
-            source: CredentialSource::SecureStorage,
-            env_var: None,
+            source: resolved.source,
+            env_var: resolved.env_var.as_deref().and_then(static_env_var),
         });
     }
 
@@ -441,8 +258,16 @@ pub fn has_oauth_or_managed_auth(discovered: &[DiscoveredProvider]) -> bool {
         .any(|entry| matches!(entry.source, CredentialSource::OAuth | CredentialSource::ManagedAuth))
 }
 
-fn env_value_present(env_key: &str) -> bool {
-    matches!(read_env_var(env_key), Some(value) if !value.trim().is_empty())
+fn static_env_var(env_key: &str) -> Option<&'static str> {
+    Provider::all_providers()
+        .into_iter()
+        .find(|provider| provider.default_api_key_env().eq_ignore_ascii_case(env_key))
+        .map(|provider| provider.default_api_key_env())
+        .or(match env_key {
+            "GOOGLE_API_KEY" => Some("GOOGLE_API_KEY"),
+            "DASHSCOPE_API_KEY" => Some("DASHSCOPE_API_KEY"),
+            _ => None,
+        })
 }
 
 /// Alternate env var names that `get_api_key` accepts for a provider.
@@ -454,31 +279,16 @@ fn alternate_env_var(provider: Provider) -> Option<&'static str> {
     }
 }
 
-fn has_stored_credential(provider: Provider, storage_mode: crate::auth::AuthCredentialsStoreMode) -> bool {
-    load_stored_api_key_with_mode(provider.as_ref(), storage_mode)
-        .ok()
-        .flatten()
-        .is_some()
-}
-
 #[cfg(test)]
-fn test_storage_lookup_is_overridden(provider: &str) -> bool {
-    let env_key = api_key_env_var(provider);
-    if !env_key.is_empty() && crate::env_helpers::test_env_overrides::is_overridden(&env_key) {
-        return true;
-    }
-
-    match provider {
-        "gemini" => crate::env_helpers::test_env_overrides::is_overridden("GOOGLE_API_KEY"),
-        "qwen" => crate::env_helpers::test_env_overrides::is_overridden("DASHSCOPE_API_KEY"),
-        _ => false,
-    }
+fn test_storage_lookup_is_overridden(key_name: &str) -> bool {
+    crate::env_helpers::test_env_overrides::is_overridden(key_name)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Mutex;
+    use tempfile::tempdir;
 
     // Serialise all env-override tests so that one test's Drop restore cannot
     // overwrite another test's set.
@@ -631,10 +441,12 @@ mod tests {
 
     #[test]
     fn unknown_provider_returns_error_with_env_hint() {
-        let result = get_api_key("someunknown", &default_sources());
-        assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("SOMEUNKNOWN_API_KEY"));
+        with_override("SOMEUNKNOWN_API_KEY", None, || {
+            let result = get_api_key("someunknown", &default_sources());
+            assert!(result.is_err());
+            let msg = result.unwrap_err().to_string();
+            assert!(msg.contains("SOMEUNKNOWN_API_KEY"));
+        });
     }
 
     #[test]
@@ -660,6 +472,8 @@ mod tests {
         assert_eq!(api_key_env_var("minimax"), "MINIMAX_API_KEY");
         assert_eq!(api_key_env_var("huggingface"), "HF_TOKEN");
         assert_eq!(api_key_env_var("poolside"), "POOLSIDE_API_KEY");
+        assert_eq!(api_key_env_var("my-corp"), "MY_CORP_API_KEY");
+        assert_eq!(api_key_env_var("123corp"), "_123CORP_API_KEY");
     }
 
     #[test]
@@ -670,6 +484,89 @@ mod tests {
     #[test]
     fn resolve_api_key_env_preserves_explicit_override() {
         assert_eq!(resolve_api_key_env("openai", "CUSTOM_OPENAI_KEY"), "CUSTOM_OPENAI_KEY");
+    }
+
+    #[test]
+    fn credential_metadata_key_normalizes_provider_and_key() {
+        assert_eq!(
+            credential_metadata_key(" MyCorp ", "mycorp_billing_key").expect("metadata key"),
+            Some("mycorp/MYCORP_BILLING_KEY".to_string())
+        );
+    }
+
+    #[test]
+    fn resolver_prefers_process_environment_over_workspace_dotenv() {
+        let workspace = tempdir().expect("workspace");
+        std::fs::write(workspace.path().join(".env"), "MYCORP_API_KEY=workspace-key\n").expect("write dotenv");
+
+        with_override("MYCORP_API_KEY", Some("process-key"), || {
+            let resolved = resolve_credential_with_mode(
+                "mycorp",
+                "MYCORP_API_KEY",
+                Some(workspace.path()),
+                crate::auth::AuthCredentialsStoreMode::File,
+            )
+            .expect("resolve credential")
+            .expect("credential");
+            assert_eq!(resolved.secret.as_deref(), Some("process-key"));
+            assert_eq!(resolved.source, CredentialSource::Env);
+            assert_eq!(resolved.identity.provider(), "mycorp");
+            assert_eq!(resolved.identity.key_name(), "MYCORP_API_KEY");
+        });
+    }
+
+    #[test]
+    fn resolver_prefers_alternate_process_environment_over_primary_workspace_dotenv() {
+        let workspace = tempdir().expect("workspace");
+        std::fs::write(workspace.path().join(".env"), "GEMINI_API_KEY=workspace-key\n").expect("write dotenv");
+
+        with_overrides(&[("GEMINI_API_KEY", None), ("GOOGLE_API_KEY", Some("process-key"))], || {
+            let resolved = resolve_credential_with_mode(
+                "gemini",
+                "GEMINI_API_KEY",
+                Some(workspace.path()),
+                crate::auth::AuthCredentialsStoreMode::File,
+            )
+            .expect("resolve credential")
+            .expect("credential");
+            assert_eq!(resolved.secret.as_deref(), Some("process-key"));
+            assert_eq!(resolved.source, CredentialSource::Env);
+            assert_eq!(resolved.env_var.as_deref(), Some("GOOGLE_API_KEY"));
+        });
+    }
+
+    #[test]
+    fn resolver_reads_workspace_dotenv_for_custom_provider_key() {
+        let workspace = tempdir().expect("workspace");
+        std::fs::write(workspace.path().join(".env"), "MYCORP_BILLING_KEY=workspace-key\n").expect("write dotenv");
+
+        with_override("MYCORP_BILLING_KEY", None, || {
+            let resolved = resolve_credential_with_mode(
+                "mycorp",
+                "mycorp_billing_key",
+                Some(workspace.path()),
+                crate::auth::AuthCredentialsStoreMode::File,
+            )
+            .expect("resolve credential")
+            .expect("credential");
+            assert_eq!(resolved.secret.as_deref(), Some("workspace-key"));
+            assert_eq!(resolved.source, CredentialSource::Workspace);
+            assert_eq!(resolved.env_var.as_deref(), Some("MYCORP_BILLING_KEY"));
+        });
+    }
+
+    #[test]
+    fn resolver_does_not_reuse_legacy_storage_for_non_default_key() {
+        with_override("MIMO_TOKEN_PLAN_KEY", None, || {
+            let resolved = resolve_credential_with_mode(
+                "mimo",
+                "MIMO_TOKEN_PLAN_KEY",
+                None,
+                crate::auth::AuthCredentialsStoreMode::File,
+            )
+            .expect("resolve credential");
+            assert!(resolved.is_none());
+        });
     }
 
     #[test]

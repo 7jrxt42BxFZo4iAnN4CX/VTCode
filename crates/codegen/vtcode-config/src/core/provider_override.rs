@@ -67,6 +67,11 @@ impl ProviderOverrideConfig {
         {
             return Err(format!("providers[{provider_name}]: `api_key_env` must not be empty"));
         }
+        if let Some(api_key_env) = &self.api_key_env
+            && let Err(err) = crate::auth::CredentialIdentity::new(provider_name, api_key_env)
+        {
+            return Err(format!("providers[{provider_name}]: invalid `api_key_env`: {err}"));
+        }
         Ok(())
     }
 }

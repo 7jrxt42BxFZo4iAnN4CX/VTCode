@@ -4,6 +4,7 @@ use std::str::FromStr;
 use vtcode_config::MiMoAuthMethod;
 use vtcode_config::OpenAIServiceTier;
 use vtcode_config::VTCodeConfig;
+use vtcode_config::api_keys::CredentialSource;
 use vtcode_config::auth::AuthCredentialsStoreMode;
 use vtcode_config::core::CustomProviderConfig;
 use vtcode_core::config::constants::reasoning;
@@ -44,14 +45,6 @@ pub(super) enum ServiceTierChoice {
     Priority,
 }
 
-pub(super) enum ExistingKey {
-    Environment,
-    WorkspaceDotenv,
-    /// OAuth token from encrypted storage (for OpenRouter)
-    OAuthToken,
-    StoredCredential,
-}
-
 #[derive(Clone)]
 pub(crate) struct ModelSelectionResult {
     pub(crate) provider: String,
@@ -67,6 +60,9 @@ pub(crate) struct ModelSelectionResult {
     pub(crate) service_tier: Option<OpenAIServiceTier>,
     pub(crate) service_tier_changed: bool,
     pub(crate) api_key: Option<String>,
+    /// Source of a credential discovered by the central resolver. `None`
+    /// means the user entered the key during this picker session.
+    pub(crate) credential_source: Option<CredentialSource>,
     pub(crate) env_key: String,
     pub(crate) requires_api_key: bool,
     pub(crate) uses_chatgpt_auth: bool,
@@ -124,7 +120,16 @@ pub(super) fn parse_model_selection(
                 provider.resolved_api_key_env()
             }
         })
-        .or_else(|| provider_enum.map(|provider| provider.default_api_key_env().to_string()))
+        .or_else(|| {
+            provider_enum.map(|provider| {
+                vt_cfg
+                    .and_then(|cfg| cfg.provider_overrides.get(provider.as_ref()))
+                    .and_then(|override_config| override_config.api_key_env.as_deref())
+                    .filter(|configured| !configured.trim().is_empty())
+                    .unwrap_or(provider.default_api_key_env())
+                    .to_string()
+            })
+        })
         .unwrap_or_else(|| derive_env_key(&provider_lower));
     if custom_provider.is_some() && provider_enum.is_none() {
         return Ok(SelectionDetail {
@@ -146,15 +151,17 @@ pub(super) fn parse_model_selection(
     }
     if let Some(provider) = provider_enum {
         let storage_mode = vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default();
-        let resolved =
-            ModelResolver::resolve_with_mode(Some(provider.as_ref()), model_token.trim(), &[], None, storage_mode)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "unable to resolve model `{}` for provider `{}`",
-                        model_token.trim(),
-                        provider.as_ref()
-                    )
-                })?;
+        let resolved = ModelResolver::resolve_with_mode_and_api_key_env(
+            Some(provider.as_ref()),
+            model_token.trim(),
+            &[],
+            None,
+            Some(&env_key),
+            storage_mode,
+        )
+        .ok_or_else(|| {
+            anyhow::anyhow!("unable to resolve model `{}` for provider `{}`", model_token.trim(), provider.as_ref())
+        })?;
         return Ok(selection_from_resolved(
             provider_lower,
             provider_label,
@@ -192,20 +199,27 @@ pub(super) fn selection_from_option_with_mode(
     option: &ModelOption,
     storage_mode: AuthCredentialsStoreMode,
 ) -> SelectionDetail {
-    let resolved =
-        ModelResolver::resolve_with_mode(Some(option.provider.as_ref()), &option.id, &[], None, storage_mode)
-            .unwrap_or_else(|| {
-                // Fallback: create a minimal ResolvedModel for static options.
-                // Use MissingCredential so the picker prompts for an API key instead of
-                // silently skipping credential steps for an unresolved model.
-                ResolvedModel {
-                    provider: option.provider,
-                    model_id: option.id.clone(),
-                    catalog: None,
-                    dynamic: None,
-                    availability: ModelAvailability::MissingCredential,
-                }
-            });
+    let resolved = ModelResolver::resolve_with_mode_and_api_key_env(
+        Some(option.provider.as_ref()),
+        &option.id,
+        &[],
+        None,
+        Some(&option.api_key_env),
+        storage_mode,
+    )
+    .unwrap_or_else(|| {
+        // Fallback: create a minimal ResolvedModel for static options.
+        // Use MissingCredential so the picker prompts for an API key instead of
+        // silently skipping credential steps for an unresolved model.
+        ResolvedModel {
+            provider: option.provider,
+            model_id: option.id.clone(),
+            api_key_env: option.api_key_env.clone(),
+            catalog: None,
+            dynamic: None,
+            availability: ModelAvailability::MissingCredential,
+        }
+    });
     selection_from_resolved(
         option.provider.to_string(),
         option.provider.label().to_string(),
@@ -213,7 +227,7 @@ pub(super) fn selection_from_option_with_mode(
         resolved,
         false,
         option.reasoning_alternative.clone(),
-        option.provider.default_api_key_env().to_string(),
+        option.api_key_env.clone(),
     )
 }
 
@@ -236,6 +250,7 @@ pub(super) fn selection_from_dynamic(
     )
 }
 
+#[cfg(test)]
 pub(super) fn selection_from_dynamic_with_mode(
     provider: Provider,
     model_id: &str,
@@ -244,8 +259,32 @@ pub(super) fn selection_from_dynamic_with_mode(
     context_window: Option<usize>,
     storage_mode: AuthCredentialsStoreMode,
 ) -> SelectionDetail {
-    let env_key = provider.default_api_key_env().to_string();
-    let resolved = ModelResolver::resolve_with_mode(
+    selection_from_dynamic_with_api_key_env(
+        provider,
+        model_id,
+        display_name,
+        description,
+        context_window,
+        None,
+        storage_mode,
+    )
+}
+
+pub(super) fn selection_from_dynamic_with_api_key_env(
+    provider: Provider,
+    model_id: &str,
+    display_name: &str,
+    description: Option<&str>,
+    context_window: Option<usize>,
+    api_key_env: Option<&str>,
+    storage_mode: AuthCredentialsStoreMode,
+) -> SelectionDetail {
+    let env_key = api_key_env
+        .map(str::trim)
+        .filter(|env_key| !env_key.is_empty())
+        .unwrap_or_else(|| provider.default_api_key_env())
+        .to_string();
+    let resolved = ModelResolver::resolve_with_mode_and_api_key_env(
         Some(provider.as_ref()),
         model_id,
         &[vtcode_core::llm::DynamicModelRef { provider, model_id }],
@@ -254,6 +293,7 @@ pub(super) fn selection_from_dynamic_with_mode(
             description: description.map(ToOwned::to_owned),
             context_window,
         }),
+        Some(&env_key),
         storage_mode,
     )
     .unwrap_or_else(|| {
@@ -263,6 +303,7 @@ pub(super) fn selection_from_dynamic_with_mode(
         ResolvedModel {
             provider,
             model_id: model_id.to_string(),
+            api_key_env: env_key.clone(),
             catalog: None,
             dynamic: Some(DynamicModelMeta {
                 display_name: display_name.to_string(),

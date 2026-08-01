@@ -955,7 +955,7 @@ async fn secret_status_no_provider() {
     assert!(matches!(
         outcome,
         SlashCommandOutcome::ManageSecrets {
-            action: SecretCommandAction::Status { provider: None }
+            action: SecretCommandAction::Status { provider: None, .. }
         }
     ));
 }
@@ -964,14 +964,17 @@ async fn secret_status_no_provider() {
 async fn secret_status_with_provider() {
     let mut renderer = renderer_for_tests();
     let workspace = std::path::PathBuf::from("/tmp");
-    let outcome = handle_slash_command("secret status anthropic", &mut renderer, &workspace)
+    let outcome = handle_slash_command("secret status anthropic MIMO_TOKEN_PLAN_KEY", &mut renderer, &workspace)
         .await
         .unwrap();
     assert!(matches!(
         outcome,
         SlashCommandOutcome::ManageSecrets {
-            action: SecretCommandAction::Status { provider: Some(ref p) }
-        } if p == "anthropic"
+            action: SecretCommandAction::Status {
+                provider: Some(ref p),
+                key_name: Some(ref key_name),
+            }
+        } if p == "anthropic" && key_name == "MIMO_TOKEN_PLAN_KEY"
     ));
 }
 
@@ -987,14 +990,35 @@ async fn secret_add_requires_provider() {
 async fn secret_add_provider() {
     let mut renderer = renderer_for_tests();
     let workspace = std::path::PathBuf::from("/tmp");
-    let outcome = handle_slash_command("secret add openai", &mut renderer, &workspace)
+    let outcome = handle_slash_command("secret add mycorp --key-name MYCORP_BILLING_KEY", &mut renderer, &workspace)
         .await
         .unwrap();
     assert!(matches!(
         outcome,
         SlashCommandOutcome::ManageSecrets {
-            action: SecretCommandAction::Add { ref provider }
-        } if provider == "openai"
+            action: SecretCommandAction::Add {
+                ref provider,
+                key_name: Some(ref key_name),
+            }
+        } if provider == "mycorp" && key_name == "MYCORP_BILLING_KEY"
+    ));
+}
+
+#[tokio::test]
+async fn secret_add_provider_accepts_equals_key_name() {
+    let mut renderer = renderer_for_tests();
+    let workspace = std::path::PathBuf::from("/tmp");
+    let outcome = handle_slash_command("secret add mycorp --env=MYCORP_BILLING_KEY", &mut renderer, &workspace)
+        .await
+        .unwrap();
+    assert!(matches!(
+        outcome,
+        SlashCommandOutcome::ManageSecrets {
+            action: SecretCommandAction::Add {
+                ref provider,
+                key_name: Some(ref key_name),
+            }
+        } if provider == "mycorp" && key_name == "MYCORP_BILLING_KEY"
     ));
 }
 
@@ -1010,14 +1034,17 @@ async fn secret_delete_requires_provider() {
 async fn secret_delete_provider() {
     let mut renderer = renderer_for_tests();
     let workspace = std::path::PathBuf::from("/tmp");
-    let outcome = handle_slash_command("secret delete openai", &mut renderer, &workspace)
+    let outcome = handle_slash_command("secret delete openai OPENAI_BILLING_KEY", &mut renderer, &workspace)
         .await
         .unwrap();
     assert!(matches!(
         outcome,
         SlashCommandOutcome::ManageSecrets {
-            action: SecretCommandAction::Delete { ref provider }
-        } if provider == "openai"
+            action: SecretCommandAction::Delete {
+                ref provider,
+                key_name: Some(ref key_name),
+            }
+        } if provider == "openai" && key_name == "OPENAI_BILLING_KEY"
     ));
 }
 
@@ -1031,7 +1058,7 @@ async fn secret_unknown_provider_returns_manage_secrets() {
     assert!(matches!(
         outcome,
         SlashCommandOutcome::ManageSecrets {
-            action: SecretCommandAction::Add { ref provider }
+            action: SecretCommandAction::Add { ref provider, .. }
         } if provider == "notaprovider"
     ));
 }

@@ -45,6 +45,7 @@ pub struct DynamicModelRef<'a> {
 pub struct ResolvedModel {
     pub provider: Provider,
     pub model_id: String,
+    pub api_key_env: String,
     pub catalog: Option<ModelCatalogEntry>,
     pub dynamic: Option<DynamicModelMeta>,
     pub availability: ModelAvailability,
@@ -113,7 +114,7 @@ impl ResolvedModel {
     }
 
     pub fn env_key(&self) -> String {
-        api_key_env_var(self.provider.as_ref())
+        self.api_key_env.clone()
     }
 }
 
@@ -147,35 +148,77 @@ impl ModelResolver {
         dynamic_meta: Option<DynamicModelMeta>,
         storage_mode: AuthCredentialsStoreMode,
     ) -> Option<ResolvedModel> {
+        Self::resolve_with_mode_and_api_key_env(
+            provider_override,
+            model,
+            dynamic_models,
+            dynamic_meta,
+            None,
+            storage_mode,
+        )
+    }
+
+    /// Resolve a model while carrying an optional provider-specific API-key
+    /// environment override through availability and picker metadata.
+    pub fn resolve_with_mode_and_api_key_env(
+        provider_override: Option<&str>,
+        model: &str,
+        dynamic_models: &[DynamicModelRef<'_>],
+        dynamic_meta: Option<DynamicModelMeta>,
+        api_key_env: Option<&str>,
+        storage_mode: AuthCredentialsStoreMode,
+    ) -> Option<ResolvedModel> {
         let model = model.trim();
         if model.is_empty() {
             return None;
         }
 
         if let Some(provider) = provider_override.and_then(parse_provider_override) {
-            return Some(Self::resolve_for_provider(provider, model, dynamic_models, dynamic_meta, storage_mode));
+            return Some(Self::resolve_for_provider(
+                provider,
+                model,
+                dynamic_models,
+                dynamic_meta,
+                api_key_env,
+                storage_mode,
+            ));
         }
 
         if let Ok(model_id) = ModelId::from_str(model) {
-            return Some(Self::resolve_for_model_id(model, model_id, dynamic_models, dynamic_meta, storage_mode));
+            return Some(Self::resolve_for_model_id(
+                model,
+                model_id,
+                dynamic_models,
+                dynamic_meta,
+                api_key_env,
+                storage_mode,
+            ));
         }
 
         if let Some((provider, entry)) = find_catalog_provider(model) {
             return Some(ResolvedModel {
                 provider,
                 model_id: model.to_string(),
+                api_key_env: resolved_api_key_env(provider, api_key_env),
                 catalog: Some(entry),
                 dynamic: dynamic_meta,
-                availability: Self::availability_with_mode(provider, model, storage_mode),
+                availability: Self::availability_with_key(provider, model, api_key_env, storage_mode),
             });
         }
 
         if let Some(provider) = find_dynamic_provider(model, dynamic_models) {
-            return Some(Self::resolve_for_provider(provider, model, dynamic_models, dynamic_meta, storage_mode));
+            return Some(Self::resolve_for_provider(
+                provider,
+                model,
+                dynamic_models,
+                dynamic_meta,
+                api_key_env,
+                storage_mode,
+            ));
         }
 
         let provider = heuristic_provider_from_model(model)?;
-        Some(Self::resolve_for_provider(provider, model, dynamic_models, dynamic_meta, storage_mode))
+        Some(Self::resolve_for_provider(provider, model, dynamic_models, dynamic_meta, api_key_env, storage_mode))
     }
 
     pub fn resolve_provider(
@@ -196,6 +239,16 @@ impl ModelResolver {
         model: &str,
         storage_mode: AuthCredentialsStoreMode,
     ) -> ModelAvailability {
+        Self::availability_with_key(provider, model, None, storage_mode)
+    }
+
+    /// Determine availability using a provider-specific credential key name.
+    pub fn availability_with_key(
+        provider: Provider,
+        model: &str,
+        api_key_env: Option<&str>,
+        storage_mode: AuthCredentialsStoreMode,
+    ) -> ModelAvailability {
         if provider.is_local() && !local_model_requires_remote_auth(provider, model) {
             return ModelAvailability::LocalOnly;
         }
@@ -204,31 +257,23 @@ impl ModelResolver {
             return ModelAvailability::ManagedAuthAvailable;
         }
 
-        if provider == Provider::OpenAI
-            && vtcode_config::auth::load_openai_chatgpt_session_with_mode(storage_mode)
-                .ok()
-                .flatten()
-                .is_some()
-        {
-            return ModelAvailability::ManagedAuthAvailable;
-        }
+        let env_key = resolved_api_key_env(provider, api_key_env);
 
-        if provider == Provider::OpenRouter
-            && vtcode_config::auth::load_oauth_token_with_mode(storage_mode)
-                .ok()
-                .flatten()
-                .is_some()
-        {
-            return ModelAvailability::ManagedAuthAvailable;
-        }
-
-        let env_key = api_key_env_var(provider.as_ref());
         if env_key.trim().is_empty() {
             return ModelAvailability::ManagedAuthAvailable;
         }
 
-        if has_env_value(&env_key) || has_stored_key(provider, storage_mode) {
-            return ModelAvailability::Available;
+        match vtcode_config::api_keys::resolve_credential_with_mode(provider.as_ref(), &env_key, None, storage_mode) {
+            Ok(Some(resolved)) => {
+                if matches!(resolved.source, vtcode_config::api_keys::CredentialSource::OAuth) {
+                    return ModelAvailability::ManagedAuthAvailable;
+                }
+                if resolved.secret.is_some() {
+                    return ModelAvailability::Available;
+                }
+            }
+            Ok(None) => {}
+            Err(_) => return ModelAvailability::Misconfigured,
         }
 
         if std::env::var(&env_key).is_ok() {
@@ -260,6 +305,7 @@ impl ModelResolver {
         model: &str,
         dynamic_models: &[DynamicModelRef<'_>],
         dynamic_meta: Option<DynamicModelMeta>,
+        api_key_env: Option<&str>,
         storage_mode: AuthCredentialsStoreMode,
     ) -> ResolvedModel {
         let catalog = model_catalog_entry(provider.as_ref(), model);
@@ -278,9 +324,10 @@ impl ModelResolver {
         ResolvedModel {
             provider,
             model_id: model.to_string(),
+            api_key_env: resolved_api_key_env(provider, api_key_env),
             catalog,
             dynamic,
-            availability: Self::availability_with_mode(provider, model, storage_mode),
+            availability: Self::availability_with_key(provider, model, api_key_env, storage_mode),
         }
     }
 
@@ -289,6 +336,7 @@ impl ModelResolver {
         model_id: ModelId,
         dynamic_models: &[DynamicModelRef<'_>],
         dynamic_meta: Option<DynamicModelMeta>,
+        api_key_env: Option<&str>,
         storage_mode: AuthCredentialsStoreMode,
     ) -> ResolvedModel {
         let provider = model_id.provider();
@@ -308,9 +356,10 @@ impl ModelResolver {
         ResolvedModel {
             provider,
             model_id: requested_model.to_string(),
+            api_key_env: resolved_api_key_env(provider, api_key_env),
             catalog,
             dynamic,
-            availability: Self::availability_with_mode(provider, requested_model, storage_mode),
+            availability: Self::availability_with_key(provider, requested_model, api_key_env, storage_mode),
         }
     }
 }
@@ -388,15 +437,12 @@ fn local_model_requires_remote_auth(provider: Provider, model: &str) -> bool {
         || (provider == Provider::Ollama && (model.contains(":cloud") || model.contains("-cloud")))
 }
 
-fn has_env_value(env_key: &str) -> bool {
-    matches!(std::env::var(env_key), Ok(value) if !value.trim().is_empty())
-}
-
-fn has_stored_key(provider: Provider, storage_mode: AuthCredentialsStoreMode) -> bool {
-    vtcode_config::api_keys::load_stored_api_key_with_mode(provider.as_ref(), storage_mode)
-        .ok()
-        .flatten()
-        .is_some()
+fn resolved_api_key_env(provider: Provider, api_key_env: Option<&str>) -> String {
+    api_key_env
+        .map(str::trim)
+        .filter(|env_key| !env_key.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| api_key_env_var(provider.as_ref()))
 }
 
 pub fn heuristic_provider_from_model(model: &str) -> Option<Provider> {
@@ -518,6 +564,22 @@ mod tests {
         assert_eq!(resolved.provider, Provider::Ollama);
         assert!(!resolved.known_model());
         assert_eq!(resolved.context_window(), Some(32_000));
+    }
+
+    #[test]
+    fn resolver_carries_provider_api_key_override() {
+        let resolved = ModelResolver::resolve_with_mode_and_api_key_env(
+            Some("openai"),
+            "gpt-5.4",
+            &[],
+            None,
+            Some("CORPORATE_OPENAI_KEY"),
+            AuthCredentialsStoreMode::File,
+        )
+        .expect("model");
+
+        assert_eq!(resolved.api_key_env, "CORPORATE_OPENAI_KEY");
+        assert_eq!(resolved.env_key(), "CORPORATE_OPENAI_KEY");
     }
 
     #[test]

@@ -19,6 +19,8 @@ pub struct RuntimeModelSelection {
     pub model: String,
     /// The resolved provider name.
     pub provider: String,
+    /// The credential identity selected for this provider.
+    pub api_key_env: String,
     /// Where the model selection originated (CLI, workspace config, etc.).
     pub model_source: ModelSelectionSource,
 }
@@ -41,7 +43,19 @@ pub fn resolve_runtime_model_selection(args: &Cli, config: &VTCodeConfig) -> Run
         model_source,
     );
 
-    RuntimeModelSelection { model, provider, model_source }
+    let api_key_env = if !args.api_key_env.trim().is_empty()
+        && !args.api_key_env.eq_ignore_ascii_case(defaults::DEFAULT_API_KEY_ENV)
+    {
+        resolve_api_key_env(&provider, &args.api_key_env)
+    } else if let Some(configured_env) = config.configured_api_key_env(&provider) {
+        resolve_api_key_env(&provider, &configured_env)
+    } else if config.agent.provider.eq_ignore_ascii_case(&provider) {
+        resolve_api_key_env(&provider, &config.agent.api_key_env)
+    } else {
+        api_key_env_var(&provider)
+    };
+
+    RuntimeModelSelection { model, provider, api_key_env, model_source }
 }
 
 /// Build a fully resolved [`AgentConfig`] from CLI arguments, workspace config,
@@ -65,8 +79,13 @@ pub fn build_runtime_agent_config(
 
     let checkpointing_storage_dir =
         resolve_checkpointing_storage_dir(&workspace, config.agent.checkpointing.storage_dir.as_deref());
-    let RuntimeModelSelection { model, provider, model_source } = selection;
-    let api_key_env = api_key_env_override.unwrap_or_else(|| resolve_api_key_env(&provider, &config.agent.api_key_env));
+    let RuntimeModelSelection {
+        model,
+        provider,
+        api_key_env: selection_api_key_env,
+        model_source,
+    } = selection;
+    let api_key_env = api_key_env_override.unwrap_or(selection_api_key_env);
 
     AgentConfig {
         model,
@@ -207,6 +226,58 @@ mod tests {
     }
 
     #[test]
+    fn runtime_selection_uses_custom_provider_api_key_env() {
+        let mut config = VTCodeConfig::default();
+        config.agent.provider = "mycorp".to_owned();
+        config.agent.default_model = "corp-model".to_owned();
+        config.custom_providers.push(vtcode_config::core::CustomProviderConfig {
+            name: "mycorp".to_owned(),
+            display_name: "MyCorp".to_owned(),
+            base_url: "https://llm.example/v1".to_owned(),
+            api_key_env: "CORP_SECRET".to_owned(),
+            auth: None,
+            model: "corp-model".to_owned(),
+            models: Vec::new(),
+        });
+
+        let selection = resolve_runtime_model_selection(&Cli::parse_from(["vtcode"]), &config);
+
+        assert_eq!(selection.provider, "mycorp");
+        assert_eq!(selection.api_key_env, "CORP_SECRET");
+    }
+
+    #[test]
+    fn runtime_selection_uses_builtin_provider_override_api_key_env() {
+        let mut config = VTCodeConfig::default();
+        config.agent.provider = "openai".to_owned();
+        config.provider_overrides.insert(
+            "openai".to_owned(),
+            vtcode_config::core::ProviderOverrideConfig {
+                models: Vec::new(),
+                base_url: None,
+                api_key_env: Some("CORP_OPENAI_SECRET".to_owned()),
+            },
+        );
+
+        let selection = resolve_runtime_model_selection(&Cli::parse_from(["vtcode"]), &config);
+
+        assert_eq!(selection.api_key_env, "CORP_OPENAI_SECRET");
+    }
+
+    #[test]
+    fn runtime_selection_reuses_persisted_key_for_cli_model_of_same_provider() {
+        let mut config = VTCodeConfig::default();
+        config.agent.provider = "mimo".to_owned();
+        config.agent.api_key_env = "MIMO_TOKEN_PLAN_KEY".to_owned();
+
+        let args = Cli::parse_from(["vtcode", "--model", "mimo-v2-flash"]);
+        let selection = resolve_runtime_model_selection(&args, &config);
+
+        assert_eq!(selection.provider, "mimo");
+        assert_eq!(selection.api_key_env, "MIMO_TOKEN_PLAN_KEY");
+    }
+
+    #[test]
     fn build_runtime_agent_config_uses_provider_default_api_key_env() {
         let mut config = VTCodeConfig::default();
         config.agent.api_key_env = defaults::DEFAULT_API_KEY_ENV.to_owned();
@@ -215,6 +286,7 @@ mod tests {
         let selection = RuntimeModelSelection {
             model: crate::config::constants::models::openai::GPT_5.to_owned(),
             provider: "openai".to_owned(),
+            api_key_env: "OPENAI_API_KEY".to_owned(),
             model_source: ModelSelectionSource::CliOverride,
         };
 
@@ -237,6 +309,7 @@ mod tests {
         let selection = RuntimeModelSelection {
             model: crate::config::constants::models::openai::GPT_5.to_owned(),
             provider: "openai".to_owned(),
+            api_key_env: "OPENAI_API_KEY".to_owned(),
             model_source: ModelSelectionSource::CliOverride,
         };
 
@@ -286,6 +359,7 @@ mod tests {
         let selection = RuntimeModelSelection {
             model: crate::config::constants::models::openai::GPT_5.to_owned(),
             provider: "openai".to_owned(),
+            api_key_env: "OPENAI_API_KEY".to_owned(),
             model_source: ModelSelectionSource::CliOverride,
         };
 

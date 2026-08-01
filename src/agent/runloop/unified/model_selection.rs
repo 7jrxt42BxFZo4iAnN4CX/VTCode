@@ -1,10 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use std::path::Path;
-use vtcode_config::{read_workspace_env_value, resolve_openai_auth};
-
-use vtcode_core::config::api_keys::{
-    ApiKeySources, get_api_key_with_mode, load_stored_api_key_with_mode, resolve_openai_api_key_for_auth,
-};
+use vtcode_config::resolve_openai_auth;
 use vtcode_core::config::loader::VTCodeConfig;
 use vtcode_core::config::models::Provider;
 use vtcode_core::config::types::AgentConfig as CoreAgentConfig;
@@ -247,13 +243,20 @@ pub(crate) async fn finalize_model_selection(
         if let Some(method) = selection.mimo_auth_method {
             renderer.line(MessageStyle::Info, &format!("Using MiMo {} authentication.", method.label()))?;
         }
-    } else if selection.api_key.is_some() {
+    } else if selection.api_key.is_some() && selection.credential_source.is_none() {
         renderer.line(
             MessageStyle::Info,
             &format!(
                 "API key saved to secure storage. The key will not be written to {} or vtcode.toml.",
                 selection.env_key,
             ),
+        )?;
+    } else if selection.credential_source == Some(vtcode_config::api_keys::CredentialSource::SecureStorage) {
+        renderer.line(MessageStyle::Info, "Using API key from secure storage.")?;
+    } else if selection.credential_source == Some(vtcode_config::api_keys::CredentialSource::Workspace) {
+        renderer.line(
+            MessageStyle::Info,
+            &format!("Using workspace environment variable {} for authentication.", selection.env_key),
         )?;
     } else if selection.requires_api_key {
         renderer.line(
@@ -306,23 +309,14 @@ async fn resolve_runtime_api_key(
     vt_cfg: Option<&VTCodeConfig>,
     selection: &ModelSelectionResult,
 ) -> Result<(String, Option<vtcode_config::auth::OpenAIChatGptAuthHandle>)> {
-    if let Some(key) = selection.api_key.as_ref() {
+    if selection.credential_source.is_none()
+        && let Some(key) = selection.api_key.as_ref()
+    {
         tracing::debug!(
             "resolve_runtime_api_key: using pending_api_key from selection result for provider '{}'",
             selection.provider
         );
         return Ok((key.clone(), None));
-    }
-
-    if selection.provider_enum == Some(Provider::OpenAI)
-        && let Some(cfg) = vt_cfg
-    {
-        let api_key = resolve_openai_api_key_for_auth(
-            cfg.agent.credential_storage_mode,
-            !matches!(cfg.auth.openai.preferred_method, vtcode_config::OpenAIPreferredMethod::ApiKey),
-        )?;
-        let resolved = resolve_openai_auth(&cfg.auth.openai, cfg.agent.credential_storage_mode, api_key)?;
-        return Ok((resolved.api_key().to_string(), resolved.handle()));
     }
 
     if selection.provider_enum == Some(Provider::Copilot) {
@@ -347,103 +341,76 @@ async fn resolve_runtime_api_key(
         };
     }
 
-    if let Some(key) = read_workspace_api_key(workspace, &selection.env_key)? {
-        tracing::debug!(
-            "resolve_runtime_api_key: resolved key from workspace .env for '{}' via {}",
-            selection.provider,
-            selection.env_key
-        );
-        return Ok((key, None));
-    }
-
     if selection.provider_enum.is_none()
         && let Some(cp) = vt_cfg.and_then(|cfg| cfg.custom_provider(&selection.provider))
+        && cp.uses_command_auth()
     {
-        if cp.uses_command_auth() {
-            return Ok((String::new(), None));
-        }
-
-        let storage_mode = vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default();
-        if let Some(key) = load_stored_api_key_with_mode(&selection.provider, storage_mode)? {
-            return Ok((key, None));
-        }
-
-        return match std::env::var(&selection.env_key) {
-            Ok(value) if !value.trim().is_empty() => Ok((value, None)),
-            _ if selection.requires_api_key => Err(anyhow!(
-                "API key not found for custom provider '{}'. Set {} or enter a key to continue.",
-                selection.provider,
-                selection.env_key
-            )),
-            _ => Ok((String::new(), None)),
-        };
+        return Ok((String::new(), None));
     }
 
-    if selection.provider_enum.is_some() {
-        let storage_mode = vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default();
-
-        // Try direct secure-storage lookup first. When process_model_selection
-        // found a StoredCredential it should have loaded the key into
-        // selection.api_key (early return above), but if anything went wrong
-        // we still resolve the stored key here instead of falling through to
-        // get_api_key_with_mode which might return a stale env-var value.
-        if let Ok(Some(key)) = load_stored_api_key_with_mode(&selection.provider, storage_mode) {
-            tracing::debug!(
-                "resolve_runtime_api_key: resolved key from secure storage for '{}' (len={})",
-                selection.provider,
-                key.len()
-            );
-            return Ok((key, None));
-        }
-
-        tracing::debug!(
-            "resolve_runtime_api_key: resolving from get_api_key_with_mode for provider '{}' (env -> provider-specific -> storage)",
-            selection.provider
-        );
-        let resolved = get_api_key_with_mode(&selection.provider, &ApiKeySources::default(), storage_mode)
-            .with_context(|| format!("API key not found for provider '{}'", selection.provider));
-        if let Ok(ref key) = resolved {
-            tracing::debug!(
-                "resolve_runtime_api_key: resolved key from get_api_key_with_mode for '{}' (len={})",
-                selection.provider,
-                key.len()
-            );
-        }
-        return resolved.map(|key| (key, None));
-    }
-
-    match std::env::var(&selection.env_key) {
-        Ok(value) if !value.trim().is_empty() => {
-            tracing::debug!(
-                "resolve_runtime_api_key: resolved key from env var {} for unknown provider '{}'",
-                selection.env_key,
-                selection.provider
-            );
-            Ok((value, None))
-        }
-        _ if selection.requires_api_key => {
-            tracing::debug!(
-                "resolve_runtime_api_key: no key found for provider '{}' (requires_api_key=true)",
-                selection.provider
-            );
-            Err(anyhow!(
+    // A provider without a built-in enum must come from the loaded custom
+    // provider configuration. Do not probe secure storage for an arbitrary
+    // unconfigured name; report the actionable key hint instead.
+    if selection.provider_enum.is_none() && vt_cfg.and_then(|cfg| cfg.custom_provider(&selection.provider)).is_none() {
+        if selection.requires_api_key {
+            return Err(anyhow!(
                 "API key not found for provider '{}'. Set {} or enter a key to continue.",
                 selection.provider,
                 selection.env_key
-            ))
+            ));
         }
-        _ => {
-            tracing::debug!(
-                "resolve_runtime_api_key: no key found for provider '{}' (requires_api_key=false), returning empty",
-                selection.provider
-            );
-            Ok((String::new(), None))
-        }
+        return Ok((String::new(), None));
     }
+
+    let storage_mode = vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default();
+    let resolved = vtcode_config::api_keys::resolve_credential_with_mode(
+        &selection.provider,
+        &selection.env_key,
+        Some(workspace),
+        storage_mode,
+    )?;
+
+    if selection.provider_enum == Some(Provider::OpenAI)
+        && selection.env_key.eq_ignore_ascii_case(Provider::OpenAI.default_api_key_env())
+        && let Some(cfg) = vt_cfg
+    {
+        let api_key = match resolved.as_ref().and_then(|credential| credential.secret.clone()) {
+            Some(api_key) => Some(api_key),
+            None if cfg.auth.openai.preferred_method == vtcode_config::OpenAIPreferredMethod::ApiKey => {
+                vtcode_config::api_keys::load_stored_api_key_with_mode("openai", storage_mode)?
+            }
+            None => None,
+        };
+        let auth = resolve_openai_auth(&cfg.auth.openai, storage_mode, api_key)?;
+        return Ok((auth.api_key().to_string(), auth.handle()));
+    }
+
+    if let Some(credential) = resolved
+        && let Some(secret) = credential.secret
+    {
+        tracing::debug!(
+            "resolve_runtime_api_key: resolved credential for provider '{}' from {:?} (len={})",
+            selection.provider,
+            credential.source,
+            secret.len()
+        );
+        return Ok((secret, None));
+    }
+
+    if selection.requires_api_key {
+        return Err(anyhow!(
+            "API key not found for provider '{}'. Set {} or enter a key to continue.",
+            selection.provider,
+            selection.env_key
+        ));
+    }
+
+    Ok((String::new(), None))
 }
 
+#[cfg(test)]
 fn read_workspace_api_key(workspace: &Path, env_key: &str) -> Result<Option<String>> {
-    read_workspace_env_value(workspace, env_key)
+    vtcode_config::read_workspace_env_value(workspace, env_key)
         .with_context(|| format!("Failed to read environment variable {env_key}"))
 }
 
@@ -452,12 +419,20 @@ fn sync_runtime_custom_api_key(config: &mut CoreAgentConfig, selection: &ModelSe
         return;
     }
 
-    if selection.api_key.is_some() {
-        config.custom_api_keys.insert(selection.provider.clone(), String::new());
+    if selection.api_key.is_some()
+        && let Ok(Some(metadata_key)) =
+            vtcode_config::api_keys::credential_metadata_key(&selection.provider, &selection.env_key)
+    {
+        config.custom_api_keys.insert(metadata_key, String::new());
         return;
     }
 
     config.custom_api_keys.remove(&selection.provider);
+    if let Ok(Some(metadata_key)) =
+        vtcode_config::api_keys::credential_metadata_key(&selection.provider, &selection.env_key)
+    {
+        config.custom_api_keys.remove(&metadata_key);
+    }
 }
 
 fn runtime_provider_label(selection: &ModelSelectionResult, using_chatgpt_auth: bool) -> String {
@@ -504,6 +479,7 @@ mod tests {
             service_tier: None,
             service_tier_changed: false,
             api_key: api_key.map(ToString::to_string),
+            credential_source: None,
             env_key: env_key.to_string(),
             requires_api_key,
             uses_chatgpt_auth: false,

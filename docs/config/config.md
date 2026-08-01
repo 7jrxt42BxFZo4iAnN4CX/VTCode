@@ -149,7 +149,7 @@ vtcode --codex-experimental
 
 ### custom_providers
 
-Use `custom_providers` for named OpenAI-compatible endpoints that are not one of VT Code's built-in providers. Each entry has a stable `name`, a human-friendly `display_name`, a `base_url`, an optional `api_key_env`, and a default `model`.
+Use `custom_providers` for named OpenAI-compatible endpoints that are not one of VT Code's built-in providers. Each entry has a stable `name`, a human-friendly `display_name`, a `base_url`, an optional `api_key_env`, and a default `model`. Secure credentials are scoped by `(name, api_key_env)`; they are not shared with another configured endpoint that uses the same API-key environment variable.
 
 ```toml
 [[custom_providers]]
@@ -159,6 +159,19 @@ base_url = "https://llm.corp.example/v1"
 api_key_env = "MYCORP_API_KEY"
 model = "gpt-5.4"
 ```
+
+Store a custom provider key with the same explicit identity used by the
+configuration:
+
+```bash
+vtcode secret add mycorp --key-name MYCORP_API_KEY
+vtcode secret status mycorp --key-name MYCORP_API_KEY
+```
+
+`api_key_env` defaults to a derived `NAME_API_KEY` value when omitted. Process
+environment variables and workspace `.env` entries take precedence over secure
+storage. Legacy provider-only entries are migrated only for a provider's
+default key; use `--key-name` for every non-default profile.
 
 These entries are editable from `/config`, and they show up in the model picker using `display_name` so you can toggle between multiple custom endpoints without losing track of the active one.
 
@@ -173,7 +186,9 @@ base_url = "https://custom-endpoint.example.com"   # optional
 api_key_env = "MY_CUSTOM_KEY"                        # optional
 ```
 
-Each `[providers.<name>]` section supports:
+Each `[providers.<name>]` section supports. Its `api_key_env` override also
+becomes the credential identity used by model availability, the picker, and the
+runtime:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|

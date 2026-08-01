@@ -124,21 +124,7 @@ impl CustomProviderConfig {
             return self.api_key_env.clone();
         }
 
-        let mut key = String::new();
-        for ch in self.name.chars() {
-            if ch.is_ascii_alphanumeric() {
-                key.push(ch.to_ascii_uppercase());
-            } else if !key.ends_with('_') {
-                key.push('_');
-            }
-        }
-        if !key.ends_with("_API_KEY") {
-            if !key.ends_with('_') {
-                key.push('_');
-            }
-            key.push_str("API_KEY");
-        }
-        key
+        crate::api_keys::api_key_env_var(&self.name)
     }
 
     pub fn uses_command_auth(&self) -> bool {
@@ -195,6 +181,12 @@ impl CustomProviderConfig {
             if !self.api_key_env.trim().is_empty() {
                 return Err(format!("custom_providers[{}]: `auth` cannot be combined with `api_key_env`", self.name));
             }
+        }
+
+        if !self.api_key_env.trim().is_empty()
+            && let Err(err) = crate::auth::CredentialIdentity::new(&self.name, &self.api_key_env)
+        {
+            return Err(format!("custom_providers[{}]: invalid `api_key_env`: {err}", self.name));
         }
 
         if self.models.iter().any(|m| m.trim().is_empty()) {

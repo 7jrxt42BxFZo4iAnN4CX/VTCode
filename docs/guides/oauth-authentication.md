@@ -13,6 +13,20 @@ OAuth integration in VT Code provides:
 - **Managed Auth Delegation**: GitHub Copilot authentication delegated to official `copilot` CLI
 - **Fallback Encryption**: AES-256-GCM encrypted file storage when keyring unavailable
 
+API-key credentials remain independent from OAuth sessions. Secure API-key
+entries use the normalized `(provider, environment-variable name)` identity, so
+an OAuth session or one API-key profile is never reused as another profile. For
+example, MiMo pay-as-you-go and Token Plan keys can be stored separately:
+
+```bash
+vtcode secret add mimo --key-name MIMO_API_KEY
+vtcode secret add mimo --key-name MIMO_TOKEN_PLAN_KEY
+```
+
+Environment variables and workspace `.env` values take precedence over secure
+storage. A legacy provider-only API-key entry is migrated only when the default
+provider key is requested; non-default identities must be named explicitly.
+
 ## Supported Providers
 
 ### GitHub Copilot Managed Auth

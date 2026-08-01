@@ -138,7 +138,12 @@ fn sort_providers_by_readiness(providers: Vec<Provider>, discovered: &[Discovere
         .enumerate()
         .map(|(idx, provider)| {
             let tier = match find_discovered(discovered, provider).map(|d| d.source) {
-                Some(CredentialSource::Env | CredentialSource::SecureStorage | CredentialSource::OAuth) => 0,
+                Some(
+                    CredentialSource::Env
+                    | CredentialSource::Workspace
+                    | CredentialSource::SecureStorage
+                    | CredentialSource::OAuth,
+                ) => 0,
                 Some(CredentialSource::ManagedAuth | CredentialSource::Local) => 1,
                 None => 2,
             };
@@ -164,12 +169,19 @@ fn provider_entries(providers: &[Provider], discovered: &[DiscoveredProvider]) -
 /// exactly what vtcode read (e.g. `GOOGLE_API_KEY` vs `GEMINI_API_KEY`).
 fn ready_subtitle(provider: Provider, entry: &DiscoveredProvider) -> String {
     let mark = match entry.source {
-        CredentialSource::Env | CredentialSource::SecureStorage | CredentialSource::OAuth => "✓",
+        CredentialSource::Env
+        | CredentialSource::Workspace
+        | CredentialSource::SecureStorage
+        | CredentialSource::OAuth => "✓",
         CredentialSource::ManagedAuth | CredentialSource::Local => "•",
     };
     let detail = match entry.source {
         CredentialSource::Env => match entry.env_var {
             Some(var) => format!("found {var} in environment"),
+            None => entry.source.describe(provider).to_string(),
+        },
+        CredentialSource::Workspace => match entry.env_var {
+            Some(var) => format!("found {var} in workspace .env"),
             None => entry.source.describe(provider).to_string(),
         },
         _ => entry.source.describe(provider).to_string(),
@@ -185,7 +197,12 @@ fn prompt_provider_text(
 ) -> Result<Provider> {
     for (index, provider) in providers.iter().enumerate() {
         let marker = match find_discovered(discovered, *provider).map(|d| d.source) {
-            Some(CredentialSource::Env | CredentialSource::SecureStorage | CredentialSource::OAuth) => " ✓",
+            Some(
+                CredentialSource::Env
+                | CredentialSource::Workspace
+                | CredentialSource::SecureStorage
+                | CredentialSource::OAuth,
+            ) => " ✓",
             Some(_) => " •",
             None => "",
         };
@@ -223,13 +240,21 @@ fn select_provider_with_ratatui(
 ) -> Result<Provider> {
     let entries = provider_entries(providers, discovered);
 
-    // Default the cursor to the first ready (env/keyring/OAuth) provider so the
+    // Default the cursor to the first ready (env/workspace/keyring/OAuth) provider so the
     // user can just press Enter when their key is already exported. After
     // `sort_providers_by_readiness` this is typically index 0, but search
     // explicitly in case the reordered list's first entry is tier 1/2.
     let default_index = discovered
         .iter()
-        .find(|d| matches!(d.source, CredentialSource::Env | CredentialSource::SecureStorage | CredentialSource::OAuth))
+        .find(|d| {
+            matches!(
+                d.source,
+                CredentialSource::Env
+                    | CredentialSource::Workspace
+                    | CredentialSource::SecureStorage
+                    | CredentialSource::OAuth
+            )
+        })
         .and_then(|d| providers.iter().position(|p| *p == d.provider))
         .unwrap_or_else(|| providers.iter().position(|provider| *provider == default).unwrap_or(0));
 

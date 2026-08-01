@@ -1,6 +1,10 @@
 use clap::{Args, Subcommand, ValueEnum};
 
-/// Supported provider names for secret management
+/// Supported built-in provider names for legacy callers.
+///
+/// The CLI accepts arbitrary configured provider names through `String`
+/// fields below; this enum remains available to integrations that used the
+/// older typed API.
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 pub enum SecretProvider {
     #[value(name = "openai")]
@@ -86,21 +90,30 @@ pub enum SecretSubcommand {
     #[command(name = "status", visible_alias = "info")]
     Status {
         /// Provider name (e.g. openai, anthropic, stepfun)
-        provider_name: Option<SecretProvider>,
+        provider_name: Option<String>,
+        /// Explicit environment-variable identity for a non-default key
+        #[arg(long, alias = "env")]
+        key_name: Option<String>,
     },
 
     /// Store an API key in secure storage
     #[command(name = "add", visible_alias = "set")]
     Add {
         /// Provider name (e.g. openai, anthropic, stepfun)
-        provider_name: SecretProvider,
+        provider_name: String,
+        /// Explicit environment-variable identity for a non-default key
+        #[arg(long, alias = "env")]
+        key_name: Option<String>,
     },
 
     /// Remove a stored API key from secure storage
     #[command(name = "delete", visible_alias = "remove")]
     Delete {
         /// Provider name (e.g. openai, anthropic, stepfun)
-        provider_name: SecretProvider,
+        provider_name: String,
+        /// Explicit environment-variable identity for a non-default key
+        #[arg(long, alias = "env")]
+        key_name: Option<String>,
     },
 
     /// Migrate API keys from workspace .env to secure storage
@@ -112,7 +125,7 @@ pub enum SecretSubcommand {
 #[derive(Debug, Args, Clone)]
 pub struct MigrateArgs {
     /// Provider name (e.g. openai, anthropic). Omit to migrate all found keys.
-    pub provider_name: Option<SecretProvider>,
+    pub provider_name: Option<String>,
 
     /// Migrate all found keys without prompting
     #[arg(long)]

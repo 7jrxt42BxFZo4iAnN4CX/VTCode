@@ -5,8 +5,12 @@
 //! configured backend selection in one independently testable interface.
 
 use anyhow::{Context, Result, bail};
-use vtcode_auth::{AuthCredentialsStoreMode, CustomApiKeyStorage};
-use vtcode_core::config::models::Provider;
+use std::path::Path;
+use vtcode_auth::AuthCredentialsStoreMode;
+use vtcode_config::api_keys::{
+    clear_credential_with_mode, load_stored_credential_with_mode, resolve_credential_with_mode,
+    store_credential_with_mode,
+};
 
 pub(super) struct SecretStorage {
     mode: AuthCredentialsStoreMode,
@@ -17,43 +21,31 @@ impl SecretStorage {
         Self { mode }
     }
 
-    pub(super) fn validate_provider(provider: Provider) -> Result<()> {
-        validate_api_key_provider(provider)
+    pub(super) fn load_resolved(&self, provider: &str, key_name: &str, workspace: &Path) -> Result<Option<String>> {
+        resolve_credential_with_mode(provider, key_name, Some(workspace), self.mode)
+            .with_context(|| format!("failed to resolve {provider} credential"))
+            .map(|resolved| resolved.and_then(|credential| credential.secret))
     }
 
-    pub(super) fn load(&self, provider: Provider) -> Result<Option<String>> {
-        validate_api_key_provider(provider)?;
-        CustomApiKeyStorage::new(provider.as_ref())
-            .load(self.mode)
-            .with_context(|| format!("failed to load {} credential", provider.label()))
+    pub(super) fn load_stored(&self, provider: &str, key_name: &str) -> Result<Option<String>> {
+        load_stored_credential_with_mode(provider, key_name, self.mode)
+            .with_context(|| format!("failed to load stored {provider} credential"))
     }
 
-    pub(super) fn store(&self, provider: Provider, value: &str) -> Result<()> {
-        validate_api_key_provider(provider)?;
+    pub(super) fn store(&self, provider: &str, key_name: &str, value: &str) -> Result<()> {
         let value = value.trim();
         if value.is_empty() {
             bail!("API key cannot be empty");
         }
 
-        CustomApiKeyStorage::new(provider.as_ref())
-            .store(value, self.mode)
-            .with_context(|| format!("failed to store {} credential", provider.label()))
+        store_credential_with_mode(provider, key_name, value, self.mode)
+            .with_context(|| format!("failed to store {provider} credential"))
+            .map(|_| ())
     }
 
-    pub(super) fn clear(&self, provider: Provider) -> Result<()> {
-        validate_api_key_provider(provider)?;
-        CustomApiKeyStorage::new(provider.as_ref())
-            .clear(self.mode)
-            .with_context(|| format!("failed to clear {} credential", provider.label()))
+    pub(super) fn clear(&self, provider: &str, key_name: &str) -> Result<()> {
+        clear_credential_with_mode(provider, key_name, self.mode)
+            .with_context(|| format!("failed to clear {provider} credential"))
+            .map(|_| ())
     }
-}
-
-fn validate_api_key_provider(provider: Provider) -> Result<()> {
-    if provider.is_local() {
-        bail!("{} is a local provider and does not use an API key", provider.label());
-    }
-    if provider.uses_managed_auth() {
-        bail!("{} uses managed authentication; use its login flow", provider.label());
-    }
-    Ok(())
 }

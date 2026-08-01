@@ -4,8 +4,10 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use tempfile::Builder;
 
-use vtcode_auth::{AuthCredentialsStoreMode, CustomApiKeyStorage};
+use vtcode_auth::AuthCredentialsStoreMode;
 use vtcode_commons::provider::Provider;
+
+use crate::api_keys::store_credential_with_mode;
 
 /// Returns the workspace `.env` file path.
 pub fn workspace_env_path(workspace: &Path) -> PathBuf {
@@ -270,15 +272,15 @@ pub fn migrate_single_env_key(
         return Ok(MigrationOutcome::Skipped);
     }
 
-    let storage = CustomApiKeyStorage::new(provider.as_ref());
-    match storage.store(trimmed, store_mode) {
-        Ok(()) => match remove_workspace_env_value(workspace, env_key) {
+    match store_credential_with_mode(provider.as_ref(), env_key, trimmed, store_mode) {
+        Ok(Some(_)) => match remove_workspace_env_value(workspace, env_key) {
             Ok(()) => Ok(MigrationOutcome::Migrated),
             Err(err) => {
                 tracing::warn!("Stored {} in keyring but failed to remove from .env: {}", env_key, err);
                 Ok(MigrationOutcome::Failed)
             }
         },
+        Ok(None) => Ok(MigrationOutcome::Skipped),
         Err(err) => {
             tracing::warn!("Failed to store API key for {}: {}", provider.label(), err);
             Ok(MigrationOutcome::Failed)
@@ -341,14 +343,17 @@ pub fn migrate_workspace_env_keys(
             }
         };
 
-        let storage = CustomApiKeyStorage::new(provider.as_ref());
-        match storage.store(value, store_mode) {
-            Ok(()) => {
+        match store_credential_with_mode(provider.as_ref(), env_key, value, store_mode) {
+            Ok(Some(_)) => {
                 if let Some(&idx) = line_map.get(env_key) {
                     removed.insert(idx);
                 }
                 summary.migrated += 1;
                 outcomes.push((provider, MigrationOutcome::Migrated));
+            }
+            Ok(None) => {
+                summary.skipped += 1;
+                outcomes.push((provider, MigrationOutcome::Skipped));
             }
             Err(err) => {
                 tracing::warn!("Failed to store API key for {}: {}", provider.label(), err);

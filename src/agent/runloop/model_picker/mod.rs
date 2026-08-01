@@ -63,7 +63,7 @@ use rendering::{dynamic_model_subtitle, model_search_value, static_model_search_
 #[cfg(test)]
 use selection::selection_from_option;
 use selection::{
-    ExistingKey, ReasoningChoice, SelectionDetail, ServiceTierChoice, is_cancel_command, parse_model_selection,
+    ReasoningChoice, SelectionDetail, ServiceTierChoice, is_cancel_command, parse_model_selection,
     selections_from_custom_provider,
 };
 #[cfg(test)]
@@ -98,6 +98,7 @@ pub(crate) use self::dynamic_models::DynamicModelRegistry;
 pub(crate) use self::lightweight_palette::build_lightweight_model_palette_view;
 pub(crate) use self::lightweight_palette::{LightweightModelPaletteView, prepare_lightweight_model_palette_view};
 pub(crate) use selection::ModelSelectionResult;
+#[cfg(test)]
 pub(super) use vtcode_config::read_workspace_env_value as read_workspace_env;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,6 +143,7 @@ pub(crate) struct ModelPickerState {
     selected_service_tier: Option<Option<OpenAIServiceTier>>,
     selected_mimo_auth: Option<MiMoAuthMethod>,
     pending_api_key: Option<String>,
+    pending_credential_source: Option<vtcode_config::api_keys::CredentialSource>,
     plain_mode_active: bool,
 }
 
@@ -211,6 +213,7 @@ impl ModelPickerState {
             selected_service_tier: None,
             selected_mimo_auth: None,
             pending_api_key: None,
+            pending_credential_source: None,
             dynamic_models,
             plain_mode_active: false,
         };
@@ -270,6 +273,7 @@ impl ModelPickerState {
         self.selected_service_tier = None;
         self.selected_mimo_auth = None;
         self.pending_api_key = None;
+        self.pending_credential_source = None;
         self.step = PickerStep::AwaitModel;
         if self.settings.inline_enabled {
             render_step_one_inline(

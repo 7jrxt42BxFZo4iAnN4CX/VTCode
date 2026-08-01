@@ -177,11 +177,12 @@ pub struct AgentConfig {
     #[serde(default)]
     pub persistent_memory: PersistentMemoryConfig,
 
-    /// Provider-specific API keys captured from interactive configuration flows
+    /// Provider/key identities captured from interactive configuration flows
     ///
     /// Note: Actual API keys are stored securely in the configured credential
     /// backend (OS keyring when available, otherwise encrypted file storage).
-    /// This field only tracks which providers have keys stored (for UI/migration purposes).
+    /// Keys use `<provider>/<environment-variable>` identity keys and this
+    /// field only tracks which identities have keys stored (for UI/migration purposes).
     /// The keys themselves are NOT serialized to the config file for security.
     #[serde(default, skip_serializing)]
     pub custom_api_keys: BTreeMap<String, String>,

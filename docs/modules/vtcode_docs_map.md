@@ -104,8 +104,8 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/development/DEVELOPMENT_SETUP.md`
   - **Content**: Development Setup
-  - **Topics**: One-Time Setup, Daily Development Loop, Full Quality Gate, Common Commands, Troubleshooting
-  - **User Questions**: "What can you tell me about Development Setup?", "How does One-Time Setup work?", "How does Daily Development Loop work?"
+  - **Topics**: One-Time Setup, Credential identities, Daily Development Loop, Full Quality Gate, Common Commands
+  - **User Questions**: "What can you tell me about Development Setup?", "How does One-Time Setup work?", "How does Credential identities work?"
 
 - **File**: `docs/development/EXTENSION_BOUNDARIES.md`
   - **Content**: Extension Boundaries in VT Code
