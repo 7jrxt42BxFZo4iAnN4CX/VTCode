@@ -813,6 +813,11 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: anstyle-git Syntax, anstyle-ls Syntax, Git Config Color Syntax, Vtcode Integration Points, Cheat Sheet: Common Patterns
   - **User Questions**: "What can you tell me about Quick Reference: Anstyle Crates?", "How does anstyle-git Syntax work?", "How does anstyle-ls Syntax work?"
 
+- **File**: `docs/harness/SESSION_LOG_REVIEW.md`
+  - **Content**: Session Log Review
+  - **Topics**: Scope, Findings and disposition, Runtime invariants, Verification
+  - **User Questions**: "What can you tell me about Session Log Review?", "How does Scope work?", "How does Findings and disposition work?"
+
 - **File**: `docs/features/SHELL_SNAPSHOT.md`
   - **Content**: Shell Environment Snapshot
   - **Topics**: Problem, Solution, Usage, Architecture, Excluded Environment Variables

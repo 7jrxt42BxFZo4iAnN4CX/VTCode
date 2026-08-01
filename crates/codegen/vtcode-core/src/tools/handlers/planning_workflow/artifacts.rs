@@ -11,14 +11,7 @@ use std::path::{Path, PathBuf};
 pub(super) const PLAN_TRACKER_START: &str = "<!-- vtcode:plan-tracker:start -->";
 pub(super) const PLAN_TRACKER_END: &str = "<!-- vtcode:plan-tracker:end -->";
 
-const REQUIRED_PLAN_SECTIONS: [&str; 4] = [
-    "Summary",
-    "Implementation Steps",
-    "Test Cases and Validation",
-    "Assumptions and Defaults",
-];
-
-const PLACEHOLDER_TOKENS: [&str; 14] = [
+const PLACEHOLDER_TOKENS: [&str; 18] = [
     "[step]",
     "[paths]",
     "[check]",
@@ -33,6 +26,10 @@ const PLACEHOLDER_TOKENS: [&str; 14] = [
     "[2-4 lines: goal, user impact, what will change, what will not]",
     "[explicit commands/manual checks]",
     "[what must not break]",
+    "[todo]",
+    "todo:",
+    "[decision needed]",
+    "tbd",
 ];
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -55,6 +52,32 @@ impl PlanValidationReport {
             && self.implementation_step_count > 0
             && self.validation_item_count > 0
             && self.assumption_count > 0
+    }
+
+    pub fn reasons(&self) -> Vec<String> {
+        let mut reasons = Vec::new();
+        if !self.missing_sections.is_empty() {
+            reasons.push(format!("missing sections: {}", self.missing_sections.join(", ")));
+        }
+        if !self.placeholder_tokens.is_empty() {
+            reasons.push(format!("placeholder tokens: {}", self.placeholder_tokens.join(", ")));
+        }
+        if !self.open_decisions.is_empty() {
+            reasons.push(format!("unresolved decisions: {}", self.open_decisions.join("; ")));
+        }
+        if !self.summary_present {
+            reasons.push("summary is empty".to_string());
+        }
+        if self.implementation_step_count == 0 {
+            reasons.push("no implementation steps".to_string());
+        }
+        if self.validation_item_count == 0 {
+            reasons.push("no validation items".to_string());
+        }
+        if self.assumption_count == 0 {
+            reasons.push("no assumptions or defaults".to_string());
+        }
+        reasons
     }
 }
 
@@ -146,6 +169,17 @@ fn section_body(content: &str, header: &str) -> Option<String> {
     (!body.is_empty()).then_some(body)
 }
 
+fn labeled_body(content: &str, label: &str) -> Option<String> {
+    let prefix = format!("{label}:");
+    let lines = content
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| line.strip_prefix(&prefix).map(str::trim))
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
 fn meaningful_section_lines(body: &str) -> Vec<&str> {
     body.lines()
         .map(str::trim)
@@ -187,9 +221,10 @@ fn find_open_decisions(content: &str) -> Vec<String> {
         .filter(|line| !line.is_empty())
         .filter(|line| {
             let lower = line.to_ascii_lowercase();
-            lower.contains("next open decision")
+            (lower.contains("next open decision") || lower.contains("open question"))
                 && ![
                     "none",
+                    "no open",
                     "no remaining",
                     "no further",
                     "resolved",
@@ -212,13 +247,33 @@ pub fn validate_plan_content(content: &str) -> PlanValidationReport {
         ..PlanValidationReport::default()
     };
 
-    let summary_body = section_body(&stripped, "Summary");
-    let implementation_body = section_body(&stripped, "Implementation Steps");
-    let validation_body = section_body(&stripped, "Test Cases and Validation");
-    let assumptions_body = section_body(&stripped, "Assumptions and Defaults");
+    let summary_body = section_body(&stripped, "Summary").or_else(|| labeled_body(&stripped, "Summary"));
+    let implementation_body = section_body(&stripped, "Implementation Steps").or_else(|| {
+        let numbered = stripped
+            .lines()
+            .map(str::trim)
+            .filter(|line| is_numbered_line(line))
+            .collect::<Vec<_>>();
+        (!numbered.is_empty()).then(|| numbered.join("\n"))
+    });
+    let validation_is_labeled = section_body(&stripped, "Test Cases and Validation").is_none()
+        && section_body(&stripped, "Validation").is_none();
+    let validation_body = section_body(&stripped, "Test Cases and Validation")
+        .or_else(|| section_body(&stripped, "Validation"))
+        .or_else(|| labeled_body(&stripped, "Validation"));
+    let assumptions_is_labeled = section_body(&stripped, "Assumptions and Defaults").is_none()
+        && section_body(&stripped, "Assumptions").is_none();
+    let assumptions_body = section_body(&stripped, "Assumptions and Defaults")
+        .or_else(|| section_body(&stripped, "Assumptions"))
+        .or_else(|| labeled_body(&stripped, "Assumptions"));
 
-    for section in REQUIRED_PLAN_SECTIONS {
-        if section_body(&stripped, section).is_none() {
+    for (section, body) in [
+        ("Summary", summary_body.as_ref()),
+        ("Implementation Steps", implementation_body.as_ref()),
+        ("Test Cases and Validation", validation_body.as_ref()),
+        ("Assumptions and Defaults", assumptions_body.as_ref()),
+    ] {
+        if body.is_none() {
             report.missing_sections.push(section.to_string());
         }
     }
@@ -245,6 +300,9 @@ pub fn validate_plan_content(content: &str) -> PlanValidationReport {
             .into_iter()
             .filter(|line| is_numbered_line(line) || line.starts_with("- "))
             .count();
+        if validation_is_labeled && report.validation_item_count == 0 {
+            report.validation_item_count = meaningful_section_lines(body).len();
+        }
     }
     if report.validation_item_count == 0 && !report.missing_sections.iter().any(|s| s == "Test Cases and Validation") {
         report.missing_sections.push("Test Cases and Validation".to_string());
@@ -255,6 +313,9 @@ pub fn validate_plan_content(content: &str) -> PlanValidationReport {
             .into_iter()
             .filter(|line| is_numbered_line(line) || line.starts_with("- "))
             .count();
+        if assumptions_is_labeled && report.assumption_count == 0 {
+            report.assumption_count = meaningful_section_lines(body).len();
+        }
     }
     if report.assumption_count == 0 && !report.missing_sections.iter().any(|s| s == "Assumptions and Defaults") {
         report.missing_sections.push("Assumptions and Defaults".to_string());

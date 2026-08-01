@@ -3,6 +3,7 @@ use vtcode_core::core::interfaces::session::PlanningEntrySource;
 use vtcode_core::utils::ansi::MessageStyle;
 use vtcode_core::utils::dot_config::load_workspace_trust_level;
 
+use crate::agent::runloop::unified::planning_workflow::PlanningFinishReason;
 use crate::agent::runloop::unified::state::should_enforce_safe_mode_prompts;
 
 use super::{SlashCommandContext, SlashCommandControl};
@@ -70,9 +71,9 @@ pub(crate) async fn handle_toggle_planning_workflow(
             ctx.tool_registry,
             ctx.plan_session,
             ctx.handle,
-            true,
+            PlanningFinishReason::Cancelled,
         )
-        .await;
+        .await?;
         sync_workspace_trust_prompt_policy(&mut ctx, false).await?;
         ctx.renderer.line(MessageStyle::Info, "Planning workflow finished")?;
         ctx.renderer.line(

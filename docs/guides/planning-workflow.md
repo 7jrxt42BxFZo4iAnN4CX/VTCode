@@ -125,6 +125,12 @@ Approved-plan execution receives a separate implementation safety budget so
 planning research does not leave the build phase with only the ordinary
 short-turn allowance.
 
+### Validated Approval Handoff
+
+Approval is accepted only for a persisted plan with concrete Summary, Implementation Steps, Test Cases and Validation, and Assumptions and Defaults sections. Placeholder tokens and unresolved `Next open decision` or `Open question` entries block approval. VT Code gives the model one bounded repair request; if the repaired artifact is still invalid, planning remains active with the validation reasons visible.
+
+Creating the `task_tracker` checklist is part of the approval gate. If the tracker tool is unavailable, fails, or does not persist its tracker file, the planning workflow remains active and no write-capable execution turn is started. All approval routes share the same typed handoff, including direct, queued, automatic, and fresh-context execution.
+
 ### Clarification Interviews
 
 When the planning agent reaches a material ambiguity, or identifies an open

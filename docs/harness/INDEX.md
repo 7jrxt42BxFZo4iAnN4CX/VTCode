@@ -17,6 +17,7 @@ The principle: if an agent cannot complete a task autonomously from information 
 | [QUALITY_SCORE.md](QUALITY_SCORE.md)                       | Quality grading (A/B/C/D) for each VT Code domain across 5 dimensions.                                  |
 | [EXEC_PLANS.md](EXEC_PLANS.md)                             | Execution plan methodology. Template and guidelines for self-contained design documents.                |
 | [TECH_DEBT_TRACKER.md](TECH_DEBT_TRACKER.md)               | Known technical debt items with priority (P0–P3) and review cadence.                                    |
+| [SESSION_LOG_REVIEW.md](SESSION_LOG_REVIEW.md)             | Review of planning handoff recovery, session-loop boundaries, and harness diagnostics.                  |
 
 ### Key Implementation Files
 
@@ -62,6 +63,7 @@ AGENTS.md (root)          ← Start here. The map.
   │   ├── QUALITY_SCORE.md
   │   ├── EXEC_PLANS.md
   │   ├── TECH_DEBT_TRACKER.md
+  │   ├── SESSION_LOG_REVIEW.md
   │   └── exec-plans/
   │       ├── active/
   │       └── completed/

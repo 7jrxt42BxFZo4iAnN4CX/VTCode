@@ -38,6 +38,7 @@ pub(crate) struct PlanningWorkflowSessionState {
     /// from the research already gathered instead of ending with an approval
     /// hint that has no draft behind it.
     plan_synthesis_retry_used: bool,
+    plan_validation_repair_used: bool,
     /// Counts re-prompts issued after the model emitted pseudo-tool-call
     /// markup (XML-ish tool-call text no parser could execute) as a plan-mode
     /// text response. Bounded so a checkpoint that keeps emitting the same
@@ -78,6 +79,7 @@ impl PlanningWorkflowSessionState {
         self.recovery_exhausted = false;
         self.interview_denied = false;
         self.plan_synthesis_retry_used = false;
+        self.plan_validation_repair_used = false;
         self.pseudo_tool_call_reprompts = 0;
         self.previous_primary_agent = None;
         self.fallback_primary_agent = None;
@@ -90,6 +92,7 @@ impl PlanningWorkflowSessionState {
         self.recovery_exhausted = false;
         self.interview_denied = false;
         self.plan_synthesis_retry_used = false;
+        self.plan_validation_repair_used = false;
         self.pseudo_tool_call_reprompts = 0;
         self.previous_primary_agent = None;
         self.fallback_primary_agent = None;
@@ -190,6 +193,14 @@ impl PlanningWorkflowSessionState {
         self.plan_synthesis_retry_used = true;
     }
 
+    pub(crate) fn plan_validation_repair_allowed(&self) -> bool {
+        !self.plan_validation_repair_used
+    }
+
+    pub(crate) fn mark_plan_validation_repair_used(&mut self) {
+        self.plan_validation_repair_used = true;
+    }
+
     pub(crate) fn plan_pseudo_tool_call_reprompt_allowed(&self) -> bool {
         self.pseudo_tool_call_reprompts < MAX_PLAN_PSEUDO_TOOL_CALL_REPROMPTS
     }
@@ -263,6 +274,12 @@ pub(crate) fn render_planning_workflow_next_step_hint(renderer: &mut AnsiRendere
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlanningFinishReason {
+    Approved,
+    Cancelled,
+}
+
 pub(crate) async fn transition_to_planning_workflow(
     tool_registry: &ToolRegistry,
     session_stats: &mut SessionStats,
@@ -299,26 +316,31 @@ pub(crate) async fn finish_planning_workflow(
     tool_registry: &ToolRegistry,
     plan_session: &mut PlanningWorkflowSessionState,
     handle: &InlineHandle,
-    clear_plan_file: bool,
-) {
-    if !clear_plan_file {
-        let _ = crate::agent::runloop::unified::planning_workflow::create_task_tracker_from_active_plan(
-            tool_registry,
-            handle,
+    reason: PlanningFinishReason,
+) -> Result<Option<crate::agent::runloop::unified::planning_workflow::TaskTrackerHandoff>> {
+    let tracker = if reason == PlanningFinishReason::Approved {
+        Some(
+            crate::agent::runloop::unified::planning_workflow::create_task_tracker_from_active_plan(
+                tool_registry,
+                handle,
+            )
+            .await?,
         )
-        .await;
-    }
+    } else {
+        None
+    };
     tool_registry.disable_planning();
     tool_registry.restore_post_planning_policies().await;
     let plan_state = tool_registry.planning_workflow_state();
     plan_state.disable();
-    if clear_plan_file {
+    if reason == PlanningFinishReason::Cancelled {
         plan_state.set_plan_file(None).await;
     }
 
     plan_session.exit();
     handle.set_activity_state(ActivityState::Idle);
     handle.force_redraw();
+    Ok(tracker)
 }
 
 #[cfg(test)]
@@ -408,6 +430,19 @@ mod tests {
         state.exit();
         state.enter(PlanningEntrySource::UserRequest);
         assert!(state.plan_pseudo_tool_call_reprompt_allowed());
+    }
+
+    #[test]
+    fn plan_validation_repair_is_bounded_and_reset_on_reentry() {
+        let mut state = PlanningWorkflowSessionState::default();
+        state.enter(PlanningEntrySource::UserRequest);
+        assert!(state.plan_validation_repair_allowed());
+        state.mark_plan_validation_repair_used();
+        assert!(!state.plan_validation_repair_allowed());
+
+        state.exit();
+        state.enter(PlanningEntrySource::UserRequest);
+        assert!(state.plan_validation_repair_allowed());
     }
 
     #[test]

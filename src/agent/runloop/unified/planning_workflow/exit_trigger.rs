@@ -9,12 +9,13 @@ use vtcode_core::utils::ansi::AnsiRenderer;
 use vtcode_ui::tui::app::{InlineHandle, InlineSession};
 
 use crate::agent::runloop::unified::planning_workflow::{
-    PlanApprovalRequestContext, PlanApprovalRoute, PlanApprovalTelemetryContext, PlanExecutionContext, PlanningIntent,
-    assistant_recently_prompted_implementation, detect_planning_intent, execute_plan_approval,
+    PlanApprovalRequestContext, PlanApprovalRoute, PlanApprovalTelemetryContext, PlanArtifactError,
+    PlanExecutionContext, PlanningFinishReason, PlanningIntent, assistant_recently_prompted_implementation,
+    complete_approved_plan_handoff, detect_planning_intent, execute_plan_approval, finish_planning_workflow,
     load_plan_text_for_approval, plan_approval_route,
 };
 use crate::agent::runloop::unified::planning_workflow_state::{
-    PlanningWorkflowSessionState, finish_planning_workflow, short_confirmation_hint_with_fallback,
+    PlanningWorkflowSessionState, short_confirmation_hint_with_fallback,
 };
 use crate::agent::runloop::unified::state::CtrlCState;
 use crate::agent::runloop::unified::turn::context::{TurnHandlerOutcome, TurnLoopResult};
@@ -127,22 +128,37 @@ pub(crate) async fn maybe_handle_planning_exit_trigger(
 
     let transition = match intent {
         PlanningIntent::ExitAndImplement => {
-            let Some(plan_text) = load_plan_text_for_approval(tool_registry).await else {
-                display_status(
-                    renderer,
-                    "No completed plan draft exists yet. I will synthesize the plan from the gathered evidence before showing approval.",
-                )?;
-                // A textual `yes`/`implement` is not an approval when there
-                // is no persisted draft. Keep the user choice attached to
-                // this turn, but continue through one model request so the
-                // plan can be synthesized and then routed to the normal
-                // approval overlay. The turn-local guard prevents the same
-                // user message from re-entering this branch on the next loop
-                // iteration.
-                *auto_finish_planning_attempted = true;
-                working_history
-                    .push(uni::Message::system(PLANNING_WORKFLOW_MISSING_PLAN_SYNTHESIS_DIRECTIVE.to_string()));
-                return Ok(PlanningTransition::None);
+            let plan = match load_plan_text_for_approval(tool_registry).await {
+                Ok(plan) => plan,
+                Err(PlanArtifactError::Missing) => {
+                    display_status(
+                        renderer,
+                        "No completed plan draft exists yet. I will synthesize the plan from the gathered evidence before showing approval.",
+                    )?;
+                    // A textual `yes`/`implement` is not an approval when there
+                    // is no persisted draft. Keep the user choice attached to
+                    // this turn, but continue through one model request so the
+                    // plan can be synthesized and then routed to the normal
+                    // approval overlay. The turn-local guard prevents the same
+                    // user message from re-entering this branch on the next loop
+                    // iteration.
+                    *auto_finish_planning_attempted = true;
+                    working_history
+                        .push(uni::Message::system(PLANNING_WORKFLOW_MISSING_PLAN_SYNTHESIS_DIRECTIVE.to_string()));
+                    return Ok(PlanningTransition::None);
+                }
+                Err(error) => {
+                    display_status(renderer, &format!("Plan approval is blocked: {error}"))?;
+                    tracing::warn!(target: "vtcode.planning_workflow", error = %error, "persisted plan rejected before approval");
+                    if plan_session.plan_validation_repair_allowed() {
+                        plan_session.mark_plan_validation_repair_used();
+                        working_history.push(uni::Message::system(
+                            "Planning recovery: repair the persisted plan once with concrete Summary, Implementation Steps, Test Cases and Validation, and Assumptions and Defaults. Resolve all open decisions before approval.".to_string(),
+                        ));
+                    }
+                    *auto_finish_planning_attempted = true;
+                    return Ok(PlanningTransition::StayInPlanning);
+                }
             };
 
             *auto_finish_planning_attempted = true;
@@ -172,7 +188,7 @@ pub(crate) async fn maybe_handle_planning_exit_trigger(
                     exit_context.ctrl_c_state,
                     exit_context.ctrl_c_notify,
                     PlanApprovalRequestContext {
-                        plan_text: &plan_text,
+                        plan: &plan,
                         active_agent_name: exit_context.active_agent_name,
                         skip_confirmations: exit_context.skip_confirmations,
                         context_usage_percent: exit_context.context_usage_percent,
@@ -218,11 +234,29 @@ pub(crate) async fn maybe_handle_planning_exit_trigger(
             }
 
             display_status(renderer, PLANNING_WORKFLOW_EXIT_TRIGGER_STATUS)?;
-            let execution_agent = plan_session.execution_agent_after_approval(exit_context.active_agent_name);
             let decision = if approval_route == PlanApprovalRoute::Automatic {
                 PlanApprovalDecision::AutoAccept
             } else {
                 PlanApprovalDecision::Execute
+            };
+            let skip_confirmations = approval_route == PlanApprovalRoute::Automatic;
+            let handoff = complete_approved_plan_handoff(
+                tool_registry,
+                plan_session,
+                handle,
+                plan,
+                exit_context.active_agent_name,
+                skip_confirmations,
+                PlanExecutionContext::Current,
+            )
+            .await;
+            let handoff = match handoff {
+                Ok(handoff) => handoff,
+                Err(error) => {
+                    display_status(renderer, &format!("Plan execution is blocked: {error}"))?;
+                    tracing::warn!(target: "vtcode.planning_workflow", error = %error, "textual approved-plan handoff blocked");
+                    return Ok(PlanningTransition::StayInPlanning);
+                }
             };
             super::resolve_plan_approval(
                 plan_session,
@@ -232,12 +266,10 @@ pub(crate) async fn maybe_handle_planning_exit_trigger(
                 decision,
                 approval_route == PlanApprovalRoute::Automatic,
             );
-            handle.set_skip_confirmations(approval_route == PlanApprovalRoute::Automatic);
-            finish_planning_workflow(tool_registry, plan_session, handle, false).await;
             PlanningTransition::ExitAndImplement {
-                execution_agent,
+                execution_agent: handoff.execution_agent,
                 execution_context: PlanExecutionContext::Current,
-                skip_confirmations: exit_context.skip_confirmations,
+                skip_confirmations,
             }
         }
         PlanningIntent::StayInPlanning => {
@@ -262,7 +294,7 @@ pub(crate) async fn maybe_handle_planning_exit_trigger(
                 PlanApprovalDecision::Cancel,
                 false,
             );
-            finish_planning_workflow(tool_registry, plan_session, handle, true).await;
+            finish_planning_workflow(tool_registry, plan_session, handle, PlanningFinishReason::Cancelled).await?;
             PlanningTransition::CancelPlanning
         }
         PlanningIntent::None => PlanningTransition::None,

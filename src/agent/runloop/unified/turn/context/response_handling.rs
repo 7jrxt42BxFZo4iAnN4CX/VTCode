@@ -4,6 +4,7 @@ use crate::agent::runloop::unified::ui_interaction_stream_helpers::render_compac
 const DENIED_INTERVIEW_PLAN_SYNTHESIS_RETRY_DIRECTIVE: &str = "Planning recovery: the interactive interview is unavailable, and the previous response did not contain a completed plan. Do not ask another question or offer approval yet. Emit exactly one compact `<proposed_plan>` now from the repository evidence already in this conversation; include Summary, numbered `Action -> files/symbols -> verify:` steps, Validation, and short Assumptions. Do not emit tool calls.";
 
 const PLAN_PSEUDO_TOOL_CALL_REPROMPT_DIRECTIVE: &str = "Planning: the previous response contained tool-call markup that was not executed — XML tool-call text is not a tool call. If you need more repository evidence, invoke tools through the tool-call channel now. Otherwise present the completed plan as one compact `<proposed_plan>` (Summary, numbered `Action -> files/symbols -> verify:` steps, Validation, short Assumptions). Do not emit XML tool-call markup as text.";
+const INVALID_PLAN_REPAIR_DIRECTIVE: &str = "Planning recovery: the proposed plan is incomplete or still contains unresolved placeholders. Repair the persisted plan once using concrete repository evidence. Include Summary, numbered Implementation Steps, Test Cases and Validation, and Assumptions and Defaults. Resolve every open decision and do not ask for approval until the artifact is complete.";
 
 /// Detect whether a planning-mode text response is a clarifying question
 /// posed to the user rather than a plan or research prose. The deterministic
@@ -25,6 +26,27 @@ pub(super) fn looks_like_clarifying_question(text: &str) -> bool {
 }
 
 impl<'a> TurnProcessingContext<'a> {
+    fn reject_plan_artifact(
+        &mut self,
+        error: crate::agent::runloop::unified::planning_workflow::PlanArtifactError,
+    ) -> anyhow::Result<TurnHandlerOutcome> {
+        use vtcode_core::utils::ansi::MessageStyle;
+
+        let message = format!("Plan is not ready for approval: {error}");
+        self.renderer.line(MessageStyle::Warning, &message)?;
+        tracing::warn!(target: "vtcode.planning_workflow", error = %error, "plan artifact rejected before approval");
+        if self.plan_session.plan_validation_repair_allowed() {
+            self.plan_session.mark_plan_validation_repair_used();
+            self.push_system_message(INVALID_PLAN_REPAIR_DIRECTIVE);
+            return Ok(TurnHandlerOutcome::Continue);
+        }
+        self.renderer.line(
+            MessageStyle::Warning,
+            "Planning remains active. Repair the plan and submit it again before approval.",
+        )?;
+        Ok(TurnHandlerOutcome::Break(TurnLoopResult::Completed { plan_approved_execution_pending: false }))
+    }
+
     /// Schedule the one bounded plan-only retry allowed after a permanent
     /// interview denial. Keeping the transition here prevents callers from
     /// duplicating the denial/recovery state machine.
@@ -408,7 +430,14 @@ impl<'a> TurnProcessingContext<'a> {
             );
             // Persist before publishing the approval request so consumers that
             // follow the event's plan_file can read the completed draft.
-            let _persisted = persist_plan_draft(&self.tool_registry.planning_workflow_state(), &plan_text).await?;
+            let persisted = persist_plan_draft(&self.tool_registry.planning_workflow_state(), &plan_text).await?;
+            let plan = match crate::agent::runloop::unified::planning_workflow::ValidatedPlanArtifact::from_text(
+                persisted.plan_file.clone(),
+                plan_text.clone(),
+            ) {
+                Ok(plan) => plan,
+                Err(error) => return self.reject_plan_artifact(error),
+            };
             self.emit_plan_events(&plan_text).await;
 
             let require_confirmation = self.vt_cfg.map(|cfg| cfg.agent.require_plan_confirmation).unwrap_or(true);
@@ -443,7 +472,7 @@ impl<'a> TurnProcessingContext<'a> {
                     self.ctrl_c_state,
                     self.ctrl_c_notify,
                     PlanApprovalRequestContext {
-                        plan_text: &plan_text,
+                        plan: &plan,
                         active_agent_name: self.active_primary_agent.active().name(),
                         skip_confirmations: self.skip_confirmations,
                         context_usage_percent: self.context_manager.context_usage_percent(
@@ -474,11 +503,29 @@ impl<'a> TurnProcessingContext<'a> {
                 }));
             }
 
-            let execution_agent = self
-                .plan_session
-                .execution_agent_after_approval(self.active_primary_agent.active().name());
             self.renderer
                 .line(MessageStyle::Info, "Plan approved by the active execution policy; starting implementation.")?;
+            let handoff = crate::agent::runloop::unified::planning_workflow::complete_approved_plan_handoff(
+                self.tool_registry,
+                self.plan_session,
+                self.handle,
+                plan,
+                self.active_primary_agent.active().name(),
+                true,
+                crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Current,
+            )
+            .await;
+            let handoff = match handoff {
+                Ok(handoff) => handoff,
+                Err(error) => {
+                    tracing::warn!(target: "vtcode.planning_workflow", error = %error, "automatic approved-plan handoff blocked");
+                    let message = format!("Plan execution is blocked: {error}");
+                    self.renderer.line(MessageStyle::Error, &message)?;
+                    return Ok(TurnHandlerOutcome::Break(TurnLoopResult::Completed {
+                        plan_approved_execution_pending: false,
+                    }));
+                }
+            };
             crate::agent::runloop::unified::planning_workflow::resolve_plan_approval(
                 self.plan_session,
                 self.harness_emitter,
@@ -487,24 +534,18 @@ impl<'a> TurnProcessingContext<'a> {
                 vtcode_core::exec::events::PlanApprovalDecision::AutoAccept,
                 true,
             );
-            crate::agent::runloop::unified::planning_workflow::finish_planning_workflow(
-                self.tool_registry,
-                self.plan_session,
-                self.handle,
-                false,
-            )
-            .await;
-            self.handle.set_skip_confirmations(true);
+            let execution_agent = handoff.execution_agent;
+            let handoff_skip_confirmations = handoff.skip_confirmations;
             if let Some(agent) = execution_agent {
                 return Ok(TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy {
                     agent,
-                    skip_confirmations: self.skip_confirmations,
+                    skip_confirmations: handoff_skip_confirmations,
                     execution_context: crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Current,
                 });
             }
             return Ok(TurnHandlerOutcome::BreakWithPolicy {
                 result: TurnLoopResult::Completed { plan_approved_execution_pending: true },
-                skip_confirmations: self.skip_confirmations,
+                skip_confirmations: handoff_skip_confirmations,
                 execution_context: crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Current,
             });
         }

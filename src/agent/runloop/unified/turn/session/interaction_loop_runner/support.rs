@@ -36,6 +36,7 @@ use crate::agent::runloop::unified::turn::primary_agent_runtime::{
 };
 use crate::startup::{auto_grant_tui_full_auto_workspace_trust, ensure_full_auto_workspace_trust};
 
+use crate::agent::runloop::unified::planning_workflow::PlanningFinishReason;
 use crate::agent::runloop::unified::planning_workflow_state::transition_to_planning_workflow;
 use vtcode_core::core::interfaces::session::PlanningEntrySource;
 
@@ -985,9 +986,9 @@ pub(crate) async fn handle_select_primary_agent(
                     ctx.tool_registry,
                     ctx.plan_session,
                     ctx.handle,
-                    true,
+                    PlanningFinishReason::Cancelled,
                 )
-                .await;
+                .await?;
             }
             // Apply per-agent tool policy overrides before refreshing the tool snapshot
             for (tool_name, policy) in &policy_overrides {

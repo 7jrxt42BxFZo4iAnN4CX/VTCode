@@ -4,7 +4,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use chrono::Utc;
 use vtcode_config::OpenResponsesConfig;
@@ -39,27 +39,23 @@ const SECONDS_PER_DAY: u64 = 86400;
 
 /// Prune harness event log files older than `max_age_days` from the given directory.
 /// Only removes files matching the `harness-*.jsonl` pattern.
-pub(crate) fn prune_old_harness_logs(log_dir: &Path, max_age_days: u64) {
+pub(crate) fn prune_old_harness_logs(log_dir: &Path, max_age_days: u64) -> Result<()> {
     if max_age_days == 0 {
-        return;
+        return Ok(());
     }
 
     let cutoff = match SystemTime::now().checked_sub(Duration::from_secs(max_age_days.saturating_mul(SECONDS_PER_DAY)))
     {
         Some(t) => t,
-        None => return,
+        None => return Ok(()),
     };
 
-    let entries = match fs::read_dir(log_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
+    let entries =
+        fs::read_dir(log_dir).with_context(|| format!("failed to read harness log directory {}", log_dir.display()))?;
 
     for entry in entries {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
+        let entry =
+            entry.with_context(|| format!("failed to enumerate harness log directory {}", log_dir.display()))?;
         let path = entry.path();
         if !path.is_file() {
             continue;
@@ -70,15 +66,17 @@ pub(crate) fn prune_old_harness_logs(log_dir: &Path, max_age_days: u64) {
         if !name.starts_with(HARNESS_LOG_PREFIX) || !name.ends_with(".jsonl") {
             continue;
         }
-        let metadata = match entry.metadata() {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        let modified = metadata.modified().unwrap_or(UNIX_EPOCH);
+        let metadata = entry
+            .metadata()
+            .with_context(|| format!("failed to inspect harness log {}", path.display()))?;
+        let modified = metadata
+            .modified()
+            .with_context(|| format!("failed to read modification time for harness log {}", path.display()))?;
         if modified <= cutoff {
-            let _ = fs::remove_file(&path);
+            fs::remove_file(&path).with_context(|| format!("failed to prune harness log {}", path.display()))?;
         }
     }
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -87,7 +85,6 @@ pub(crate) struct HarnessEventEmitter {
 }
 
 struct HarnessEventEmitterInner {
-    #[cfg(test)]
     path: PathBuf,
     writer: Mutex<BufWriter<File>>,
     open_responses: Mutex<Option<OpenResponsesState>>,
@@ -104,6 +101,7 @@ struct AtifState {
 struct OpenResponsesState {
     integration: OpenResponsesIntegration,
     writer: Option<BufWriter<File>>,
+    output_path: Option<PathBuf>,
     sequence_counter: u64,
 }
 
@@ -120,7 +118,6 @@ impl HarnessEventEmitter {
             .with_context(|| format!("Failed to open harness log {}", path.display()))?;
         Ok(Self {
             inner: Arc::new(HarnessEventEmitterInner {
-                #[cfg(test)]
                 path,
                 writer: Mutex::new(BufWriter::new(file)),
                 open_responses: Mutex::new(None),
@@ -142,11 +139,11 @@ impl HarnessEventEmitter {
             return Ok(());
         }
 
-        let writer = if let Some(path) = output_path {
+        let writer = if let Some(path) = output_path.as_ref() {
             if let Some(parent) = path.parent() {
                 ensure_dir_exists_sync(parent)?;
             }
-            let file = OpenOptions::new().create(true).append(true).open(&path)?;
+            let file = OpenOptions::new().create(true).append(true).open(path)?;
             Some(BufWriter::new(file))
         } else {
             None
@@ -160,7 +157,12 @@ impl HarnessEventEmitter {
             .open_responses
             .lock()
             .map_err(|e| anyhow::anyhow!("Open Responses lock poisoned: {e}"))?;
-        *guard = Some(OpenResponsesState { integration, writer, sequence_counter: 0 });
+        *guard = Some(OpenResponsesState {
+            integration,
+            writer,
+            output_path,
+            sequence_counter: 0,
+        });
 
         Ok(())
     }
@@ -182,7 +184,13 @@ impl HarnessEventEmitter {
     /// Returns (prompt_tokens, completion_tokens, cached_tokens) from the
     /// already-computed ATIF metrics — zero clones, zero telemetry lock.
     pub(crate) fn finish_atif(&self) -> (u64, u64, u64) {
-        let state = self.inner.atif.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let state = match self.inner.atif.lock() {
+            Ok(mut guard) => guard.take(),
+            Err(error) => {
+                tracing::warn!(target: "vtcode.harness", phase = "atif_finish", path = %self.inner.path.display(), error = %error, "ATIF state lock poisoned");
+                return (0, 0, 0);
+            }
+        };
         let Some(state) = state else {
             return (0, 0, 0);
         };
@@ -203,15 +211,19 @@ impl HarnessEventEmitter {
         let json = match serde_json::to_string_pretty(&trajectory) {
             Ok(j) => j,
             Err(err) => {
-                tracing::debug!(error = %err, "failed to serialize ATIF trajectory");
+                tracing::warn!(target: "vtcode.harness", phase = "atif_serialize", path = %state.output_path.display(), error = %err, "failed to serialize ATIF trajectory");
                 return (prompt, completion, cached);
             }
         };
         if let Some(parent) = state.output_path.parent() {
-            let _ = ensure_dir_exists_sync(parent);
+            if let Err(error) = ensure_dir_exists_sync(parent) {
+                tracing::warn!(target: "vtcode.harness", phase = "atif_setup", path = %parent.display(), error = %error, "failed to create ATIF output directory");
+                return (prompt, completion, cached);
+            }
         }
         if let Err(err) = fs::write(&state.output_path, json) {
-            tracing::debug!(
+            tracing::warn!(target: "vtcode.harness",
+                phase = "atif_write",
                 error = %err,
                 path = %state.output_path.display(),
                 "failed to write ATIF trajectory"
@@ -228,13 +240,28 @@ impl HarnessEventEmitter {
                 .inner
                 .writer
                 .lock()
-                .map_err(|e| anyhow::anyhow!("Harness log lock poisoned: {e}"))?;
-            let serialized = serde_json::to_string(&payload).context("Failed to serialize harness event")?;
+                .map_err(|e| {
+                    tracing::warn!(target: "vtcode.harness", phase = "harness_write", path = %self.inner.path.display(), error = %e, "harness log lock poisoned");
+                    anyhow::anyhow!("Harness log lock poisoned: {e}")
+                })?;
+            let serialized = serde_json::to_string(&payload).map_err(|error| {
+                tracing::warn!(target: "vtcode.harness", phase = "harness_serialize", path = %self.inner.path.display(), error = %error, "harness event serialization failed");
+                anyhow::anyhow!("Failed to serialize harness event: {error}")
+            })?;
             writer
                 .write_all(serialized.as_bytes())
-                .context("Failed to write harness event")?;
-            writer.write_all(b"\n").context("Failed to write harness event newline")?;
-            writer.flush().context("Failed to flush harness log")?;
+                .map_err(|error| {
+                    tracing::warn!(target: "vtcode.harness", phase = "harness_write", path = %self.inner.path.display(), error = %error, "harness event write failed");
+                    anyhow::anyhow!("Failed to write harness event: {error}")
+                })?;
+            writer.write_all(b"\n").map_err(|error| {
+                tracing::warn!(target: "vtcode.harness", phase = "harness_write", path = %self.inner.path.display(), error = %error, "harness event newline write failed");
+                anyhow::anyhow!("Failed to write harness event newline: {error}")
+            })?;
+            writer.flush().map_err(|error| {
+                tracing::warn!(target: "vtcode.harness", phase = "harness_flush", path = %self.inner.path.display(), error = %error, "harness log flush failed");
+                anyhow::anyhow!("Failed to flush harness log: {error}")
+            })?;
         }
 
         // Also emit to Open Responses format if enabled
@@ -251,18 +278,34 @@ impl HarnessEventEmitter {
                             let sequenced = SequencedEvent::new(seq, &stream_event);
 
                             // SSE format
-                            let _ = writeln!(writer, "event: {}", stream_event.event_type());
-                            if let Ok(json) = serde_json::to_string(&sequenced) {
-                                let _ = writeln!(writer, "data: {json}");
+                            if let Err(error) = writeln!(writer, "event: {}", stream_event.event_type()) {
+                                tracing::warn!(target: "vtcode.harness", phase = "open_responses_write", path = %state.output_path.as_ref().map_or_else(|| self.inner.path.display().to_string(), |path| path.display().to_string()), error = %error, "Open Responses event write failed");
                             }
-                            let _ = writeln!(writer);
-                            let _ = writer.flush();
+                            match serde_json::to_string(&sequenced) {
+                                Ok(json) => {
+                                    if let Err(error) = writeln!(writer, "data: {json}") {
+                                        tracing::warn!(target: "vtcode.harness", phase = "open_responses_write", path = %state.output_path.as_ref().map_or_else(|| self.inner.path.display().to_string(), |path| path.display().to_string()), error = %error, "Open Responses data write failed");
+                                    }
+                                }
+                                Err(error) => {
+                                    tracing::warn!(target: "vtcode.harness", phase = "open_responses_serialize", path = %state.output_path.as_ref().map_or_else(|| self.inner.path.display().to_string(), |path| path.display().to_string()), error = %error, "Open Responses event serialization failed")
+                                }
+                            }
+                            if let Err(error) = writeln!(writer) {
+                                tracing::warn!(target: "vtcode.harness", phase = "open_responses_write", path = %state.output_path.as_ref().map_or_else(|| self.inner.path.display().to_string(), |path| path.display().to_string()), error = %error, "Open Responses event terminator write failed");
+                            }
+                            if let Err(error) = writer.flush() {
+                                tracing::warn!(target: "vtcode.harness", phase = "open_responses_flush", path = %state.output_path.as_ref().map_or_else(|| self.inner.path.display().to_string(), |path| path.display().to_string()), error = %error, "Open Responses flush failed");
+                            }
                         }
                     }
                 }
             }
             Err(poisoned) => {
                 tracing::warn!(
+                    target: "vtcode.harness",
+                    phase = "open_responses_write",
+                    path = %self.inner.path.display(),
                     error = %poisoned,
                     "Open Responses mutex poisoned; dropping event to avoid cascade"
                 );
@@ -270,10 +313,15 @@ impl HarnessEventEmitter {
         }
 
         // Also feed ATIF trajectory builder if enabled
-        if let Ok(mut guard) = self.inner.atif.lock()
-            && let Some(ref mut state) = *guard
-        {
-            state.builder.process_event(&event);
+        match self.inner.atif.lock() {
+            Ok(mut guard) => {
+                if let Some(ref mut state) = *guard {
+                    state.builder.process_event(&event);
+                }
+            }
+            Err(error) => {
+                tracing::warn!(target: "vtcode.harness", phase = "atif_write", path = %self.inner.path.display(), error = %error, "ATIF state lock poisoned while processing event")
+            }
         }
 
         Ok(())
@@ -301,15 +349,28 @@ impl HarnessEventEmitter {
         match self.inner.open_responses.lock() {
             Ok(mut guard) => {
                 if let Some(ref mut state) = *guard {
-                    let _ = state.integration.finish_response();
+                    let output_path = state
+                        .output_path
+                        .as_ref()
+                        .map_or_else(|| self.inner.path.display().to_string(), |path| path.display().to_string());
+                    if state.integration.finish_response().is_none() {
+                        tracing::warn!(target: "vtcode.harness", phase = "open_responses_finish", path = %output_path, error = "no terminal response was produced", "Open Responses finish produced no terminal response");
+                    }
                     if let Some(ref mut writer) = state.writer {
-                        let _ = writeln!(writer, "data: [DONE]");
-                        let _ = writer.flush();
+                        if let Err(error) = writeln!(writer, "data: [DONE]") {
+                            tracing::warn!(target: "vtcode.harness", phase = "open_responses_finish", path = %output_path, error = %error, "Open Responses terminal marker write failed");
+                        }
+                        if let Err(error) = writer.flush() {
+                            tracing::warn!(target: "vtcode.harness", phase = "open_responses_flush", path = %output_path, error = %error, "Open Responses terminal marker flush failed");
+                        }
                     }
                 }
             }
             Err(poisoned) => {
                 tracing::warn!(
+                    target: "vtcode.harness",
+                    phase = "open_responses_finish",
+                    path = %self.inner.path.display(),
                     error = %poisoned,
                     "Open Responses mutex poisoned during finish; skipping terminal marker"
                 );

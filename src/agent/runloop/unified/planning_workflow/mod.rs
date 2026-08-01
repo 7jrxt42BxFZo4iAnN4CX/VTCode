@@ -30,7 +30,16 @@ pub(crate) enum PlanExecutionContext {
 
 // --- Stable interface (the only planning symbols the runloop should name) ---
 
-pub(crate) use super::planning_workflow_state::finish_planning_workflow;
+use std::path::PathBuf;
+
+use anyhow::Context;
+use thiserror::Error;
+use vtcode_core::tools::registry::ToolRegistry;
+use vtcode_ui::tui::app::InlineHandle;
+
+use crate::agent::runloop::unified::planning_workflow_state::PlanningWorkflowSessionState;
+
+pub(crate) use super::planning_workflow_state::{PlanningFinishReason, finish_planning_workflow};
 pub(crate) use confirmation::{StartPlanningDecision, execute_plan_approval, present_start_planning_confirmation};
 pub(crate) use events::{emit_context_reset, emit_plan_approval_requested, emit_plan_approval_resolved};
 pub(crate) use execution::handle_start_planning;
@@ -43,13 +52,84 @@ pub(crate) use plan_approval::{
     plan_approval_route,
 };
 pub(crate) use recovery::maybe_condense_truncated_plan;
-pub(crate) use task_tracker::create_task_tracker_from_active_plan;
+pub(crate) use task_tracker::{TaskTrackerHandoff, create_task_tracker_from_active_plan};
+
+#[derive(Debug, Clone)]
+pub(crate) struct ValidatedPlanArtifact {
+    pub(crate) plan_file: PathBuf,
+    pub(crate) text: String,
+    pub(crate) validation: vtcode_core::tools::handlers::planning_workflow::PlanValidationReport,
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum PlanArtifactError {
+    #[error("the planning workflow has no persisted plan draft")]
+    Missing,
+    #[error("failed to read persisted plan {path}: {source}")]
+    Read { path: PathBuf, source: std::io::Error },
+    #[error("persisted plan is not ready for approval: {reasons}")]
+    Invalid { reasons: String },
+}
+
+impl ValidatedPlanArtifact {
+    pub(crate) fn from_text(plan_file: PathBuf, text: String) -> Result<Self, PlanArtifactError> {
+        let validation = vtcode_core::tools::handlers::planning_workflow::validate_plan_content(&text);
+        if !validation.is_ready() {
+            return Err(PlanArtifactError::Invalid { reasons: validation.reasons().join("; ") });
+        }
+        Ok(Self { plan_file, text, validation })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ApprovedPlanHandoff {
+    pub(crate) plan: ValidatedPlanArtifact,
+    pub(crate) tracker: TaskTrackerHandoff,
+    pub(crate) execution_agent: Option<String>,
+    pub(crate) skip_confirmations: bool,
+    pub(crate) execution_context: PlanExecutionContext,
+}
+
+pub(crate) async fn complete_approved_plan_handoff(
+    tool_registry: &ToolRegistry,
+    plan_session: &mut PlanningWorkflowSessionState,
+    handle: &InlineHandle,
+    plan: ValidatedPlanArtifact,
+    active_agent_name: &str,
+    skip_confirmations: bool,
+    execution_context: PlanExecutionContext,
+) -> anyhow::Result<ApprovedPlanHandoff> {
+    let execution_agent = plan_session.execution_agent_after_approval(active_agent_name);
+    let tracker = finish_planning_workflow(tool_registry, plan_session, handle, PlanningFinishReason::Approved)
+        .await?
+        .context("approved-plan handoff completed without a task tracker")?;
+    handle.set_skip_confirmations(skip_confirmations);
+    let handoff = ApprovedPlanHandoff {
+        plan,
+        tracker,
+        execution_agent,
+        skip_confirmations,
+        execution_context,
+    };
+    tracing::info!(
+        target: "vtcode.planning_workflow",
+        plan_file = %handoff.plan.plan_file.display(),
+        implementation_steps = handoff.plan.validation.implementation_step_count,
+        tracker_plan_file = %handoff.tracker.plan_file.display(),
+        tracker_file = %handoff.tracker.tracker_file.display(),
+        tracker_items = handoff.tracker.item_count,
+        skip_confirmations = handoff.skip_confirmations,
+        execution_context = ?handoff.execution_context,
+        "approved-plan handoff completed"
+    );
+    Ok(handoff)
+}
 
 /// Resolve the current approval request using its original telemetry identity.
 /// The fallback IDs are used only for legacy callers that resolve an approval
 /// before a request was recorded.
 pub(crate) fn resolve_plan_approval(
-    plan_session: &mut super::planning_workflow_state::PlanningWorkflowSessionState,
+    plan_session: &mut PlanningWorkflowSessionState,
     emitter: Option<&crate::agent::runloop::unified::inline_events::harness::HarnessEventEmitter>,
     fallback_thread_id: &str,
     fallback_turn_id: &str,

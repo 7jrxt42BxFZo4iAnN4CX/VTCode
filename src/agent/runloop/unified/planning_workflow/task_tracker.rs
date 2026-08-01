@@ -1,5 +1,7 @@
+use anyhow::{Context, bail};
 use std::collections::HashMap;
 use vtcode_core::config::constants::tools;
+use vtcode_core::tools::handlers::planning_workflow::validate_plan_content;
 use vtcode_core::tools::registry::ToolRegistry;
 use vtcode_ui::tui::app::{InlineHandle, InlineMessageKind, PlanContent};
 
@@ -16,6 +18,13 @@ fn render_created_task_tracker(handle: &InlineHandle, output: &serde_json::Value
     handle.update_task_panel(lines.clone());
     handle.show_task_panel();
     handle.append_pasted_message(InlineMessageKind::Tool, lines.join("\n"), lines.len());
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TaskTrackerHandoff {
+    pub(crate) plan_file: std::path::PathBuf,
+    pub(crate) tracker_file: std::path::PathBuf,
+    pub(crate) item_count: usize,
 }
 
 fn markdown_task_description(line: &str) -> Option<(&str, bool)> {
@@ -130,20 +139,21 @@ fn task_items_from_plan(plan: &PlanContent) -> Vec<serde_json::Value> {
 pub(crate) async fn create_task_tracker_from_active_plan(
     tool_registry: &ToolRegistry,
     handle: &InlineHandle,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<TaskTrackerHandoff> {
     let plan_state = tool_registry.planning_workflow_state();
-    let plan_file = match plan_state.get_plan_file().await {
-        Some(path) => path,
-        None => return Ok(()),
-    };
-
-    let plan_content = match tokio::fs::read_to_string(&plan_file).await {
-        Ok(content) => content,
-        Err(_) => return Ok(()),
-    };
-
-    if plan_content.trim().is_empty() {
-        return Ok(());
+    if !plan_state.is_active() {
+        bail!("approved-plan task tracker creation requires an active planning workflow");
+    }
+    let plan_file = plan_state
+        .get_plan_file()
+        .await
+        .context("approved plan is missing its persisted plan file")?;
+    let plan_content = tokio::fs::read_to_string(&plan_file)
+        .await
+        .with_context(|| format!("failed to read approved plan {}", plan_file.display()))?;
+    let validation = validate_plan_content(&plan_content);
+    if !validation.is_ready() {
+        bail!("approved plan is not ready for execution: {}", validation.reasons().join("; "));
     }
 
     let plan = PlanContent::from_markdown(
@@ -157,34 +167,50 @@ pub(crate) async fn create_task_tracker_from_active_plan(
     );
     let items = task_items_from_plan(&plan);
     if items.is_empty() {
-        return Ok(());
+        bail!("approved plan contains no executable task items");
     }
+    let item_count = items.len();
 
-    let tool = match tool_registry.get_tool(tools::TASK_TRACKER) {
-        Some(tool) => tool,
-        None => return Ok(()),
-    };
+    let tool = tool_registry
+        .get_tool(tools::TASK_TRACKER)
+        .context("task_tracker is unavailable; approved-plan execution is blocked")?;
     let args = serde_json::json!({
         "action": "create",
         "title": plan.title,
         "items": items,
     });
 
-    match tool.execute(args).await {
-        Ok(result) => {
-            render_created_task_tracker(handle, &result);
-            let message = result
-                .get("message")
-                .and_then(|value| value.as_str())
-                .unwrap_or("Task tracker created");
-            tracing::info!(message = %message, "Task tracker created during approved-plan handoff");
-        }
-        Err(err) => {
-            tracing::warn!(error = %err, "Failed to auto-create task tracker from approved plan");
-        }
+    let result = tool
+        .execute(args)
+        .await
+        .context("task_tracker failed during approved-plan handoff")?;
+    if result.get("status").and_then(|value| value.as_str()) == Some("error") {
+        bail!("task_tracker returned an error during approved-plan handoff: {result}");
     }
+    let tracker_file = result
+        .get("tracker_file")
+        .and_then(|value| value.as_str())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            plan_file.with_file_name(format!(
+                "{}.tasks.md",
+                plan_file.file_stem().and_then(|s| s.to_str()).unwrap_or("plan")
+            ))
+        });
+    if !tokio::fs::try_exists(&tracker_file)
+        .await
+        .with_context(|| format!("failed to verify task tracker {}", tracker_file.display()))?
+    {
+        bail!("task_tracker reported success but did not create {}", tracker_file.display());
+    }
+    render_created_task_tracker(handle, &result);
+    let message = result
+        .get("message")
+        .and_then(|value| value.as_str())
+        .unwrap_or("Task tracker created");
+    tracing::info!(message = %message, tracker_file = %tracker_file.display(), item_count, "Task tracker created during approved-plan handoff");
 
-    Ok(())
+    Ok(TaskTrackerHandoff { plan_file, tracker_file, item_count })
 }
 
 #[cfg(test)]

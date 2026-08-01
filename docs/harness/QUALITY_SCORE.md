@@ -251,6 +251,10 @@ When updating an `Agent Legibility` row, make all three signals explicit in the 
 
 ## Summary Table
 
+### Session runner revalidation
+
+The session-runner facade is now 13 lines; the implementation is isolated in `session_loop_runner/orchestration.rs`, with harness setup and lifecycle support in focused sibling modules. Planning approval has a validated artifact boundary and a required task-tracker gate. Error handling is observable through structured harness warnings with phase and path fields. The remaining orchestration body is still a large implementation hotspot, so the TUI domain remains capped at B until its internal phases are further decomposed.
+
 | Domain               | Overall | Priority Action                                                                                                                                   | Status             |
 | -------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
 | Tool System          | A-      | Add handler-level tests for remaining gaps.                                                                                                       | maintenance        |

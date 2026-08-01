@@ -1,15 +1,12 @@
 use anyhow::Result;
-use std::collections::VecDeque;
 use std::io::Write;
 
-use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use tokio::time::{Duration, sleep, timeout};
 use vtcode_core::config::loader::VTCodeConfig;
 use vtcode_core::config::types::AgentConfig as CoreAgentConfig;
+use vtcode_core::core::agent::steering::SteeringMessage;
 use vtcode_core::core::interfaces::session::PlanningEntrySource;
-use vtcode_core::hooks::{SessionEndReason, SessionStartTrigger};
 
 /// Optimization: Pre-computed idle detection thresholds to avoid repeated config lookups
 #[derive(Clone, Copy)]
@@ -20,30 +17,7 @@ struct IdleDetectionConfig {
     enabled: bool,
 }
 
-use crate::agent::runloop::unified::inline_events::harness::{
-    HarnessEventEmitter, default_harness_log_dir, resolve_event_log_path,
-};
-use crate::agent::runloop::unified::run_loop_context::{HarnessTurnState, TurnId, TurnRunId};
-use chrono::Utc;
-use vtcode_core::exec::events::{ThreadEvent, ThreadStartedEvent};
-use vtcode_core::session::SessionId;
-use vtcode_core::utils::ansi::MessageStyle;
-use vtcode_core::utils::session_archive::{SessionMessage, SessionProgressArgs};
-
 use crate::agent::runloop::ResumeSession;
-use crate::agent::runloop::model_picker::ModelPickerState;
-
-use super::super::context::TurnLoopResult as RunLoopTurnLoopResult;
-use super::super::finalization::finalize_session;
-use vtcode_core::core::agent::steering::SteeringMessage;
-
-use crate::agent::runloop::unified::palettes::ActivePalette;
-use crate::agent::runloop::unified::session_setup::{
-    SessionState, initialize_session, initialize_session_ui, spawn_signal_handler,
-};
-use crate::agent::runloop::unified::state::SessionStats;
-use crate::agent::runloop::unified::status_line::InputStatusState;
-use crate::agent::runloop::unified::workspace_links::LinkedDirectory;
 
 #[path = "session_loop_runner/mod.rs"]
 mod session_loop_runner;

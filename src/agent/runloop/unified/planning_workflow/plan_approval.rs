@@ -17,7 +17,9 @@ use vtcode_ui::tui::app::{
 
 use crate::agent::runloop::unified::inline_events::harness::HarnessEventEmitter;
 use crate::agent::runloop::unified::overlay_prompt::{OverlayWaitOutcome, show_overlay_and_wait};
-use crate::agent::runloop::unified::planning_workflow::PlanExecutionContext;
+use crate::agent::runloop::unified::planning_workflow::{
+    PlanArtifactError, PlanExecutionContext, ValidatedPlanArtifact, complete_approved_plan_handoff,
+};
 use crate::agent::runloop::unified::state::CtrlCState;
 
 /// Result of the plan confirmation flow
@@ -72,7 +74,7 @@ pub(crate) struct PlanApprovalTelemetryContext<'a> {
 }
 
 pub(crate) struct PlanApprovalRequestContext<'a> {
-    pub(crate) plan_text: &'a str,
+    pub(crate) plan: &'a ValidatedPlanArtifact,
     pub(crate) active_agent_name: &'a str,
     pub(crate) skip_confirmations: bool,
     pub(crate) context_usage_percent: u8,
@@ -439,15 +441,21 @@ pub(crate) async fn execute_plan_confirmation_with_context(
 /// draft directly through `execute_plan_approval`; subsequent turns must use
 /// the persisted copy so they can present the same popup instead of bypassing
 /// confirmation.
-pub(crate) async fn load_plan_text_for_approval(tool_registry: &ToolRegistry) -> Option<String> {
-    let plan_file = tool_registry.planning_workflow_state().get_plan_file().await?;
-    tokio::fs::read_to_string(plan_file)
+pub(crate) async fn load_plan_text_for_approval(
+    tool_registry: &ToolRegistry,
+) -> Result<ValidatedPlanArtifact, PlanArtifactError> {
+    let plan_file = tool_registry
+        .planning_workflow_state()
+        .get_plan_file()
         .await
-        .ok()
-        .filter(|text| !text.trim().is_empty())
+        .ok_or(PlanArtifactError::Missing)?;
+    let text = tokio::fs::read_to_string(&plan_file)
+        .await
+        .map_err(|source| PlanArtifactError::Read { path: plan_file.clone(), source })?;
+    ValidatedPlanArtifact::from_text(plan_file, text)
 }
 
-use crate::agent::runloop::unified::planning_workflow_state::{PlanningWorkflowSessionState, finish_planning_workflow};
+use crate::agent::runloop::unified::planning_workflow_state::PlanningWorkflowSessionState;
 use crate::agent::runloop::unified::turn::context::{TurnHandlerOutcome, TurnLoopResult};
 use vtcode_config::{builtin_primary_auto_agent, builtin_primary_build_agent};
 use vtcode_core::tools::registry::ToolRegistry;
@@ -475,12 +483,11 @@ pub(crate) async fn execute_plan_approval(
         "execute_plan_approval: showing confirmation dialog"
     );
 
-    let plan_file = tool_registry
-        .planning_workflow_state()
-        .get_plan_file()
-        .await
-        .map(|path| path.to_string_lossy().into_owned());
-    let plan_content = PlanContent::from_markdown("Implementation Plan".to_string(), request.plan_text, plan_file);
+    let plan_content = PlanContent::from_markdown(
+        "Implementation Plan".to_string(),
+        &request.plan.text,
+        Some(request.plan.plan_file.to_string_lossy().into_owned()),
+    );
     let outcome = execute_plan_confirmation_with_context(
         handle,
         session,
@@ -498,115 +505,16 @@ pub(crate) async fn execute_plan_approval(
         "execute_plan_approval: dialog closed"
     );
 
-    let (decision, automatic) = match outcome.as_ref() {
-        Ok(PlanConfirmationOutcome::Execute) => (PlanApprovalDecision::Execute, false),
-        Ok(PlanConfirmationOutcome::FreshContext) => (PlanApprovalDecision::FreshContext, false),
-        Ok(PlanConfirmationOutcome::AutoAccept) => (PlanApprovalDecision::AutoAccept, false),
-        Ok(PlanConfirmationOutcome::EditPlan) => (PlanApprovalDecision::Revise, false),
-        Ok(PlanConfirmationOutcome::SwitchBuild) => (PlanApprovalDecision::SwitchBuild, false),
-        Ok(PlanConfirmationOutcome::SwitchAuto) => (PlanApprovalDecision::SwitchAuto, false),
-        Ok(PlanConfirmationOutcome::Cancel) | Err(_) => (PlanApprovalDecision::Cancel, false),
-    };
-    super::resolve_plan_approval(
-        plan_session,
-        telemetry.emitter,
-        telemetry.thread_id,
-        telemetry.turn_id,
-        decision,
-        automatic,
-    );
-
     match outcome {
-        Ok(PlanConfirmationOutcome::Execute) => {
-            let execution_agent = plan_session.execution_agent_after_approval(request.active_agent_name);
-            finish_planning_workflow(tool_registry, plan_session, handle, false).await;
-            handle.set_skip_confirmations(request.skip_confirmations);
-            tracing::info!(
-                target: "vtcode.planning_workflow",
-                "User approved plan via inline overlay (manual edit approvals); enabling mutating tools"
-            );
-            Ok(execution_agent.map_or(
-                TurnHandlerOutcome::BreakWithPolicy {
-                    result: TurnLoopResult::Completed { plan_approved_execution_pending: true },
-                    skip_confirmations: request.skip_confirmations,
-                    execution_context: PlanExecutionContext::Current,
-                },
-                |agent| TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy {
-                    agent,
-                    skip_confirmations: request.skip_confirmations,
-                    execution_context: PlanExecutionContext::Current,
-                },
-            ))
-        }
-        Ok(PlanConfirmationOutcome::FreshContext) => {
-            let execution_agent = plan_session.execution_agent_after_approval(request.active_agent_name);
-            finish_planning_workflow(tool_registry, plan_session, handle, false).await;
-            handle.set_skip_confirmations(request.skip_confirmations);
-            tracing::info!(
-                target: "vtcode.planning_workflow",
-                "User approved plan via inline overlay and requested a fresh execution context"
-            );
-            Ok(execution_agent.map_or(
-                TurnHandlerOutcome::BreakWithPolicy {
-                    result: TurnLoopResult::Completed { plan_approved_execution_pending: true },
-                    skip_confirmations: request.skip_confirmations,
-                    execution_context: PlanExecutionContext::Fresh,
-                },
-                |agent| TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy {
-                    agent,
-                    skip_confirmations: request.skip_confirmations,
-                    execution_context: PlanExecutionContext::Fresh,
-                },
-            ))
-        }
-        Ok(PlanConfirmationOutcome::AutoAccept) => {
-            let execution_agent = plan_session.execution_agent_after_approval(request.active_agent_name);
-            finish_planning_workflow(tool_registry, plan_session, handle, false).await;
-            handle.set_skip_confirmations(true);
-            tracing::info!(
-                target: "vtcode.planning_workflow",
-                "User approved plan via inline overlay (auto-accept); enabling mutating tools"
-            );
-            Ok(execution_agent.map_or(
-                TurnHandlerOutcome::BreakWithPolicy {
-                    result: TurnLoopResult::Completed { plan_approved_execution_pending: true },
-                    skip_confirmations: true,
-                    execution_context: PlanExecutionContext::Current,
-                },
-                |agent| TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy {
-                    agent,
-                    skip_confirmations: true,
-                    execution_context: PlanExecutionContext::Current,
-                },
-            ))
-        }
-        Ok(PlanConfirmationOutcome::SwitchBuild) => {
-            finish_planning_workflow(tool_registry, plan_session, handle, false).await;
-            handle.set_skip_confirmations(false);
-            tracing::info!(
-                target: "vtcode.planning_workflow",
-                "User handed plan to build agent via inline overlay; switching primary agent"
-            );
-            Ok(TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy {
-                agent: builtin_primary_build_agent().name,
-                skip_confirmations: false,
-                execution_context: PlanExecutionContext::Current,
-            })
-        }
-        Ok(PlanConfirmationOutcome::SwitchAuto) => {
-            finish_planning_workflow(tool_registry, plan_session, handle, false).await;
-            handle.set_skip_confirmations(true);
-            tracing::info!(
-                target: "vtcode.planning_workflow",
-                "User handed plan to auto agent via inline overlay; switching primary agent"
-            );
-            Ok(TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy {
-                agent: builtin_primary_auto_agent().name,
-                skip_confirmations: true,
-                execution_context: PlanExecutionContext::Current,
-            })
-        }
         Ok(PlanConfirmationOutcome::EditPlan) => {
+            super::resolve_plan_approval(
+                plan_session,
+                telemetry.emitter,
+                telemetry.thread_id,
+                telemetry.turn_id,
+                PlanApprovalDecision::Revise,
+                false,
+            );
             tracing::info!(
                 target: "vtcode.planning_workflow",
                 "User chose to revise the plan via inline overlay; remaining in Planning workflow"
@@ -614,11 +522,97 @@ pub(crate) async fn execute_plan_approval(
             Ok(TurnHandlerOutcome::Break(TurnLoopResult::Completed { plan_approved_execution_pending: false }))
         }
         Ok(PlanConfirmationOutcome::Cancel) | Err(_) => {
+            super::resolve_plan_approval(
+                plan_session,
+                telemetry.emitter,
+                telemetry.thread_id,
+                telemetry.turn_id,
+                PlanApprovalDecision::Cancel,
+                false,
+            );
             tracing::info!(
                 target: "vtcode.planning_workflow",
                 "User dismissed the plan via inline overlay; remaining in Planning workflow"
             );
             Ok(TurnHandlerOutcome::Break(TurnLoopResult::Completed { plan_approved_execution_pending: false }))
+        }
+        Ok(approval) => {
+            let (decision, skip_confirmations, execution_context) = match approval {
+                PlanConfirmationOutcome::Execute => {
+                    (PlanApprovalDecision::Execute, request.skip_confirmations, PlanExecutionContext::Current)
+                }
+                PlanConfirmationOutcome::FreshContext => {
+                    (PlanApprovalDecision::FreshContext, request.skip_confirmations, PlanExecutionContext::Fresh)
+                }
+                PlanConfirmationOutcome::AutoAccept => {
+                    (PlanApprovalDecision::AutoAccept, true, PlanExecutionContext::Current)
+                }
+                PlanConfirmationOutcome::SwitchBuild => {
+                    (PlanApprovalDecision::SwitchBuild, false, PlanExecutionContext::Current)
+                }
+                PlanConfirmationOutcome::SwitchAuto => {
+                    (PlanApprovalDecision::SwitchAuto, true, PlanExecutionContext::Current)
+                }
+                PlanConfirmationOutcome::EditPlan | PlanConfirmationOutcome::Cancel => {
+                    tracing::debug!(target: "vtcode.planning_workflow", "approval outcome was already handled");
+                    return Ok(TurnHandlerOutcome::Break(TurnLoopResult::Completed {
+                        plan_approved_execution_pending: false,
+                    }));
+                }
+            };
+            let handoff = complete_approved_plan_handoff(
+                tool_registry,
+                plan_session,
+                handle,
+                request.plan.clone(),
+                request.active_agent_name,
+                skip_confirmations,
+                execution_context,
+            )
+            .await;
+            let handoff = match handoff {
+                Ok(handoff) => handoff,
+                Err(err) => {
+                    super::resolve_plan_approval(
+                        plan_session,
+                        telemetry.emitter,
+                        telemetry.thread_id,
+                        telemetry.turn_id,
+                        PlanApprovalDecision::Cancel,
+                        false,
+                    );
+                    tracing::warn!(target: "vtcode.planning_workflow", error = %err, "approved-plan handoff blocked");
+                    append_message(handle, InlineMessageKind::Error, format!("Plan execution is blocked: {err}"));
+                    return Ok(TurnHandlerOutcome::Break(TurnLoopResult::Completed {
+                        plan_approved_execution_pending: false,
+                    }));
+                }
+            };
+            super::resolve_plan_approval(
+                plan_session,
+                telemetry.emitter,
+                telemetry.thread_id,
+                telemetry.turn_id,
+                decision,
+                false,
+            );
+            let execution_agent = match approval {
+                PlanConfirmationOutcome::SwitchBuild => Some(builtin_primary_build_agent().name),
+                PlanConfirmationOutcome::SwitchAuto => Some(builtin_primary_auto_agent().name),
+                _ => handoff.execution_agent,
+            };
+            Ok(execution_agent.map_or(
+                TurnHandlerOutcome::BreakWithPolicy {
+                    result: TurnLoopResult::Completed { plan_approved_execution_pending: true },
+                    skip_confirmations,
+                    execution_context,
+                },
+                |agent| TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy {
+                    agent,
+                    skip_confirmations,
+                    execution_context,
+                },
+            ))
         }
     }
 }
