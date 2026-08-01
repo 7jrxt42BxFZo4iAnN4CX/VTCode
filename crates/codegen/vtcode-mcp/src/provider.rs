@@ -2,8 +2,8 @@ use anyhow::{Context, Result, anyhow};
 use arc_swap::ArcSwap;
 use hashbrown::HashMap;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, GetPromptRequestParams, InitializeRequestParams, InitializeResult, Prompt,
-    ReadResourceRequestParams, Resource, Tool,
+    CallToolRequestParams, CallToolResult, GetPromptRequestParams, InitializeRequestParams, Prompt,
+    ReadResourceRequestParams, Resource, ServerPeerInfo, Tool,
 };
 use serde_json::{Map, Value};
 use std::ffi::OsString;
@@ -37,7 +37,7 @@ pub struct McpProvider {
     elicitation_handler: Option<Arc<dyn McpElicitationHandler>>,
     pub(crate) semaphore: Arc<Semaphore>,
     caches: Mutex<ProviderCaches>,
-    initialize_result: Mutex<Option<InitializeResult>>,
+    initialize_result: Mutex<Option<ServerPeerInfo>>,
 }
 
 #[derive(Default)]

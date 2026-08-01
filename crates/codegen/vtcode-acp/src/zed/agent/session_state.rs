@@ -417,7 +417,15 @@ impl ZedAgent {
         };
 
         let config_id = args.config_id.0.to_string();
-        let value = args.value.0.to_string();
+        let value = match &args.value {
+            acp::SessionConfigOptionValue::ValueId { value } => value.0.as_ref().to_string(),
+            _ => {
+                return Err(acp::Error::invalid_params().data(serde_json::json!({
+                    "reason": "expected_string_config_option_value",
+                    "config_id": config_id,
+                })));
+            }
+        };
         let updated = match config_id.as_str() {
             SESSION_CONFIG_PRIMARY_AGENT_ID => {
                 let Some(primary_agent) = self.primary_agents.resolve_id(&value) else {

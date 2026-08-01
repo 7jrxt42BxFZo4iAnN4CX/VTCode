@@ -679,7 +679,7 @@ mod tests {
 
         let enabled: UiConfig = toml::from_str("show_task_panel = true").expect("show_task_panel parses");
         assert!(enabled.show_task_panel);
-        assert!(toml::from_str::<UiConfig>("").expect("empty parses").show_task_panel == false);
+        assert!(!toml::from_str::<UiConfig>("").expect("empty parses").show_task_panel);
     }
 
     #[test]

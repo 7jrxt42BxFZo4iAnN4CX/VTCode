@@ -8,10 +8,10 @@ use rmcp::handler::client::ClientHandler;
 #[allow(deprecated)]
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, CancelledNotificationParam, ClientResult, CustomResult, ElicitRequestParams,
-    ElicitationAction, GetPromptRequestParams, GetPromptResult, InitializeRequestParams, InitializeResult,
-    ListRootsResult, LoggingLevel, LoggingMessageNotificationParam, Meta, ProgressNotificationParam, Prompt,
-    ReadResourceRequestParams, ReadResourceResult, Resource, ResourceTemplate, ResourceUpdatedNotificationParam, Root,
-    ServerNotification, ServerRequest, Tool,
+    ElicitationAction, GetPromptRequestParams, GetPromptResult, InitializeRequestParams, ListRootsResult, LoggingLevel,
+    LoggingMessageNotificationParam, MetaObject, ProgressNotificationParam, Prompt, ReadResourceRequestParams,
+    ReadResourceResult, RequestMetaObject, Resource, ResourceTemplate, ResourceUpdatedNotificationParam, Root,
+    ServerNotification, ServerPeerInfo, ServerRequest, Tool,
 };
 use rmcp::service::{self, NotificationContext, RequestContext, RoleClient, RunningService, Service};
 use rmcp::transport::child_process::TokioChildProcess;
@@ -204,7 +204,7 @@ impl RmcpClient {
         &self,
         params: InitializeRequestParams,
         timeout: Option<Duration>,
-    ) -> Result<InitializeResult> {
+    ) -> Result<ServerPeerInfo> {
         let handler = LoggingClientHandler::new(
             self.provider_name.clone(),
             params,
@@ -611,7 +611,7 @@ impl ClientHandler for LoggingClientHandler {
         async move {
             self.process_elicitation_request(request).await.map(|response| {
                 let meta = response.meta.and_then(|value| {
-                    value.as_object().cloned().map(Meta).or_else(|| {
+                    value.as_object().cloned().map(MetaObject).or_else(|| {
                         warn!(
                             provider = self.provider.as_str(),
                             "Elicitation response meta is not an object; dropping _meta"
@@ -747,7 +747,7 @@ impl ClientHandler for LoggingClientHandler {
     }
 }
 
-fn restore_context_meta(mut request: ElicitRequestParams, mut context_meta: Meta) -> ElicitRequestParams {
+fn restore_context_meta(mut request: ElicitRequestParams, mut context_meta: RequestMetaObject) -> ElicitRequestParams {
     context_meta.remove(MCP_PROGRESS_TOKEN_META_KEY);
     if context_meta.is_empty() {
         return request;
@@ -756,7 +756,7 @@ fn restore_context_meta(mut request: ElicitRequestParams, mut context_meta: Meta
     match &mut request {
         ElicitRequestParams::FormElicitationParams { meta, .. }
         | ElicitRequestParams::UrlElicitationParams { meta, .. } => {
-            meta.get_or_insert_with(Meta::new).extend(context_meta);
+            meta.get_or_insert_with(RequestMetaObject::new).extend(context_meta);
         }
         _ => {}
     }
@@ -786,7 +786,7 @@ fn elicitation_response_result(response: super::McpElicitationResponse) -> Resul
         .map_err(|err| rmcp::ErrorData::internal_error(err.to_string(), None))
 }
 
-fn serialize_elicitation_meta(provider: &str, meta: Option<&Meta>) -> Option<Value> {
+fn serialize_elicitation_meta(provider: &str, meta: Option<&RequestMetaObject>) -> Option<Value> {
     meta.and_then(|meta| match serde_json::to_value(meta) {
         Ok(value) => Some(value),
         Err(err) => {
@@ -942,7 +942,7 @@ mod tests {
         assert!(!state.take_prompts_changed());
     }
 
-    fn form_request(meta: Option<Meta>) -> ElicitRequestParams {
+    fn form_request(meta: Option<RequestMetaObject>) -> ElicitRequestParams {
         ElicitRequestParams::FormElicitationParams {
             meta,
             message: "Confirm?".to_string(),
@@ -953,10 +953,10 @@ mod tests {
         }
     }
 
-    fn meta(value: Value) -> Meta {
+    fn meta(value: Value) -> RequestMetaObject {
         let Value::Object(map) = value else {
             panic!("meta must be an object");
         };
-        Meta(map)
+        RequestMetaObject(MetaObject(map))
     }
 }
