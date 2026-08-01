@@ -2,6 +2,21 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.141.10 - 2026-08-01
+
+### Highlights
+#### Bug Fixes
+
+- Scope credentials by provider and key (e91cba4d) 
+- Harden planning recovery handoff (d7ad7bd6) 
+- Validate config option value and update rmcp API types (d6ed196b) 
+### Other Changes
+#### Other
+
+- Revert "fix(tools): restrict planning profile to exec, search, and input tools" (7abdff96) 
+#### Refactors
+
+- Open /model directly on the main model picker (70141dc2) 
 ## 0.141.9 - 2026-08-01
 
 ### Highlights
