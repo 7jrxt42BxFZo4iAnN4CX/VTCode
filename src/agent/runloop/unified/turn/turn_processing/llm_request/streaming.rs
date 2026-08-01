@@ -7,6 +7,7 @@ use crate::agent::runloop::unified::ui_interaction::StreamProgressEvent;
 
 pub(super) struct HarnessStreamingBridge {
     inner: CoreStreamingLifecycleBridge,
+    assistant_output_observed: bool,
 }
 
 impl HarnessStreamingBridge {
@@ -14,10 +15,14 @@ impl HarnessStreamingBridge {
         let event_sink = emitter.cloned().map(harness_event_sink);
         Self {
             inner: CoreStreamingLifecycleBridge::new(event_sink, turn_id, step, attempt),
+            assistant_output_observed: false,
         }
     }
 
     pub(super) fn on_progress(&mut self, event: StreamProgressEvent) {
+        if matches!(&event, StreamProgressEvent::OutputDelta(delta) if !delta.trim().is_empty()) {
+            self.assistant_output_observed = true;
+        }
         self.inner.on_progress(event);
     }
 
@@ -31,6 +36,10 @@ impl HarnessStreamingBridge {
 
     pub(super) fn take_streamed_tool_call_items(&mut self) -> hashbrown::HashMap<String, String> {
         self.inner.take_streamed_tool_call_items()
+    }
+
+    pub(super) fn assistant_output_observed(&self) -> bool {
+        self.assistant_output_observed
     }
 }
 

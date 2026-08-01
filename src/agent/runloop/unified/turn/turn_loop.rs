@@ -141,6 +141,11 @@ const PLANNING_RECOVERY_EXHAUSTED_USER_NOTICE: &str = "Plan synthesis failed aft
 /// `result_handler` (producer) and `post_tool_recovery` (consumer).
 pub(super) const RECOVERY_CONTRACT_VIOLATION_REASON: &str =
     "Recovery mode requested a final tool-free synthesis pass, but the model attempted more tool calls.";
+const COMPLETED_TURN_FALLBACK_RESPONSE: &str = "The turn stopped before a final assistant response was produced. No final outcome was confirmed; please retry the request.";
+const COMPLETED_TURN_FALLBACK_REASON: &str = "Turn ended with a recovery fallback; the requested work was not confirmed. The current plan and task state were retained.";
+const COMPLETED_TURN_NO_RESPONSE_REASON: &str =
+    "Turn ended without a harness-visible final assistant response, so successful completion could not be confirmed.";
+const PLAN_RECOVERY_EXHAUSTED_REASON: &str = "Approved-plan execution stopped after recovery was exhausted. The approved plan and task checklist were retained; retry from the pending step.";
 /// System message injected before retrying a tool-free recovery pass when the model
 /// produced tool calls or textual tool-call markup (which are discarded) instead of
 /// plain text. It names the failure mode explicitly so the model can self-correct on
@@ -198,6 +203,80 @@ fn count_assistant_text_responses_for_guard(
     count_assistant_text_responses_in_turn(history, turn_history_start_len).max(recorded_text_responses_in_turn)
 }
 
+fn latest_final_assistant_response(history: &[uni::Message], turn_history_start_len: usize) -> Option<String> {
+    history
+        .get(turn_history_start_len..)
+        .unwrap_or_default()
+        .iter()
+        .rev()
+        .find(|message| {
+            message.role == uni::MessageRole::Assistant
+                && message.tool_calls.is_none()
+                && message.phase != Some(uni::AssistantPhase::Commentary)
+                && !message.content.as_text().trim().is_empty()
+        })
+        .map(|message| message.content.as_text().trim().to_string())
+}
+
+fn publish_final_assistant_response(ctx: &mut TurnLoopContext<'_>, text: &str) -> Result<bool> {
+    if text.trim().is_empty() {
+        return Ok(false);
+    }
+
+    if !ctx.harness_state.final_response_rendered() {
+        ctx.renderer.line(MessageStyle::Response, text)?;
+        ctx.harness_state.mark_final_response_rendered();
+    }
+
+    if ctx.harness_emitter.is_none() {
+        ctx.harness_state.mark_final_response_event_emitted();
+        return Ok(true);
+    }
+
+    if !ctx.harness_state.final_response_event_emitted()
+        && let Some(emitter) = ctx.harness_emitter
+    {
+        match emitter.emit_assistant_message(&ctx.harness_state.turn_id.0, text) {
+            Ok(()) => ctx.harness_state.mark_final_response_event_emitted(),
+            Err(err) => tracing::warn!(error = %err, "final assistant message harness emission failed"),
+        }
+    }
+
+    Ok(ctx.harness_state.final_response_event_emitted())
+}
+
+/// Ensure a completed turn has crossed both user-visible response surfaces.
+/// Recovery helpers may already have appended a fallback to history; this
+/// publishes that existing text instead of appending a second answer.
+fn ensure_completed_turn_response(
+    ctx: &mut TurnLoopContext<'_>,
+    working_history: &mut Vec<uni::Message>,
+    turn_history_start_len: usize,
+) -> Result<bool> {
+    let mut response_was_fallback = ctx.harness_state.final_response_was_fallback();
+    let final_text = latest_final_assistant_response(working_history, turn_history_start_len);
+
+    let final_text = if let Some(final_text) = final_text {
+        final_text
+    } else {
+        response_was_fallback = true;
+        let fallback = COMPLETED_TURN_FALLBACK_RESPONSE.to_string();
+        working_history
+            .push(uni::Message::assistant(fallback.clone()).with_phase(Some(uni::AssistantPhase::FinalAnswer)));
+        fallback
+    };
+
+    if !ctx.harness_state.final_response_rendered() {
+        response_was_fallback = true;
+    }
+    let _ = publish_final_assistant_response(ctx, &final_text)?;
+
+    if response_was_fallback {
+        ctx.harness_state.mark_final_response_fallback();
+    }
+    Ok(response_was_fallback)
+}
+
 pub(crate) struct TurnLoopOutcome {
     pub result: TurnLoopResult,
     pub turn_modified_files: BTreeSet<PathBuf>,
@@ -214,6 +293,9 @@ pub(crate) struct TurnLoopOutcome {
     /// directive before starting the next turn so the model begins
     /// implementation immediately.
     pub plan_approved_execution_pending: bool,
+    /// Whether the turn's final response came from deterministic recovery
+    /// fallback rather than a confirmed model synthesis.
+    pub final_response_was_fallback: bool,
 }
 
 pub(crate) struct TurnLoopContext<'a> {
@@ -1215,6 +1297,27 @@ pub(crate) async fn run_turn_loop(
         }
     }
 
+    let final_response_was_fallback = if matches!(result, TurnLoopResult::Completed { .. }) {
+        ensure_completed_turn_response(&mut ctx, working_history, turn_history_start_len)?
+    } else {
+        ctx.harness_state.final_response_was_fallback()
+    };
+    if matches!(result, TurnLoopResult::Completed { .. }) {
+        if final_response_was_fallback {
+            result = TurnLoopResult::Blocked {
+                reason: Some(COMPLETED_TURN_FALLBACK_REASON.to_string()),
+            };
+        } else if !ctx.harness_state.final_response_rendered() || !ctx.harness_state.final_response_event_emitted() {
+            result = TurnLoopResult::Blocked {
+                reason: Some(COMPLETED_TURN_NO_RESPONSE_REASON.to_string()),
+            };
+        } else if ctx.plan_session.is_recovery_exhausted() {
+            result = TurnLoopResult::Blocked {
+                reason: Some(PLAN_RECOVERY_EXHAUSTED_REASON.to_string()),
+            };
+        }
+    }
+
     ctx.set_phase(TurnPhase::Finalizing);
     finalize_turn(&mut ctx, working_history, &result, &turn_usage).await;
 
@@ -1229,6 +1332,7 @@ pub(crate) async fn run_turn_loop(
         pending_plan_auto_accept,
         pending_plan_execution_context,
         plan_approved_execution_pending,
+        final_response_was_fallback,
     })
 }
 

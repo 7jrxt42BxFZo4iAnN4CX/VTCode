@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use vtcode_core::llm::provider::{self as uni, AssistantPhase};
+use vtcode_core::llm::provider as uni;
 
 use crate::agent::runloop::unified::run_loop_context::RecoveryMode;
 
@@ -106,10 +106,11 @@ pub(super) fn recovery_empty_fallback_safety_message(mode: RecoveryMode) -> Stri
 /// fallback is the user's only view of what happened when the model returns
 /// nothing during recovery; without forcing the push, the conversation can
 /// end with a silent blank assistant message.
+#[cfg(test)]
 pub(super) fn push_recovery_fallback_assistant_message(
     history: &mut Vec<uni::Message>,
     content: &str,
-    phase: Option<AssistantPhase>,
+    phase: Option<uni::AssistantPhase>,
 ) {
     if content.trim().is_empty() {
         return;
@@ -121,6 +122,7 @@ pub(super) fn push_recovery_fallback_assistant_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vtcode_core::llm::provider::AssistantPhase;
 
     #[test]
     fn safety_message_is_non_empty_for_all_modes() {

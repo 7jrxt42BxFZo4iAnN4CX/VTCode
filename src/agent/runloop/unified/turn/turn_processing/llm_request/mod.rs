@@ -92,6 +92,9 @@ fn finish_streaming_bridge_success(ctx: &mut TurnProcessingContext<'_>, stream_b
     ctx.harness_state
         .remember_streamed_tool_call_items(stream_bridge.take_streamed_tool_call_items());
     stream_bridge.complete_open_items();
+    if stream_bridge.assistant_output_observed() {
+        ctx.harness_state.mark_streamed_response_event_emitted();
+    }
 }
 
 /// Execute an LLM request and return the response.
@@ -242,6 +245,7 @@ pub(crate) async fn execute_llm_request(
             request.reasoning_effort = Some(ReasoningEffortLevel::None);
         }
 
+        ctx.harness_state.reset_streamed_response_event_emitted();
         let step_result = if use_streaming {
             let mut stream_bridge =
                 HarnessStreamingBridge::new(ctx.harness_emitter, &ctx.harness_state.turn_id.0, step_count, attempt + 1);

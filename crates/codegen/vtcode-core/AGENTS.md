@@ -12,11 +12,11 @@
 - Re-export public APIs from `lib.rs`; consumers must not reach into submodules.
 - Keep constants in `config::constants`, not inline.
 - `exec_policy` and `command_safety` are separate policy layers.
-- Session event sinks are authoritative: preserve ordering, bounded backpressure, and await the drain handle before reporting task success.
+- Session event sinks are authoritative: preserve ordering, bounded backpressure, and await the drain handle before reporting task success. Recovery/final assistant messages must use the canonical `ThreadEvent` path rather than history-only writes.
 - Trajectory logging is best effort: retain line/byte bounds and expose drops/failures through diagnostics.
 
 ## Workflows
-- Add tools under `tools/`, register/classify them, wire them into `core/agent/`; add providers with `adding-llm-providers` and update model enumeration, presets, and the `llm/providers` facade.
+- Add tools under `tools/`, register/classify them, wire them into `core/agent/`; approved-plan task trackers deduplicate normalized step descriptions while preserving first-seen order. Add providers with `adding-llm-providers` and update model enumeration, presets, and the `llm/providers` facade.
 
 ## Gotchas
 

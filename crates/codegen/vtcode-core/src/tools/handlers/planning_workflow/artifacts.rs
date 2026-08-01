@@ -5,6 +5,7 @@
 //! is independently testable (see `super::tests`). I/O and tool wiring live in
 //! `persistence.rs` / `start.rs` / `finish.rs`.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 pub(super) const PLAN_TRACKER_START: &str = "<!-- vtcode:plan-tracker:start -->";
@@ -289,6 +290,7 @@ pub fn generate_tracker_markdown_from_plan(plan_markdown: &str) -> Option<String
         .unwrap_or("Implementation Plan");
 
     let mut items = Vec::new();
+    let mut seen_descriptions = HashSet::new();
     for line in implementation.lines().map(str::trim).filter(|line| !line.is_empty()) {
         if !is_numbered_line(line) {
             continue;
@@ -297,6 +299,10 @@ pub fn generate_tracker_markdown_from_plan(plan_markdown: &str) -> Option<String
         let segments = description.split("->").map(str::trim).collect::<Vec<_>>();
         let main = segments.first().copied().unwrap_or_default();
         if main.is_empty() {
+            continue;
+        }
+        let description_key = main.split_whitespace().collect::<Vec<_>>().join(" ").to_ascii_lowercase();
+        if !seen_descriptions.insert(description_key) {
             continue;
         }
 

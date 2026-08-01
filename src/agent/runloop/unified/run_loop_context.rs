@@ -312,6 +312,22 @@ pub(crate) struct HarnessTurnState {
     /// loop when the model has already produced a final answer but recovery
     /// iteration keeps re-prompting it.  Reset every turn.
     pub assistant_text_responses_in_turn: u32,
+    /// Whether a non-empty final assistant response was rendered for this turn.
+    /// This is separate from conversation history because recovery code can
+    /// append a message without sending it through the user-facing renderer.
+    final_response_rendered: bool,
+    /// Whether the final assistant response reached the harness event stream.
+    /// The stream is optional in interactive-only runs, where the state is
+    /// treated as emitted once the response was rendered.
+    final_response_event_emitted: bool,
+    /// Whether the streaming bridge emitted assistant output for this turn.
+    /// This is kept separate from the final-response flag because a streamed
+    /// commentary preamble can precede tool calls and is not itself a final
+    /// answer.
+    streamed_response_event_emitted: bool,
+    /// Whether the final response was produced by deterministic recovery
+    /// fallback rather than by a successful model synthesis.
+    final_response_was_fallback: bool,
     pub consecutive_spool_chunk_reads: usize,
     pub consecutive_same_shell_command_runs: usize,
     pub last_shell_command_signature: Option<String>,
@@ -405,6 +421,10 @@ impl HarnessTurnState {
             consecutive_blocked_tool_calls: 0,
             consecutive_preflight_failures: 0,
             assistant_text_responses_in_turn: 0,
+            final_response_rendered: false,
+            final_response_event_emitted: false,
+            streamed_response_event_emitted: false,
+            final_response_was_fallback: false,
             consecutive_spool_chunk_reads: 0,
             consecutive_same_shell_command_runs: 0,
             last_shell_command_signature: None,
@@ -675,6 +695,42 @@ impl HarnessTurnState {
     pub(crate) fn set_approved_plan_execution(&mut self, active: bool) {
         self.approved_plan_execution = active;
         self.approved_plan_recovery_retries = 0;
+    }
+
+    pub(crate) fn final_response_rendered(&self) -> bool {
+        self.final_response_rendered
+    }
+
+    pub(crate) fn final_response_event_emitted(&self) -> bool {
+        self.final_response_event_emitted
+    }
+
+    pub(crate) fn mark_final_response_rendered(&mut self) {
+        self.final_response_rendered = true;
+    }
+
+    pub(crate) fn mark_final_response_event_emitted(&mut self) {
+        self.final_response_event_emitted = true;
+    }
+
+    pub(crate) fn mark_streamed_response_event_emitted(&mut self) {
+        self.streamed_response_event_emitted = true;
+    }
+
+    pub(crate) fn reset_streamed_response_event_emitted(&mut self) {
+        self.streamed_response_event_emitted = false;
+    }
+
+    pub(crate) fn streamed_response_event_emitted(&self) -> bool {
+        self.streamed_response_event_emitted
+    }
+
+    pub(crate) fn mark_final_response_fallback(&mut self) {
+        self.final_response_was_fallback = true;
+    }
+
+    pub(crate) fn final_response_was_fallback(&self) -> bool {
+        self.final_response_was_fallback
     }
 
     pub(crate) fn is_approved_plan_execution(&self) -> bool {

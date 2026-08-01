@@ -2,8 +2,10 @@ use super::archive::workspace_archive_label;
 use super::*;
 use crate::agent::runloop::git::{DirtyWorktreeStatus, git_dirty_worktree_entries, workspace_relative_display};
 use crate::agent::runloop::unified::overlay_prompt::{OverlayWaitOutcome, show_overlay_and_wait};
+use crate::agent::runloop::unified::turn::context::TurnLoopResult;
 use std::sync::Arc;
 use vtcode_core::llm::provider::MessageRole;
+use vtcode_core::tools::registry::ToolRegistry;
 use vtcode_core::utils::session_archive;
 use vtcode_ui::tui::app::{
     InlineHandle, InlineListItem, InlineListSelection, InlineSession, ListOverlayRequest, TransientRequest,
@@ -117,7 +119,7 @@ pub(super) fn build_unrelated_dirty_worktree_note(
 pub(super) fn append_transient_turn_notes(
     history: &mut Vec<vtcode_core::llm::provider::Message>,
     workspace: &std::path::Path,
-    tool_registry: &vtcode_core::tools::registry::ToolRegistry,
+    tool_registry: &ToolRegistry,
     agent_touched_paths: &std::collections::BTreeSet<std::path::PathBuf>,
 ) -> Vec<String> {
     let mut transient_system_notes = Vec::with_capacity(2);
@@ -154,6 +156,133 @@ pub(super) fn latest_assistant_result_text(messages: &[vtcode_core::llm::provide
         .find(|message| message.role == MessageRole::Assistant)
         .map(|message| message.content.as_text().trim().to_string())
         .filter(|text| !text.is_empty())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ExecutionSummaryStatus {
+    Completed,
+    Blocked,
+    Failed,
+}
+
+impl ExecutionSummaryStatus {
+    pub(super) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Blocked => "blocked",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ExecutionSummary {
+    pub(super) status: ExecutionSummaryStatus,
+    pub(super) blocker: Option<String>,
+}
+
+pub(super) fn classify_execution_summary(
+    result: &TurnLoopResult,
+    final_response_was_fallback: bool,
+    checklist: Option<&serde_json::Value>,
+    changed_files: bool,
+) -> ExecutionSummaryStatus {
+    match result {
+        TurnLoopResult::Completed { .. } => {
+            if final_response_was_fallback || !changed_files {
+                return ExecutionSummaryStatus::Blocked;
+            }
+            let Some(checklist) = checklist else {
+                return ExecutionSummaryStatus::Blocked;
+            };
+            let total = checklist.get("total").and_then(serde_json::Value::as_u64).unwrap_or_default();
+            let completed = checklist
+                .get("completed")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default();
+            let pending = checklist.get("pending").and_then(serde_json::Value::as_u64).unwrap_or_default();
+            let in_progress = checklist
+                .get("in_progress")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default();
+            let blocked = checklist.get("blocked").and_then(serde_json::Value::as_u64).unwrap_or_default();
+            if total > 0 && completed >= total && pending == 0 && in_progress == 0 && blocked == 0 {
+                ExecutionSummaryStatus::Completed
+            } else {
+                ExecutionSummaryStatus::Blocked
+            }
+        }
+        TurnLoopResult::Blocked { .. } => ExecutionSummaryStatus::Blocked,
+        TurnLoopResult::Aborted | TurnLoopResult::Cancelled | TurnLoopResult::Exit => ExecutionSummaryStatus::Failed,
+    }
+}
+
+fn pending_checklist_items(checklist: &serde_json::Value) -> Vec<String> {
+    checklist
+        .get("items")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|item| item.get("status").and_then(serde_json::Value::as_str) != Some("completed"))
+        .filter_map(|item| item.get("description").and_then(serde_json::Value::as_str))
+        .map(str::to_string)
+        .take(4)
+        .collect()
+}
+
+fn execution_summary_blocker(
+    result: &TurnLoopResult,
+    final_response_was_fallback: bool,
+    checklist: Option<&serde_json::Value>,
+    changed_files: bool,
+) -> Option<String> {
+    if final_response_was_fallback {
+        return Some("recovery ended with a deterministic fallback and did not confirm the requested work".to_string());
+    }
+    if !changed_files && matches!(result, TurnLoopResult::Completed { .. }) {
+        return Some(
+            "the approved-plan turn produced no file changes, so implementation completion was not confirmed"
+                .to_string(),
+        );
+    }
+    if matches!(result, TurnLoopResult::Aborted | TurnLoopResult::Cancelled | TurnLoopResult::Exit) {
+        return Some("the execution turn did not finish successfully".to_string());
+    }
+    if let TurnLoopResult::Blocked { reason } = result {
+        return Some(reason.clone().unwrap_or_else(|| "the execution turn was blocked".to_string()));
+    }
+    let Some(checklist) = checklist else {
+        return Some("the approved-plan task checklist was not available".to_string());
+    };
+    let pending = pending_checklist_items(checklist);
+    if !pending.is_empty() {
+        return Some(format!("pending checklist items: {}", pending.join(", ")));
+    }
+    Some("the approved-plan checklist is not fully completed".to_string())
+}
+
+pub(super) async fn approved_plan_execution_summary(
+    tool_registry: &ToolRegistry,
+    result: &TurnLoopResult,
+    final_response_was_fallback: bool,
+    changed_files: bool,
+) -> ExecutionSummary {
+    let checklist_result = match tool_registry.get_tool(vtcode_core::config::constants::tools::TASK_TRACKER) {
+        Some(tool) => match tool.execute(serde_json::json!({"action": "list"})).await {
+            Ok(value) => Some(value),
+            Err(err) => {
+                tracing::warn!(error = %err, "Failed to read approved-plan task tracker for execution summary");
+                None
+            }
+        },
+        None => None,
+    };
+    let checklist = checklist_result.as_ref().and_then(|value| value.get("checklist"));
+    let status = classify_execution_summary(result, final_response_was_fallback, checklist, changed_files);
+    let blocker = (status != ExecutionSummaryStatus::Completed)
+        .then(|| execution_summary_blocker(result, final_response_was_fallback, checklist, changed_files))
+        .flatten();
+    ExecutionSummary { status, blocker }
 }
 
 pub(super) fn take_pending_resumed_user_prompt(
@@ -272,7 +401,7 @@ pub(super) async fn force_reload_workspace_config_for_execution(
     workspace: &std::path::Path,
     runtime_cfg: &CoreAgentConfig,
     vt_cfg: &mut Option<VTCodeConfig>,
-    tool_registry: &mut vtcode_core::tools::registry::ToolRegistry,
+    tool_registry: &mut ToolRegistry,
     async_mcp_manager: Option<&crate::agent::runloop::unified::async_mcp_manager::AsyncMcpManager>,
 ) -> Result<()> {
     crate::agent::runloop::unified::turn::workspace::refresh_vt_config(workspace, runtime_cfg, vt_cfg).await?;
@@ -348,4 +477,73 @@ pub(super) async fn prompt_startup_planning_workflow(
         .await?;
 
     Ok(matches!(outcome, OverlayWaitOutcome::Submitted(true)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ExecutionSummaryStatus, classify_execution_summary};
+    use crate::agent::runloop::unified::turn::context::TurnLoopResult;
+    use serde_json::json;
+
+    #[test]
+    fn pending_approved_plan_checklist_cannot_be_completed() {
+        let checklist = json!({
+            "total": 3,
+            "completed": 1,
+            "pending": 1,
+            "in_progress": 1,
+            "blocked": 0
+        });
+        let result = TurnLoopResult::Completed { plan_approved_execution_pending: false };
+
+        assert_eq!(classify_execution_summary(&result, false, Some(&checklist), true), ExecutionSummaryStatus::Blocked);
+    }
+
+    #[test]
+    fn completed_approved_plan_requires_all_checklist_items() {
+        let checklist = json!({
+            "total": 2,
+            "completed": 2,
+            "pending": 0,
+            "in_progress": 0,
+            "blocked": 0
+        });
+        let result = TurnLoopResult::Completed { plan_approved_execution_pending: false };
+
+        assert_eq!(
+            classify_execution_summary(&result, false, Some(&checklist), true),
+            ExecutionSummaryStatus::Completed
+        );
+    }
+
+    #[test]
+    fn recovery_fallback_is_blocked_even_with_a_complete_tracker() {
+        let checklist = json!({
+            "total": 1,
+            "completed": 1,
+            "pending": 0,
+            "in_progress": 0,
+            "blocked": 0
+        });
+        let result = TurnLoopResult::Completed { plan_approved_execution_pending: false };
+
+        assert_eq!(classify_execution_summary(&result, true, Some(&checklist), true), ExecutionSummaryStatus::Blocked);
+    }
+
+    #[test]
+    fn completed_plan_without_file_changes_is_blocked() {
+        let checklist = json!({
+            "total": 1,
+            "completed": 1,
+            "pending": 0,
+            "in_progress": 0,
+            "blocked": 0
+        });
+        let result = TurnLoopResult::Completed { plan_approved_execution_pending: false };
+
+        assert_eq!(
+            classify_execution_summary(&result, false, Some(&checklist), false),
+            ExecutionSummaryStatus::Blocked
+        );
+    }
 }

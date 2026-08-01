@@ -90,12 +90,14 @@ use metrics::{
 };
 use plan_seed::load_active_plan_seed;
 use support::{
-    append_transient_turn_notes, checkpoint_session_archive_start, force_reload_workspace_config_for_execution,
-    latest_assistant_result_text, live_reload_preserves_session_config, prepare_resume_bootstrap_without_archive,
-    prompt_startup_planning_workflow, remove_transient_system_notes, take_pending_resumed_user_prompt,
+    ExecutionSummaryStatus, append_transient_turn_notes, approved_plan_execution_summary,
+    checkpoint_session_archive_start, force_reload_workspace_config_for_execution, latest_assistant_result_text,
+    live_reload_preserves_session_config, prepare_resume_bootstrap_without_archive, prompt_startup_planning_workflow,
+    remove_transient_system_notes, take_pending_resumed_user_prompt,
 };
 use tokio::sync::{Notify, mpsc};
 use vtcode_commons::ui_protocol::ActivityState;
+use vtcode_core::exec::events::ThreadCompletionSubtype;
 use vtcode_core::llm::provider::MessageRole;
 use vtcode_core::utils::session_archive;
 use vtcode_ui::tui::app::ArchivedPromptEntry;
@@ -533,6 +535,9 @@ pub(super) async fn run_single_agent_loop_unified_impl(
 
         let mut cross_turn_tracker = crate::agent::runloop::unified::run_loop_context::CrossTurnTracker::new();
         let mut approved_plan_execution_turn = false;
+        let mut last_approved_plan_summary_status: Option<ExecutionSummaryStatus> = None;
+        let mut last_turn_result: Option<RunLoopTurnLoopResult> = None;
+        let mut last_turn_response_was_fallback = false;
 
         if !startup_update_requested_restart {
             loop {
@@ -1041,6 +1046,7 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                             pending_plan_execution_context:
                                 crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Current,
                             plan_approved_execution_pending: false,
+                            final_response_was_fallback: false,
                         }
                     }
                 };
@@ -1072,6 +1078,9 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                 let plan_auto_accept = outcome.pending_plan_auto_accept;
                 let plan_execution_context = outcome.pending_plan_execution_context;
                 let plan_approved_execution_pending = outcome.plan_approved_execution_pending;
+                let final_response_was_fallback = outcome.final_response_was_fallback;
+                last_turn_result = Some(outcome_result.clone());
+                last_turn_response_was_fallback = final_response_was_fallback;
                 let turn_elapsed = turn_started_at.elapsed();
                 let show_turn_timer = vt_cfg.as_ref().map(|cfg| cfg.ui.show_turn_timer).unwrap_or(true);
                 let harness_snapshot = tool_registry.harness_context_snapshot();
@@ -1242,13 +1251,14 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                     }
                 }
                 if executing_approved_plan {
-                    let status = match &outcome_result {
-                        RunLoopTurnLoopResult::Completed { .. } => "completed",
-                        RunLoopTurnLoopResult::Aborted => "aborted",
-                        RunLoopTurnLoopResult::Cancelled => "cancelled",
-                        RunLoopTurnLoopResult::Exit => "ended",
-                        RunLoopTurnLoopResult::Blocked { .. } => "blocked",
-                    };
+                    let summary = approved_plan_execution_summary(
+                        &tool_registry,
+                        &outcome_result,
+                        final_response_was_fallback,
+                        !execution_modified_files.is_empty(),
+                    )
+                    .await;
+                    last_approved_plan_summary_status = Some(summary.status);
                     let changed_files = if execution_modified_files.is_empty() {
                         "none recorded".to_string()
                     } else {
@@ -1261,7 +1271,11 @@ pub(super) async fn run_single_agent_loop_unified_impl(
                     };
                     let _ = renderer.line(
                         MessageStyle::Info,
-                        &format!("Execution summary: {status}; changed files: {changed_files}. See the final response for verification and blockers."),
+                        &format!(
+                            "Execution summary: {}; changed files: {changed_files}; verification: see the final response and task tracker; blockers: {}.",
+                            summary.status.as_str(),
+                            summary.blocker.as_deref().unwrap_or("none")
+                        ),
                     );
                 }
                 if let Err(err) = crate::agent::runloop::unified::turn::compaction::refresh_session_memory_envelope(
@@ -1375,8 +1389,27 @@ pub(super) async fn run_single_agent_loop_unified_impl(
         }
         if let Some(emitter) = harness_emitter.as_ref() {
             let harness_snapshot = tool_registry.harness_context_snapshot();
-            let (outcome_code, subtype) =
-                session_end_reason.thread_completion_status(session_stats.budget_limit().is_some());
+            let (outcome_code, subtype) = if matches!(session_end_reason, SessionEndReason::Completed) {
+                match (last_approved_plan_summary_status, last_turn_result.as_ref()) {
+                    (Some(ExecutionSummaryStatus::Blocked), _)
+                    | (_, Some(RunLoopTurnLoopResult::Blocked { .. }))
+                    | (_, Some(RunLoopTurnLoopResult::Aborted)) => {
+                        ("blocked", ThreadCompletionSubtype::ErrorDuringExecution)
+                    }
+                    (Some(ExecutionSummaryStatus::Failed), _)
+                    | (_, Some(RunLoopTurnLoopResult::Completed { .. }))
+                    | (_, Some(RunLoopTurnLoopResult::Cancelled))
+                        if last_turn_response_was_fallback =>
+                    {
+                        ("failed", ThreadCompletionSubtype::ErrorDuringExecution)
+                    }
+                    (_, Some(RunLoopTurnLoopResult::Cancelled)) => ("cancelled", ThreadCompletionSubtype::Cancelled),
+                    (_, Some(RunLoopTurnLoopResult::Exit)) => ("exit", ThreadCompletionSubtype::Cancelled),
+                    _ => session_end_reason.thread_completion_status(session_stats.budget_limit().is_some()),
+                }
+            } else {
+                session_end_reason.thread_completion_status(session_stats.budget_limit().is_some())
+            };
             let result = subtype
                 .is_success()
                 .then(|| latest_assistant_result_text(&runtime.state.messages))

@@ -18,7 +18,7 @@ use vtcode_core::core::agent::events::{
 use vtcode_core::exec::events::ThreadStartedEvent;
 use vtcode_core::exec::events::atif::{AtifAgent, AtifTrajectoryBuilder};
 use vtcode_core::exec::events::{
-    CompactionMode, CompactionTrigger, HarnessEventItem, HarnessEventKind, ItemCompletedEvent,
+    AgentMessageItem, CompactionMode, CompactionTrigger, HarnessEventItem, HarnessEventKind, ItemCompletedEvent,
     ThreadCompactBoundaryEvent, ThreadCompletedEvent, ThreadCompletionSubtype, ThreadEvent, ThreadItem,
     ThreadItemDetails, ToolCallStatus, ToolOutcome, TurnCompletedEvent, TurnFailedEvent, TurnStartedEvent, Usage,
     VersionedThreadEvent,
@@ -279,6 +279,23 @@ impl HarnessEventEmitter {
         Ok(())
     }
 
+    /// Emit a completed assistant message for a response that did not come
+    /// from the streaming lifecycle bridge, such as deterministic recovery.
+    /// Keeping this on the normal emitter preserves the same ThreadEvent
+    /// contract for interactive, headless, Open Responses, and ATIF output.
+    pub(crate) fn emit_assistant_message(&self, turn_id: &str, text: &str) -> Result<()> {
+        if text.trim().is_empty() {
+            return Ok(());
+        }
+
+        self.emit(ThreadEvent::ItemCompleted(ItemCompletedEvent {
+            item: ThreadItem {
+                id: format!("{turn_id}-assistant-final-{}", Utc::now().timestamp_millis()),
+                details: ThreadItemDetails::AgentMessage(AgentMessageItem { text: text.to_string() }),
+            },
+        }))
+    }
+
     /// Finishes the Open Responses session and writes the terminal marker.
     pub(crate) fn finish_open_responses(&self) {
         match self.inner.open_responses.lock() {
@@ -485,6 +502,22 @@ mod tests {
             Some(vtcode_core::exec::events::EVENT_SCHEMA_VERSION)
         );
         assert_eq!(value.get("event").and_then(|v| v.get("type")).and_then(|v| v.as_str()), Some("turn.started"));
+    }
+
+    #[test]
+    fn assistant_message_fallback_is_written_as_completed_item() {
+        let tmp = TempDir::new().expect("temp dir");
+        let path = tmp.path().join("events.jsonl");
+        let emitter = HarnessEventEmitter::new(path.clone()).expect("emitter");
+
+        emitter
+            .emit_assistant_message("turn-1", "The turn was blocked; retry the request.")
+            .expect("emit assistant message");
+
+        let content = fs::read_to_string(path).expect("read harness log");
+        assert!(content.contains("item.completed"));
+        assert!(content.contains("agent_message"));
+        assert!(content.contains("The turn was blocked; retry the request."));
     }
 
     #[test]

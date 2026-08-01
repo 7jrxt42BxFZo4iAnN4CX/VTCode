@@ -1,7 +1,6 @@
 use super::recovery_guidance::{
     empty_response_notice, empty_response_recovery_mode, empty_response_recovery_reason,
-    push_recovery_fallback_assistant_message, recovery_empty_fallback_safety_message,
-    recovery_empty_response_fallback_message,
+    recovery_empty_fallback_safety_message, recovery_empty_response_fallback_message,
 };
 use anyhow::Result;
 use std::collections::BTreeSet;
@@ -294,22 +293,19 @@ pub(crate) async fn handle_turn_processing_result<'a>(
                     recovery_mode,
                 );
 
-                // Push the fallback message directly into working_history,
-                // bypassing `handle_assistant_response`'s skip-empty guard.
-                // The fallback is the user's only view of what happened when
-                // the model returns nothing during recovery; without forcing
-                // the push, the conversation can end with a silent "\n"
-                // assistant message and no actionable information.
                 let final_fallback = if fallback_message.trim().is_empty() {
                     recovery_empty_fallback_safety_message(recovery_mode)
                 } else {
                     fallback_message
                 };
-                push_recovery_fallback_assistant_message(
-                    params.ctx.working_history,
-                    &final_fallback,
+                params.ctx.harness_state.mark_final_response_fallback();
+                params.ctx.handle_assistant_response(
+                    final_fallback.clone(),
+                    Vec::new(),
+                    None,
+                    false,
                     Some(uni::AssistantPhase::FinalAnswer),
-                );
+                )?;
                 params.ctx.finish_recovery_pass();
                 tracing::warn!(
                     mode = ?recovery_mode,

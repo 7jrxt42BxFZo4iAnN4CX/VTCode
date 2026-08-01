@@ -311,6 +311,15 @@ Persist a concrete draft and seed tracker state.
     }
 
     #[test]
+    fn generate_tracker_markdown_deduplicates_repeated_steps() {
+        let plan = "# Test Plan\n\n## Summary\nConcrete.\n\n## Implementation Steps\n1. Inspect runtime -> files: [src/a.rs]\n2. Apply fix -> files: [src/b.rs]\n3. inspect   runtime -> files: [src/c.rs]\n\n## Test Cases and Validation\n1. Build: cargo check\n\n## Assumptions and Defaults\n1. Assume nothing.\n";
+        let tracker = generate_tracker_markdown_from_plan(plan).expect("tracker generated");
+
+        assert_eq!(tracker.matches("- [ ] Inspect runtime").count(), 1);
+        assert_eq!(tracker.matches("- [ ] Apply fix").count(), 1);
+    }
+
+    #[test]
     fn planning_tool_descriptions_do_not_expose_internal_unified_tools() {
         fn internal_unified_tool_name(suffix: &str) -> String {
             format!("unified_{suffix}")

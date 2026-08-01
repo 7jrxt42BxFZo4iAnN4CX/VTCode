@@ -54,6 +54,9 @@ impl<'a> TurnProcessingContext<'a> {
             text.clear();
         }
         let has_visible_text = !text.trim().is_empty();
+        let final_response_text = matches!(phase, Some(uni::AssistantPhase::FinalAnswer))
+            .then(|| text.clone())
+            .filter(|text| !text.trim().is_empty());
         if !reasoning.is_empty() || reasoning_details.as_ref().is_some_and(|details| !details.is_empty()) {
             tracing::info!(
                 target: "vtcode.turn.metrics",
@@ -143,6 +146,20 @@ impl<'a> TurnProcessingContext<'a> {
             || msg_with_reasoning.reasoning_details.is_some()
         {
             push_assistant_message(self.working_history, msg_with_reasoning);
+        }
+
+        if let Some(final_response_text) = final_response_text {
+            self.harness_state.mark_final_response_rendered();
+            if self.harness_emitter.is_none() || self.harness_state.streamed_response_event_emitted() {
+                self.harness_state.mark_final_response_event_emitted();
+            } else if !self.harness_state.final_response_event_emitted()
+                && let Some(emitter) = self.harness_emitter
+            {
+                match emitter.emit_assistant_message(&self.harness_state.turn_id.0, &final_response_text) {
+                    Ok(()) => self.harness_state.mark_final_response_event_emitted(),
+                    Err(err) => tracing::warn!(error = %err, "final assistant message harness emission failed"),
+                }
+            }
         }
 
         Ok(())

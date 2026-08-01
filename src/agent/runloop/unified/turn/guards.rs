@@ -1,4 +1,4 @@
-use crate::agent::runloop::unified::turn::context::{TurnHandlerOutcome, TurnProcessingContext};
+use crate::agent::runloop::unified::turn::context::{TurnHandlerOutcome, TurnLoopResult, TurnProcessingContext};
 use anyhow::Result;
 use serde_json::Value;
 use std::borrow::Cow;
@@ -347,6 +347,12 @@ pub(crate) async fn handle_turn_balancer(
         repeated_tool_attempts.navigation_loop_recoveries =
             repeated_tool_attempts.navigation_loop_recoveries.saturating_add(1);
         let recurrence = repeated_tool_attempts.navigation_loop_recoveries;
+        if ctx.is_approved_plan_execution() && recurrence >= 2 {
+            let blocker = "Approved-plan execution stopped after repeated read-only/navigation actions made no implementation progress. The approved plan and task checklist were retained; retry from the pending step.";
+            ctx.renderer.line(MessageStyle::Warning, blocker).unwrap_or(());
+            ctx.working_history.push(uni::Message::system(blocker.to_string()));
+            return TurnHandlerOutcome::Break(TurnLoopResult::Blocked { reason: Some(blocker.to_string()) });
+        }
         let recovery_reason = format!(
             "Navigation loop detected after {} consecutive read/search steps (recurrence #{recurrence}). Tools are disabled on the next pass; summarize findings and propose the next concrete action.",
             repeated_tool_attempts.consecutive_navigations

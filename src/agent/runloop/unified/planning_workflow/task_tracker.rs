@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use vtcode_core::config::constants::tools;
 use vtcode_core::tools::registry::ToolRegistry;
 use vtcode_ui::tui::app::{InlineHandle, InlineMessageKind, PlanContent};
@@ -35,8 +36,51 @@ fn markdown_task_description(line: &str) -> Option<(&str, bool)> {
     }
 }
 
+fn normalized_task_description(description: &str) -> String {
+    description
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
+}
+
+fn append_unique_task_item(
+    items: &mut Vec<serde_json::Value>,
+    index_by_description: &mut HashMap<String, usize>,
+    item: serde_json::Value,
+) {
+    let Some(description) = item.get("description").and_then(|value| value.as_str()) else {
+        return;
+    };
+    let key = normalized_task_description(description);
+    if key.is_empty() {
+        return;
+    }
+
+    if let Some(index) = index_by_description.get(&key).copied() {
+        let existing = &mut items[index];
+        if item["status"].as_str() == Some("completed") && existing["status"].as_str() != Some("completed") {
+            existing["status"] = serde_json::Value::String("completed".to_string());
+        }
+        let existing_files_empty = existing
+            .get("files")
+            .and_then(serde_json::Value::as_array)
+            .is_none_or(Vec::is_empty);
+        if existing_files_empty
+            && let Some(files) = item.get("files").filter(|files| !files.as_array().is_none_or(Vec::is_empty))
+        {
+            existing["files"] = files.clone();
+        }
+        return;
+    }
+
+    index_by_description.insert(key, items.len());
+    items.push(item);
+}
+
 fn task_items_from_plan(plan: &PlanContent) -> Vec<serde_json::Value> {
     let mut items = Vec::new();
+    let mut index_by_description = HashMap::new();
     for phase in &plan.phases {
         for step in &phase.steps {
             if step.description.trim().is_empty() {
@@ -51,7 +95,7 @@ fn task_items_from_plan(plan: &PlanContent) -> Vec<serde_json::Value> {
             {
                 item["files"] = files;
             }
-            items.push(item);
+            append_unique_task_item(&mut items, &mut index_by_description, item);
         }
     }
 
@@ -65,10 +109,14 @@ fn task_items_from_plan(plan: &PlanContent) -> Vec<serde_json::Value> {
             if description.is_empty() {
                 continue;
             }
-            items.push(serde_json::json!({
-                "description": description,
-                "status": if completed { "completed" } else { "pending" },
-            }));
+            append_unique_task_item(
+                &mut items,
+                &mut index_by_description,
+                serde_json::json!({
+                    "description": description,
+                    "status": if completed { "completed" } else { "pending" },
+                }),
+            );
         }
     }
 
@@ -158,5 +206,22 @@ mod tests {
         assert_eq!(items[0]["status"], "pending");
         assert_eq!(items[2]["description"], "Verify with cargo check");
         assert_eq!(items[2]["status"], "completed");
+    }
+
+    #[test]
+    fn repeated_plan_steps_are_deduplicated_in_order() {
+        let plan = PlanContent::from_markdown(
+            "Launch plan".to_string(),
+            "Summary\nImprove the runtime.\n\n## Phase 1\n1. Inspect the runtime\n2. Apply the fix\n\n## Phase 2\n1. inspect   the runtime\n[x] Verify the fix\n[x] APPLY THE FIX",
+            None,
+        );
+
+        let items = task_items_from_plan(&plan);
+
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0]["description"], "Inspect the runtime");
+        assert_eq!(items[1]["description"], "Apply the fix");
+        assert_eq!(items[1]["status"], "completed");
+        assert_eq!(items[2]["description"], "Verify the fix");
     }
 }

@@ -190,6 +190,7 @@ mod tests {
             pending_plan_execution_context:
                 crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Current,
             plan_approved_execution_pending: false,
+            final_response_was_fallback: false,
         };
         conversation_history.push(uni::Message::assistant("done".to_string()));
 
@@ -236,6 +237,7 @@ mod tests {
             pending_plan_execution_context:
                 crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Current,
             plan_approved_execution_pending: false,
+            final_response_was_fallback: false,
         };
         conversation_history.push(uni::Message::assistant("done".to_string()));
 
@@ -282,6 +284,7 @@ mod tests {
             pending_plan_execution_context:
                 crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Current,
             plan_approved_execution_pending: false,
+            final_response_was_fallback: false,
         };
         conversation_history.push(uni::Message::assistant("done".to_string()));
 

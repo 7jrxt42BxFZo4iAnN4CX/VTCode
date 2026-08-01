@@ -291,6 +291,27 @@ fn post_tool_follow_up_failure_chain_consumes_tool_free_recovery_pass() {
 }
 
 #[tokio::test]
+async fn empty_model_response_after_recovery_is_visible_and_blocked() {
+    let mut backing = TestTurnProcessingBacking::new(4).await;
+    backing.activate_tool_free_recovery_for_test("post-tool follow-up failure");
+    let mut history = vec![uni::Message::user("summarize the tool outputs".to_string())];
+
+    let outcome = run_turn_loop(&mut history, backing.turn_loop_context())
+        .await
+        .expect("recovery should produce a visible fallback");
+
+    assert!(matches!(outcome.result, TurnLoopResult::Blocked { .. }));
+    assert!(outcome.final_response_was_fallback);
+    let final_text = history
+        .iter()
+        .rev()
+        .find(|message| message.role == uni::MessageRole::Assistant)
+        .map(|message| message.content.as_text().trim().to_string())
+        .unwrap_or_default();
+    assert!(!final_text.is_empty(), "recovery must not leave an empty final response");
+}
+
+#[tokio::test]
 async fn complete_turn_after_failed_tool_free_recovery_appends_fallback_once() {
     let mut history = vec![uni::Message::user("summarize".to_string())];
     let outcome = complete_turn_after_failed_tool_free_recovery(
