@@ -479,6 +479,11 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Configuration, Using Custom Ollama Models, OpenAI OSS Models Support, Laguna XS.2 Model, Tool calling and web search integration
   - **User Questions**: "What can you tell me about Ollama Provider Guide?", "How does Configuration work?", "How does Using Custom Ollama Models work?"
 
+- **File**: `docs/providers/omniroute.md`
+  - **Content**: OmniRoute Integration Guide
+  - **Topics**: Configuration, Model Selection, Protocol Behavior, Remote and Container Setups, Troubleshooting
+  - **User Questions**: "What can you tell me about OmniRoute Integration Guide?", "How does Configuration work?", "How does Model Selection work?"
+
 - **File**: `docs/providers/openrouter.md`
   - **Content**: OpenRouter Integration Guide
   - **Topics**: Quickstart, Persisting configuration, Runtime behaviour, Troubleshooting
