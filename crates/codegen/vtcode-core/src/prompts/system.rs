@@ -30,8 +30,7 @@ pub const PLANNING_WORKFLOW_READ_ONLY_HEADER: &str = "# PLANNING WORKFLOW (READ-
 /// Shared Planning workflow notice line describing strict read-only enforcement.
 pub const PLANNING_WORKFLOW_READ_ONLY_NOTICE_LINE: &str = "Mutating file edits are blocked, including `apply_patch`. Use `exec_command.cmd` only for read-only repository inspection with the active shell profile's syntax; keep `task_tracker` current. Plan artifacts under `.vtcode/plans/` are allowed.";
 /// Shared Planning workflow instruction line for transitioning to implementation.
-pub const PLANNING_WORKFLOW_EXIT_INSTRUCTION_LINE: &str =
-    "The plan is ready for user approval. Mutating tools stay disabled until the user approves.";
+pub const PLANNING_WORKFLOW_EXIT_INSTRUCTION_LINE: &str = "Only a validated plan persisted under `.vtcode/plans/` is ready for user approval. Mutating tools stay disabled until the user approves.";
 /// Compact, spec-like plan quality line. The previous wording ("summary,
 /// steps, test cases, assumptions") let the model emit verbosely large plans
 /// that blew the generation token budget and were cut off mid-`<proposed_plan>`
@@ -42,7 +41,7 @@ pub const PLANNING_WORKFLOW_EXIT_INSTRUCTION_LINE: &str =
 /// `file://`) — plans are read in terminals and other non-hyperlink
 /// surfaces, and a bare `path/to/file.rs:42` reference is portable while a
 /// broken pseudo-link pointing at the editor binary itself is not.
-pub const PLANNING_WORKFLOW_PLAN_QUALITY_LINE: &str = "Keep plans compact and spec-like. Emit ONE `<proposed_plan>` that fits ~1500 tokens: a 1-3 line Summary; a tight numbered step list where each step is `Action -> files/symbols -> verify:`; one Validation line (build/lint + test commands); Assumptions as short bullets. Prefer file:symbol references over prose, written as plain text or inline code (e.g. `src/main.rs:42`) — never as markdown links or editor/IDE URIs (no `[label](url)`, no `vscode-file://`/`file://` schemes). Ask only material blocking questions; unresolved: `Next open decision: ...`.";
+pub const PLANNING_WORKFLOW_PLAN_QUALITY_LINE: &str = "Keep plans compact and spec-like. Emit ONE `<proposed_plan>` with these sections: `## Summary`; `## Implementation Steps` (or `## Steps`); `## Test Cases and Validation` (or `## Validation`); `## Assumptions and Defaults` (or `## Assumptions`). Every numbered implementation step must name a concrete file, symbol, behavior, or other repository target and include a non-empty `verify:`/`verification:` command or check; generic `1. Do the work` steps are not plans. Prefer file:symbol references over prose, written as plain text or inline code (e.g. `src/main.rs:42`) — never as markdown links or editor/IDE URIs (no `[label](url)`, no `vscode-file://`/`file://` schemes). Resolve placeholders and open decisions before approval; use `Next open decision:` or `Open question:` only when a decision remains unresolved.";
 /// Scale research effort to the request instead of always exhaustively
 /// enumerating the repository. Checkpoint turn_647 showed a "make a simple
 /// plan to improve launch time" request burn 70+ tool calls across dozens of
@@ -53,20 +52,18 @@ pub const PLANNING_WORKFLOW_RESEARCH_SCOPE_LINE: &str = "Scale research to the r
 /// Shared Planning workflow policy line directing context-aware read-only research and plain-text question resolution.
 pub const PLANNING_WORKFLOW_PLAN_POLICY_LINE: &str = "Continue exploring read-only, finish unblocked planning, and surface open decisions or questions directly in plain text. Monitor the available tool-loop budget; stop research when the plan is sufficiently specified or the limit is near, then synthesize one compact decision-ready plan from the evidence already gathered.";
 pub const PLANNING_WORKFLOW_INTERVIEW_POLICY_LINE: &str = "Use repository evidence and reasonable engineering judgment to resolve ordinary ambiguity. Do not ask the user to choose files, implementation details, validation commands, or prioritization you can infer. Use `request_user_input` only for a critical blocker where proceeding could cause materially different, unsafe, or irreversible work; otherwise state the assumption and continue to the plan.";
-pub const PLANNING_WORKFLOW_NO_REQUEST_USER_INPUT_POLICY_LINE: &str = PLANNING_WORKFLOW_PLAN_POLICY_LINE;
+pub const PLANNING_WORKFLOW_NO_REQUEST_USER_INPUT_POLICY_LINE: &str = "`request_user_input` is optional. If it is unavailable or denied, do not retry it: make reasonable assumptions, synthesize one valid plan from the evidence already gathered, and keep planning active until that plan is persisted and ready for approval.";
 /// Shared Planning workflow guard line requiring explicit transition from planning to execution.
-pub const PLANNING_WORKFLOW_NO_AUTO_EXIT_LINE: &str =
-    "Do not auto-exit Planning workflow; wait for explicit implementation intent.";
+pub const PLANNING_WORKFLOW_NO_AUTO_EXIT_LINE: &str = "Do not auto-exit Planning workflow; wait for explicit implementation intent after a validated persisted plan exists.";
 /// Shared Planning workflow task-tracking line clarifying availability and aliasing.
 /// Implementation prompt used when transitioning from planning to execution.
 pub const PLANNING_WORKFLOW_IMPLEMENTATION_PROMPT: &str = "Implement the approved plan. Finish with a concise execution summary covering outcome, changed files, verification performed, and remaining blockers.";
 /// Hint shown when planning workflow is active.
-pub const PLANNING_WORKFLOW_HINT: &str =
-    "Planning workflow is active. Type `implement` to start execution or continue refining the plan.";
+pub const PLANNING_WORKFLOW_HINT: &str = "Planning workflow is active. Continue refining; approval controls appear only after a validated plan is persisted.";
 
 pub const PLANNING_WORKFLOW_TASK_TRACKER_LINE: &str = "`task_tracker` remains available while planning.";
 /// Shared reminder appended when presenting plans while still in Planning workflow.
-pub const PLANNING_WORKFLOW_IMPLEMENT_REMINDER: &str = "• Planning workflow is active with read-only permissions. Say “implement” to present the plan for user approval, or “stay in planning workflow” to revise. The plan will be shown to the user for approval; mutating tools stay disabled until the user approves the plan. If the tool-loop limit is near, stop researching and synthesize from existing evidence. For long research sessions, the approval screen offers a fresh execution thread that preserves the plan and task tracker.";
+pub const PLANNING_WORKFLOW_IMPLEMENT_REMINDER: &str = "• Planning workflow is active with read-only permissions. Continue refining and describe what to revise; approval controls appear only after a validated plan is persisted. If the tool-loop limit is near, stop researching and synthesize from existing evidence. For long research sessions, the approval screen preserves the plan and task tracker.";
 
 pub const PROMPT_TITLE: &str = "# VT Code";
 pub const PROMPT_INTRO: &str = "VT Code. Be concise and safe.";

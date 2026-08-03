@@ -58,9 +58,11 @@ use notifications::emit_turn_outcome_notification;
 use post_tool_recovery::PostToolFailureRecovery;
 #[cfg(test)]
 use post_tool_recovery::maybe_recover_after_post_tool_llm_failure;
+#[cfg(test)]
+use post_tool_recovery::normalize_tool_free_recovery_break_outcome;
 use post_tool_recovery::{
-    PostToolFailureAction, PostToolRecoveryContext, dispatch_post_tool_failure,
-    normalize_tool_free_recovery_break_outcome,
+    PlanRecoveryEventContext, PostToolFailureAction, PostToolRecoveryContext, dispatch_post_tool_failure,
+    normalize_tool_free_recovery_break_outcome_with_events,
 };
 use usage_accounting::{accumulate_turn_usage, estimate_session_costs, has_turn_usage, stop_reason_from_finish_reason};
 use vtcode_core::config::types::AgentConfig;
@@ -821,6 +823,7 @@ pub(crate) async fn run_turn_loop(
                     renderer: &mut *turn_processing_ctx.renderer,
                     working_history: &mut *turn_processing_ctx.working_history,
                     harness_state: &mut *turn_processing_ctx.harness_state,
+                    harness_emitter: turn_processing_ctx.harness_emitter,
                     plan_session: planning.then_some(&mut *turn_processing_ctx.plan_session),
                     plan_state: planning.then_some(&turn_processing_ctx.tool_registry.planning_workflow_state()),
                     err: &err,
@@ -932,13 +935,21 @@ pub(crate) async fn run_turn_loop(
                         if turn_processing_ctx.is_planning_active() {
                             turn_processing_ctx.plan_session.mark_budget_exhausted();
                             let plan_state = turn_processing_ctx.tool_registry.planning_workflow_state();
-                            result = post_tool_recovery::complete_turn_after_failed_tool_free_recovery(
+                            let event_thread_id = turn_processing_ctx.harness_state.run_id.0.clone();
+                            let event_turn_id = turn_processing_ctx.harness_state.turn_id.0.clone();
+                            let event_context = PlanRecoveryEventContext {
+                                emitter: turn_processing_ctx.harness_emitter,
+                                thread_id: &event_thread_id,
+                                turn_id: &event_turn_id,
+                            };
+                            result = post_tool_recovery::complete_turn_after_failed_tool_free_recovery_with_events(
                                 turn_processing_ctx.working_history,
                                 "turn_loop.budget_limit_planning",
                                 None,
                                 None,
                                 Some(turn_processing_ctx.plan_session),
                                 Some(&plan_state),
+                                Some(event_context),
                             )
                             .await;
                             let _ = turn_processing_ctx.renderer.line(
@@ -1064,6 +1075,7 @@ pub(crate) async fn run_turn_loop(
                     renderer: &mut *turn_processing_ctx.renderer,
                     working_history: &mut *turn_processing_ctx.working_history,
                     harness_state: &mut *turn_processing_ctx.harness_state,
+                    harness_emitter: turn_processing_ctx.harness_emitter,
                     plan_session: planning.then_some(&mut *turn_processing_ctx.plan_session),
                     plan_state: planning.then_some(&turn_processing_ctx.tool_registry.planning_workflow_state()),
                     err: &err,
@@ -1183,6 +1195,7 @@ pub(crate) async fn run_turn_loop(
                     renderer: &mut *ctx.renderer,
                     working_history: &mut *working_history,
                     harness_state: &mut *ctx.harness_state,
+                    harness_emitter: ctx.harness_emitter,
                     plan_session: planning.then_some(&mut *ctx.plan_session),
                     plan_state: planning.then_some(&ctx.tool_registry.planning_workflow_state()),
                     err: &err,
@@ -1283,13 +1296,21 @@ pub(crate) async fn run_turn_loop(
                 let plan_session_opt = planning.then_some(&mut *ctx.plan_session);
                 let plan_state = ctx.tool_registry.planning_workflow_state();
                 let plan_state_opt = planning.then_some(&plan_state);
-                result = normalize_tool_free_recovery_break_outcome(
+                let event_thread_id = ctx.harness_state.run_id.0.clone();
+                let event_turn_id = ctx.harness_state.turn_id.0.clone();
+                let event_context = PlanRecoveryEventContext {
+                    emitter: ctx.harness_emitter,
+                    thread_id: &event_thread_id,
+                    turn_id: &event_turn_id,
+                };
+                result = normalize_tool_free_recovery_break_outcome_with_events(
                     working_history,
                     outcome_result,
                     tool_free_recovery,
                     salvaged,
                     plan_session_opt,
                     plan_state_opt,
+                    Some(event_context),
                 )
                 .await;
                 break;

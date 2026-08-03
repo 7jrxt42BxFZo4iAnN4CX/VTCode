@@ -14,7 +14,9 @@ use crate::tools::handlers::planning_workflow::artifacts::{
     tracker_file_for_plan_file, tracker_has_progress_or_notes, validate_plan_content,
 };
 use crate::tools::handlers::planning_workflow::state::PlanningWorkflowState;
-use crate::utils::file_utils::{ensure_dir_exists, read_file_with_context, write_file_with_context};
+use crate::utils::file_utils::{
+    ensure_dir_exists, read_file_with_context, write_file_atomic_with_context, write_file_with_context,
+};
 
 #[derive(Debug, Clone)]
 pub struct PersistedPlanDraft {
@@ -23,23 +25,47 @@ pub struct PersistedPlanDraft {
     pub validation: PlanValidationReport,
 }
 
-async fn persist_global_tracker_if_missing(workspace_root: &Path, tracker_markdown: &str) -> Result<()> {
+async fn persist_global_tracker_if_missing(workspace_root: &Path, tracker_markdown: &str) -> Result<bool> {
     if workspace_root.as_os_str().is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     let task_file = workspace_root.join(".vtcode").join("tasks").join("current_task.md");
-    if tokio::fs::try_exists(&task_file).await.unwrap_or(false) {
-        return Ok(());
+    if tokio::fs::read_to_string(&task_file)
+        .await
+        .ok()
+        .is_some_and(|content| !content.trim().is_empty())
+    {
+        return Ok(false);
     }
     if let Some(parent) = task_file.parent() {
         ensure_dir_exists(parent)
             .await
             .with_context(|| format!("Failed to create task tracker directory: {}", parent.display()))?;
     }
-    write_file_with_context(&task_file, tracker_markdown, "task checklist")
+    write_file_atomic_with_context(&task_file, tracker_markdown, "task checklist")
         .await
         .with_context(|| format!("Failed to write task checklist: {}", task_file.display()))?;
-    Ok(())
+    Ok(true)
+}
+
+async fn read_optional_file(path: &Path, context: &str) -> Result<Option<String>> {
+    match tokio::fs::read_to_string(path).await {
+        Ok(content) => Ok(Some(content)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("Failed to read {context}: {}", path.display())),
+    }
+}
+
+async fn restore_optional_file(path: &Path, content: Option<&str>, context: &str) -> Result<()> {
+    if let Some(content) = content {
+        return write_file_atomic_with_context(path, content, context).await;
+    }
+
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("Failed to remove {context}: {}", path.display())),
+    }
 }
 
 pub async fn sync_tracker_into_plan_file(plan_file: &Path, tracker_markdown: &str) -> Result<()> {
@@ -54,6 +80,11 @@ pub async fn sync_tracker_into_plan_file(plan_file: &Path, tracker_markdown: &st
 }
 
 pub async fn persist_plan_draft(state: &PlanningWorkflowState, plan_markdown: &str) -> Result<PersistedPlanDraft> {
+    let validation = validate_plan_content(plan_markdown);
+    if !validation.is_ready() {
+        bail!("plan draft is not ready for persistence: {}", validation.reasons().join("; "));
+    }
+
     let plan_file = match state.get_plan_file().await {
         Some(path) => path,
         None if state.is_active() => {
@@ -79,11 +110,13 @@ pub async fn persist_plan_draft(state: &PlanningWorkflowState, plan_markdown: &s
         }
         None => bail!("No active plan file. Call start_planning first."),
     };
-    let existing_plan = read_file_with_context(&plan_file, "plan file").await.ok();
+    let existing_plan = read_optional_file(&plan_file, "plan file").await?;
     let tracker_file = tracker_file_for_plan_file(&plan_file);
-    let (existing_tracker, tracker_from_sidecar) = if let Some(path) = tracker_file.as_ref() {
-        if tokio::fs::try_exists(path).await.unwrap_or(false) {
-            (read_file_with_context(path, "plan tracker file").await.ok(), true)
+    let (existing_tracker, tracker_from_sidecar, original_tracker_file) = if let Some(path) = tracker_file.as_ref() {
+        let sidecar = read_optional_file(path, "plan tracker file").await?;
+        if sidecar.is_some() {
+            let existing_tracker = sidecar.clone().filter(|value| !value.trim().is_empty());
+            (existing_tracker, true, sidecar)
         } else {
             (
                 existing_plan
@@ -91,6 +124,7 @@ pub async fn persist_plan_draft(state: &PlanningWorkflowState, plan_markdown: &s
                     .and_then(extract_embedded_tracker)
                     .filter(|content: &String| !content.trim().is_empty()),
                 false,
+                None,
             )
         }
     } else {
@@ -100,44 +134,96 @@ pub async fn persist_plan_draft(state: &PlanningWorkflowState, plan_markdown: &s
                 .and_then(extract_embedded_tracker)
                 .filter(|content: &String| !content.trim().is_empty()),
             false,
+            None,
         )
+    };
+    let workspace_root = state.workspace_root().unwrap_or_default();
+    let global_tracker_file = (!workspace_root.as_os_str().is_empty())
+        .then(|| workspace_root.join(".vtcode").join("tasks").join("current_task.md"));
+    let existing_global_tracker = match global_tracker_file.as_ref() {
+        Some(path) => read_optional_file(path, "task checklist").await?,
+        None => None,
     };
 
     let should_refresh_embedded = !tracker_from_sidecar
         && existing_tracker
             .as_deref()
             .is_some_and(|tracker| !tracker_has_progress_or_notes(tracker));
-    let validation = validate_plan_content(plan_markdown);
-    let allow_tracker_generation = validation.implementation_step_count > 0 && validation.placeholder_tokens.is_empty();
-    let generated_tracker = if allow_tracker_generation {
-        generate_tracker_markdown_from_plan(plan_markdown)
-    } else {
-        None
-    };
+    let generated_tracker = generate_tracker_markdown_from_plan(plan_markdown);
     let tracker_to_persist = if should_refresh_embedded {
         generated_tracker.or(existing_tracker.clone())
     } else {
         existing_tracker.clone().or(generated_tracker)
     };
-    let canonical_plan = render_plan_with_tracker(plan_markdown, tracker_to_persist.as_deref());
-    write_file_with_context(&plan_file, &canonical_plan, "plan file")
-        .await
-        .with_context(|| format!("Failed to write plan file: {}", plan_file.display()))?;
+    let Some(tracker_markdown) = tracker_to_persist.as_deref().filter(|content| !content.trim().is_empty()) else {
+        bail!("unable to generate a non-empty plan task tracker");
+    };
+    let Some(tracker_file_path) = tracker_file.as_ref() else {
+        bail!("unable to derive a plan task tracker path");
+    };
 
-    if let (Some(path), Some(tracker_markdown)) = (tracker_file.as_ref(), tracker_to_persist.as_deref()) {
-        if let Some(parent) = path.parent() {
+    let canonical_plan = render_plan_with_tracker(plan_markdown, Some(tracker_markdown));
+    let mut tracker_published = false;
+    let mut global_tracker_published = false;
+    let mut plan_published = false;
+    let publish_result: Result<()> = async {
+        // Publish the tracker artifacts before replacing the plan. Each file
+        // is written atomically so readers never observe a truncated artifact.
+        if let Some(parent) = tracker_file_path.parent() {
             ensure_dir_exists(parent)
                 .await
                 .with_context(|| format!("Failed to create plan tracker directory: {}", parent.display()))?;
         }
-        write_file_with_context(path, tracker_markdown, "plan tracker file")
+        write_file_atomic_with_context(tracker_file_path, tracker_markdown, "plan tracker file")
             .await
-            .with_context(|| format!("Failed to write plan tracker file: {}", path.display()))?;
-        let workspace_root = state.workspace_root().unwrap_or_default();
-        persist_global_tracker_if_missing(&workspace_root, tracker_markdown).await?;
+            .with_context(|| format!("Failed to write plan tracker file: {}", tracker_file_path.display()))?;
+        tracker_published = true;
+        global_tracker_published = persist_global_tracker_if_missing(&workspace_root, tracker_markdown).await?;
+        write_file_atomic_with_context(&plan_file, &canonical_plan, "plan file")
+            .await
+            .with_context(|| format!("Failed to write plan file: {}", plan_file.display()))?;
+        plan_published = true;
+        Ok(())
+    }
+    .await;
+
+    if let Err(error) = publish_result {
+        let mut rollback_error = None;
+        if plan_published
+            && let Err(rollback) =
+                restore_optional_file(&plan_file, existing_plan.as_deref(), "plan file rollback").await
+        {
+            rollback_error = Some(rollback);
+        }
+        if tracker_published
+            && let Err(rollback) =
+                restore_optional_file(tracker_file_path, original_tracker_file.as_deref(), "plan tracker rollback")
+                    .await
+        {
+            rollback_error.get_or_insert(rollback);
+        }
+        if global_tracker_published
+            && let Some(global_tracker_file) = global_tracker_file.as_ref()
+            && let Err(rollback) = restore_optional_file(
+                global_tracker_file,
+                existing_global_tracker.as_deref(),
+                "task checklist rollback",
+            )
+            .await
+        {
+            rollback_error.get_or_insert(rollback);
+        }
+        if let Some(rollback_error) = rollback_error {
+            return Err(error.context(format!("failed to roll back plan artifacts: {rollback_error}")));
+        }
+        return Err(error);
     }
 
-    Ok(PersistedPlanDraft { plan_file, tracker_file, validation })
+    Ok(PersistedPlanDraft {
+        plan_file,
+        tracker_file: Some(tracker_file_path.clone()),
+        validation,
+    })
 }
 
 pub(super) fn resolve_plan_path(workspace_root: &Path, raw_path: &str) -> PathBuf {

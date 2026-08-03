@@ -45,7 +45,10 @@ pub(crate) fn maybe_force_planning_workflow_interview(
     if !plan_session.interview_forcing_allowed() {
         return processing_result;
     }
-    let gate = evaluate_interview_gate(response_text, session_stats, plan_session);
+    let response_has_plan =
+        matches!(&processing_result, TurnProcessingResult::TextResponse { proposed_plan: Some(_), .. })
+            || response_text.is_some_and(|text| text.contains("<proposed_plan>") || text.contains("<plan>"));
+    let gate = evaluate_interview_gate(response_text, response_has_plan, session_stats, plan_session);
     if gate.response_has_plan {
         return handle_plan_response(processing_result, gate, plan_session, conversation_len);
     }

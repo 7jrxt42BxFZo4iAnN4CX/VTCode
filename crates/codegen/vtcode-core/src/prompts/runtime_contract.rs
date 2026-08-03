@@ -2,8 +2,9 @@ use std::fmt::Write as _;
 
 use super::system::{
     PLANNING_WORKFLOW_EXIT_INSTRUCTION_LINE, PLANNING_WORKFLOW_INTERVIEW_POLICY_LINE,
-    PLANNING_WORKFLOW_NO_AUTO_EXIT_LINE, PLANNING_WORKFLOW_PLAN_POLICY_LINE, PLANNING_WORKFLOW_PLAN_QUALITY_LINE,
-    PLANNING_WORKFLOW_READ_ONLY_HEADER, PLANNING_WORKFLOW_READ_ONLY_NOTICE_LINE, PLANNING_WORKFLOW_RESEARCH_SCOPE_LINE,
+    PLANNING_WORKFLOW_NO_AUTO_EXIT_LINE, PLANNING_WORKFLOW_NO_REQUEST_USER_INPUT_POLICY_LINE,
+    PLANNING_WORKFLOW_PLAN_POLICY_LINE, PLANNING_WORKFLOW_PLAN_QUALITY_LINE, PLANNING_WORKFLOW_READ_ONLY_HEADER,
+    PLANNING_WORKFLOW_READ_ONLY_NOTICE_LINE, PLANNING_WORKFLOW_RESEARCH_SCOPE_LINE,
     PLANNING_WORKFLOW_TASK_TRACKER_LINE,
 };
 use crate::config::constants::tool_limits;
@@ -48,8 +49,11 @@ fn append_full_auto_notice(prompt: &mut String, contract: RuntimePromptContract)
     }
 }
 
-fn append_planning_workflow_notice(prompt: &mut String, _request_user_input_enabled: bool) {
+fn append_planning_workflow_notice(prompt: &mut String, request_user_input_enabled: bool) {
     if prompt.contains(PLANNING_WORKFLOW_READ_ONLY_HEADER) {
+        if !request_user_input_enabled && !prompt.contains(PLANNING_WORKFLOW_NO_REQUEST_USER_INPUT_POLICY_LINE) {
+            let _ = writeln!(prompt, "{PLANNING_WORKFLOW_NO_REQUEST_USER_INPUT_POLICY_LINE}");
+        }
         return;
     }
 
@@ -74,6 +78,10 @@ fn append_planning_workflow_notice(prompt: &mut String, _request_user_input_enab
     );
     prompt.push_str(PLANNING_WORKFLOW_INTERVIEW_POLICY_LINE);
     prompt.push('\n');
+    if !request_user_input_enabled {
+        prompt.push_str(PLANNING_WORKFLOW_NO_REQUEST_USER_INPUT_POLICY_LINE);
+        prompt.push('\n');
+    }
     prompt.push_str(PLANNING_WORKFLOW_NO_AUTO_EXIT_LINE);
     prompt.push('\n');
     prompt.push_str(PLANNING_WORKFLOW_TASK_TRACKER_LINE);

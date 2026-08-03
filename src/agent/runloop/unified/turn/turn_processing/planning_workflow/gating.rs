@@ -61,10 +61,11 @@ pub(crate) fn planning_workflow_interview_ready(
 
 pub(super) fn evaluate_interview_gate(
     response_text: Option<&str>,
+    response_has_plan: bool,
     session_stats: &SessionStats,
     plan_session: &PlanningWorkflowSessionState,
 ) -> InterviewGate {
-    let need_state = interview_need_state(response_text, plan_session);
+    let need_state = interview_need_state(response_text, response_has_plan, plan_session);
     InterviewGate {
         allow_interview: planning_workflow_interview_ready(session_stats, plan_session),
         response_has_plan: need_state.response_has_plan,
@@ -73,18 +74,22 @@ pub(super) fn evaluate_interview_gate(
 }
 
 /// Whether the planning session still needs an interview cycle, and whether
-/// the response already contains a `<proposed_plan>` block.
+/// the response already contains a validated-shape plan candidate.
 pub(super) fn interview_need_state(
     response_text: Option<&str>,
+    response_has_plan: bool,
     plan_session: &PlanningWorkflowSessionState,
 ) -> InterviewNeedState {
-    let response_has_plan = response_text.map(|text| text.contains("<proposed_plan>")).unwrap_or(false);
     let has_open_decisions = response_text.map(has_open_decision_markers).unwrap_or(false);
     let has_completed_interview = plan_session.interview_cycles_completed() > 0;
     let interview_cancelled = plan_session.last_interview_cancelled();
 
-    InterviewNeedState {
-        response_has_plan,
-        needs_interview: !has_completed_interview || interview_cancelled || has_open_decisions,
-    }
+    // A complete response candidate is already actionable and should flow to
+    // the approval gate instead of being discarded while an interview is
+    // injected. Open decisions remain the exception: they must be resolved by
+    // the interview before approval can proceed.
+    let needs_interview =
+        has_open_decisions || (!response_has_plan && (!has_completed_interview || interview_cancelled));
+
+    InterviewNeedState { response_has_plan, needs_interview }
 }

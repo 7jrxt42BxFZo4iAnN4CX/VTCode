@@ -59,10 +59,10 @@ fn maybe_force_planning_workflow_interview_appends_reminder_when_plan_ready() {
     let mut stats = SessionStats::default();
     let mut plan_session = PlanningWorkflowSessionState::default();
     let processing_result = TurnProcessingResult::TextResponse {
-        text: "<proposed_plan>\nPlan content\n</proposed_plan>".to_string(),
+        text: String::new(),
         reasoning: Vec::new(),
         reasoning_details: None,
-        proposed_plan: None,
+        proposed_plan: Some("Plan content".to_string()),
     };
 
     stats.record_tool(tools::READ_FILE);
@@ -85,21 +85,46 @@ fn maybe_force_planning_workflow_interview_appends_reminder_when_plan_ready() {
 }
 
 #[test]
-fn planning_workflow_reminder_includes_manual_switch_fallback() {
+fn maybe_force_planning_workflow_interview_preserves_untagged_plan_candidates() {
+    let mut stats = SessionStats::default();
+    let mut plan_session = PlanningWorkflowSessionState::default();
+    let plan = "Summary\nA complete plan without XML tags.\n\nSteps\n1. Gate approval -> files: [src/main.rs] -> verify: cargo check\n\nValidation\n1. Run cargo check.\n\nAssumptions\n1. Keep the current entry point.";
+    let processing_result = TurnProcessingResult::TextResponse {
+        text: String::new(),
+        reasoning: Vec::new(),
+        reasoning_details: None,
+        proposed_plan: Some(plan.to_string()),
+    };
+
+    stats.record_tool(tools::READ_FILE);
+    plan_session.increment_turns();
+
+    let result = maybe_force_planning_workflow_interview(processing_result, Some(plan), &stats, &mut plan_session, 2);
+    match result {
+        TurnProcessingResult::TextResponse { proposed_plan, .. } => {
+            assert_eq!(proposed_plan.as_deref(), Some(plan));
+        }
+        _ => panic!("untagged plan candidate must reach approval handling"),
+    }
+}
+
+#[test]
+fn planning_workflow_reminder_stays_fail_closed_before_persistence() {
     assert!(!PLANNING_WORKFLOW_REMINDER.contains(&format!("/{}", "mode")));
-    assert!(PLANNING_WORKFLOW_REMINDER.contains("implement"));
+    assert!(!PLANNING_WORKFLOW_REMINDER.contains("implement"));
+    assert!(PLANNING_WORKFLOW_REMINDER.contains("validated plan is persisted"));
 }
 
 #[test]
 fn maybe_force_planning_workflow_interview_does_not_duplicate_reminder() {
     let mut stats = SessionStats::default();
     let mut plan_session = PlanningWorkflowSessionState::default();
-    let text = format!("<proposed_plan>\nPlan content\n</proposed_plan>\n\n{PLANNING_WORKFLOW_REMINDER}");
+    let text = PLANNING_WORKFLOW_REMINDER.to_string();
     let processing_result = TurnProcessingResult::TextResponse {
         text: text.clone(),
         reasoning: Vec::new(),
         reasoning_details: None,
-        proposed_plan: None,
+        proposed_plan: Some("Plan content".to_string()),
     };
 
     stats.record_tool(tools::READ_FILE);

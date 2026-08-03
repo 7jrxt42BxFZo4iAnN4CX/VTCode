@@ -350,3 +350,172 @@ Persist a concrete draft and seed tracker state.
         assert!(start_tool.description().contains("apply_patch"));
     }
 }
+#[cfg(test)]
+mod planning_artifact_regression_tests {
+    use super::artifacts::validate_plan_content;
+    use super::persistence::persist_plan_draft;
+    use super::start::StartPlanningTool;
+    use super::state::PlanningWorkflowState;
+    use crate::tools::traits::Tool;
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    #[test]
+    fn validate_plan_content_accepts_case_insensitive_section_aliases() {
+        let report = validate_plan_content(
+            r#"# Alias Plan
+
+## summary
+Keep the recovery handoff approval-safe.
+
+## steps
+1. Gate plan persistence -> files: [src/agent/runloop/unified/turn/context/response_handling.rs] -> verify: [cargo nextest run -p vtcode]
+
+## validation
+1. Run planning regressions.
+
+## assumptions
+1. request_user_input remains optional in headless runtimes.
+"#,
+        );
+
+        assert!(report.is_ready(), "aliases should be case-insensitive: {:?}", report.reasons());
+    }
+
+    #[test]
+    fn validate_plan_content_rejects_generic_numbered_steps_with_precise_reason() {
+        let report = validate_plan_content(
+            r#"# Generic Plan
+
+## Summary
+Make the workflow better.
+
+## Implementation Steps
+1. Do the work.
+
+## Test Cases and Validation
+1. Run checks.
+
+## Assumptions and Defaults
+1. Keep existing behavior.
+"#,
+        );
+
+        assert!(!report.is_ready());
+        assert_eq!(report.implementation_step_count, 1);
+        assert!(
+            report
+                .invalid_implementation_steps
+                .iter()
+                .any(|reason| reason.contains("concrete"))
+        );
+        assert!(
+            report
+                .reasons()
+                .iter()
+                .any(|reason| reason.contains("invalid implementation steps"))
+        );
+    }
+
+    #[test]
+    fn validate_plan_content_rejects_generic_target_phrases() {
+        for target in [
+            "relevant code",
+            "appropriate files",
+            "the implementation",
+            "implementation details",
+            "foo bar",
+            "[file]",
+        ] {
+            let plan = format!(
+                "# Generic target\n\n## Summary\nReject vague repository targets.\n\n## Steps\n1. Apply the change -> files: {target} -> verify: cargo check\n\n## Validation\n1. Run cargo check.\n\n## Assumptions\n1. Keep the existing workflow.\n"
+            );
+            let report = validate_plan_content(&plan);
+            assert!(!report.is_ready(), "generic target should be rejected: {target}");
+            assert!(
+                report
+                    .invalid_implementation_steps
+                    .iter()
+                    .any(|reason| reason.contains("concrete")),
+                "missing precise target reason for {target}: {:?}",
+                report.reasons()
+            );
+        }
+    }
+
+    #[test]
+    fn validate_plan_content_rejects_arbitrary_verification_prose() {
+        let report = validate_plan_content(
+            "# Verification plan\n\n## Summary\nReject arbitrary checks.\n\n## Steps\n1. Update -> src/main.rs -> verify: run banana\n\n## Validation\n1. Run cargo check.\n\n## Assumptions\n1. Keep the current workflow.\n",
+        );
+
+        assert!(!report.is_ready());
+        assert!(
+            report
+                .invalid_implementation_steps
+                .iter()
+                .any(|reason| { reason.contains("verification marker must include a concrete command or check") })
+        );
+    }
+
+    #[test]
+    fn validate_plan_content_rejects_commands_only_mentioned_in_prose() {
+        let report = validate_plan_content(
+            "# Verification plan\n\n## Summary\nReject command mentions.\n\n## Steps\n1. Update -> src/main.rs -> verify: documentation mentions pytest\n\n## Validation\n1. Run cargo check.\n\n## Assumptions\n1. Keep the current workflow.\n",
+        );
+
+        assert!(!report.is_ready());
+        assert!(
+            report
+                .invalid_implementation_steps
+                .iter()
+                .any(|reason| { reason.contains("verification marker must include a concrete command or check") })
+        );
+    }
+
+    #[test]
+    fn validate_plan_content_accepts_compact_numbered_steps_after_summary_heading() {
+        let report = validate_plan_content(
+            "# Compact plan\n\n## Summary\nKeep compatibility with compact plan files.\n\n1. Preserve compact parsing -> files: [src/main.rs] -> verify: cargo check\n\n## Validation\n1. Run cargo check.\n\n## Assumptions\n1. Keep the existing plan format.\n",
+        );
+
+        assert!(report.is_ready(), "compact plan should remain valid: {:?}", report.reasons());
+        assert_eq!(report.implementation_step_count, 1);
+    }
+
+    #[tokio::test]
+    async fn persist_plan_draft_rejects_invalid_candidate_without_overwriting_existing_plan() {
+        let temp_dir = TempDir::new().unwrap();
+        let state = PlanningWorkflowState::new(temp_dir.path().to_path_buf());
+        let tool = StartPlanningTool::new(state.clone());
+        tool.execute(json!({"plan_name":"preserve-valid","approved":true}))
+            .await
+            .unwrap();
+
+        let valid_plan = r#"# Preserve Valid
+
+## Summary
+Keep the existing valid draft intact.
+
+## Implementation Steps
+1. Preserve the draft -> files: [src/lib.rs] -> verify: [cargo check]
+
+## Test Cases and Validation
+1. Run cargo check.
+
+## Assumptions and Defaults
+1. The existing plan remains the source of truth.
+"#;
+        let persisted = persist_plan_draft(&state, valid_plan).await.unwrap();
+        let before = tokio::fs::read_to_string(&persisted.plan_file).await.unwrap();
+
+        let invalid = "## Summary\nIncomplete.\n\n## Implementation Steps\n1. Do the work.\n";
+        let error = persist_plan_draft(&state, invalid)
+            .await
+            .expect_err("invalid draft must be rejected");
+        assert!(error.to_string().contains("invalid implementation steps"));
+
+        let after = tokio::fs::read_to_string(&persisted.plan_file).await.unwrap();
+        assert_eq!(after, before, "invalid candidates must not overwrite a valid draft");
+    }
+}

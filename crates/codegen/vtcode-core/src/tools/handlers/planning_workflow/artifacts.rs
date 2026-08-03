@@ -32,11 +32,17 @@ const PLACEHOLDER_TOKENS: [&str; 18] = [
     "tbd",
 ];
 
+const SUMMARY_SECTION_ALIASES: &[&str] = &["Summary"];
+const IMPLEMENTATION_SECTION_ALIASES: &[&str] = &["Implementation Steps", "Steps"];
+const VALIDATION_SECTION_ALIASES: &[&str] = &["Test Cases and Validation", "Validation"];
+const ASSUMPTIONS_SECTION_ALIASES: &[&str] = &["Assumptions and Defaults", "Assumptions"];
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PlanValidationReport {
     pub missing_sections: Vec<String>,
     pub placeholder_tokens: Vec<String>,
     pub open_decisions: Vec<String>,
+    pub invalid_implementation_steps: Vec<String>,
     pub implementation_step_count: usize,
     pub validation_item_count: usize,
     pub assumption_count: usize,
@@ -48,6 +54,7 @@ impl PlanValidationReport {
         self.missing_sections.is_empty()
             && self.placeholder_tokens.is_empty()
             && self.open_decisions.is_empty()
+            && self.invalid_implementation_steps.is_empty()
             && self.summary_present
             && self.implementation_step_count > 0
             && self.validation_item_count > 0
@@ -64,6 +71,9 @@ impl PlanValidationReport {
         }
         if !self.open_decisions.is_empty() {
             reasons.push(format!("unresolved decisions: {}", self.open_decisions.join("; ")));
+        }
+        if !self.invalid_implementation_steps.is_empty() {
+            reasons.push(format!("invalid implementation steps: {}", self.invalid_implementation_steps.join("; ")));
         }
         if !self.summary_present {
             reasons.push("summary is empty".to_string());
@@ -154,11 +164,14 @@ fn section_body(content: &str, header: &str) -> Option<String> {
     let mut lines = Vec::new();
     for line in content.lines() {
         let trimmed = line.trim();
+        if capture && is_plan_section_boundary(trimmed) {
+            break;
+        }
         if let Some(found) = trimmed.strip_prefix("## ") {
             if capture {
                 break;
             }
-            capture = found.trim().eq_ignore_ascii_case(header);
+            capture = found.trim().trim_end_matches(':').trim().eq_ignore_ascii_case(header);
             continue;
         }
         if capture {
@@ -169,12 +182,65 @@ fn section_body(content: &str, header: &str) -> Option<String> {
     (!body.is_empty()).then_some(body)
 }
 
-fn labeled_body(content: &str, label: &str) -> Option<String> {
-    let prefix = format!("{label}:");
+fn section_body_for_aliases(content: &str, headers: &[&str]) -> Option<String> {
+    headers
+        .iter()
+        .find_map(|header| section_body(content, header).or_else(|| standalone_section_body(content, header)))
+}
+
+fn normalized_section_label(line: &str) -> &str {
+    let mut normalized = line.trim().trim_start_matches('>').trim_start();
+    while let Some(stripped) = normalized.strip_prefix('#') {
+        normalized = stripped.trim_start();
+    }
+    strip_list_marker(normalized).trim()
+}
+
+fn is_standalone_section_label(line: &str, header: &str) -> bool {
+    let normalized = normalized_section_label(line);
+    normalized.eq_ignore_ascii_case(header)
+}
+
+fn standalone_section_body(content: &str, header: &str) -> Option<String> {
+    let mut capture = false;
+    let mut lines = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if is_standalone_section_label(trimmed, header) {
+            if capture {
+                break;
+            }
+            capture = true;
+            continue;
+        }
+        if capture && is_plan_section_boundary(trimmed) {
+            break;
+        }
+        if capture {
+            lines.push(line.to_string());
+        }
+    }
+    let body = lines.join("\n").trim().to_string();
+    (!body.is_empty()).then_some(body)
+}
+
+fn strip_ascii_case_insensitive_prefix<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
+    let prefix_end = prefix.len();
+    value
+        .get(..prefix_end)
+        .filter(|candidate| candidate.eq_ignore_ascii_case(prefix))
+        .and_then(|_| value.get(prefix_end..).map(str::trim_start))
+}
+
+fn labeled_body_for_aliases(content: &str, labels: &[&str]) -> Option<String> {
     let lines = content
         .lines()
         .map(str::trim)
-        .filter_map(|line| line.strip_prefix(&prefix).map(str::trim))
+        .filter_map(|line| {
+            labels
+                .iter()
+                .find_map(|label| strip_ascii_case_insensitive_prefix(line, &format!("{label}:")))
+        })
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
     (!lines.is_empty()).then(|| lines.join("\n"))
@@ -193,16 +259,500 @@ fn meaningful_section_lines(body: &str) -> Vec<&str> {
         .collect()
 }
 
+fn numbered_line_parts(line: &str) -> Option<(&str, &str)> {
+    let trimmed = line.trim();
+    let digit_end = trimmed
+        .char_indices()
+        .take_while(|(_, ch)| ch.is_ascii_digit())
+        .last()
+        .map_or(0, |(index, ch)| index + ch.len_utf8());
+    if digit_end == 0 {
+        return None;
+    }
+
+    let rest = trimmed.get(digit_end..)?.trim_start();
+    let punctuation = rest.chars().next()?;
+    if punctuation != '.' && punctuation != ')' {
+        return None;
+    }
+
+    Some((trimmed.get(..digit_end)?, rest.get(punctuation.len_utf8()..)?.trim_start()))
+}
+
 fn is_numbered_line(line: &str) -> bool {
-    let mut seen_digit = false;
-    for ch in line.chars() {
-        if ch.is_ascii_digit() {
-            seen_digit = true;
+    numbered_line_parts(line).is_some()
+}
+
+#[derive(Debug, Clone)]
+struct ImplementationStepBlock {
+    number: String,
+    lines: Vec<String>,
+}
+
+fn strip_list_marker(line: &str) -> &str {
+    let mut current = line.trim();
+    loop {
+        let Some(stripped) = current
+            .strip_prefix("- ")
+            .or_else(|| current.strip_prefix("* "))
+            .or_else(|| current.strip_prefix("• "))
+        else {
+            return current;
+        };
+        current = stripped.trim_start();
+    }
+}
+
+fn is_plan_section_boundary(line: &str) -> bool {
+    let mut normalized = line.trim();
+    while let Some(stripped) = normalized.strip_prefix('#') {
+        normalized = stripped.trim_start();
+    }
+    normalized = strip_list_marker(normalized).trim();
+    SUMMARY_SECTION_ALIASES
+        .iter()
+        .chain(IMPLEMENTATION_SECTION_ALIASES.iter())
+        .chain(VALIDATION_SECTION_ALIASES.iter())
+        .chain(ASSUMPTIONS_SECTION_ALIASES.iter())
+        .any(|alias| {
+            normalized.eq_ignore_ascii_case(alias)
+                || strip_ascii_case_insensitive_prefix(normalized, &format!("{alias}:")).is_some()
+        })
+}
+
+fn collect_implementation_step_blocks(content: &str, stop_at_section_boundaries: bool) -> Vec<ImplementationStepBlock> {
+    let mut blocks = Vec::new();
+    let mut current: Option<ImplementationStepBlock> = None;
+    let mut collecting = true;
+    let mut started = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty()
+            || trimmed.starts_with('>')
+            || trimmed.starts_with("<!--")
+            || trimmed == PLAN_TRACKER_START
+            || trimmed == PLAN_TRACKER_END
+        {
             continue;
         }
-        return seen_digit && (ch == '.' || ch == ')');
+
+        if let Some((number, step)) = numbered_line_parts(trimmed) {
+            if !collecting {
+                continue;
+            }
+            if let Some(previous) = current.take() {
+                blocks.push(previous);
+            }
+            started = true;
+            current = Some(ImplementationStepBlock {
+                number: number.to_string(),
+                lines: vec![step.to_string()],
+            });
+            continue;
+        }
+
+        if stop_at_section_boundaries && is_plan_section_boundary(trimmed) {
+            if started {
+                if let Some(previous) = current.take() {
+                    blocks.push(previous);
+                }
+                collecting = false;
+            }
+            continue;
+        }
+
+        if collecting
+            && started
+            && let Some(step) = current.as_mut()
+        {
+            step.lines.push(trimmed.to_string());
+        }
     }
-    false
+
+    if let Some(last) = current {
+        blocks.push(last);
+    }
+    blocks
+}
+
+fn marker_value<'a>(line: &'a str, labels: &[&str]) -> Option<&'a str> {
+    let line = strip_list_marker(line);
+    labels
+        .iter()
+        .find_map(|label| strip_ascii_case_insensitive_prefix(line, &format!("{label}:")))
+}
+
+fn is_concrete_value(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty() && value != "[]" && find_placeholder_tokens(value).is_empty()
+}
+
+fn is_concrete_target(value: &str) -> bool {
+    let value = value.trim();
+    if !is_concrete_value(value) {
+        return false;
+    }
+
+    let target = marker_value(value, &["files/symbols", "files", "symbols", "target", "behavior", "behaviour"])
+        .unwrap_or(value)
+        .trim();
+    if !is_concrete_value(target) {
+        return false;
+    }
+
+    let lower = target.to_ascii_lowercase();
+    if lower.starts_with('[') && lower.ends_with(']') {
+        let items = parse_bracket_list(target);
+        return !items.is_empty() && items.iter().all(|item| is_concrete_target(item));
+    }
+
+    let has_structural_reference = target.split_whitespace().any(|token| {
+        let token = token.trim_matches(|ch: char| ch.is_ascii_punctuation() && ch != '_' && ch != '/');
+        token.contains('/')
+            || token.contains('\\')
+            || token.contains("::")
+            || token.contains('_')
+            || token.chars().skip(1).any(char::is_uppercase)
+            || token.rsplit_once('.').is_some_and(|(_, suffix)| !suffix.is_empty())
+    });
+    if has_structural_reference {
+        return true;
+    }
+
+    const GENERIC_TARGETS: &[&str] = &[
+        "file",
+        "files",
+        "path",
+        "paths",
+        "symbol",
+        "symbols",
+        "files/symbols",
+        "files or symbols",
+        "file/symbol",
+        "file or symbol",
+        "behavior",
+        "behaviour",
+        "code",
+        "codebase",
+        "implementation",
+        "feature",
+        "workflow",
+        "module",
+        "modules",
+        "component",
+        "components",
+        "target",
+        "relevant files",
+        "relevant code",
+        "relevant modules",
+        "relevant symbols",
+        "appropriate files",
+        "appropriate code",
+        "appropriate modules",
+        "affected files",
+        "affected code",
+        "affected modules",
+        "the file",
+        "the files",
+        "the path",
+        "the symbol",
+        "the symbols",
+        "the behavior",
+        "the behaviour",
+        "the code",
+        "the codebase",
+        "the implementation",
+        "the feature",
+        "the workflow",
+        "the module",
+        "the modules",
+        "the component",
+        "the components",
+        "the relevant files",
+        "the relevant code",
+        "the relevant modules",
+        "the relevant symbols",
+        "the affected files",
+        "the affected code",
+        "the affected modules",
+        "existing code",
+        "existing files",
+        "existing modules",
+        "changed code",
+        "changed files",
+        "changed modules",
+        "all relevant files",
+        "all relevant code",
+        "all relevant modules",
+    ];
+    if GENERIC_TARGETS.iter().any(|generic| lower == *generic) {
+        return false;
+    }
+
+    let generic_prefixes = [
+        "relevant ",
+        "appropriate ",
+        "affected ",
+        "the relevant ",
+        "the affected ",
+        "existing ",
+        "changed ",
+        "all relevant ",
+        "the ",
+        "a ",
+        "an ",
+        "some ",
+        "any ",
+    ];
+    if generic_prefixes.iter().any(|prefix| lower.starts_with(prefix)) {
+        return false;
+    }
+
+    // A behavior target may be prose, but it still needs two recognizable
+    // domain terms. This rejects arbitrary filler such as `foo bar` or
+    // `implementation details` while allowing concrete behavior names such
+    // as `approval handoff`, `startup latency`, and `cache invalidation`.
+    const CONCRETE_BEHAVIOR_WORDS: &[&str] = &[
+        "agent",
+        "assertion",
+        "approval",
+        "artifact",
+        "budget",
+        "cache",
+        "check",
+        "command",
+        "configuration",
+        "confirmation",
+        "context",
+        "deferred",
+        "error",
+        "event",
+        "execution",
+        "fallback",
+        "flow",
+        "handoff",
+        "input",
+        "interview",
+        "latency",
+        "lifecycle",
+        "logic",
+        "markup",
+        "memory",
+        "output",
+        "parser",
+        "parsing",
+        "path",
+        "performance",
+        "permission",
+        "persistence",
+        "plan",
+        "planning",
+        "policy",
+        "prompt",
+        "question",
+        "read",
+        "recovery",
+        "refresh",
+        "request",
+        "response",
+        "runtime",
+        "state",
+        "startup",
+        "step",
+        "stream",
+        "symbol",
+        "task",
+        "test",
+        "timeout",
+        "tracker",
+        "transition",
+        "tool",
+        "ui",
+        "validation",
+        "workflow",
+        "write",
+    ];
+    let concrete_word_count = lower
+        .split_whitespace()
+        .map(|word| word.trim_matches(|character: char| character.is_ascii_punctuation()))
+        .filter(|word| CONCRETE_BEHAVIOR_WORDS.contains(word))
+        .count();
+    lower.split_whitespace().count() >= 2 && concrete_word_count >= 2
+}
+
+fn is_concrete_verification(value: &str) -> bool {
+    let value = value.trim();
+    if !is_concrete_value(value) {
+        return false;
+    }
+
+    if value.starts_with('[') && value.ends_with(']') {
+        let items = parse_bracket_list(value);
+        return !items.is_empty() && items.iter().all(|item| is_concrete_verification(item));
+    }
+
+    let lower = value.to_ascii_lowercase();
+    // A command/tool name is a concrete check even when its arguments are
+    // short (for example, `cargo check` or `nextest passes`). Do not treat
+    // generic words such as `check` or `run` as commands by themselves.
+    const COMMAND_NAMES: &[&str] = &[
+        "bun",
+        "cargo",
+        "cmake",
+        "clippy",
+        "deno",
+        "dotnet",
+        "eslint",
+        "go",
+        "gradle",
+        "just",
+        "make",
+        "meson",
+        "mvn",
+        "mypy",
+        "ninja",
+        "nextest",
+        "npm",
+        "pnpm",
+        "python",
+        "python3",
+        "pytest",
+        "rg",
+        "ruff",
+        "rustfmt",
+        "shellcheck",
+        "swiftlint",
+        "tsc",
+        "xcodebuild",
+        "yarn",
+    ];
+    let raw_words = lower.split_whitespace().collect::<Vec<_>>();
+    let is_command_token = |raw_word: &str| {
+        let word = raw_word.trim_matches(|character: char| matches!(character, '`' | '"' | '\''));
+        let bare_word = word.trim_matches(|character: char| character.is_ascii_punctuation());
+        COMMAND_NAMES.contains(&bare_word)
+            || word.starts_with("./")
+            || word.starts_with("../")
+            || word.starts_with('/')
+            || word.ends_with(".sh")
+            || word.ends_with(".cmd")
+            || word.ends_with(".ps1")
+            || word.ends_with(".bat")
+    };
+    let leading_wrapper = raw_words.first().is_some_and(|word| {
+        matches!(
+            word.trim_matches(|character: char| character.is_ascii_punctuation()),
+            "command" | "execute" | "invoke" | "run" | "use"
+        )
+    });
+    if raw_words.first().is_some_and(|word| is_command_token(word))
+        || (leading_wrapper && raw_words.get(1).is_some_and(|word| is_command_token(word)))
+    {
+        return true;
+    }
+
+    let words = lower.split_whitespace().collect::<Vec<_>>();
+    if words.len() < 2 {
+        return false;
+    }
+
+    let observable_markers = [
+        "assert",
+        "available",
+        "completes",
+        "contains",
+        "deferred",
+        "emits",
+        "expected",
+        "fails",
+        "finishes",
+        "holds",
+        "includes",
+        "matches",
+        "manual",
+        "measure",
+        "never",
+        "observable",
+        "outputs",
+        "persists",
+        "preserves",
+        "remains",
+        "renders",
+        "reports",
+        "returns",
+        "shows",
+        "starts",
+        "stays",
+        "survives",
+        "updates",
+        "visible",
+        "waits",
+    ];
+    words.iter().any(|word| observable_markers.contains(word))
+        || ((words.contains(&"tests") || words.contains(&"checks")) && words.contains(&"pass"))
+}
+
+fn implementation_step_shape_error(step: &ImplementationStepBlock) -> Option<String> {
+    let first_line = step.lines.first().map(String::as_str).unwrap_or_default();
+    let action = first_line.trim();
+    if action.is_empty() {
+        return Some("action is empty".to_string());
+    }
+
+    let segments = action.split("->").map(str::trim).collect::<Vec<_>>();
+    let verify_index = segments
+        .iter()
+        .position(|segment| marker_value(segment, &["verify", "verification"]).is_some());
+    let mut has_target = false;
+    let mut invalid_target = false;
+
+    if let Some(index) = verify_index {
+        if index < 2 {
+            return Some("must include a concrete target before the verification marker".to_string());
+        }
+        for target in segments.iter().skip(1).take(index.saturating_sub(1)) {
+            if marker_value(target, &["outcome"]).is_some() {
+                continue;
+            }
+            has_target = true;
+            invalid_target |= !is_concrete_target(target);
+        }
+    } else if segments.len() > 1 {
+        for target in segments.iter().skip(1) {
+            if marker_value(target, &["outcome"]).is_some() {
+                continue;
+            }
+            has_target = true;
+            invalid_target |= !is_concrete_target(target);
+        }
+    }
+
+    let mut has_verification = verify_index.is_some();
+    let mut verification_is_concrete = verify_index
+        .and_then(|index| marker_value(segments[index], &["verify", "verification"]))
+        .is_none_or(is_concrete_verification);
+    for continuation in step.lines.iter().skip(1) {
+        if let Some(target) = marker_value(continuation, &["files/symbols", "files", "symbols", "target"]) {
+            has_target = true;
+            invalid_target |= !is_concrete_target(target);
+        }
+        if let Some(verify) = marker_value(continuation, &["verify", "verification"]) {
+            has_verification = true;
+            verification_is_concrete &= is_concrete_verification(verify);
+        }
+    }
+
+    if !has_target || invalid_target {
+        return Some("must name a concrete file, symbol, or behavior target".to_string());
+    }
+    if !has_verification {
+        return Some("must include a `verify:` or `verification:` marker".to_string());
+    }
+    if !verification_is_concrete {
+        return Some("verification marker must include a concrete command or check".to_string());
+    }
+    None
 }
 
 fn find_placeholder_tokens(content: &str) -> Vec<String> {
@@ -247,29 +797,29 @@ pub fn validate_plan_content(content: &str) -> PlanValidationReport {
         ..PlanValidationReport::default()
     };
 
-    let summary_body = section_body(&stripped, "Summary").or_else(|| labeled_body(&stripped, "Summary"));
-    let implementation_body = section_body(&stripped, "Implementation Steps").or_else(|| {
-        let numbered = stripped
-            .lines()
-            .map(str::trim)
-            .filter(|line| is_numbered_line(line))
-            .collect::<Vec<_>>();
-        (!numbered.is_empty()).then(|| numbered.join("\n"))
-    });
-    let validation_is_labeled = section_body(&stripped, "Test Cases and Validation").is_none()
-        && section_body(&stripped, "Validation").is_none();
-    let validation_body = section_body(&stripped, "Test Cases and Validation")
-        .or_else(|| section_body(&stripped, "Validation"))
-        .or_else(|| labeled_body(&stripped, "Validation"));
-    let assumptions_is_labeled = section_body(&stripped, "Assumptions and Defaults").is_none()
-        && section_body(&stripped, "Assumptions").is_none();
-    let assumptions_body = section_body(&stripped, "Assumptions and Defaults")
-        .or_else(|| section_body(&stripped, "Assumptions"))
-        .or_else(|| labeled_body(&stripped, "Assumptions"));
+    let summary_body = section_body_for_aliases(&stripped, SUMMARY_SECTION_ALIASES)
+        .or_else(|| labeled_body_for_aliases(&stripped, SUMMARY_SECTION_ALIASES));
+    let implementation_section_body = section_body_for_aliases(&stripped, IMPLEMENTATION_SECTION_ALIASES);
+    let implementation_labeled_body = labeled_body_for_aliases(&stripped, IMPLEMENTATION_SECTION_ALIASES);
+    let implementation_blocks = if let Some(body) = implementation_section_body.as_deref() {
+        collect_implementation_step_blocks(body, false)
+    } else if implementation_labeled_body.is_some() {
+        collect_implementation_step_blocks(implementation_labeled_body.as_deref().unwrap_or_default(), false)
+    } else {
+        // Older compact plans omit a Steps heading and put the numbered list
+        // between labeled Summary/Validation/Assumptions lines. Keep that
+        // compatibility, but stop collecting when the next labeled section
+        // begins so validation bullets cannot masquerade as step details.
+        collect_implementation_step_blocks(&stripped, true)
+    };
+    let validation_body = section_body_for_aliases(&stripped, VALIDATION_SECTION_ALIASES)
+        .or_else(|| labeled_body_for_aliases(&stripped, VALIDATION_SECTION_ALIASES));
+    let assumptions_body = section_body_for_aliases(&stripped, ASSUMPTIONS_SECTION_ALIASES)
+        .or_else(|| labeled_body_for_aliases(&stripped, ASSUMPTIONS_SECTION_ALIASES));
 
     for (section, body) in [
         ("Summary", summary_body.as_ref()),
-        ("Implementation Steps", implementation_body.as_ref()),
+        ("Implementation Steps", (!implementation_blocks.is_empty()).then_some(&stripped)),
         ("Test Cases and Validation", validation_body.as_ref()),
         ("Assumptions and Defaults", assumptions_body.as_ref()),
     ] {
@@ -285,23 +835,25 @@ pub fn validate_plan_content(content: &str) -> PlanValidationReport {
         report.missing_sections.push("Summary".to_string());
     }
 
-    if let Some(body) = implementation_body.as_deref() {
-        report.implementation_step_count = meaningful_section_lines(body)
-            .into_iter()
-            .filter(|line| is_numbered_line(line))
-            .count();
-    }
+    report.implementation_step_count = implementation_blocks.len();
+    report.invalid_implementation_steps = implementation_blocks
+        .iter()
+        .filter_map(|step| {
+            implementation_step_shape_error(step).map(|reason| format!("step {}: {reason}", step.number))
+        })
+        .collect();
     if report.implementation_step_count == 0 && !report.missing_sections.iter().any(|s| s == "Implementation Steps") {
         report.missing_sections.push("Implementation Steps".to_string());
     }
 
     if let Some(body) = validation_body.as_deref() {
-        report.validation_item_count = meaningful_section_lines(body)
-            .into_iter()
+        let lines = meaningful_section_lines(body);
+        report.validation_item_count = lines
+            .iter()
             .filter(|line| is_numbered_line(line) || line.starts_with("- "))
             .count();
-        if validation_is_labeled && report.validation_item_count == 0 {
-            report.validation_item_count = meaningful_section_lines(body).len();
+        if report.validation_item_count == 0 {
+            report.validation_item_count = lines.len();
         }
     }
     if report.validation_item_count == 0 && !report.missing_sections.iter().any(|s| s == "Test Cases and Validation") {
@@ -309,12 +861,13 @@ pub fn validate_plan_content(content: &str) -> PlanValidationReport {
     }
 
     if let Some(body) = assumptions_body.as_deref() {
-        report.assumption_count = meaningful_section_lines(body)
-            .into_iter()
+        let lines = meaningful_section_lines(body);
+        report.assumption_count = lines
+            .iter()
             .filter(|line| is_numbered_line(line) || line.starts_with("- "))
             .count();
-        if assumptions_is_labeled && report.assumption_count == 0 {
-            report.assumption_count = meaningful_section_lines(body).len();
+        if report.assumption_count == 0 {
+            report.assumption_count = lines.len();
         }
     }
     if report.assumption_count == 0 && !report.missing_sections.iter().any(|s| s == "Assumptions and Defaults") {
@@ -343,7 +896,17 @@ pub(super) fn tracker_has_progress_or_notes(tracker: &str) -> bool {
 }
 
 pub fn generate_tracker_markdown_from_plan(plan_markdown: &str) -> Option<String> {
-    let implementation = section_body(plan_markdown, "Implementation Steps")?;
+    let stripped = strip_embedded_tracker(plan_markdown);
+    let implementation = section_body_for_aliases(&stripped, IMPLEMENTATION_SECTION_ALIASES).or_else(|| {
+        let blocks = collect_implementation_step_blocks(&stripped, true);
+        (!blocks.is_empty()).then(|| {
+            blocks
+                .into_iter()
+                .filter_map(|block| block.lines.first().map(|line| format!("{}. {line}", block.number)))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+    })?;
     let title = plan_markdown
         .lines()
         .find_map(|line| line.trim().strip_prefix("# ").map(str::trim))
@@ -369,21 +932,21 @@ pub fn generate_tracker_markdown_from_plan(plan_markdown: &str) -> Option<String
 
         let mut entry = format!("- [ ] {main}\n");
         for segment in segments.iter().skip(1) {
-            if let Some(files) = segment.strip_prefix("files:") {
+            if let Some(files) = strip_ascii_case_insensitive_prefix(segment, "files:") {
                 let values = parse_bracket_list(files);
                 if !values.is_empty() {
                     entry.push_str(&format!("  files: {}\n", values.join(", ")));
                 }
                 continue;
             }
-            if let Some(outcome) = segment.strip_prefix("outcome:") {
+            if let Some(outcome) = strip_ascii_case_insensitive_prefix(segment, "outcome:") {
                 let outcome = outcome.trim().trim_start_matches('[').trim_end_matches(']');
                 if !outcome.is_empty() {
                     entry.push_str(&format!("  outcome: {outcome}\n"));
                 }
                 continue;
             }
-            if let Some(verify) = segment.strip_prefix("verify:") {
+            if let Some(verify) = strip_ascii_case_insensitive_prefix(segment, "verify:") {
                 let values = parse_bracket_list(verify);
                 if values.is_empty() {
                     let trimmed = verify.trim();

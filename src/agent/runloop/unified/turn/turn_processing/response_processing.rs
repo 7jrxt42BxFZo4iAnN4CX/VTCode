@@ -4,6 +4,7 @@ use vtcode_core::utils::ansi::AnsiRenderer;
 use vtcode_core::utils::ansi::MessageStyle;
 
 use crate::agent::runloop::unified::plan_blocks::extract_any_plan;
+use crate::agent::runloop::unified::planning_workflow::validate_plan_content;
 use crate::agent::runloop::unified::turn::context::{PreparedAssistantToolCall, TurnProcessingResult};
 use crate::agent::runloop::unified::turn::guards::validate_tool_args_security;
 
@@ -80,10 +81,7 @@ pub(crate) fn process_llm_response(
         }
     }
 
-    if planning_active
-        && tool_calls.is_empty()
-        && let Some(ref text) = final_text
-    {
+    if planning_active && let Some(ref text) = final_text {
         let extraction = extract_any_plan(text);
         // The plan is rendered once by the approval flow below. Keep only the
         // non-plan prose in the normal assistant response; retaining the plan
@@ -99,7 +97,6 @@ pub(crate) fn process_llm_response(
     // uncommitted intermediate answer.
     if planning_active
         && proposed_plan.is_none()
-        && tool_calls.is_empty()
         && let Some(text) = final_text.as_deref()
         && looks_like_structured_plan(text)
     {
@@ -248,17 +245,34 @@ pub(crate) fn process_llm_response(
 }
 
 fn looks_like_structured_plan(text: &str) -> bool {
-    let normalized = text.to_ascii_lowercase();
-    let has_summary = normalized.contains("summary");
-    let has_steps = normalized.contains("steps")
-        || normalized.contains("step ")
-        || normalized.contains("1. ")
-        || normalized.contains("2. ");
-    let has_validation =
-        normalized.contains("validation") || normalized.contains("verification") || normalized.contains("verify:");
-    has_summary && (has_steps || has_validation)
-}
+    const SUMMARY_HEADERS: &[&str] = &["Summary"];
+    const VALIDATION_HEADERS: &[&str] = &["Test Cases and Validation", "Validation"];
 
+    let has_section = |headers: &[&str]| {
+        text.lines().map(str::trim).any(|line| {
+            let mut normalized = line.trim_start_matches('>').trim_start();
+            while let Some(stripped) = normalized.strip_prefix('#') {
+                normalized = stripped.trim_start();
+            }
+            for marker in ["- ", "* ", "• "] {
+                if let Some(stripped) = normalized.strip_prefix(marker) {
+                    normalized = stripped.trim_start();
+                    break;
+                }
+            }
+            headers.iter().any(|header| {
+                normalized.eq_ignore_ascii_case(header)
+                    || normalized
+                        .get(..header.len() + 1)
+                        .and_then(|prefix| prefix.strip_suffix(':'))
+                        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(header))
+            })
+        })
+    };
+
+    let report = validate_plan_content(text);
+    has_section(SUMMARY_HEADERS) && has_section(VALIDATION_HEADERS) && report.is_ready()
+}
 pub(crate) fn prepare_tool_calls(
     tool_calls: Vec<vtcode_core::llm::provider::ToolCall>,
 ) -> Vec<PreparedAssistantToolCall> {
@@ -784,6 +798,42 @@ mod tests {
     }
 
     #[test]
+    fn process_llm_response_drops_tool_calls_attached_to_a_complete_plan() {
+        let response = LLMResponse {
+            content: Some(
+                "# Attached plan\n\n## Summary\nKeep approval ahead of tool execution.\n\n## Steps\n1. Gate the plan -> files: [src/agent/runloop/unified/turn/turn_processing/response_processing.rs] -> verify: cargo check\n\n## Validation\n1. Run the planning regression tests.\n\n## Assumptions\n1. Preserve the existing planning policy.\n".to_string(),
+            ),
+            tool_calls: Some(vec![vtcode_core::llm::provider::ToolCall::function(
+                "call_after_plan".to_string(),
+                "code_search".to_string(),
+                r#"{"query":"should-not-run"}"#.to_string(),
+            )]),
+            model: "test".to_string(),
+            usage: None,
+            finish_reason: FinishReason::ToolCalls,
+            reasoning: None,
+            reasoning_details: None,
+            tool_references: Vec::new(),
+            compaction: None,
+            request_id: None,
+            organization_id: None,
+        };
+
+        let mut renderer = AnsiRenderer::stdout();
+        let result = process_llm_response(&response, &mut renderer, 0, true, false, true, true, None, None)
+            .expect("processing should succeed");
+
+        match result {
+            TurnProcessingResult::TextResponse { text, proposed_plan, .. } => {
+                assert!(text.is_empty());
+                assert!(proposed_plan.is_some());
+            }
+            TurnProcessingResult::ToolCalls { .. } => panic!("attached calls must not bypass plan approval"),
+            TurnProcessingResult::Empty => panic!("complete plan should remain actionable"),
+        }
+    }
+
+    #[test]
     fn process_llm_response_extracts_sparse_proposed_plan_blocks() {
         let response = LLMResponse {
             content: Some(
@@ -1024,17 +1074,22 @@ Open questions for alignment:
 
      1. Measure baseline
        - Action: Add a high-resolution startup timer.
-       - Files/symbols: main entry.
+       - Files/symbols: src/main.rs:main.
        - Verify: `cargo run --release` prints phase durations.
 
      2. Trim binary size
        - Action: Audit Cargo.toml for large crates.
+       - Files/symbols: Cargo.toml.
        - Verify: `cargo build --locked --release` size drops.
 
-     Validation
+      Validation
 
-     •   Build: cargo check --locked
-     •   Tests: targeted tests in src/startup/.
+      •   Build: cargo check --locked
+      •   Tests: targeted tests in src/startup/.
+
+      Assumptions
+
+      •   Keep the existing startup entry point and output format.
         "#;
         assert!(looks_like_structured_plan(text));
     }
@@ -1043,5 +1098,17 @@ Open questions for alignment:
     fn looks_like_structured_plan_rejects_plain_conversation() {
         let text = "Here is a quick update: I searched the codebase and found nothing relevant.";
         assert!(!looks_like_structured_plan(text));
+
+        let generic_fallback = r#"Summary
+The current context is sufficient.
+
+Steps
+1. Review the relevant code.
+2. Make the required changes.
+
+Validation
+Run the usual checks.
+"#;
+        assert!(!looks_like_structured_plan(generic_fallback));
     }
 }

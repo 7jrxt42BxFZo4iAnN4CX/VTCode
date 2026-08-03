@@ -461,7 +461,7 @@ async fn plan_mode_recovery_fallback_marks_interview_pending_and_preserves_resea
     assert!(history.iter().any(|message| {
         message.role == uni::MessageRole::Assistant
             && message.phase == Some(uni::AssistantPhase::FinalAnswer)
-            && message.content.as_text() == PLANNING_RECOVERY_SYNTHESIS_FALLBACK
+            && message.content.as_text().contains(PLANNING_RECOVERY_SYNTHESIS_FALLBACK)
     }));
     assert!(!history.iter().any(|message| {
         message.role == uni::MessageRole::Assistant
@@ -498,8 +498,8 @@ async fn plan_mode_recovery_exhausted_finalizes_instead_of_reforcing_interview()
     // Must NOT re-force the interview — that is what caused the infinite loop.
     assert!(!plan_session.interview_pending());
     // Must conclude with the USER-facing recovery-exhausted notice (not the
-    // model-addressed `*_FINALIZE` directive) plus the plan-confirmation hint
-    // so the user can continue with `implement` / `keep planning`.
+    // model-addressed `*_FINALIZE` directive). With no validated persisted
+    // artifact, the user must be told to keep planning rather than implement.
     let last = history.last().unwrap();
     assert_eq!(last.role, uni::MessageRole::Assistant);
     assert_eq!(last.phase, Some(uni::AssistantPhase::FinalAnswer));
@@ -509,7 +509,8 @@ async fn plan_mode_recovery_exhausted_finalizes_instead_of_reforcing_interview()
         !text.contains("Do NOT attempt more tool calls"),
         "model directive must not leak into the user-visible final answer"
     );
-    assert!(text.contains("`implement`"), "final answer must include the plan-confirmation hint");
+    assert!(!text.contains("`implement`"), "no approval hint is allowed without a valid draft");
+    assert!(text.to_ascii_lowercase().contains("keep planning"));
 }
 
 #[tokio::test]

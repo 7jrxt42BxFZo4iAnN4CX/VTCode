@@ -1,4 +1,8 @@
 use super::*;
+use crate::agent::runloop::unified::planning_workflow::{
+    PlanArtifactError, ValidatedPlanArtifact, emit_plan_ready_events, persist_plan_draft, persisted_plan_is_ready,
+    validate_plan_content,
+};
 use crate::agent::runloop::unified::ui_interaction_stream_helpers::render_compact_reasoning_block;
 
 const DENIED_INTERVIEW_PLAN_SYNTHESIS_RETRY_DIRECTIVE: &str = "Planning recovery: the interactive interview is unavailable, and the previous response did not contain a completed plan. Do not ask another question or offer approval yet. Emit exactly one compact `<proposed_plan>` now from the repository evidence already in this conversation; include Summary, numbered `Action -> files/symbols -> verify:` steps, Validation, and short Assumptions. Do not emit tool calls.";
@@ -28,21 +32,22 @@ pub(super) fn looks_like_clarifying_question(text: &str) -> bool {
 impl<'a> TurnProcessingContext<'a> {
     fn reject_plan_artifact(
         &mut self,
-        error: crate::agent::runloop::unified::planning_workflow::PlanArtifactError,
+        error: PlanArtifactError,
+        allow_repair: bool,
     ) -> anyhow::Result<TurnHandlerOutcome> {
         use vtcode_core::utils::ansi::MessageStyle;
 
         let message = format!("Plan is not ready for approval: {error}");
         self.renderer.line(MessageStyle::Warning, &message)?;
         tracing::warn!(target: "vtcode.planning_workflow", error = %error, "plan artifact rejected before approval");
-        if self.plan_session.plan_validation_repair_allowed() {
+        if allow_repair && self.plan_session.plan_validation_repair_allowed() {
             self.plan_session.mark_plan_validation_repair_used();
             self.push_system_message(INVALID_PLAN_REPAIR_DIRECTIVE);
             return Ok(TurnHandlerOutcome::Continue);
         }
         self.renderer.line(
             MessageStyle::Warning,
-            "Planning remains active. Repair the plan and submit it again before approval.",
+            crate::agent::runloop::unified::planning_workflow_state::PLANNING_WORKFLOW_NO_APPROVAL_READY_PLAN_HINT,
         )?;
         Ok(TurnHandlerOutcome::Break(TurnLoopResult::Completed { plan_approved_execution_pending: false }))
     }
@@ -237,7 +242,6 @@ impl<'a> TurnProcessingContext<'a> {
         } else {
             text
         };
-        let final_text = text.clone();
         let denied_interview_plan_retry = self.is_planning_active()
             && !tool_free_recovery_pass
             && proposed_plan.is_none()
@@ -247,6 +251,18 @@ impl<'a> TurnProcessingContext<'a> {
             && tool_free_recovery_pass
             && proposed_plan.is_none()
             && self.plan_session.plan_synthesis_retry_allowed();
+        let denied_interview_without_ready_plan = self.is_planning_active()
+            && self.plan_session.is_interview_denied()
+            && proposed_plan.is_none()
+            && !persisted_plan_is_ready(&self.tool_registry.planning_workflow_state()).await
+            && !looks_like_clarifying_question(&text);
+        let text = if denied_interview_without_ready_plan {
+            crate::agent::runloop::unified::planning_workflow_state::PLANNING_WORKFLOW_NO_APPROVAL_READY_PLAN_HINT
+                .to_string()
+        } else {
+            text
+        };
+        let final_text = text.clone();
         let consecutive_relaxed = self.harness_state.consecutive_relaxed_continuations;
         let continuation_decision = if tool_free_recovery_pass {
             // Tool-free recovery is terminal: the text produced during recovery
@@ -430,15 +446,43 @@ impl<'a> TurnProcessingContext<'a> {
             );
             // Persist before publishing the approval request so consumers that
             // follow the event's plan_file can read the completed draft.
-            let persisted = persist_plan_draft(&self.tool_registry.planning_workflow_state(), &plan_text).await?;
-            let plan = match crate::agent::runloop::unified::planning_workflow::ValidatedPlanArtifact::from_text(
-                persisted.plan_file.clone(),
-                plan_text.clone(),
-            ) {
-                Ok(plan) => plan,
-                Err(error) => return self.reject_plan_artifact(error),
+            let validation = validate_plan_content(&plan_text);
+            if !validation.is_ready() {
+                let error = PlanArtifactError::Invalid { reasons: validation.reasons().join("; ") };
+                return self.reject_plan_artifact(error, !tool_free_recovery_pass);
+            }
+
+            let persisted = match persist_plan_draft(&self.tool_registry.planning_workflow_state(), &plan_text).await {
+                Ok(persisted) => persisted,
+                Err(error) => {
+                    let error = PlanArtifactError::Persistence { reason: error.to_string() };
+                    return self.reject_plan_artifact(error, false);
+                }
             };
-            self.emit_plan_events(&plan_text).await;
+            if !persisted.validation.is_ready() {
+                let error = PlanArtifactError::Invalid { reasons: persisted.validation.reasons().join("; ") };
+                return self.reject_plan_artifact(error, !tool_free_recovery_pass);
+            }
+            if !persisted_plan_is_ready(&self.tool_registry.planning_workflow_state()).await {
+                let error = PlanArtifactError::Persistence {
+                    reason: "plan, sidecar tracker, and workspace tracker were not published completely".to_string(),
+                };
+                return self.reject_plan_artifact(error, false);
+            }
+            let plan = match ValidatedPlanArtifact::from_text(persisted.plan_file.clone(), plan_text.clone()) {
+                Ok(plan) => plan,
+                Err(error) => return self.reject_plan_artifact(error, !tool_free_recovery_pass),
+            };
+            let plan_state = self.tool_registry.planning_workflow_state();
+            emit_plan_ready_events(
+                self.plan_session,
+                &plan_state,
+                self.harness_emitter,
+                &self.harness_state.run_id.0,
+                &self.harness_state.turn_id.0,
+                &plan_text,
+            )
+            .await;
 
             let require_confirmation = self.vt_cfg.map(|cfg| cfg.agent.require_plan_confirmation).unwrap_or(true);
             let supports_inline = self.renderer.supports_inline_ui();
@@ -519,6 +563,14 @@ impl<'a> TurnProcessingContext<'a> {
                 Ok(handoff) => handoff,
                 Err(error) => {
                     tracing::warn!(target: "vtcode.planning_workflow", error = %error, "automatic approved-plan handoff blocked");
+                    crate::agent::runloop::unified::planning_workflow::resolve_plan_approval(
+                        self.plan_session,
+                        self.harness_emitter,
+                        &self.harness_state.run_id.0,
+                        &self.harness_state.turn_id.0,
+                        vtcode_core::exec::events::PlanApprovalDecision::Cancel,
+                        true,
+                    );
                     let message = format!("Plan execution is blocked: {error}");
                     self.renderer.line(MessageStyle::Error, &message)?;
                     return Ok(TurnHandlerOutcome::Break(TurnLoopResult::Completed {
@@ -551,62 +603,6 @@ impl<'a> TurnProcessingContext<'a> {
         }
 
         Ok(TurnHandlerOutcome::Break(TurnLoopResult::Completed { plan_approved_execution_pending: false }))
-    }
-
-    async fn emit_plan_events(&mut self, plan_text: &str) {
-        let turn_id = self.harness_state.turn_id.0.clone();
-        let thread_id = self.harness_state.run_id.0.clone();
-        self.plan_session.mark_plan_approval_pending(thread_id.clone(), turn_id.clone());
-        let Some(emitter) = self.harness_emitter else {
-            return;
-        };
-        let item_id = format!("{turn_id}-plan");
-        let plan_path = self
-            .tool_registry
-            .planning_workflow_state()
-            .get_plan_file()
-            .await
-            .map(|path| path.display().to_string());
-
-        let _ = emitter.emit(crate::agent::runloop::unified::inline_events::harness::harness_event(
-            vtcode_core::exec::events::HarnessEventKind::PlanningStarted,
-            Some("Planning workflow produced a plan for review.".to_string()),
-            plan_path.clone(),
-            None,
-            None,
-        ));
-
-        let start_item = ThreadItem {
-            id: item_id.clone(),
-            details: ThreadItemDetails::Plan(PlanItem { text: String::new() }),
-        };
-        let _ = emitter.emit(ThreadEvent::ItemStarted(ItemStartedEvent { item: start_item }));
-
-        let _ = emitter.emit(ThreadEvent::PlanDelta(PlanDeltaEvent {
-            thread_id,
-            turn_id: turn_id.clone(),
-            item_id: item_id.clone(),
-            delta: plan_text.to_string(),
-        }));
-
-        let completed_item = ThreadItem {
-            id: item_id,
-            details: ThreadItemDetails::Plan(PlanItem { text: plan_text.to_string() }),
-        };
-        let _ = emitter.emit(ThreadEvent::ItemCompleted(ItemCompletedEvent { item: completed_item }));
-        let _ = emitter.emit(crate::agent::runloop::unified::inline_events::harness::harness_event(
-            vtcode_core::exec::events::HarnessEventKind::PlanningCompleted,
-            Some("Plan is ready for user approval.".to_string()),
-            plan_path.clone(),
-            None,
-            None,
-        ));
-        crate::agent::runloop::unified::planning_workflow::emit_plan_approval_requested(
-            self.harness_emitter,
-            self.harness_state.run_id.0.clone(),
-            self.harness_state.turn_id.0.clone(),
-            plan_path,
-        );
     }
 }
 

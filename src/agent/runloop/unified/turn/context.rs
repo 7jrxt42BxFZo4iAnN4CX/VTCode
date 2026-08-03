@@ -31,13 +31,9 @@ use tokio::sync::RwLock;
 use vtcode_core::config::loader::VTCodeConfig;
 use vtcode_core::core::agent::runtime::RuntimeSteering;
 use vtcode_core::core::agent::snapshots::SnapshotManager;
-use vtcode_core::exec::events::{
-    ItemCompletedEvent, ItemStartedEvent, PlanDeltaEvent, PlanItem, ThreadEvent, ThreadItem, ThreadItemDetails,
-};
 use vtcode_core::hooks::{LifecycleHookEngine, SessionEndReason};
 use vtcode_core::llm::provider as uni;
 use vtcode_core::llm::providers::ReasoningSegment;
-use vtcode_core::tools::handlers::planning_workflow::persist_plan_draft;
 use vtcode_core::tools::registry::ToolExecutionError;
 use vtcode_core::utils::ansi::AnsiRenderer;
 use vtcode_ui::tui::app::InlineHandle;

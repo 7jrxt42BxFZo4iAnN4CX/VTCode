@@ -3,7 +3,6 @@
 use anyhow::Result;
 use vtcode_commons::ErrorCategory;
 use vtcode_core::llm::provider as uni;
-use vtcode_core::tools::handlers::planning_workflow::{PlanningWorkflowState, persist_plan_draft};
 use vtcode_core::utils::ansi::{AnsiRenderer, MessageStyle};
 
 use super::{
@@ -11,9 +10,13 @@ use super::{
     PLANNING_RECOVERY_SYNTHESIS_FALLBACK_NO_INTERVIEW, POST_TOOL_RECOVERY_REASON, POST_TOOL_RECOVERY_REASON_PLAN_MODE,
     POST_TOOL_RESUME_DIRECTIVE, RECOVERY_CONTRACT_VIOLATION_REASON, RECOVERY_SYNTHESIS_FALLBACK_FINAL_ANSWER,
 };
+use crate::agent::runloop::unified::inline_events::harness::HarnessEventEmitter;
 use crate::agent::runloop::unified::plan_blocks::extract_any_plan;
+use crate::agent::runloop::unified::planning_workflow::{
+    PlanningWorkflowState, emit_plan_ready_events, persist_plan_draft, persisted_plan_is_ready, validate_plan_content,
+};
 use crate::agent::runloop::unified::planning_workflow_state::{
-    PlanningWorkflowSessionState, short_confirmation_hint_with_fallback,
+    PLANNING_WORKFLOW_NO_APPROVAL_READY_PLAN_HINT, PlanningWorkflowSessionState, short_confirmation_hint_with_fallback,
 };
 use crate::agent::runloop::unified::run_loop_context::HarnessTurnState;
 use crate::agent::runloop::unified::turn::context::TurnLoopResult;
@@ -23,6 +26,13 @@ pub(super) enum PostToolFailureRecovery {
     NotApplicable,
     RetryToolFree,
     StopAfterDirective,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct PlanRecoveryEventContext<'a> {
+    pub(super) emitter: Option<&'a HarnessEventEmitter>,
+    pub(super) thread_id: &'a str,
+    pub(super) turn_id: &'a str,
 }
 
 pub(super) fn has_tool_response_since(messages: &[uni::Message], baseline_len: usize) -> bool {
@@ -42,6 +52,15 @@ fn ensure_recent_system_message(working_history: &mut Vec<uni::Message>, content
     }
 
     working_history.push(uni::Message::system(content.to_string()));
+}
+
+fn ready_plan_text(text: &str) -> Option<String> {
+    let extraction = extract_any_plan(text);
+    if let Some(plan_text) = extraction.plan_text {
+        return validate_plan_content(&plan_text).is_ready().then_some(plan_text);
+    }
+
+    validate_plan_content(text).is_ready().then(|| text.trim().to_string())
 }
 
 pub(super) fn ensure_post_tool_resume_directive(working_history: &mut Vec<uni::Message>) {
@@ -81,7 +100,7 @@ pub(super) fn maybe_recover_after_post_tool_llm_failure(
         && working_history.get(turn_history_start_len..).is_some_and(|recent| {
             recent
                 .iter()
-                .any(|msg| msg.role == uni::MessageRole::Assistant && !msg.content.as_text().trim().is_empty())
+                .any(|msg| msg.role == uni::MessageRole::Assistant && ready_plan_text(&msg.content.as_text()).is_some())
         });
     if has_plan_in_history {
         return Ok(PostToolFailureRecovery::StopAfterDirective);
@@ -167,17 +186,15 @@ fn gather_files_read_this_turn(working_history: &[uni::Message]) -> Vec<String> 
 /// Plan-mode recovery fallback. When the tool-free synthesis fails, the
 /// "salvaged" text is usually just a rambling recovery monologue with tool-call
 /// markup stripped out — not a plan. Injecting that as the plan the user sees is
-/// worse than the structured plan-mode message. We only keep the salvage when it
-/// actually contains a `<proposed_plan>` (a real, if partial, plan); otherwise we
-/// fall back to the informative plan-mode message so the turn ends cleanly
-/// instead of leaking garbage into the proposed plan.
+/// worse than the structured plan-mode message. Keep salvage only when its
+/// extracted artifact passes the same readiness gate used by approval.
 fn plan_mode_recovery_fallback(
     salvaged_text: Option<String>,
     structured_message: &str,
     working_history: &[uni::Message],
 ) -> String {
     if let Some(text) = salvaged_text
-        && text.trim().contains("<proposed_plan")
+        && ready_plan_text(&text).is_some()
     {
         // Trim only the outer whitespace so a plan salvaged with stray
         // blank lines isn't injected with that garbage framing intact.
@@ -202,6 +219,7 @@ fn build_recovery_fallback(working_history: &[uni::Message], lead_in: &str) -> S
     }
 }
 
+#[cfg(test)]
 pub(super) async fn complete_turn_after_failed_tool_free_recovery(
     working_history: &mut Vec<uni::Message>,
     failure_stage: &str,
@@ -210,21 +228,74 @@ pub(super) async fn complete_turn_after_failed_tool_free_recovery(
     plan_session: Option<&mut PlanningWorkflowSessionState>,
     plan_state: Option<&PlanningWorkflowState>,
 ) -> TurnLoopResult {
+    complete_turn_after_failed_tool_free_recovery_with_events(
+        working_history,
+        failure_stage,
+        err,
+        salvaged_text,
+        plan_session,
+        plan_state,
+        None,
+    )
+    .await
+}
+
+pub(super) async fn complete_turn_after_failed_tool_free_recovery_with_events(
+    working_history: &mut Vec<uni::Message>,
+    failure_stage: &str,
+    err: Option<&anyhow::Error>,
+    salvaged_text: Option<String>,
+    plan_session: Option<&mut PlanningWorkflowSessionState>,
+    plan_state: Option<&PlanningWorkflowState>,
+    events: Option<PlanRecoveryEventContext<'_>>,
+) -> TurnLoopResult {
     // In plan mode, the recovery salvage (the inline `<proposed_plan>` the model
     // produced) must be persisted to the session plan file even though tools
     // were disabled during the tool-free recovery pass. Otherwise the plan
     // exists only in chat history while the user-facing notices promise it is
     // "preserved in the session plan file (.vtcode/plans/)". Best-effort: a
     // write failure is logged and must never dead-end the turn.
-    if let (Some(state), Some(salvaged)) = (plan_state, salvaged_text.as_ref()) {
-        if let Some(plan_text) = extract_any_plan(salvaged).plan_text {
-            if let Err(e) = persist_plan_draft(state, &plan_text).await {
+    let mut plan_session = plan_session;
+    let mut persisted_salvage = None;
+    let mut recovered_plan_text = None;
+    if let (Some(state), Some(salvaged)) = (plan_state, salvaged_text.as_ref())
+        && let Some(plan_text) = ready_plan_text(salvaged)
+    {
+        match persist_plan_draft(state, &plan_text).await {
+            Ok(persisted) if persisted.validation.is_ready() && persisted_plan_is_ready(state).await => {
+                persisted_salvage = Some(salvaged.clone());
+                recovered_plan_text = Some(plan_text);
+            }
+            Ok(_) => {
+                tracing::warn!("plan-mode recovery: persisted salvage failed the readiness gate");
+            }
+            Err(error) => {
                 tracing::warn!(
-                    error = %e,
+                    error = %error,
                     "plan-mode recovery: failed to persist salvaged plan to session plan file"
                 );
             }
         }
+    }
+    let persisted_plan_ready = if let Some(state) = plan_state {
+        persisted_plan_is_ready(state).await
+    } else {
+        false
+    };
+
+    if let Some(event_context) = events
+        && let (Some(session), Some(state), Some(plan_text)) =
+            (plan_session.as_deref_mut(), plan_state, recovered_plan_text.as_deref())
+    {
+        emit_plan_ready_events(
+            session,
+            state,
+            event_context.emitter,
+            event_context.thread_id,
+            event_context.turn_id,
+            plan_text,
+        )
+        .await;
     }
 
     // Plan mode: never dead-end. Preserve the planning session and re-force
@@ -268,9 +339,14 @@ pub(super) async fn complete_turn_after_failed_tool_free_recovery(
             } else {
                 PLANNING_RECOVERY_SYNTHESIS_FALLBACK_NO_INTERVIEW
             };
-            let mut planning_fallback = plan_mode_recovery_fallback(salvaged_text, finalize_message, working_history);
+            let mut planning_fallback =
+                plan_mode_recovery_fallback(persisted_salvage, finalize_message, working_history);
             planning_fallback.push_str("\n\n");
-            planning_fallback.push_str(&short_confirmation_hint_with_fallback());
+            if persisted_plan_ready {
+                planning_fallback.push_str(&short_confirmation_hint_with_fallback());
+            } else {
+                planning_fallback.push_str(PLANNING_WORKFLOW_NO_APPROVAL_READY_PLAN_HINT);
+            }
             push_final_answer_if_absent(working_history, &planning_fallback);
             tracing::warn!(
                 stage = failure_stage,
@@ -281,9 +357,19 @@ pub(super) async fn complete_turn_after_failed_tool_free_recovery(
             );
             return TurnLoopResult::Completed { plan_approved_execution_pending: false };
         }
-        plan_session.mark_interview_pending();
-        let planning_fallback =
-            plan_mode_recovery_fallback(salvaged_text, PLANNING_RECOVERY_SYNTHESIS_FALLBACK, working_history);
+        if recovered_plan_text.is_some() && persisted_plan_ready {
+            plan_session.clear_interview_pending();
+        } else {
+            plan_session.mark_interview_pending();
+        }
+        let mut planning_fallback =
+            plan_mode_recovery_fallback(persisted_salvage, PLANNING_RECOVERY_SYNTHESIS_FALLBACK, working_history);
+        planning_fallback.push_str("\n\n");
+        if persisted_plan_ready {
+            planning_fallback.push_str(&short_confirmation_hint_with_fallback());
+        } else {
+            planning_fallback.push_str(PLANNING_WORKFLOW_NO_APPROVAL_READY_PLAN_HINT);
+        }
         push_final_answer_if_absent(working_history, &planning_fallback);
         tracing::warn!(
             stage = failure_stage,
@@ -336,6 +422,7 @@ fn push_final_answer_if_absent(working_history: &mut Vec<uni::Message>, text: &s
     }
 }
 
+#[cfg(test)]
 pub(super) async fn normalize_tool_free_recovery_break_outcome(
     working_history: &mut Vec<uni::Message>,
     outcome_result: TurnLoopResult,
@@ -343,6 +430,27 @@ pub(super) async fn normalize_tool_free_recovery_break_outcome(
     salvaged_text: Option<String>,
     plan_session: Option<&mut PlanningWorkflowSessionState>,
     plan_state: Option<&PlanningWorkflowState>,
+) -> TurnLoopResult {
+    normalize_tool_free_recovery_break_outcome_with_events(
+        working_history,
+        outcome_result,
+        tool_free_recovery,
+        salvaged_text,
+        plan_session,
+        plan_state,
+        None,
+    )
+    .await
+}
+
+pub(super) async fn normalize_tool_free_recovery_break_outcome_with_events(
+    working_history: &mut Vec<uni::Message>,
+    outcome_result: TurnLoopResult,
+    tool_free_recovery: bool,
+    salvaged_text: Option<String>,
+    plan_session: Option<&mut PlanningWorkflowSessionState>,
+    plan_state: Option<&PlanningWorkflowState>,
+    events: Option<PlanRecoveryEventContext<'_>>,
 ) -> TurnLoopResult {
     let should_fallback = tool_free_recovery
         && matches!(
@@ -353,13 +461,14 @@ pub(super) async fn normalize_tool_free_recovery_break_outcome(
         );
 
     if should_fallback {
-        return complete_turn_after_failed_tool_free_recovery(
+        return complete_turn_after_failed_tool_free_recovery_with_events(
             working_history,
             "handle_turn_processing_result.tool_free_recovery_contract_violation",
             None,
             salvaged_text,
             plan_session,
             plan_state,
+            events,
         )
         .await;
     }
@@ -386,6 +495,7 @@ pub(super) struct PostToolRecoveryContext<'a> {
     pub renderer: &'a mut AnsiRenderer,
     pub working_history: &'a mut Vec<uni::Message>,
     pub harness_state: &'a mut HarnessTurnState,
+    pub harness_emitter: Option<&'a HarnessEventEmitter>,
     pub plan_session: Option<&'a mut PlanningWorkflowSessionState>,
     pub plan_state: Option<&'a PlanningWorkflowState>,
     pub err: &'a anyhow::Error,
@@ -405,6 +515,7 @@ pub(super) async fn dispatch_post_tool_failure(ctx: PostToolRecoveryContext<'_>)
         renderer,
         working_history,
         harness_state,
+        harness_emitter,
         mut plan_session,
         plan_state,
         err,
@@ -413,6 +524,13 @@ pub(super) async fn dispatch_post_tool_failure(ctx: PostToolRecoveryContext<'_>)
         stage,
         tool_free_recovery,
     } = ctx;
+    let event_thread_id = harness_state.run_id.0.clone();
+    let event_turn_id = harness_state.turn_id.0.clone();
+    let event_context = PlanRecoveryEventContext {
+        emitter: harness_emitter,
+        thread_id: &event_thread_id,
+        turn_id: &event_turn_id,
+    };
     let planning_active = plan_session.is_some();
     // Plan-mode: if this turn's tool wall-clock budget was exhausted, the
     // planning context is saturated — the model spent the entire budget on
@@ -449,13 +567,14 @@ pub(super) async fn dispatch_post_tool_failure(ctx: PostToolRecoveryContext<'_>)
             if tool_free_recovery {
                 let salvaged = harness_state.take_recovery_rejected_synthesis();
                 let direct_stage = concat_compact(stage, ".direct_tool_free_failure");
-                let result = complete_turn_after_failed_tool_free_recovery(
+                let result = complete_turn_after_failed_tool_free_recovery_with_events(
                     working_history,
                     &direct_stage,
                     Some(err),
                     salvaged,
                     plan_session,
                     plan_state,
+                    Some(event_context),
                 )
                 .await;
                 Ok(PostToolFailureAction::Break(result))
@@ -474,6 +593,7 @@ pub(super) async fn dispatch_post_tool_failure(ctx: PostToolRecoveryContext<'_>)
                 salvaged,
                 plan_session,
                 plan_state,
+                Some(event_context),
             )
             .await
             {
@@ -487,13 +607,14 @@ pub(super) async fn dispatch_post_tool_failure(ctx: PostToolRecoveryContext<'_>)
             let result = if tool_free_recovery {
                 let salvaged = harness_state.take_recovery_rejected_synthesis();
                 let directive_stage = concat_compact(stage, ".stop_after_directive");
-                complete_turn_after_failed_tool_free_recovery(
+                complete_turn_after_failed_tool_free_recovery_with_events(
                     working_history,
                     &directive_stage,
                     Some(err),
                     salvaged,
                     plan_session,
                     plan_state,
+                    Some(event_context),
                 )
                 .await
             } else {
@@ -526,6 +647,7 @@ async fn check_recovery_cycle_cap(
     salvaged_text: Option<String>,
     mut plan_session: Option<&mut PlanningWorkflowSessionState>,
     plan_state: Option<&PlanningWorkflowState>,
+    events: Option<PlanRecoveryEventContext<'_>>,
 ) -> Option<TurnLoopResult> {
     if cycles >= MAX_POST_TOOL_RECOVERY_CYCLES {
         tracing::warn!(
@@ -542,13 +664,14 @@ async fn check_recovery_cycle_cap(
             plan_session.mark_recovery_exhausted();
         }
         return Some(
-            complete_turn_after_failed_tool_free_recovery(
+            complete_turn_after_failed_tool_free_recovery_with_events(
                 working_history,
                 stage,
                 Some(err),
                 salvaged_text,
                 plan_session,
                 plan_state,
+                events,
             )
             .await,
         );
@@ -631,6 +754,7 @@ mod tests {
             renderer: &mut renderer,
             working_history: &mut working_history,
             harness_state: &mut harness_state,
+            harness_emitter: None,
             plan_session: Some(&mut plan_session),
             plan_state: None,
             err: &err,
@@ -679,12 +803,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tool_free_recovery_finalizes_with_yes_no_edit_when_interview_denied() {
+    async fn tool_free_recovery_keeps_planning_when_interview_denied_without_valid_plan() {
         // When `request_user_input` is permanently denied (non-interactive
-        // runtime), the recovery fallback must surface a clean yes/no/edit
-        // HITL prompt instead of promising an interview that will never come
-        // (checkpoint turn_725). The user-visible final answer must contain
-        // all three choices so `detect_planning_intent` can route the reply.
+        // runtime), the recovery fallback must not advertise implementation
+        // until a validated persisted artifact exists. It must keep the
+        // planning session actionable without promising another interview.
         let mut working_history: Vec<uni::Message> = Vec::new();
         let mut plan_session = PlanningWorkflowSessionState::default();
         plan_session.mark_interview_denied();
@@ -711,10 +834,8 @@ mod tests {
             .expect("a final answer must be pushed")
             .content
             .as_text();
-        assert!(
-            text.contains("`yes`") && text.contains("`no`") && text.contains("`edit`"),
-            "interview-denied fallback must offer yes/no/edit choices: {text}"
-        );
+        assert!(!text.contains("`implement`"), "no approval hint is allowed without a valid plan: {text}");
+        assert!(text.to_ascii_lowercase().contains("keep planning"), "fallback must keep planning active: {text}");
         assert!(
             !text.contains("interview will be presented"),
             "interview-denied fallback must NOT promise a future interview: {text}"
@@ -758,8 +879,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn plan_mode_recovery_keeps_partial_proposed_plan_salvage() {
-        // A real (if partial) proposed plan in the salvage is worth keeping.
+    async fn plan_mode_recovery_rejects_partial_proposed_plan_salvage() {
+        // A partial proposed plan is not approval-ready and must not be
+        // presented or persisted as if it were a completed artifact.
         let mut working_history: Vec<uni::Message> = Vec::new();
         let mut plan_session = PlanningWorkflowSessionState::default();
         let partial_plan =
@@ -783,7 +905,11 @@ mod tests {
             .expect("a final answer must be pushed")
             .content
             .as_text();
-        assert!(text.contains("<proposed_plan"), "a real partial plan must be kept as the plan: {text}");
+        assert!(!text.contains("<proposed_plan"), "partial plans must not be presented: {text}");
+        assert!(
+            text.to_ascii_lowercase().contains("keep planning"),
+            "partial plans must keep planning active: {text}"
+        );
     }
 
     #[tokio::test]
@@ -794,8 +920,8 @@ mod tests {
         // session plan file so the "preserved in the session plan file"
         // notice is truthful. Previously the plan lived only in chat history
         // and `.vtcode/plans/` stayed empty/template-only.
+        use crate::agent::runloop::unified::planning_workflow::PlanningWorkflowState;
         use tempfile::TempDir;
-        use vtcode_core::tools::handlers::planning_workflow::PlanningWorkflowState;
 
         let temp_dir = TempDir::new().unwrap();
         let state = PlanningWorkflowState::new(temp_dir.path().to_path_buf());
@@ -805,7 +931,21 @@ mod tests {
         let mut working_history: Vec<uni::Message> = Vec::new();
         let mut plan_session = PlanningWorkflowSessionState::default();
         plan_session.mark_budget_exhausted();
-        let salvaged = "<proposed_plan>\n- Action: add caching -> src/cache.rs\n  verify: cargo test\n</proposed_plan>";
+        let salvaged = r#"<proposed_plan>
+# Launch-time recovery
+
+## Summary
+Persist a concrete recovery plan without implementing it.
+
+## Implementation Steps
+1. Add caching -> files: [src/cache.rs] -> verify: [cargo nextest run -p vtcode]
+
+## Test Cases and Validation
+1. Run the targeted planning tests.
+
+## Assumptions and Defaults
+1. The existing cache policy remains unchanged.
+</proposed_plan>"#;
 
         let result = complete_turn_after_failed_tool_free_recovery(
             &mut working_history,
@@ -821,7 +961,7 @@ mod tests {
         let content =
             std::fs::read_to_string(&plan_file).expect("salvaged plan must be persisted to the session plan file");
         assert!(
-            content.contains("add caching"),
+            content.contains("Add caching"),
             "salvaged plan must be written to the session plan file, got: {content}"
         );
     }

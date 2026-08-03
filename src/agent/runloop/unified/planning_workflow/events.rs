@@ -1,11 +1,74 @@
 //! Shared planning approval events for interactive and headless runtimes.
 
 use vtcode_core::exec::events::{
-    ContextResetEvent, ContextResetTrigger, PlanApprovalDecision, PlanApprovalRequestedEvent,
-    PlanApprovalResolvedEvent, ThreadEvent,
+    ContextResetEvent, ContextResetTrigger, HarnessEventKind, ItemCompletedEvent, ItemStartedEvent,
+    PlanApprovalDecision, PlanApprovalRequestedEvent, PlanApprovalResolvedEvent, PlanDeltaEvent, PlanItem, ThreadEvent,
+    ThreadItem, ThreadItemDetails,
 };
 
+use super::PlanningWorkflowState;
 use crate::agent::runloop::unified::inline_events::harness::HarnessEventEmitter;
+use crate::agent::runloop::unified::inline_events::harness::harness_event;
+use crate::agent::runloop::unified::planning_workflow_state::PlanningWorkflowSessionState;
+
+/// Publish the complete approval-ready plan lifecycle after the persisted
+/// artifact and its tracker have passed validation.
+///
+/// Keeping this sequence behind the planning facade prevents recovery,
+/// interactive, and headless paths from drifting apart. The session state is
+/// marked pending before the first event so a later cancellation can resolve
+/// the exact request identity that was published.
+pub(crate) async fn emit_plan_ready_events(
+    plan_session: &mut PlanningWorkflowSessionState,
+    plan_state: &PlanningWorkflowState,
+    emitter: Option<&HarnessEventEmitter>,
+    thread_id: &str,
+    turn_id: &str,
+    plan_text: &str,
+) {
+    plan_session.mark_plan_approval_pending(thread_id.to_owned(), turn_id.to_owned());
+    let Some(emitter) = emitter else {
+        return;
+    };
+
+    let item_id = format!("{turn_id}-plan");
+    let plan_path = plan_state.get_plan_file().await.map(|path| path.display().to_string());
+
+    let _ = emitter.emit(harness_event(
+        HarnessEventKind::PlanningStarted,
+        Some("Planning workflow produced a plan for review.".to_string()),
+        plan_path.clone(),
+        None,
+        None,
+    ));
+
+    let start_item = ThreadItem {
+        id: item_id.clone(),
+        details: ThreadItemDetails::Plan(PlanItem { text: String::new() }),
+    };
+    let _ = emitter.emit(ThreadEvent::ItemStarted(ItemStartedEvent { item: start_item }));
+
+    let _ = emitter.emit(ThreadEvent::PlanDelta(PlanDeltaEvent {
+        thread_id: thread_id.to_owned(),
+        turn_id: turn_id.to_owned(),
+        item_id: item_id.clone(),
+        delta: plan_text.to_owned(),
+    }));
+
+    let completed_item = ThreadItem {
+        id: item_id,
+        details: ThreadItemDetails::Plan(PlanItem { text: plan_text.to_owned() }),
+    };
+    let _ = emitter.emit(ThreadEvent::ItemCompleted(ItemCompletedEvent { item: completed_item }));
+    let _ = emitter.emit(harness_event(
+        HarnessEventKind::PlanningCompleted,
+        Some("Plan is ready for user approval.".to_string()),
+        plan_path.clone(),
+        None,
+        None,
+    ));
+    emit_plan_approval_requested(Some(emitter), thread_id, turn_id, plan_path);
+}
 
 pub(crate) fn emit_plan_approval_requested(
     emitter: Option<&HarnessEventEmitter>,

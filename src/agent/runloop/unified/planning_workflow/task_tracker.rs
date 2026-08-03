@@ -1,9 +1,10 @@
 use anyhow::{Context, bail};
 use std::collections::HashMap;
 use vtcode_core::config::constants::tools;
-use vtcode_core::tools::handlers::planning_workflow::validate_plan_content;
 use vtcode_core::tools::registry::ToolRegistry;
 use vtcode_ui::tui::app::{InlineHandle, InlineMessageKind, PlanContent};
+
+use super::validate_plan_content;
 
 fn render_created_task_tracker(handle: &InlineHandle, output: &serde_json::Value) {
     let lines = crate::agent::runloop::tool_output::tracker_view_lines(output);
@@ -36,13 +37,83 @@ fn markdown_task_description(line: &str) -> Option<(&str, bool)> {
         return Some((description.trim(), true));
     }
 
-    let (prefix, description) = trimmed.split_once('.')?;
-    if prefix.chars().all(|character| character.is_ascii_digit()) {
-        let description = description.trim();
-        (!description.is_empty()).then_some((description, false))
+    let (prefix, description) = trimmed.split_once('.').or_else(|| trimmed.split_once(')'))?;
+    prefix
+        .chars()
+        .all(|character| character.is_ascii_digit())
+        .then_some(description.trim())
+        .filter(|description| !description.is_empty())
+        .map(|description| (description, false))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PlanSection {
+    Summary,
+    Implementation,
+    Validation,
+    Assumptions,
+}
+
+fn plan_section(line: &str) -> Option<PlanSection> {
+    let mut label = line.trim().trim_start_matches('>').trim_start();
+    while let Some(stripped) = label.strip_prefix('#') {
+        label = stripped.trim_start();
+    }
+    let label = label
+        .strip_prefix("- ")
+        .or_else(|| label.strip_prefix("* "))
+        .unwrap_or(label)
+        .trim()
+        .trim_end_matches(':')
+        .trim();
+
+    if label.eq_ignore_ascii_case("Summary") {
+        Some(PlanSection::Summary)
+    } else if label.eq_ignore_ascii_case("Implementation Steps") || label.eq_ignore_ascii_case("Steps") {
+        Some(PlanSection::Implementation)
+    } else if label.eq_ignore_ascii_case("Test Cases and Validation") || label.eq_ignore_ascii_case("Validation") {
+        Some(PlanSection::Validation)
+    } else if label.eq_ignore_ascii_case("Assumptions and Defaults") || label.eq_ignore_ascii_case("Assumptions") {
+        Some(PlanSection::Assumptions)
     } else {
         None
     }
+}
+
+fn sparse_implementation_task_lines(plan: &PlanContent) -> Vec<(&str, bool)> {
+    let mut in_implementation = false;
+    let mut saw_implementation = false;
+    let mut compact_after_summary = false;
+    let mut tasks = Vec::new();
+
+    for line in plan.raw_content.lines() {
+        if let Some(section) = plan_section(line) {
+            match section {
+                PlanSection::Summary => {
+                    in_implementation = false;
+                    compact_after_summary = !saw_implementation;
+                }
+                PlanSection::Implementation => {
+                    in_implementation = true;
+                    saw_implementation = true;
+                    compact_after_summary = false;
+                }
+                PlanSection::Validation | PlanSection::Assumptions => {
+                    in_implementation = false;
+                    compact_after_summary = false;
+                }
+            }
+            continue;
+        }
+
+        if (in_implementation || compact_after_summary)
+            && let Some(task) = markdown_task_description(line)
+        {
+            tasks.push(task);
+        }
+    }
+
+    tasks
 }
 
 fn normalized_task_description(description: &str) -> String {
@@ -91,6 +162,11 @@ fn task_items_from_plan(plan: &PlanContent) -> Vec<serde_json::Value> {
     let mut items = Vec::new();
     let mut index_by_description = HashMap::new();
     for phase in &plan.phases {
+        if !phase.name.trim().eq_ignore_ascii_case("Implementation Steps")
+            && !phase.name.trim().eq_ignore_ascii_case("Steps")
+        {
+            continue;
+        }
         for step in &phase.steps {
             if step.description.trim().is_empty() {
                 continue;
@@ -111,13 +187,7 @@ fn task_items_from_plan(plan: &PlanContent) -> Vec<serde_json::Value> {
     // Sparse plans may omit a phase heading. Preserve their numbered and
     // checkbox steps so approval still produces a usable tracker.
     if items.is_empty() {
-        for line in plan.raw_content.lines() {
-            let Some((description, completed)) = markdown_task_description(line) else {
-                continue;
-            };
-            if description.is_empty() {
-                continue;
-            }
+        for (description, completed) in sparse_implementation_task_lines(plan) {
             append_unique_task_item(
                 &mut items,
                 &mut index_by_description,
@@ -249,5 +319,19 @@ mod tests {
         assert_eq!(items[1]["description"], "Apply the fix");
         assert_eq!(items[1]["status"], "completed");
         assert_eq!(items[2]["description"], "Verify the fix");
+    }
+
+    #[test]
+    fn tracker_only_contains_implementation_steps() {
+        let plan = PlanContent::from_markdown(
+            "Launch plan".to_string(),
+            "## Summary\nImprove startup behavior.\n\n## Implementation Steps\n1. Update src/startup.rs -> verify: cargo nextest run -p vtcode\n\n## Test Cases and Validation\n1. Run cargo nextest run -p vtcode\n\n## Assumptions and Defaults\n1. Existing startup policy remains unchanged.",
+            None,
+        );
+
+        let items = task_items_from_plan(&plan);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["description"], "Update src/startup.rs -> verify: cargo nextest run -p vtcode");
     }
 }

@@ -127,7 +127,7 @@ short-turn allowance.
 
 ### Validated Approval Handoff
 
-Approval is accepted only for a persisted plan with concrete Summary, Implementation Steps, Test Cases and Validation, and Assumptions and Defaults sections. Placeholder tokens and unresolved `Next open decision` or `Open question` entries block approval. VT Code gives the model one bounded repair request; if the repaired artifact is still invalid, planning remains active with the validation reasons visible.
+Approval is accepted only for a persisted plan that passes the artifact validator and has a persisted task tracker. The canonical sections are `Summary`, `Implementation Steps`, `Test Cases and Validation`, and `Assumptions and Defaults`; the documented short aliases `Steps`, `Validation`, and `Assumptions` are accepted case-insensitively. Every numbered implementation step must name a concrete file, symbol, behavior, or other repository target and include a non-empty `verify:`/`verification:` command or check. Placeholder tokens and unresolved `Next open decision` or `Open question` entries block approval. Invalid candidates are rejected before persistence, so an existing valid draft is preserved. VT Code gives the model one bounded repair request; if the repaired artifact is still invalid, planning remains active with the validation reasons visible.
 
 Creating the `task_tracker` checklist is part of the approval gate. If the tracker tool is unavailable, fails, or does not persist its tracker file, the planning workflow remains active and no write-capable execution turn is started. All approval routes share the same typed handoff, including direct, queued, automatic, and fresh-context execution.
 
@@ -143,6 +143,13 @@ model request so planning can continue with the user's choice.
 Pressing `Esc` or `Ctrl-C` cancels the interview without submitting an answer;
 the planning agent may ask again when the ambiguity still matters. A plan
 approval popup is not shown until any required clarification has completed.
+
+`request_user_input` is optional in headless and other noninteractive runtimes.
+A permanent denial is recorded for the planning session and suppresses repeated
+interview attempts. VT Code gives the model one bounded synthesis retry using
+the repository evidence already gathered. If that retry does not produce a
+validated persisted plan, the session stays in planning and shows a keep-planning
+message; it does not advertise implementation or emit approval events.
 
 ## Plan Output Format
 
@@ -177,25 +184,25 @@ Next open decision: [if any], otherwise: No remaining scope decisions.
 
 [1-3 lines: goal, user impact, what changes / what does not]
 
-## Steps
+## Implementation Steps
 
 1. [Action] -> files/symbols -> verify: [check]
 2. [Action] -> files/symbols -> verify: [check]
 
-## Validation
+## Test Cases and Validation
 
 - build/lint: [detected toolchain command]
 - tests: [detected toolchain command]
 - behaviour: [targeted check]
 
-## Assumptions
+## Assumptions and Defaults
 
 - [assumption or default chosen]
 - [out-of-scope item intentionally not changed]
   </proposed_plan>
 ```
 
-Only `Next open decision` is used as the explicit reopen marker for follow-up planning.
+`Next open decision` and `Open question` entries are explicit reopen markers for follow-up planning; use a resolved statement such as `No remaining scope decisions` when none remain.
 
 ### Research Scope
 
@@ -264,16 +271,14 @@ draft and research are preserved for a later approval or revision command.
 ## Plan File Persistence
 
 The draft is the single source of truth and always lives on disk under
-`.vtcode/plans/<plan>.md`, not only in chat history. Even when the final
-synthesis fails and the runloop enters the tool-free recovery pass (where all
-tools — including `apply_patch` and `task_tracker` — are disabled), any
-`<proposed_plan>` the model emitted inline is extracted and written to the
-session plan file before the turn ends. This is why the budget/recovery
-exhaustion notices can promise the draft is "preserved in the session plan
-file": the recovery path persists it rather than leaving `.vtcode/plans/` at its
-`start_planning` template. If you ever see an empty plan dir after planning,
-treat it as a regression in this persistence path, not a permissions or
-directory-creation problem.
+`.vtcode/plans/<plan>.md`, not only in chat history. A candidate is validated
+before the plan file, sidecar tracker, global tracker, or approval events are
+created or updated. Invalid or partial inline plans from normal or tool-free
+recovery are discarded for approval and cannot overwrite an existing valid
+draft; the existing malformed file is preserved until a later valid synthesis
+repairs it. Only a validated `<proposed_plan>` is extracted and written during
+tool-free recovery. If no valid draft exists, the recovery message tells the
+user to keep planning rather than offering `implement`.
 
 ## Best Practices
 

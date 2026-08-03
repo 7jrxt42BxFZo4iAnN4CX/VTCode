@@ -39,9 +39,49 @@ use vtcode_ui::tui::app::InlineHandle;
 
 use crate::agent::runloop::unified::planning_workflow_state::PlanningWorkflowSessionState;
 
+// Keep vtcode-core's planning implementation behind this facade. Runloop
+// modules should depend on these re-exports instead of reaching through the
+// core tool-handler path directly.
+pub(crate) use vtcode_core::tools::handlers::planning_workflow::{
+    PlanValidationReport, PlanningWorkflowState, merge_plan_content, persist_plan_draft, tracker_file_for_plan_file,
+    validate_plan_content,
+};
+
+pub(crate) async fn persisted_plan_is_ready(state: &PlanningWorkflowState) -> bool {
+    let Some(plan_file) = state.get_plan_file().await else {
+        return false;
+    };
+    let Ok(plan_text) = tokio::fs::read_to_string(&plan_file).await else {
+        return false;
+    };
+    if !validate_plan_content(&plan_text).is_ready() {
+        return false;
+    }
+
+    let Some(tracker_file) = tracker_file_for_plan_file(&plan_file) else {
+        return false;
+    };
+    let Ok(tracker_text) = tokio::fs::read_to_string(&tracker_file).await else {
+        return false;
+    };
+    if tracker_text.trim().is_empty() {
+        return false;
+    }
+
+    match state.workspace_root() {
+        Some(workspace_root) => {
+            tokio::fs::read_to_string(workspace_root.join(".vtcode").join("tasks").join("current_task.md"))
+                .await
+                .ok()
+                .is_some_and(|content| !content.trim().is_empty())
+        }
+        None => true,
+    }
+}
+
 pub(crate) use super::planning_workflow_state::{PlanningFinishReason, finish_planning_workflow};
 pub(crate) use confirmation::{StartPlanningDecision, execute_plan_approval, present_start_planning_confirmation};
-pub(crate) use events::{emit_context_reset, emit_plan_approval_requested, emit_plan_approval_resolved};
+pub(crate) use events::{emit_context_reset, emit_plan_approval_resolved, emit_plan_ready_events};
 pub(crate) use execution::handle_start_planning;
 pub(crate) use exit_trigger::{PlanningExitContext, maybe_handle_planning_exit_trigger};
 pub(crate) use intent::{
@@ -58,7 +98,7 @@ pub(crate) use task_tracker::{TaskTrackerHandoff, create_task_tracker_from_activ
 pub(crate) struct ValidatedPlanArtifact {
     pub(crate) plan_file: PathBuf,
     pub(crate) text: String,
-    pub(crate) validation: vtcode_core::tools::handlers::planning_workflow::PlanValidationReport,
+    pub(crate) validation: PlanValidationReport,
 }
 
 #[derive(Debug, Error)]
@@ -69,11 +109,13 @@ pub(crate) enum PlanArtifactError {
     Read { path: PathBuf, source: std::io::Error },
     #[error("persisted plan is not ready for approval: {reasons}")]
     Invalid { reasons: String },
+    #[error("failed to persist plan draft: {reason}")]
+    Persistence { reason: String },
 }
 
 impl ValidatedPlanArtifact {
     pub(crate) fn from_text(plan_file: PathBuf, text: String) -> Result<Self, PlanArtifactError> {
-        let validation = vtcode_core::tools::handlers::planning_workflow::validate_plan_content(&text);
+        let validation = validate_plan_content(&text);
         if !validation.is_ready() {
             return Err(PlanArtifactError::Invalid { reasons: validation.reasons().join("; ") });
         }
