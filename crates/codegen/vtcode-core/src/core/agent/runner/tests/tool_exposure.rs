@@ -430,14 +430,23 @@ async fn planning_mode_filters_provider_facing_mutating_tools() {
     runner.provider_client = Box::new(RecordingQueuedProvider::new(Vec::new()));
 
     let before_planning = runner.build_universal_tool_snapshot().await.expect("snapshot before planning");
+    assert_provider_exposes_tool(&before_planning, tools::EXEC_COMMAND);
+    assert_provider_exposes_tool(&before_planning, tools::WRITE_STDIN);
+    assert_provider_exposes_tool(&before_planning, tools::APPLY_PATCH);
+    assert_provider_exposes_tool(&before_planning, tools::SEARCH_TOOLS);
     assert_provider_catalogues_inactive_tool(&before_planning, tools::CODE_SEARCH);
 
     runner.tool_registry.enable_planning();
 
     let snapshot = runner.build_universal_tool_snapshot().await.expect("snapshot");
-    assert_provider_exposes_tool(&snapshot, tools::APPLY_PATCH);
+    assert_provider_catalogues_inactive_tool(&snapshot, tools::WRITE_STDIN);
+    assert_provider_catalogues_inactive_tool(&snapshot, tools::APPLY_PATCH);
+    assert_provider_catalogues_inactive_tool(&snapshot, tools::SEARCH_TOOLS);
     assert_provider_hides_tool(&snapshot, tools::READ_FILE);
+    assert_provider_exposes_tool(&snapshot, tools::EXEC_COMMAND);
     assert_provider_exposes_tool(&snapshot, tools::CODE_SEARCH);
+    assert!(!runner.is_tool_exposed(tools::WRITE_STDIN).await);
+    assert!(!runner.is_tool_exposed(tools::APPLY_PATCH).await);
     assert_eq!(
         before_planning.tool_catalog_hash, snapshot.tool_catalog_hash,
         "planning transitions should retain the stable provider catalogue"
@@ -466,6 +475,7 @@ async fn active_primary_agent_policy_filters_provider_snapshot_to_allowed_tools(
     assert_provider_exposes_tool(&baseline, tools::EXEC_COMMAND);
     assert_provider_exposes_tool(&baseline, tools::WRITE_STDIN);
     assert_provider_exposes_tool(&baseline, tools::APPLY_PATCH);
+    assert_provider_exposes_tool(&baseline, tools::SEARCH_TOOLS);
 
     let mut spec = vtcode_config::builtin_primary_auto_agent();
     spec.tools = Some(vec![tools::EXEC_COMMAND.to_string()]);

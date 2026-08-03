@@ -22,13 +22,20 @@ These scripts provide a repeatable local performance workflow for VT Code.
 ./scripts/perf/native-run.sh -- --version
 ```
 
+The baseline captures `tool_pipeline_bench_ms` and the `vtcode-core`
+`agent_harness_bench_ms`. The harness benchmark includes deterministic cases
+for prompt-resource cache hits, few-shot selection, tool-catalog sorting, and
+warm indexed file-search scoring. These measurements are for local comparison;
+they are not a CI performance gate.
+
 ## Outputs
 
 All artifacts are written to `.vtcode/perf/`:
 
 - `baseline.json` / `latest.json`: captured metrics
 - `*-cargo_check.log`: cargo check output
-- `*-bench_core.log`: `vtcode-core` bench output
+- `*-bench_tool_pipeline.log`: `vtcode-core` tool-pipeline bench output
+- `*-bench_agent_harness.log`: `vtcode-core` interactive harness and optimization bench output
 - `*-startup.json` (if `hyperfine` installed)
 - `diff.md`: markdown comparison report
 

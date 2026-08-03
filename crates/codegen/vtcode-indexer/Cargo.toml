@@ -21,6 +21,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 anyhow = { workspace = true }
+arc-swap = { workspace = true }
 fs2 = { workspace = true }
 hashbrown = { workspace = true }
 ignore = { workspace = true }

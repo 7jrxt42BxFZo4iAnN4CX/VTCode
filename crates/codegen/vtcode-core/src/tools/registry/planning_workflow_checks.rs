@@ -15,7 +15,6 @@ const FILE_WRITING_TOOLS: &[&str] = &[
     crate::config::constants::tools::CREATE_FILE,
     crate::config::constants::tools::EDIT_FILE,
     crate::config::constants::tools::SEARCH_REPLACE,
-    crate::config::constants::tools::APPLY_PATCH,
 ];
 
 impl ToolRegistry {
@@ -75,6 +74,13 @@ impl ToolRegistry {
         let canonical = canonical_tool_name(tool_name);
         if canonical == tools::TASK_TRACKER {
             return true;
+        }
+
+        // These legacy direct mutation/session surfaces are never admitted
+        // during planning. Read-only command/session exploration remains
+        // available through argument-validated command tools.
+        if matches!(canonical, tools::WRITE_STDIN | tools::APPLY_PATCH) {
+            return false;
         }
 
         if !intent.mutating {
@@ -204,6 +210,11 @@ mod tests {
         registry.enable_planning();
 
         assert!(registry.is_planning_active_allowed(tools::TASK_TRACKER, &json!({"action": "list"})));
+        assert!(
+            !registry
+                .is_planning_active_allowed(tools::APPLY_PATCH, &json!({"patch": "*** Begin Patch\n*** End Patch"}))
+        );
+        assert!(!registry.is_planning_active_allowed(tools::WRITE_STDIN, &json!({"session_id": "run-1", "chars": ""})));
         Ok(())
     }
 

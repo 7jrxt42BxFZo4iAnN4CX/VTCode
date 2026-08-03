@@ -11,6 +11,15 @@ fn default_public_tool_names() -> Vec<String> {
         tools::EXEC_COMMAND.to_string(),
         tools::WRITE_STDIN.to_string(),
         tools::APPLY_PATCH.to_string(),
+        tools::SEARCH_TOOLS.to_string(),
+    ]
+}
+
+fn default_acp_tool_names() -> Vec<String> {
+    vec![
+        tools::EXEC_COMMAND.to_string(),
+        tools::WRITE_STDIN.to_string(),
+        tools::APPLY_PATCH.to_string(),
     ]
 }
 
@@ -108,6 +117,6 @@ async fn audit_acp_subset_comes_from_same_catalog() {
         .public_tool_names(SessionSurface::Acp, CapabilityLevel::CodeSearch)
         .await;
 
-    assert_same_tool_set(&acp_names, &default_public_tool_names());
+    assert_same_tool_set(&acp_names, &default_acp_tool_names());
     assert!(!acp_names.contains(&tools::CODE_SEARCH.to_string()));
 }

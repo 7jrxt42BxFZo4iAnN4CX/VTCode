@@ -19,7 +19,7 @@ use crate::tool_policy::ToolPolicy;
 use crate::tools::defuddle::{DEFUDDLE_FETCH_DESCRIPTION, DefuddleTool};
 use crate::tools::handlers::{PlanningWorkflowState, StartPlanningTool, TaskTrackerTool};
 use crate::tools::native_memory;
-use crate::tools::registry::distributed::tool_config;
+use crate::tools::registry::distributed::ToolConfigSnapshot;
 use crate::tools::registry::pack::BUILTIN_PACKS;
 use crate::tools::registry::pack::{ToolPack, batch_register};
 use crate::tools::registry::registration::ToolRegistration;
@@ -30,7 +30,7 @@ use crate::tools::web_search::{WEB_SEARCH_DESCRIPTION, WebSearchTool};
 use serde_json::json;
 use vtcode_utility_tool_specs::{
     agent_parameters, apply_patch_parameters, code_search_parameters, cron_parameters, exec_command_parameters,
-    list_files_parameters, mcp_parameters, write_stdin_parameters,
+    list_files_parameters, mcp_parameters, search_tools_parameters, write_stdin_parameters,
 };
 
 // ===========================================================================
@@ -46,7 +46,12 @@ impl ToolPack for HitlPack {
         "hitl"
     }
 
-    async fn register(&self, inventory: &ToolInventory, _plan_state: &PlanningWorkflowState) {
+    async fn register(
+        &self,
+        inventory: &ToolInventory,
+        _plan_state: &PlanningWorkflowState,
+        _tool_config: &ToolConfigSnapshot,
+    ) {
         let registrations = vec![
             ToolRegistration::from_tool_instance(
                 tools::REQUEST_USER_INPUT,
@@ -102,7 +107,12 @@ impl ToolPack for PlanningPack {
         "planning"
     }
 
-    async fn register(&self, inventory: &ToolInventory, plan_state: &PlanningWorkflowState) {
+    async fn register(
+        &self,
+        inventory: &ToolInventory,
+        plan_state: &PlanningWorkflowState,
+        _tool_config: &ToolConfigSnapshot,
+    ) {
         let plan_state = Clone::clone(plan_state);
         let factory_state = Arc::new(plan_state.clone());
         let start_factory = Arc::clone(&factory_state);
@@ -154,7 +164,12 @@ impl ToolPack for MultiAgentPack {
         "multi_agent"
     }
 
-    async fn register(&self, inventory: &ToolInventory, _plan_state: &PlanningWorkflowState) {
+    async fn register(
+        &self,
+        inventory: &ToolInventory,
+        _plan_state: &PlanningWorkflowState,
+        _tool_config: &ToolConfigSnapshot,
+    ) {
         let registrations = vec![ToolRegistration::new(
             tools::AGENT,
             CapabilityLevel::Basic,
@@ -199,7 +214,12 @@ impl ToolPack for SearchPack {
         "search"
     }
 
-    async fn register(&self, inventory: &ToolInventory, _plan_state: &PlanningWorkflowState) {
+    async fn register(
+        &self,
+        inventory: &ToolInventory,
+        _plan_state: &PlanningWorkflowState,
+        _tool_config: &ToolConfigSnapshot,
+    ) {
         let registrations = vec![
             ToolRegistration::new(
                 tools::CODE_SEARCH,
@@ -232,6 +252,17 @@ impl ToolPack for SearchPack {
                 "mcp_tool_search",
                 "mcp_tool_details",
             ]),
+            ToolRegistration::new(
+                tools::SEARCH_TOOLS,
+                CapabilityLevel::Basic,
+                false,
+                ToolRegistry::search_tools_executor,
+            )
+            .with_description(
+                "Search the deferred local tool catalog by capability. Matching definitions are expanded deterministically for the next request segment.",
+            )
+            .with_parameter_schema(search_tools_parameters())
+            .with_permission(ToolPolicy::Allow),
         ];
         batch_register(inventory, registrations);
     }
@@ -250,15 +281,17 @@ impl ToolPack for WebPack {
         "web"
     }
 
-    async fn register(&self, inventory: &ToolInventory, _plan_state: &PlanningWorkflowState) {
-        let web_fetch = tool_config()
-            .map(|snapshot| WebFetchTool::from_config(&snapshot.web_fetch))
-            .unwrap_or_default();
+    async fn register(
+        &self,
+        inventory: &ToolInventory,
+        _plan_state: &PlanningWorkflowState,
+        tool_config: &ToolConfigSnapshot,
+    ) {
+        let web_fetch = WebFetchTool::from_config(&tool_config.web_fetch);
         let web_fetch_for_factory = web_fetch.clone();
         let web_fetch_factory = native_cgp_tool_factory(move || web_fetch_for_factory.clone());
 
-        let web_search =
-            WebSearchTool::with_config(tool_config().map(|snapshot| snapshot.web_search.clone()).unwrap_or_default());
+        let web_search = WebSearchTool::with_config(tool_config.web_search.clone());
         let web_search_for_factory = web_search.clone();
         let web_search_factory = native_cgp_tool_factory(move || web_search_for_factory.clone());
 
@@ -356,7 +389,12 @@ impl ToolPack for ShellPack {
         "shell"
     }
 
-    async fn register(&self, inventory: &ToolInventory, _plan_state: &PlanningWorkflowState) {
+    async fn register(
+        &self,
+        inventory: &ToolInventory,
+        _plan_state: &PlanningWorkflowState,
+        _tool_config: &ToolConfigSnapshot,
+    ) {
         let registrations = vec![
             ToolRegistration::new(
                 tools::EXEC_COMMAND,
@@ -408,7 +446,12 @@ impl ToolPack for InternalPtyPack {
         "internal_pty"
     }
 
-    async fn register(&self, inventory: &ToolInventory, _plan_state: &PlanningWorkflowState) {
+    async fn register(
+        &self,
+        inventory: &ToolInventory,
+        _plan_state: &PlanningWorkflowState,
+        _tool_config: &ToolConfigSnapshot,
+    ) {
         let registrations = vec![
             ToolRegistration::new(tools::READ_FILE, CapabilityLevel::CodeSearch, false, ToolRegistry::read_file_executor)
                 .with_description(
@@ -490,7 +533,12 @@ impl ToolPack for EditingPack {
         "editing"
     }
 
-    async fn register(&self, inventory: &ToolInventory, _plan_state: &PlanningWorkflowState) {
+    async fn register(
+        &self,
+        inventory: &ToolInventory,
+        _plan_state: &PlanningWorkflowState,
+        _tool_config: &ToolConfigSnapshot,
+    ) {
         let registrations = vec![ToolRegistration::new(
             tools::APPLY_PATCH,
             CapabilityLevel::Editing,

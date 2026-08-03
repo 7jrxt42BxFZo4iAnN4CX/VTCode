@@ -92,7 +92,7 @@ impl FeatureSet {
     pub fn tool_enabled_for_mode(tool_name: &str, planning_active: bool, request_user_input_enabled: bool) -> bool {
         match tool_name {
             tools::REQUEST_USER_INPUT => request_user_input_enabled,
-            tools::APPLY_PATCH => true,
+            tools::WRITE_STDIN | tools::APPLY_PATCH if planning_active => false,
             _ if !planning_active => true,
             _ => {
                 builtin_tool_behavior(tool_name)
@@ -149,7 +149,11 @@ mod tests {
         let cfg = VTCodeConfig::default();
         let features = FeatureSet::from_config(Some(&cfg));
 
-        assert!(features.allows_tool_name(tools::APPLY_PATCH, true, true));
+        assert!(!features.allows_tool_name(tools::WRITE_STDIN, true, true));
+        assert!(!features.allows_tool_name(tools::APPLY_PATCH, true, true));
+        assert!(features.allows_tool_name(tools::EXEC_COMMAND, true, true));
+        assert!(features.allows_tool_name(tools::WRITE_STDIN, false, true));
+        assert!(features.allows_tool_name(tools::APPLY_PATCH, false, true));
         assert!(!features.allows_tool_name(tools::WRITE_FILE, true, true));
         assert!(features.allows_tool_name(tools::UNIFIED_FILE, true, true));
         assert!(features.allows_tool_name(tools::UNIFIED_EXEC, true, true));

@@ -11,6 +11,7 @@ pub mod guidelines;
 pub mod harness_limits;
 pub mod output_styles;
 pub mod render;
+pub(crate) mod resource_cache;
 pub mod resources;
 pub mod runtime_contract;
 pub mod sections;

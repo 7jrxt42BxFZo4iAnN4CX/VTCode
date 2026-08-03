@@ -43,8 +43,8 @@ ensure_vtcode_binary() {
 echo "[perf] collecting baseline in ${OUT_JSON}"
 
 check_ms="$(run_cargo_timed cargo_check check --workspace --quiet)"
-core_bench_ms="$(run_cargo_timed bench_core bench -p vtcode-core --bench tool_pipeline -- --sample-size 20 --warm-up-time 0.5 --measurement-time 1)"
-tools_bench_ms="$(run_cargo_timed bench_tools bench -p vtcode-tools --bench cache_bench -- --sample-size 20 --warm-up-time 0.5 --measurement-time 1)"
+tool_pipeline_bench_ms="$(run_cargo_timed bench_tool_pipeline bench -p vtcode-core --bench tool_pipeline -- --sample-size 20 --warm-up-time 0.5 --measurement-time 1)"
+agent_harness_bench_ms="$(run_cargo_timed bench_agent_harness bench -p vtcode-core --bench agent_harness -- --sample-size 20 --warm-up-time 0.5 --measurement-time 1)"
 
 # Measure a command's mean startup latency (warm: 2 warmups + 8 measured runs).
 # Usage: measure_command <metric_name> <command> [args...]
@@ -137,10 +137,10 @@ PY
 # startup_ms: clap-only path — bypasses from_cli_args (binary load + parse only).
 # Stable signal for binary/loader cost, NOT a proxy for the optimization plan.
 measure_command startup "${ROOT_DIR}/target/debug/vtcode" --version
-# first_user_io_ms: real from_cli_args path (local, no network). Exercises config
-# load, dotfolder init, guardian init, theme resolution, and auth resolution —
-# i.e. the startup work the optimization plan actually targets.
-measure_command first_user_io "${ROOT_DIR}/target/debug/vtcode" auth openai
+# first_user_io_ms: a credential-free from_cli_args path (local, no network).
+# Tool-policy status loads the workspace/config context without requiring a
+# writable global auth directory, keeping this probe portable in CI and sandboxes.
+measure_command first_user_io "${ROOT_DIR}/target/debug/vtcode" tool-policy status
 
 startup_ms="${startup_ms}"
 startup_src="${startup_src}"
@@ -157,8 +157,8 @@ out = {
     "label": r"${LABEL}",
     "metrics": {
         "cargo_check_ms": int(r"${check_ms}"),
-        "core_bench_ms": int(r"${core_bench_ms}"),
-        "tools_bench_ms": int(r"${tools_bench_ms}"),
+        "tool_pipeline_bench_ms": int(r"${tool_pipeline_bench_ms}"),
+        "agent_harness_bench_ms": int(r"${agent_harness_bench_ms}"),
         "startup_ms": float(r"${startup_ms}"),
         "first_user_io_ms": float(r"${first_user_io_ms}"),
     },

@@ -25,7 +25,13 @@ current_startup_source = current.get("startup_source", "unknown")
 baseline_io_source = baseline.get("first_user_io_source", "unknown")
 current_io_source = current.get("first_user_io_source", "unknown")
 
-keys = ["cargo_check_ms", "core_bench_ms", "tools_bench_ms", "startup_ms", "first_user_io_ms"]
+keys = [
+    "cargo_check_ms",
+    "tool_pipeline_bench_ms",
+    "agent_harness_bench_ms",
+    "startup_ms",
+    "first_user_io_ms",
+]
 rows = []
 for key in keys:
     b = baseline["metrics"].get(key)

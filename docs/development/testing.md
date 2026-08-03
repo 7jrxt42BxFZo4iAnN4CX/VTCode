@@ -37,8 +37,8 @@ cargo nextest run test_name
 # Run tests for specific crate
 cargo nextest run -p vtcode-core
 
-# Run tests in release mode (use --release with cargo test)
-cargo test --release
+# Run tests in release mode
+cargo nextest run --release
 ```
 
 ### Local Test Build Optimization
@@ -121,6 +121,7 @@ cargo bench
 
 # Run specific Criterion benches used in this workspace
 cargo bench -p vtcode-core --bench tool_pipeline
+cargo bench -p vtcode-core --bench agent_harness
 ```
 
 ### Fuzz Testing (cargo-fuzz)
@@ -147,6 +148,7 @@ tests/
 
 benches/
  tool_pipeline.rs       # vtcode-core tool pipeline benchmarks
+ agent_harness.rs       # interactive prompt/indexer workload benchmarks
 
 src/
  lib.rs                 # Unit tests for library exports
@@ -358,6 +360,17 @@ Measures:
 
 -   Rate limiter throughput and latency
 -   Tool pipeline outcome construction overhead
+
+### Interactive Prompt and Indexed Search Performance
+
+```bash
+cargo bench -p vtcode-core --bench agent_harness
+cargo nextest run -p vtcode-indexer
+```
+
+Measures warm prompt-resource cache hits, few-shot selection, tool-definition
+sorting, and indexed file-search scoring. The benchmark is intentionally local
+and comparative rather than a CI threshold.
 
 ### Tool Cache Performance
 

@@ -29,6 +29,7 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
+use arc_swap::ArcSwapOption;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
@@ -49,7 +50,12 @@ use vtcode_commons::StringId;
 pub struct FileIndex {
     files: Vec<StringId>,
     directories: Vec<StringId>,
-    interner: Arc<Mutex<vtcode_commons::StringInterner>>,
+    /// Immutable path text indexed by the corresponding [`StringId`].
+    /// Searches only read this table, so scoring never contends on the
+    /// incremental-update interner or allocates a candidate string.
+    path_texts_by_id: Arc<Vec<Arc<str>>>,
+    /// Used only while applying incremental index updates.
+    interner: vtcode_commons::StringInterner,
     last_built: std::time::Instant,
 }
 
@@ -120,7 +126,7 @@ impl FileIndex {
                 if let Some(rel_path) = entry.path().strip_prefix(&search_dir).ok().and_then(|p| p.to_str())
                     && !rel_path.is_empty()
                 {
-                    if entry.path().is_dir() {
+                    if entry.file_type().is_some_and(|file_type| file_type.is_dir()) {
                         dirs_clone.lock().push(rel_path.to_string());
                     } else {
                         files_clone.lock().push(rel_path.to_string());
@@ -141,13 +147,21 @@ impl FileIndex {
             .into_inner();
 
         let mut interner = vtcode_commons::StringInterner::new();
-        let interned_files: Vec<StringId> = files.iter().map(|s| interner.intern(s)).collect();
-        let interned_dirs: Vec<StringId> = directories.iter().map(|s| interner.intern(s)).collect();
+        let mut path_texts_by_id = Vec::with_capacity(files.len() + directories.len());
+        let interned_files: Vec<StringId> = files
+            .iter()
+            .map(|path| intern_path(path, &mut interner, &mut path_texts_by_id))
+            .collect();
+        let interned_dirs: Vec<StringId> = directories
+            .iter()
+            .map(|path| intern_path(path, &mut interner, &mut path_texts_by_id))
+            .collect();
 
         Ok(Self {
             files: interned_files,
             directories: interned_dirs,
-            interner: Arc::new(Mutex::new(interner)),
+            path_texts_by_id: Arc::new(path_texts_by_id),
+            interner,
             last_built: std::time::Instant::now(),
         })
     }
@@ -167,19 +181,44 @@ impl FileIndex {
         let mut heaps = Vec::new();
 
         if match_type_filter.is_none_or(|t| t == MatchType::File) {
-            heaps.push(score_paths_top_k(&self.files, &self.interner, limit, pattern_text, MatchType::File));
+            heaps.push(score_paths_top_k(
+                &self.files,
+                self.path_texts_by_id.as_slice(),
+                limit,
+                pattern_text,
+                MatchType::File,
+            ));
         }
 
         if match_type_filter.is_none_or(|t| t == MatchType::Directory) {
-            heaps.push(score_paths_top_k(&self.directories, &self.interner, limit, pattern_text, MatchType::Directory));
+            heaps.push(score_paths_top_k(
+                &self.directories,
+                self.path_texts_by_id.as_slice(),
+                limit,
+                pattern_text,
+                MatchType::Directory,
+            ));
         }
 
-        merge_top_k(heaps, &self.interner, limit)
+        merge_top_k(heaps, limit)
             .into_sorted_vec()
             .into_iter()
             .map(|Reverse(item)| item)
             .collect()
     }
+}
+
+fn intern_path(
+    path: &str,
+    interner: &mut vtcode_commons::StringInterner,
+    path_texts_by_id: &mut Vec<Arc<str>>,
+) -> StringId {
+    let path_id = interner.intern(path);
+    let path_index = path_id.as_u32() as usize;
+    if path_index == path_texts_by_id.len() {
+        path_texts_by_id.push(Arc::from(path));
+    }
+    path_id
 }
 
 /// Score `paths` in parallel rayon chunks, returning the worker-merged top-K
@@ -191,7 +230,7 @@ impl FileIndex {
 /// `merge_top_k`. Callers must not depend on equal-score ordering.
 fn score_paths_top_k(
     paths: &[StringId],
-    interner: &Arc<Mutex<vtcode_commons::StringInterner>>,
+    path_texts_by_id: &[Arc<str>],
     limit: usize,
     pattern_text: &str,
     match_type: MatchType,
@@ -201,11 +240,10 @@ fn score_paths_top_k(
     // Serial fast path for small inputs: avoids the rayon thread-pool spawn
     // overhead and keeps equal-score ordering deterministic.
     if paths.len() <= CHUNK {
-        let mut list = BestMatchesList::new(limit, pattern_text, interner);
+        let mut list = BestMatchesList::new(limit, pattern_text);
         for &path_id in paths {
-            let path_opt = interner.lock().get(path_id).map(|s| s.to_string());
-            if let Some(path) = path_opt {
-                list.record_match(&path, match_type);
+            if let Some(path) = path_texts_by_id.get(path_id.as_u32() as usize) {
+                list.record_match(path_id, path, match_type);
             }
         }
         return list.matches;
@@ -214,12 +252,11 @@ fn score_paths_top_k(
     let heaps: Vec<_> = paths
         .par_chunks(CHUNK)
         .map_init(
-            || BestMatchesList::new(limit, pattern_text, interner),
+            || BestMatchesList::new(limit, pattern_text),
             |list, chunk| {
                 for &path_id in chunk {
-                    let path_opt = interner.lock().get(path_id).map(|s| s.to_string());
-                    if let Some(path) = path_opt {
-                        list.record_match(&path, match_type);
+                    if let Some(path) = path_texts_by_id.get(path_id.as_u32() as usize) {
+                        list.record_match(path_id, path, match_type);
                     }
                 }
                 std::mem::take(&mut list.matches)
@@ -227,7 +264,7 @@ fn score_paths_top_k(
         )
         .collect();
 
-    merge_top_k(heaps, interner, limit)
+    merge_top_k(heaps, limit)
 }
 
 /// Merge worker-local top-K heaps into a single top-K heap.
@@ -237,7 +274,6 @@ fn score_paths_top_k(
 /// the top-K yields the correct global result.
 fn merge_top_k(
     heaps: Vec<BinaryHeap<Reverse<(u32, StringId, MatchType)>>>,
-    _interner: &Arc<Mutex<vtcode_commons::StringInterner>>,
     limit: usize,
 ) -> BinaryHeap<Reverse<(u32, StringId, MatchType)>> {
     let mut merged = BinaryHeap::with_capacity(limit);
@@ -252,6 +288,10 @@ fn merge_top_k(
 /// A cached file index that can be shared across searches.
 pub struct FileIndexCache {
     cache: Arc<RwLock<Option<Arc<FileIndex>>>>,
+    /// Lock-free copy of the latest published index for synchronous callers.
+    /// This keeps `refresh_background` from blocking or panicking when called
+    /// on a Tokio worker that is concurrently publishing a replacement.
+    snapshot: Arc<ArcSwapOption<FileIndex>>,
     /// Serializes full index builds so concurrent cache misses do not launch
     /// duplicate workspace traversals and Rayon jobs.
     build_gate: Arc<tokio::sync::Semaphore>,
@@ -270,6 +310,7 @@ impl FileIndexCache {
     ) -> Self {
         Self {
             cache: Arc::new(RwLock::new(None)),
+            snapshot: Arc::new(ArcSwapOption::empty()),
             build_gate: Arc::new(tokio::sync::Semaphore::new(1)),
             search_directory,
             exclude: exclude.into_iter().collect(),
@@ -321,22 +362,35 @@ impl FileIndexCache {
         {
             let mut guard = self.cache.write().await;
             *guard = Some(Arc::clone(&index));
+            self.snapshot.store(Some(Arc::clone(&index)));
         }
         Ok(index)
     }
 
     /// Force refresh the index in the background.
-    /// Returns the old index immediately while rebuilding happens asynchronously.
+    ///
+    /// Returns the latest published index immediately while rebuilding happens
+    /// asynchronously. If no Tokio runtime is available, no refresh is
+    /// scheduled and the latest published index is returned unchanged.
     pub fn refresh_background(&self) -> Option<Arc<FileIndex>> {
+        let runtime = match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                tracing::debug!(%error, "cannot refresh file index without a Tokio runtime");
+                return self.snapshot.load_full();
+            }
+        };
+
         // Build new index asynchronously
         let search_directory = self.search_directory.clone();
         let exclude = self.exclude.clone();
         let respect_gitignore = self.respect_gitignore;
         let threads = self.threads;
         let cache = self.cache.clone();
+        let snapshot = Arc::clone(&self.snapshot);
         let build_gate = Arc::clone(&self.build_gate);
 
-        tokio::spawn(async move {
+        runtime.spawn(async move {
             let _build_permit = match build_gate.acquire_owned().await {
                 Ok(permit) => permit,
                 Err(error) => {
@@ -351,8 +405,10 @@ impl FileIndexCache {
             .await
             {
                 Ok(Ok(new_index)) => {
+                    let new_index = Arc::new(new_index);
                     let mut guard = cache.write().await;
-                    *guard = Some(Arc::new(new_index));
+                    *guard = Some(Arc::clone(&new_index));
+                    snapshot.store(Some(new_index));
                 }
                 Ok(Err(error)) => {
                     tracing::error!(%error, "failed to rebuild file index");
@@ -363,9 +419,7 @@ impl FileIndexCache {
             }
         });
 
-        // Return old index if available
-        let guard = self.cache.blocking_read();
-        guard.as_ref().map(Arc::clone)
+        self.snapshot.load_full()
     }
 
     /// Incrementally update the index when a file change is detected.
@@ -375,19 +429,39 @@ impl FileIndexCache {
         let Some(existing) = guard.take() else { return };
 
         let mut index = Arc::try_unwrap(existing).unwrap_or_else(|arc| (*arc).clone());
-        let path_id = index.interner.lock().intern(path);
         if is_added {
-            if Path::new(path).is_dir() {
-                index.directories.push(path_id);
+            let path_id = intern_path(path, &mut index.interner, Arc::make_mut(&mut index.path_texts_by_id));
+            let is_directory = self.search_directory.join(path).is_dir();
+            if is_directory {
+                index.files.retain(|&existing| existing != path_id);
+                if !index.directories.contains(&path_id) {
+                    index.directories.push(path_id);
+                }
             } else {
-                index.files.push(path_id);
+                index.directories.retain(|&existing| existing != path_id);
+                if !index.files.contains(&path_id) {
+                    index.files.push(path_id);
+                }
             }
         } else {
-            index.files.retain(|&p| p != path_id);
-            index.directories.retain(|&p| p != path_id);
+            let Some(path_id) = index.files.iter().chain(index.directories.iter()).copied().find(|&path_id| {
+                index
+                    .path_texts_by_id
+                    .get(path_id.as_u32() as usize)
+                    .is_some_and(|value| value.as_ref() == path)
+            }) else {
+                let index = Arc::new(index);
+                *guard = Some(Arc::clone(&index));
+                self.snapshot.store(Some(index));
+                return;
+            };
+            index.files.retain(|&existing| existing != path_id);
+            index.directories.retain(|&existing| existing != path_id);
         }
         index.last_built = std::time::Instant::now();
-        *guard = Some(Arc::new(index));
+        let index = Arc::new(index);
+        *guard = Some(Arc::clone(&index));
+        self.snapshot.store(Some(index));
     }
 
     /// Get the age of the current index.
@@ -403,6 +477,7 @@ impl Clone for FileIndex {
         Self {
             files: self.files.clone(),
             directories: self.directories.clone(),
+            path_texts_by_id: Arc::clone(&self.path_texts_by_id),
             interner: self.interner.clone(),
             last_built: self.last_built,
         }
@@ -464,7 +539,6 @@ struct BestMatchesList {
     haystack_buf: Vec<char>,
     /// Pre-computed pattern - avoids per-match UTF-32 conversion
     pattern: PatternStorage,
-    interner: Arc<Mutex<vtcode_commons::StringInterner>>,
 }
 
 /// Stores a pattern in the optimal form for Utf32Str creation.
@@ -476,7 +550,7 @@ enum PatternStorage {
 }
 
 impl BestMatchesList {
-    fn new(limit: usize, pattern_text: &str, interner: &Arc<Mutex<vtcode_commons::StringInterner>>) -> Self {
+    fn new(limit: usize, pattern_text: &str) -> Self {
         // Normalize pattern to lowercase to work around a nucleo-matcher bug:
         // its prefilter only does case-insensitive search for lowercase needle
         // chars, not uppercase. See https://github.com/openai/codex/pull/15772.
@@ -492,28 +566,31 @@ impl BestMatchesList {
             matcher: nucleo_matcher::Matcher::new(nucleo_matcher::Config::DEFAULT),
             haystack_buf: Vec::with_capacity(256),
             pattern,
-            interner: interner.clone(),
         }
     }
 
-    /// Record a matching path while preserving the worker-local top-K heap.
-    ///
-    /// Returns true when the path matches the search pattern, even if it
-    /// does not survive the top-K cutoff.
-    fn record_match(&mut self, path: &str, match_type: MatchType) -> bool {
-        // Use pre-computed pattern directly - zero allocation per match
+    /// Score a path using the pre-computed pattern without allocating a
+    /// temporary string.
+    fn score_path(&mut self, path: &str) -> Option<u32> {
         let haystack = nucleo_matcher::Utf32Str::new(path, &mut self.haystack_buf);
         let needle = match &self.pattern {
             PatternStorage::Ascii(bytes) => nucleo_matcher::Utf32Str::Ascii(bytes),
             PatternStorage::Unicode(chars) => nucleo_matcher::Utf32Str::Unicode(chars),
         };
-        let Some(score) = self.matcher.fuzzy_match(haystack, needle) else {
+        self.matcher.fuzzy_match(haystack, needle).map(|score| score as u32)
+    }
+
+    /// Record a matching path with an already-known [`StringId`].
+    fn record_match(&mut self, path_id: StringId, path: &str, match_type: MatchType) -> bool {
+        let Some(score) = self.score_path(path) else {
             return false;
         };
-
-        let path_id = self.interner.lock().intern(path);
-        push_top_match(&mut self.matches, self.limit, score as u32, path_id, match_type);
+        push_top_match(&mut self.matches, self.limit, score, path_id, match_type);
         true
+    }
+
+    fn record_scored_match(&mut self, path_id: StringId, score: u32, match_type: MatchType) {
+        push_top_match(&mut self.matches, self.limit, score, path_id, match_type);
     }
 }
 
@@ -587,7 +664,7 @@ pub async fn run_with_index(
     let matches = matched_paths
         .into_iter()
         .filter_map(|(score, path_id, match_type)| {
-            let path = index_for_results.interner.lock().get(path_id)?.to_string();
+            let path = index_for_results.path_texts_by_id.get(path_id.as_u32() as usize)?.to_string();
             Some(FileMatch {
                 score,
                 path,
@@ -653,7 +730,7 @@ fn run_bounded_no_follow_with_visit(
     }
 
     let interner = Arc::new(Mutex::new(vtcode_commons::StringInterner::new()));
-    let mut matches = BestMatchesList::new(limit, &config.pattern_text, &interner);
+    let mut matches = BestMatchesList::new(limit, &config.pattern_text);
     let mut matching_count = 0usize;
     for result in walk_builder.build() {
         if config.cancel_flag.load(Ordering::Relaxed) {
@@ -676,11 +753,14 @@ fn run_bounded_no_follow_with_visit(
         else {
             continue;
         };
-        if matches.record_match(relative_path, MatchType::File) {
-            matching_count += 1;
-            if matching_count >= limit {
-                break;
-            }
+        let Some(score) = matches.score_path(relative_path) else {
+            continue;
+        };
+        let path_id = interner.lock().intern(relative_path);
+        matches.record_scored_match(path_id, score, MatchType::File);
+        matching_count += 1;
+        if matching_count >= limit {
+            break;
         }
     }
 
@@ -728,10 +808,9 @@ fn run_with_policy(
     // Create per-worker result collection using Arc + Mutex for thread safety.
     // Each worker gets exactly one instance - no sharing between workers.
     let best_matchers_per_worker: Vec<Arc<Mutex<BestMatchesList>>> = (0..threads)
-        .map(|_| Arc::new(Mutex::new(BestMatchesList::new(limit, &config.pattern_text, &interner))))
+        .map(|_| Arc::new(Mutex::new(BestMatchesList::new(limit, &config.pattern_text))))
         .collect();
 
-    let interner_for_merge = interner.clone();
     let total_match_count = Arc::new(AtomicUsize::new(0));
 
     // Run parallel traversal - the closure is called once per worker thread.
@@ -743,7 +822,7 @@ fn run_with_policy(
         let best_list = best_matchers_per_worker[worker_id].clone();
         let cancel_flag_clone = cancel_flag.clone();
         let total_match_count_clone = total_match_count.clone();
-        let _interner = interner.clone();
+        let interner_clone = interner.clone();
 
         Box::new(move |result| {
             // Check cancellation flag periodically
@@ -764,7 +843,10 @@ fn run_with_policy(
                 _ => return ignore::WalkState::Continue, // Skip root and non-relative paths
             };
 
-            let match_type = if entry.path().is_dir() {
+            let Some(file_type) = entry.file_type() else {
+                return ignore::WalkState::Continue;
+            };
+            let match_type = if file_type.is_dir() {
                 MatchType::Directory
             } else {
                 MatchType::File
@@ -777,9 +859,12 @@ fn run_with_policy(
             // Try to add to results - no contention with other workers
             {
                 let mut list = best_list.lock();
-                if list.record_match(path_to_match, match_type) {
-                    total_match_count_clone.fetch_add(1, Ordering::Relaxed);
-                }
+                let Some(score) = list.score_path(path_to_match) else {
+                    return ignore::WalkState::Continue;
+                };
+                let path_id = interner_clone.lock().intern(path_to_match);
+                list.record_scored_match(path_id, score, match_type);
+                total_match_count_clone.fetch_add(1, Ordering::Relaxed);
             }
 
             ignore::WalkState::Continue
@@ -791,10 +876,10 @@ fn run_with_policy(
         .into_iter()
         .map(|arc| std::mem::take(&mut arc.lock().matches))
         .collect();
-    let merged_matches = merge_top_k(worker_heaps, &interner_for_merge, limit);
+    let merged_matches = merge_top_k(worker_heaps, limit);
 
     // Build final results
-    let interner_guard = interner_for_merge.lock();
+    let interner_guard = interner.lock();
     let matches = merged_matches
         .into_sorted_vec()
         .into_iter()
@@ -817,7 +902,10 @@ fn run_with_policy(
 
 #[cfg(test)]
 mod tests {
-    use super::{FileIndexCache, FileSearchConfig, run_bounded_no_follow, run_bounded_no_follow_with_visit};
+    use super::{
+        FileIndexCache, FileSearchConfig, MatchType, run_bounded_no_follow, run_bounded_no_follow_with_visit,
+        run_with_index,
+    };
     use std::num::NonZero;
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
@@ -834,6 +922,151 @@ mod tests {
         let second = second.expect("reuse file index");
 
         assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn background_refresh_is_safe_when_called_from_tokio() {
+        let workspace = TempDir::new().expect("workspace");
+        std::fs::write(workspace.path().join("widget.rs"), "fn widget() {}\n").expect("fixture source");
+
+        let cache = FileIndexCache::new(workspace.path().to_path_buf(), Vec::new(), false, 1);
+        cache.get_or_build().await.expect("initial index");
+
+        assert!(cache.refresh_background().is_some());
+    }
+
+    #[test]
+    fn background_refresh_returns_snapshot_without_runtime() {
+        let workspace = TempDir::new().expect("workspace");
+        std::fs::write(workspace.path().join("widget.rs"), "fn widget() {}\n").expect("fixture source");
+
+        let runtime = tokio::runtime::Runtime::new().expect("Tokio runtime");
+        let cache = FileIndexCache::new(workspace.path().to_path_buf(), Vec::new(), false, 1);
+        runtime.block_on(cache.get_or_build()).expect("initial index");
+        drop(runtime);
+
+        assert!(cache.refresh_background().is_some());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn incremental_directory_updates_use_the_cache_root() {
+        let workspace = TempDir::new().expect("workspace");
+        std::fs::write(workspace.path().join("widget.rs"), "fn widget() {}\n").expect("fixture source");
+        std::fs::create_dir(workspace.path().join("new_directory")).expect("fixture directory");
+
+        let cache = Arc::new(FileIndexCache::new(workspace.path().to_path_buf(), Vec::new(), false, 1));
+        cache.get_or_build().await.expect("initial index");
+
+        tokio::task::spawn_blocking({
+            let cache = Arc::clone(&cache);
+            move || cache.update_file("new_directory", true)
+        })
+        .await
+        .expect("incremental directory update task");
+
+        let index = cache.get_or_build().await.expect("updated index");
+        let matches = index.query("new_directory", 16, None);
+        assert!(matches.iter().any(|(_, _, match_type)| *match_type == MatchType::Directory));
+    }
+
+    fn indexed_search_config(
+        workspace: &std::path::Path,
+        pattern: &str,
+        cancel_flag: Arc<AtomicBool>,
+    ) -> FileSearchConfig {
+        FileSearchConfig {
+            pattern_text: pattern.to_string(),
+            limit: NonZero::new(16).expect("non-zero limit"),
+            search_directory: workspace.to_path_buf(),
+            exclude: Vec::new(),
+            threads: NonZero::new(1).expect("non-zero threads"),
+            cancel_flag,
+            compute_indices: false,
+            respect_gitignore: false,
+        }
+    }
+
+    fn result_signature(results: &super::FileSearchResults) -> Vec<(u32, String, MatchType)> {
+        results
+            .matches
+            .iter()
+            .map(|candidate| (candidate.score, candidate.path.clone(), candidate.match_type))
+            .collect()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn indexed_search_preserves_scores_order_and_match_types() {
+        let workspace = TempDir::new().expect("workspace");
+        std::fs::create_dir_all(workspace.path().join("src/widget_dir")).expect("fixture directory");
+        std::fs::write(workspace.path().join("src/widget.rs"), "fn widget() {}\n").expect("fixture source");
+        std::fs::write(workspace.path().join("src/widget_test.rs"), "fn widget_test() {}\n").expect("fixture source");
+        std::fs::write(workspace.path().join("README.md"), "widget documentation\n").expect("fixture docs");
+
+        let cache = FileIndexCache::new(workspace.path().to_path_buf(), Vec::new(), false, 1);
+        let first =
+            run_with_index(indexed_search_config(workspace.path(), "widget", Arc::new(AtomicBool::new(false))), &cache)
+                .await
+                .expect("indexed search");
+        let second =
+            run_with_index(indexed_search_config(workspace.path(), "widget", Arc::new(AtomicBool::new(false))), &cache)
+                .await
+                .expect("repeat indexed search");
+
+        assert_eq!(result_signature(&first), result_signature(&second));
+        assert!(
+            first
+                .matches
+                .iter()
+                .any(|candidate| candidate.match_type == MatchType::Directory)
+        );
+        assert!(first.matches.iter().any(|candidate| candidate.match_type == MatchType::File));
+        assert!(first.matches.windows(2).all(|window| window[0].score >= window[1].score));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn indexed_search_honors_cancellation_before_scoring() {
+        let workspace = TempDir::new().expect("workspace");
+        std::fs::write(workspace.path().join("widget.rs"), "fn widget() {}\n").expect("fixture source");
+        let cache = FileIndexCache::new(workspace.path().to_path_buf(), Vec::new(), false, 1);
+        let cancel_flag = Arc::new(AtomicBool::new(true));
+
+        let results = run_with_index(indexed_search_config(workspace.path(), "widget", cancel_flag), &cache)
+            .await
+            .expect("cancelled indexed search");
+        assert!(results.matches.is_empty());
+        assert_eq!(results.total_match_count, 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn incremental_updates_do_not_mutate_an_old_search_index() {
+        let workspace = TempDir::new().expect("workspace");
+        std::fs::write(workspace.path().join("old_widget.rs"), "fn old_widget() {}\n").expect("fixture source");
+        let cache = Arc::new(FileIndexCache::new(workspace.path().to_path_buf(), Vec::new(), false, 1));
+        let old_index = cache.get_or_build().await.expect("initial index");
+
+        tokio::task::spawn_blocking({
+            let cache = Arc::clone(&cache);
+            move || cache.update_file("new_widget.rs", true)
+        })
+        .await
+        .expect("incremental update task");
+
+        let old_matches = old_index.query("widget", 16, None);
+        let new_index = cache.get_or_build().await.expect("updated index");
+        let new_matches = new_index.query("widget", 16, None);
+        let old_paths = old_matches
+            .iter()
+            .filter_map(|(_, path_id, _)| old_index.path_texts_by_id.get(path_id.as_u32() as usize))
+            .map(AsRef::as_ref)
+            .collect::<Vec<&str>>();
+        let new_paths = new_matches
+            .iter()
+            .filter_map(|(_, path_id, _)| new_index.path_texts_by_id.get(path_id.as_u32() as usize))
+            .map(AsRef::as_ref)
+            .collect::<Vec<&str>>();
+
+        assert!(!old_paths.contains(&"new_widget.rs"));
+        assert!(new_paths.contains(&"new_widget.rs"));
     }
 
     fn bounded_paths(workspace: &std::path::Path) -> Vec<String> {

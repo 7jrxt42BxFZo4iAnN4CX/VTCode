@@ -7850,6 +7850,7 @@ name = "vtcode-indexer"
 version = "0.141.10"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "fs2",
  "hashbrown 0.17.1",
  "ignore",

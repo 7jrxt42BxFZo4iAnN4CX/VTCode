@@ -308,6 +308,7 @@ mod tests {
             function_tool(tools::CODE_SEARCH),
             function_tool(tools::UNIFIED_FILE),
             function_tool(tools::APPLY_PATCH),
+            function_tool(tools::WRITE_STDIN),
             function_tool(tools::WRITE_FILE),
         ]);
 
@@ -316,7 +317,8 @@ mod tests {
 
         assert!(names.contains(&tools::CODE_SEARCH));
         assert!(names.contains(&tools::UNIFIED_FILE));
-        assert!(names.contains(&tools::APPLY_PATCH));
+        assert!(!names.contains(&tools::APPLY_PATCH));
+        assert!(!names.contains(&tools::WRITE_STDIN));
         assert!(!names.contains(&tools::WRITE_FILE));
     }
 

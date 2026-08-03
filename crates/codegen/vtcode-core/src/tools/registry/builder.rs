@@ -103,11 +103,11 @@ impl ToolRegistry {
         pty_config: PtyConfig,
         policy_manager: Option<ToolPolicyManager>,
     ) -> Self {
-        // Install the user-config snapshot *before* constructing the
-        // inventory so `WebFetchTool`/`WebSearchTool` are built with the
-        // user's allow/block lists, cooldown, and session cap rather than
-        // defaulting out. Parse the workspace config once because both the
-        // web tools and output spooler consume it.
+        // Load the user-config snapshot *before* constructing the inventory so
+        // `WebFetchTool`/`WebSearchTool` are built with the user's allow/block
+        // lists, cooldown, and session cap rather than defaulting out. The
+        // snapshot is passed explicitly to active packs; parse the workspace
+        // config once because both the web tools and output spooler consume it.
         let config_workspace = workspace_root.clone();
         let workspace_config =
             match tokio::task::spawn_blocking(move || load_workspace_tool_config(&config_workspace)).await {
@@ -118,15 +118,11 @@ impl ToolRegistry {
                 }
             };
         let tool_config = workspace_config.tool;
-        if let Err(error) = super::distributed::install_tool_config(tool_config) {
-            tracing::warn!(error = %error, "tool config reinstall failed; using existing snapshot");
-        }
-
         let edited_file_monitor = Arc::new(crate::tools::edited_file_monitor::EditedFileMonitor::new());
         let inventory = ToolInventory::new(workspace_root.clone(), Arc::clone(&edited_file_monitor));
         let planning_workflow_state = PlanningWorkflowState::new(workspace_root.clone());
 
-        register_builtin_packs(&inventory, &planning_workflow_state).await;
+        register_builtin_packs(&inventory, &planning_workflow_state, &tool_config).await;
 
         let pty_sessions = pty::PtySessionManager::new(workspace_root.clone(), pty_config);
         let exec_sessions =

@@ -21,6 +21,8 @@
 ## Gotchas
 
 - `FileIndexCache` builds traverse the workspace and use synchronous/Rayon work; keep them in `spawn_blocking` and preserve the single-build gate so Tokio workers remain responsive and concurrent misses do not stampede the filesystem.
+- Indexed searches read immutable `StringId` path text through the shared snapshot; keep mutable interner access on incremental-update paths only.
+- `refresh_background` returns the lock-free latest snapshot and schedules work only inside Tokio; publish cache and snapshot together after successful rebuilds or incremental updates.
 - `index_directory()` respects `.gitignore` via `ignore` crate's `WalkBuilder`.
 - `path_cache` is not used here — that's `vtcode-bash-runner`. Indexer uses `index_cache: HashMap`.
 - Binary/unreadable files are silently skipped (`ErrorKind::InvalidData`).

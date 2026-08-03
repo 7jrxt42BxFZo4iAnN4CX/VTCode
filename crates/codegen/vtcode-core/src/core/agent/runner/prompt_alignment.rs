@@ -29,7 +29,7 @@ pub enum AlignmentError {
     /// The system prompt carries the wrong planning workflow interview policy line for
     /// the current runtime.
     PlanningWorkflowPromptPolicyMismatch { expected_line: &'static str },
-    /// A mutating tool name appears in a planning workflow system prompt.
+    /// Mutating tool invocation guidance appears in a planning workflow system prompt.
     ///
     /// This should never occur after Phase 2-F/G (cache invalidation on planning workflow
     /// transition + catalog epoch in the prompt cache key).  If it fires, treat it
@@ -134,10 +134,16 @@ pub fn validate_prompt_catalog_alignment(
             return Err(AlignmentError::PlanningWorkflowPromptPolicyMismatch { expected_line });
         }
 
-        const MUTATING_HINTS: &[&str] = &["file_operation write", "file_operation edit"];
-        for &hint in MUTATING_HINTS {
+        // The read-only notice may mention blocked tools by name. Match only
+        // guidance that tells the model it may invoke a mutating operation.
+        const MUTATING_HINTS: &[(&str, &str)] = &[
+            ("you may call apply_patch", "apply_patch"),
+            ("file_operation write", "file_operation write"),
+            ("file_operation edit", "file_operation edit"),
+        ];
+        for &(hint, tool_name) in MUTATING_HINTS {
             if system_instruction.contains(hint) {
-                return Err(AlignmentError::MutatingToolInPlanningWorkflowPrompt { tool_name: hint });
+                return Err(AlignmentError::MutatingToolInPlanningWorkflowPrompt { tool_name });
             }
         }
     }
@@ -220,6 +226,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prompts::system::PLANNING_WORKFLOW_READ_ONLY_NOTICE_LINE;
     use std::cell::Cell;
     use std::sync::Arc;
 
@@ -292,13 +299,33 @@ mod tests {
     #[test]
     fn mutating_tool_in_planning_workflow_prompt_detected() {
         let err = validate_prompt_catalog_alignment(
-            &format!("{PLANNING_WORKFLOW_INTERVIEW_POLICY_LINE}\nyou may call file_operation write to mutate files"),
+            &format!("{PLANNING_WORKFLOW_INTERVIEW_POLICY_LINE}\nyou may call apply_patch to mutate files"),
             &snapshot(true),
             true,
             false,
         )
         .expect_err("canary should fire");
+        assert_eq!(err, AlignmentError::MutatingToolInPlanningWorkflowPrompt { tool_name: "apply_patch" });
+    }
+
+    #[test]
+    fn mutating_file_actions_in_planning_workflow_prompt_are_detected() {
+        let err = validate_prompt_catalog_alignment(
+            &format!("{PLANNING_WORKFLOW_INTERVIEW_POLICY_LINE}\nfile_operation write is unavailable"),
+            &snapshot(true),
+            true,
+            false,
+        )
+        .expect_err("file mutation canary should fire");
         assert_eq!(err, AlignmentError::MutatingToolInPlanningWorkflowPrompt { tool_name: "file_operation write" });
+    }
+
+    #[test]
+    fn planning_notice_can_mention_blocked_apply_patch() {
+        let prompt = format!("{PLANNING_WORKFLOW_INTERVIEW_POLICY_LINE}\n{PLANNING_WORKFLOW_READ_ONLY_NOTICE_LINE}");
+
+        validate_prompt_catalog_alignment(&prompt, &snapshot(true), true, false)
+            .expect("blocked tool mention should not be treated as call guidance");
     }
 
     #[test]

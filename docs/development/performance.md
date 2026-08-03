@@ -48,10 +48,11 @@ Use this loop for any non-trivial performance change. Change one thing at a time
   flag short-circuits during argument parsing and `from_cli_args` never runs.
   Use it as a stable signal for binary/loader cost, **not** as a proxy for
   startup optimization work.
-- **`first_user_io_ms`** — `vtcode auth openai`. This actually exercises
-  `from_cli_args` (config load, dotfolder init, guardian init, theme
-  resolution, auth resolution) without any network round-trip, so it is the
-  right metric for startup-critical changes. `baseline.sh` measures both via 8
+- **`first_user_io_ms`** — `vtcode tool-policy status`. This exercises the
+  credential-free `from_cli_args` path and policy/config loading without a
+  network round-trip or a writable global auth directory. It intentionally
+  follows the command's startup gates, so it is a stable local startup probe,
+  not a full authenticated chat launch. `baseline.sh` measures both via 8
   warm runs and diffs them in `compare.sh`.
 
 ### Patterns that pay off on the startup path
@@ -78,7 +79,7 @@ Warm startup (binary already in the OS page cache) is **effectively free**:
 | metric | release (62 MB) | debug (176 MB) |
 |---|---|---|
 | `vtcode --version`, warm | < 1 ms | ~5–8 ms |
-| `vtcode auth openai`, warm | < 1 ms | ~10–20 ms |
+| `vtcode tool-policy status`, warm | < 1 ms | ~10–20 ms |
 
 The **only** meaningful launch cost is **cold binary page-in** (first run after
 the page cache evicts the binary). Measured release cold-start of
@@ -148,9 +149,37 @@ Current Criterion benches:
 
 ```bash
 cargo bench -p vtcode-core --bench tool_pipeline
+cargo bench -p vtcode-core --bench agent_harness
 ```
 
 Use benches when a hotspot is stable and repeatable. Use the baseline/profile scripts when the question is broader end-to-end behavior.
+
+### Interactive latency workloads
+
+The `agent_harness` target measures the repeated work that affects interactive
+requests: warm prompt-resource cache hits, few-shot tag selection, tool
+definition sorting during catalog refresh, and scoring against a warm indexed
+file list. Its fixtures are deterministic and keep filesystem setup outside the
+timed iterations.
+
+Prompt resources use canonical source paths, a five-minute bounded cache, and a
+two-second metadata polling interval. Cache misses perform scans, reads, and
+parsing on Tokio's blocking pool; warm prompt assembly does not reread or
+reparse unchanged resources. Indexed searches read an immutable path-text table
+by `StringId`; incremental updates publish a new table so searches holding an
+older index remain safe.
+
+Compare repeated local medians rather than adding a noisy hard gate:
+
+```bash
+./scripts/perf/baseline.sh baseline
+./scripts/perf/baseline.sh latest
+./scripts/perf/compare.sh
+```
+
+Rustc-specific AST shrinking, compiler incremental-cache changes, and PGO are
+outside this runtime-focused wave. Revisit them only with a confirmed VT Code
+profile hotspot and a separate build-performance budget.
 
 ## Optimization Rules
 

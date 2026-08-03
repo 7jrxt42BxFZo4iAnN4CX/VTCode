@@ -16,10 +16,11 @@
 //!
 //! Builtin packs are collected via `linkme::distributed_slice` into
 //! `BUILTIN_PACKS`, then iterated at startup by `register_builtin_packs()`.
-//! Each pack's `register()` method batches its tool registrations into a
-//! single `inventory.register_tool_batch()` call to minimize lock contention.
+//! Each pack's `register()` method groups its tool registrations so behavior
+//! and catalog-source decoration stays in one place.
 
 use crate::tools::handlers::PlanningWorkflowState;
+use crate::tools::registry::distributed::ToolConfigSnapshot;
 use crate::tools::registry::inventory::ToolInventory;
 use crate::tools::registry::registration::{ToolCatalogSource, ToolRegistration};
 use crate::tools::tool_intent::builtin_tool_behavior;
@@ -30,11 +31,8 @@ use crate::tools::tool_intent::builtin_tool_behavior;
 /// and iterated during `ToolRegistry` construction. Each pack is responsible
 /// for batch-registering its tools into the inventory.
 ///
-/// # Performance
-///
-/// The `register()` method receives an owned `Vec<ToolRegistration>` to allow
-/// packs to batch-register tools in a single inventory operation, reducing
-/// lock acquisitions from O(tools) to O(packs).
+/// The pack receives an immutable workspace tool-config snapshot explicitly;
+/// pack construction must not read process-global workspace state.
 #[async_trait::async_trait]
 pub trait ToolPack: Send + Sync {
     /// Unique identifier for this pack (e.g. "shell", "web", "planning").
@@ -43,13 +41,19 @@ pub trait ToolPack: Send + Sync {
     /// Register all tools in this pack into the inventory.
     ///
     /// Implementations should batch registrations where possible.
-    async fn register(&self, inventory: &ToolInventory, plan_state: &PlanningWorkflowState);
+    async fn register(
+        &self,
+        inventory: &ToolInventory,
+        plan_state: &PlanningWorkflowState,
+        tool_config: &ToolConfigSnapshot,
+    );
 }
 
 /// Batch-register a list of tools into the inventory, logging any failures.
 ///
-/// This is the preferred registration path for packs: it takes a single
-/// lock on the inventory rather than one per tool.
+/// This is the preferred registration path for packs: it centralizes the
+/// built-in behavior and catalog-source decoration while preserving
+/// per-registration validation and failure isolation.
 pub fn batch_register(inventory: &ToolInventory, registrations: Vec<ToolRegistration>) {
     for mut registration in registrations {
         let tool_name = registration.name().to_string();
@@ -84,15 +88,31 @@ pub static BUILTIN_PACKS: [BuiltinPackFactory] = [..];
 ///
 /// This is the new entry point for builtin tool registration, replacing
 /// the old `builtin_tool_registrations()` loop over individual factories.
-/// Packs are sorted by `pack_id` for deterministic registration order.
-pub async fn register_builtin_packs(inventory: &ToolInventory, plan_state: &PlanningWorkflowState) {
+/// Packs use a deterministic model-facing priority for the core execution
+/// surface, then fall back to `pack_id` so catalog projections share one
+/// stable order.
+pub async fn register_builtin_packs(
+    inventory: &ToolInventory,
+    plan_state: &PlanningWorkflowState,
+    tool_config: &ToolConfigSnapshot,
+) {
     let mut packs: Vec<Box<dyn ToolPack>> = BUILTIN_PACKS.iter().map(|factory| factory()).collect();
 
-    // Deterministic registration order by pack_id.
-    packs.sort_by(|a, b| a.pack_id().cmp(b.pack_id()));
+    packs.sort_by_key(|pack| (pack_priority(pack.pack_id()), pack.pack_id()));
 
     for pack in packs {
-        pack.register(inventory, plan_state).await;
+        pack.register(inventory, plan_state, tool_config).await;
+    }
+}
+
+fn pack_priority(pack_id: &str) -> usize {
+    match pack_id {
+        // Keep the compact interactive surface in the same order used by
+        // public schemas and declarations: edit, execute, discover, stdin.
+        "editing" => 0,
+        "shell" => 1,
+        "search" => 2,
+        _ => 3,
     }
 }
 
@@ -124,9 +144,10 @@ mod tests {
         );
         let plan_state = PlanningWorkflowState::new(temp.path().to_path_buf());
 
-        register_builtin_packs(&inventory, &plan_state).await;
+        register_builtin_packs(&inventory, &plan_state, &ToolConfigSnapshot::default()).await;
 
         assert!(inventory.has_tool(tools::CODE_SEARCH), "CODE_SEARCH should be registered");
         assert!(inventory.has_tool(tools::EXEC_COMMAND), "EXEC_COMMAND should be registered");
+        assert!(inventory.has_tool(tools::SEARCH_TOOLS), "SEARCH_TOOLS should be registered");
     }
 }

@@ -36,10 +36,21 @@ impl AgentRunner {
     async fn build_exposed_tool_snapshot(&self) -> Result<SessionToolCatalogSnapshot> {
         let planning_active = self.tool_registry.is_planning_active();
         let request_user_input_enabled = false;
-        // Keep definitions stable across runtime mode transitions. Active names
-        // still follow the current profile, mode, permissions, and allow-list.
-        let stable_config = self.session_tools_config_for_snapshot(true, true);
-        let definitions = self.tool_registry.model_tools(stable_config).await;
+        // Keep definitions stable across runtime mode transitions by retaining
+        // both projections. Use the planning projection first so multi-action
+        // schemas stay masked to their planning-safe shape when a tool exists
+        // in both modes. Active names still follow the current profile, mode,
+        // permissions, and allow-list.
+        let planning_config = self.session_tools_config_for_snapshot(true, true);
+        let mut definitions = self.tool_registry.model_tools(planning_config).await;
+        let mut definition_names: HashSet<String> =
+            definitions.iter().map(|tool| tool.function_name().to_string()).collect();
+        let normal_config = self.session_tools_config_for_snapshot(false, true);
+        for tool in self.tool_registry.model_tools(normal_config).await {
+            if definition_names.insert(tool.function_name().to_string()) {
+                definitions.push(tool);
+            }
+        }
         let runtime_config = self.session_tools_config_for_snapshot(planning_active, false);
         let mut runtime_tool_names: HashSet<String> = self
             .tool_registry

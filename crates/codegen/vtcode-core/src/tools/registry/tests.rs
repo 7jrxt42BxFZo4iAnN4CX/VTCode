@@ -127,6 +127,7 @@ async fn registers_builtin_tools() -> Result<()> {
     assert!(available.contains(&tools::EXEC_COMMAND.to_string()));
     assert!(available.contains(&tools::WRITE_STDIN.to_string()));
     assert!(available.contains(&tools::APPLY_PATCH.to_string()));
+    assert!(available.contains(&tools::SEARCH_TOOLS.to_string()));
     assert!(!available.contains(&tools::CODE_SEARCH.to_string()));
     assert!(!available.contains(&tools::UNIFIED_SEARCH.to_string()));
     assert!(!available.contains(&tools::UNIFIED_FILE.to_string()));
@@ -194,6 +195,7 @@ async fn public_tool_projections_stay_in_sync() -> Result<()> {
             tools::APPLY_PATCH.to_string(),
             tools::EXEC_COMMAND.to_string(),
             tools::WRITE_STDIN.to_string(),
+            tools::SEARCH_TOOLS.to_string(),
         ]
     );
     for removed_tool in [
@@ -890,6 +892,37 @@ async fn prevalidated_execution_enforces_planning_workflow_guards() -> Result<()
         .expect_err("planning workflow should block prevalidated mutating tool call");
     assert!(err.to_string().contains("planning workflow"));
     assert!(!blocked_path.exists());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn prevalidated_execution_denies_direct_stdin_and_patch_in_planning_workflow() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
+    registry.allow_all_tools().await?;
+    registry.enable_planning();
+
+    let stdin_error = registry
+        .execute_tool_ref_prevalidated(
+            tools::WRITE_STDIN,
+            &json!({"session_id": "planning-session", "chars": "echo blocked\n"}),
+        )
+        .await
+        .expect_err("direct write_stdin must remain blocked during planning");
+    assert!(stdin_error.to_string().contains("planning workflow"));
+
+    let patch_error = registry
+        .execute_tool_ref_prevalidated(
+            tools::APPLY_PATCH,
+            &json!({
+                "patch": "*** Begin Patch\n*** Add File: blocked-by-planning.txt\n+blocked\n*** End Patch"
+            }),
+        )
+        .await
+        .expect_err("direct apply_patch must remain blocked during planning");
+    assert!(patch_error.to_string().contains("planning workflow"));
+    assert!(!temp_dir.path().join("blocked-by-planning.txt").exists());
 
     Ok(())
 }

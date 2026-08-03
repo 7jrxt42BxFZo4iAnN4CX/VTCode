@@ -4,6 +4,7 @@ use vtcode_config::core::{CustomProviderConfig, ProviderOverrideConfig};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use crate::config::VTCodeConfig;
 use crate::config::constants::models;
@@ -11,6 +12,7 @@ use crate::config::models::{ModelId, Provider};
 use crate::core::agent::types::AgentType;
 use crate::llm::auto_lightweight_model;
 use crate::llm::factory::{infer_provider, infer_provider_from_model};
+use crate::prompts::resource_cache::{ResourceCache, canonical_cache_path, fingerprint_files};
 
 // ─── Model Resolution ───────────────────────────────────────────────────────
 
@@ -368,13 +370,58 @@ pub fn load_primary_memory_appendix(
         return Ok(None);
     };
 
-    let memory_file = agent_memory_dir(workspace_root, agent_name, scope).join("MEMORY.md");
-    if !memory_file.exists() {
+    load_primary_memory_appendix_cached(agent_memory_dir(workspace_root, agent_name, scope).join("MEMORY.md"))
+}
+
+/// Async variant of [`load_primary_memory_appendix`] for prompt assembly.
+/// Cache misses, metadata scans, and memory parsing run on Tokio's blocking
+/// pool so an interactive request never monopolizes a runtime worker with
+/// synchronous filesystem work.
+pub async fn load_primary_memory_appendix_async(
+    workspace_root: &Path,
+    agent_name: &str,
+    scope: Option<SubagentMemoryScope>,
+) -> Result<Option<String>> {
+    let Some(scope) = scope else {
         return Ok(None);
+    };
+
+    let memory_file = agent_memory_dir(workspace_root, agent_name, scope).join("MEMORY.md");
+    tokio::task::spawn_blocking(move || load_primary_memory_appendix_cached(memory_file))
+        .await
+        .context("primary-agent memory cache task failed")?
+}
+
+fn load_primary_memory_appendix_cached(memory_file: PathBuf) -> Result<Option<String>> {
+    let cache_key = canonical_cache_path(&memory_file);
+    if let Some(cached) = primary_memory_cache().fast_get(&cache_key) {
+        return Ok((*cached).clone());
     }
 
-    let content =
-        std::fs::read_to_string(&memory_file).with_context(|| format!("Failed to read {}", memory_file.display()))?;
+    primary_memory_cache().with_load_gate(|| {
+        if let Some(cached) = primary_memory_cache().fast_get(&cache_key) {
+            return Ok((*cached).clone());
+        }
+
+        let fingerprint = fingerprint_files(&[memory_file.as_path()]);
+        if let Some(cached) = primary_memory_cache().get_if_unchanged(&cache_key, &fingerprint) {
+            return Ok((*cached).clone());
+        }
+
+        let appendix = load_primary_memory_appendix_uncached(&memory_file)?;
+        primary_memory_cache().insert(cache_key, appendix.clone(), fingerprint);
+        Ok(appendix)
+    })
+}
+
+fn load_primary_memory_appendix_uncached(memory_file: &Path) -> Result<Option<String>> {
+    let content = match std::fs::read_to_string(memory_file) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("Failed to read {}", memory_file.display()));
+        }
+    };
     let (excerpt, truncated) = memory_excerpt(&content);
     let highlights = extract_memory_highlights(&excerpt, SUBAGENT_MEMORY_HIGHLIGHT_LIMIT);
     let mut appendix = String::new();
@@ -397,6 +444,12 @@ pub fn load_primary_memory_appendix(
     }
 
     Ok(Some(appendix))
+}
+
+static PRIMARY_MEMORY_APPENDIX_CACHE: OnceLock<ResourceCache<PathBuf, Option<String>>> = OnceLock::new();
+
+fn primary_memory_cache() -> &'static ResourceCache<PathBuf, Option<String>> {
+    PRIMARY_MEMORY_APPENDIX_CACHE.get_or_init(ResourceCache::default)
 }
 
 fn agent_memory_dir(workspace_root: &Path, agent_name: &str, scope: SubagentMemoryScope) -> PathBuf {
@@ -425,4 +478,81 @@ fn memory_excerpt(content: &str) -> (String, bool) {
 
     let truncated = excerpt_lines.len() < total_lines;
     (excerpt_lines.join("\n"), truncated)
+}
+
+#[cfg(test)]
+mod memory_cache_tests {
+    use super::{load_primary_memory_appendix, load_primary_memory_appendix_async, primary_memory_cache};
+    use tempfile::TempDir;
+    use vtcode_config::SubagentMemoryScope;
+
+    fn memory_file(workspace: &TempDir) -> std::path::PathBuf {
+        workspace.path().join(".vtcode/agent-memory/reviewer/MEMORY.md")
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn primary_memory_cache_refreshes_edits_and_missing_files() {
+        primary_memory_cache().clear();
+        let workspace = TempDir::new().expect("workspace");
+
+        assert!(
+            load_primary_memory_appendix(workspace.path(), "reviewer", Some(SubagentMemoryScope::Project))
+                .expect("missing memory")
+                .is_none()
+        );
+
+        let path = memory_file(&workspace);
+        std::fs::create_dir_all(path.parent().expect("memory parent")).expect("memory directory");
+        std::fs::write(&path, "# Reviewer Memory\n\n- old guidance\n").expect("old memory");
+        primary_memory_cache().force_metadata_poll();
+        let first = load_primary_memory_appendix(workspace.path(), "reviewer", Some(SubagentMemoryScope::Project))
+            .expect("first memory")
+            .expect("memory appendix");
+        assert!(first.contains("old guidance"));
+
+        std::fs::write(&path, "# Reviewer Memory\n\n- new guidance\n").expect("new memory");
+        primary_memory_cache().force_metadata_poll();
+        let second = load_primary_memory_appendix(workspace.path(), "reviewer", Some(SubagentMemoryScope::Project))
+            .expect("updated memory")
+            .expect("updated appendix");
+        assert!(second.contains("new guidance"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn primary_memory_cache_honors_ttl_refresh() {
+        primary_memory_cache().clear();
+        let workspace = TempDir::new().expect("workspace");
+        let path = memory_file(&workspace);
+        std::fs::create_dir_all(path.parent().expect("memory parent")).expect("memory directory");
+        std::fs::write(&path, "# Reviewer Memory\n\n- old guidance\n").expect("old memory");
+
+        let first = load_primary_memory_appendix(workspace.path(), "reviewer", Some(SubagentMemoryScope::Project))
+            .expect("first memory")
+            .expect("memory appendix");
+        assert!(first.contains("old guidance"));
+        std::fs::write(&path, "# Reviewer Memory\n\n- new guidance\n").expect("new memory");
+        primary_memory_cache().force_expiration();
+        let second = load_primary_memory_appendix(workspace.path(), "reviewer", Some(SubagentMemoryScope::Project))
+            .expect("expired memory")
+            .expect("expired appendix");
+        assert!(second.contains("new guidance"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[serial_test::serial]
+    async fn concurrent_primary_memory_misses_return_identical_appendices() {
+        primary_memory_cache().clear();
+        let workspace = TempDir::new().expect("workspace");
+        let path = memory_file(&workspace);
+        std::fs::create_dir_all(path.parent().expect("memory parent")).expect("memory directory");
+        std::fs::write(&path, "# Reviewer Memory\n\n- shared guidance\n").expect("memory");
+
+        let (first, second) = tokio::join!(
+            load_primary_memory_appendix_async(workspace.path(), "reviewer", Some(SubagentMemoryScope::Project)),
+            load_primary_memory_appendix_async(workspace.path(), "reviewer", Some(SubagentMemoryScope::Project)),
+        );
+        assert_eq!(first.expect("first appendix"), second.expect("second appendix"));
+    }
 }

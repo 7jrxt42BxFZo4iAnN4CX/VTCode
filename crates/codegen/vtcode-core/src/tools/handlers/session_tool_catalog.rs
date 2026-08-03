@@ -728,9 +728,11 @@ impl ToolCatalogEntry {
 
 fn profile_allows_tool(profile: ToolProfile, tool_name: &str, planning_active: bool) -> bool {
     match profile {
+        ToolProfile::VtCode if planning_active => {
+            matches!(tool_name, tools::EXEC_COMMAND | tools::CODE_SEARCH | tools::REQUEST_USER_INPUT)
+        }
         ToolProfile::VtCode => {
             matches!(tool_name, tools::EXEC_COMMAND | tools::WRITE_STDIN | tools::APPLY_PATCH | tools::SEARCH_TOOLS)
-                || (planning_active && matches!(tool_name, tools::CODE_SEARCH | tools::REQUEST_USER_INPUT))
         }
         ToolProfile::AdvancedVtCode => !matches!(
             tool_name,
@@ -950,6 +952,20 @@ mod tests {
     #[test]
     fn default_profile_exposes_planning_tools_during_planning() {
         let registrations = vec![
+            registration(tools::EXEC_COMMAND)
+                .with_description("Run command")
+                .with_parameter_schema(empty_object_schema()),
+            registration(tools::WRITE_STDIN)
+                .with_description("Write stdin")
+                .with_parameter_schema(empty_object_schema()),
+            registration(tools::APPLY_PATCH)
+                .with_llm_visibility(false)
+                .with_description("Apply patch")
+                .with_parameter_schema(apply_patch_parameters())
+                .with_behavior(ToolBehavior::apply_patch(ToolMutationModel::Mutating, false, true)),
+            registration(tools::SEARCH_TOOLS)
+                .with_description("Discover deferred tools")
+                .with_parameter_schema(empty_object_schema()),
             registration(tools::CODE_SEARCH)
                 .with_description("Search code")
                 .with_parameter_schema(empty_object_schema()),
@@ -959,7 +975,23 @@ mod tests {
         ];
 
         let catalog = SessionToolCatalog::rebuild_from_registrations(registrations);
-        let names = catalog.public_tool_names(
+        let normal_names = catalog.public_tool_names(SessionToolsConfig::full_public(
+            SessionSurface::Interactive,
+            CapabilityLevel::CodeSearch,
+            ToolDocumentationMode::Full,
+            ToolModelCapabilities::default(),
+        ));
+        assert_eq!(
+            normal_names,
+            vec![
+                tools::EXEC_COMMAND.to_string(),
+                tools::WRITE_STDIN.to_string(),
+                tools::APPLY_PATCH.to_string(),
+                tools::SEARCH_TOOLS.to_string(),
+            ]
+        );
+
+        let planning_names = catalog.public_tool_names(
             SessionToolsConfig::full_public(
                 SessionSurface::Interactive,
                 CapabilityLevel::CodeSearch,
@@ -969,7 +1001,14 @@ mod tests {
             .with_planning_active(true),
         );
 
-        assert_eq!(names, vec![tools::CODE_SEARCH.to_string(), tools::REQUEST_USER_INPUT.to_string(),]);
+        assert_eq!(
+            planning_names,
+            vec![
+                tools::EXEC_COMMAND.to_string(),
+                tools::CODE_SEARCH.to_string(),
+                tools::REQUEST_USER_INPUT.to_string(),
+            ]
+        );
     }
 
     #[test]

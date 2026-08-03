@@ -5,12 +5,10 @@
 //! collects all annotated functions into a contiguous slice at load time,
 //! eliminating the need for a central enumeration in `builtins.rs`.
 //!
-//! The `TOOL_CONFIG` global is shared across every tool that reads user
-//! config. Tests that need a fresh config snapshot should call
-//! `install_tool_config` themselves; once a test process installs a
-//! snapshot, the global cannot be reset (a `OnceLock` has no public
-/// drop API by design — see review M1 in the code review for the
-/// architectural rationale).
+//! The `TOOL_CONFIG` global is retained only for the legacy distributed
+//! registration compatibility path. The active pack-based registry receives
+//! its workspace snapshot explicitly and must not read this process-global
+//! value.
 use std::sync::OnceLock;
 
 use crate::tools::handlers::PlanningWorkflowState;
@@ -31,16 +29,17 @@ pub struct ToolConfigSnapshot {
 
 static TOOL_CONFIG: OnceLock<ToolConfigSnapshot> = OnceLock::new();
 
-/// Install the tool config snapshot. Must be called exactly once, before any
-/// built-in tool that consumes it is constructed. The registry calls this in
-/// `register_builtin_tools`; tests that exercise `register_*` functions in
-/// isolation should call it too.
+/// Install the tool config snapshot for the legacy distributed registration
+/// compatibility path. The active pack-based registry does not call this
+/// function; tests that exercise legacy `register_*` functions in isolation
+/// may still use it.
 ///
 /// A second call with the SAME snapshot is a no-op (lets tests share
 /// state across multiple `ToolRegistry::new` invocations in one
 /// process). A second call with a DIFFERENT snapshot returns an error,
 /// since silently dropping the new value would mask a real config-loading
 /// bug (e.g. two vtcode.toml files racing during a hot reload).
+#[allow(dead_code)]
 pub fn install_tool_config(snapshot: ToolConfigSnapshot) -> anyhow::Result<()> {
     match TOOL_CONFIG.set(snapshot) {
         Ok(()) => Ok(()),

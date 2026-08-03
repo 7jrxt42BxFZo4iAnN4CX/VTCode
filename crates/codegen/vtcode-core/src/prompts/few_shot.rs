@@ -38,10 +38,14 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
+use compact_str::CompactString;
 use serde::Deserialize;
 use tracing::warn;
 use vtcode_commons::tokens::estimate_tokens;
+
+use super::resource_cache::{ResourceCache, canonical_cache_path, fingerprint_markdown_directories};
 
 const EXAMPLES_DIR: &str = "examples";
 const PROMPTS_PARENT: &str = ".vtcode/prompts";
@@ -58,7 +62,7 @@ pub const DEFAULT_FEW_SHOT_BUDGET_TOKENS: usize = 800;
 /// `tags` drive keyword selection; `summary` is for debug logs; `body` is
 /// the raw markdown body that flows verbatim into the prompt. `token_count`
 /// is filled on load and refreshed lazily on first selection.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FewShotExample {
     pub id: String,
     pub tags: Vec<String>,
@@ -89,6 +93,7 @@ struct FewShotFrontmatter {
 #[derive(Debug, Clone, Default)]
 pub struct FewShotStore {
     examples: Vec<FewShotExample>,
+    normalized_tags: Vec<Vec<CompactString>>,
 }
 
 impl FewShotStore {
@@ -100,21 +105,30 @@ impl FewShotStore {
     /// load only the workspace; pass `home_dir = Some("/home/user")` to
     /// also pull user-global examples.
     pub fn load(workspace_root: Option<&Path>, home_dir: Option<&Path>) -> Self {
-        let mut by_id: HashMap<String, FewShotExample> = HashMap::new();
+        let key = FewShotCacheKey::new(workspace_root, home_dir);
+        load_cached_sync(key, workspace_root.map(Path::to_path_buf), home_dir.map(Path::to_path_buf))
+    }
 
-        if let Some(home) = home_dir {
-            merge_from_dir(&mut by_id, &home.join(PROMPTS_PARENT).join(EXAMPLES_DIR));
+    /// Load examples without performing cache-key or cache-miss filesystem
+    /// work on a Tokio worker. Warm loads still use the blocking pool because
+    /// canonicalizing a new source path may touch the filesystem.
+    pub async fn load_async(workspace_root: Option<&Path>, home_dir: Option<&Path>) -> Self {
+        let workspace_root = workspace_root.map(Path::to_path_buf);
+        let home_dir = home_dir.map(Path::to_path_buf);
+        match tokio::task::spawn_blocking(move || {
+            // Canonicalization may touch the filesystem for a first-time
+            // source path, so keep key construction on the blocking pool too.
+            let key = FewShotCacheKey::new(workspace_root.as_deref(), home_dir.as_deref());
+            load_cached_sync(key, workspace_root, home_dir)
+        })
+        .await
+        {
+            Ok(store) => store,
+            Err(error) => {
+                warn!(%error, "few-shot resource load task failed");
+                Self::default()
+            }
         }
-
-        if let Some(workspace) = workspace_root {
-            merge_from_dir(&mut by_id, &workspace.join(PROMPTS_PARENT).join(EXAMPLES_DIR));
-        }
-
-        let mut examples: Vec<FewShotExample> = by_id.into_values().collect();
-        // Stable ordering by id so the same library produces deterministic
-        // selections across runs.
-        examples.sort_by(|a, b| a.id.cmp(&b.id));
-        Self { examples }
     }
 
     /// Construct a store from an in-memory list. Useful for tests and for
@@ -122,7 +136,8 @@ impl FewShotStore {
     pub fn from_examples(examples: Vec<FewShotExample>) -> Self {
         let mut sorted = examples;
         sorted.sort_by(|a, b| a.id.cmp(&b.id));
-        Self { examples: sorted }
+        let normalized_tags = sorted.iter().map(|example| normalize_tags(&example.tags)).collect();
+        Self { examples: sorted, normalized_tags }
     }
 
     /// Number of loaded examples.
@@ -159,12 +174,14 @@ impl FewShotStore {
         if query_words.is_empty() {
             return Vec::new();
         }
+        let query_lower = query.to_ascii_lowercase();
 
         let mut scored: Vec<(f64, &FewShotExample)> = self
             .examples
             .iter()
-            .filter_map(|example| {
-                let score = score_example(example, &query_words, query);
+            .zip(&self.normalized_tags)
+            .filter_map(|(example, normalized_tags)| {
+                let score = score_example(normalized_tags, &query_words, &query_lower);
                 if score <= 0.0 {
                     return None;
                 }
@@ -223,6 +240,70 @@ pub fn render_few_shot_section(examples: &[&FewShotExample]) -> String {
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct FewShotCacheKey {
+    workspace_examples_dir: Option<PathBuf>,
+    home_examples_dir: Option<PathBuf>,
+}
+
+impl FewShotCacheKey {
+    fn new(workspace_root: Option<&Path>, home_dir: Option<&Path>) -> Self {
+        Self {
+            workspace_examples_dir: workspace_root
+                .map(|root| canonical_cache_path(&root.join(PROMPTS_PARENT).join(EXAMPLES_DIR))),
+            home_examples_dir: home_dir.map(|home| canonical_cache_path(&home.join(PROMPTS_PARENT).join(EXAMPLES_DIR))),
+        }
+    }
+}
+
+static FEW_SHOT_CACHE: OnceLock<ResourceCache<FewShotCacheKey, FewShotStore>> = OnceLock::new();
+
+fn few_shot_cache() -> &'static ResourceCache<FewShotCacheKey, FewShotStore> {
+    FEW_SHOT_CACHE.get_or_init(ResourceCache::default)
+}
+
+fn load_cached_sync(key: FewShotCacheKey, workspace_root: Option<PathBuf>, home_dir: Option<PathBuf>) -> FewShotStore {
+    if let Some(cached) = few_shot_cache().fast_get(&key) {
+        return (*cached).clone();
+    }
+
+    few_shot_cache().with_load_gate(|| {
+        if let Some(cached) = few_shot_cache().fast_get(&key) {
+            return (*cached).clone();
+        }
+
+        let source_dirs = key
+            .workspace_examples_dir
+            .iter()
+            .chain(key.home_examples_dir.iter())
+            .map(PathBuf::as_path)
+            .collect::<Vec<_>>();
+        let fingerprint = fingerprint_markdown_directories(&source_dirs);
+        if let Some(cached) = few_shot_cache().get_if_unchanged(&key, &fingerprint) {
+            return (*cached).clone();
+        }
+
+        let store = load_uncached(workspace_root.as_deref(), home_dir.as_deref());
+        few_shot_cache().insert(key, store.clone(), fingerprint);
+        store
+    })
+}
+
+fn load_uncached(workspace_root: Option<&Path>, home_dir: Option<&Path>) -> FewShotStore {
+    let mut by_id: HashMap<String, FewShotExample> = HashMap::new();
+
+    // Keep the workspace copy when an id collides with a user-global copy.
+    if let Some(workspace) = workspace_root {
+        merge_from_dir(&mut by_id, &workspace.join(PROMPTS_PARENT).join(EXAMPLES_DIR));
+    }
+
+    if let Some(home) = home_dir {
+        merge_from_dir(&mut by_id, &home.join(PROMPTS_PARENT).join(EXAMPLES_DIR));
+    }
+
+    FewShotStore::from_examples(by_id.into_values().collect())
+}
 
 fn merge_from_dir(by_id: &mut HashMap<String, FewShotExample>, dir: &Path) {
     let entries = match std::fs::read_dir(dir) {
@@ -336,16 +417,18 @@ fn tokenize(query: &str) -> Vec<String> {
         .collect()
 }
 
-fn score_example(example: &FewShotExample, query_words: &[String], query_raw: &str) -> f64 {
-    let query_lower = query_raw.to_ascii_lowercase();
+fn normalize_tags(tags: &[String]) -> Vec<CompactString> {
+    tags.iter().map(|tag| CompactString::from(tag.to_ascii_lowercase())).collect()
+}
+
+fn score_example(normalized_tags: &[CompactString], query_words: &[String], query_lower: &str) -> f64 {
     let mut score = 0.0;
-    for tag in &example.tags {
-        let tag_lower = tag.to_ascii_lowercase();
-        if query_words.iter().any(|word| word == &tag_lower) {
+    for tag in normalized_tags {
+        if query_words.iter().any(|word| word == tag.as_str()) {
             score += 1.0;
             continue;
         }
-        if query_lower.contains(&tag_lower) {
+        if query_lower.contains(tag.as_str()) {
             score += 0.5;
         }
     }
@@ -493,5 +576,102 @@ mod tests {
         // No directories exist; load must succeed with zero examples.
         let store = FewShotStore::load(Some(Path::new("/does/not/exist/anywhere")), None);
         assert!(store.is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn load_preserves_workspace_precedence_and_refreshes_edits() {
+        few_shot_cache().clear();
+        let workspace = tempfile::tempdir().expect("workspace");
+        let home = tempfile::tempdir().expect("home");
+        let workspace_dir = workspace.path().join(PROMPTS_PARENT).join(EXAMPLES_DIR);
+        let home_dir = home.path().join(PROMPTS_PARENT).join(EXAMPLES_DIR);
+        std::fs::create_dir_all(&workspace_dir).expect("workspace examples");
+        std::fs::create_dir_all(&home_dir).expect("home examples");
+        std::fs::write(home_dir.join("review.md"), "---\ntags: [review]\n---\nhome\n").expect("home example");
+        std::fs::write(workspace_dir.join("review.md"), "---\ntags: [review]\n---\nworkspace\n")
+            .expect("workspace example");
+
+        let first = FewShotStore::load(Some(workspace.path()), Some(home.path()));
+        assert_eq!(first.examples[0].body, "workspace");
+
+        std::fs::write(workspace_dir.join("review.md"), "---\ntags: [review]\n---\nupdated\n").expect("edit example");
+        few_shot_cache().force_metadata_poll();
+        let second = FewShotStore::load(Some(workspace.path()), Some(home.path()));
+        assert_eq!(second.examples[0].body, "updated");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cache_detects_additions_deletions_and_missing_sources() {
+        few_shot_cache().clear();
+        let workspace = tempfile::tempdir().expect("workspace");
+        let examples_dir = workspace.path().join(PROMPTS_PARENT).join(EXAMPLES_DIR);
+
+        assert!(FewShotStore::load(Some(workspace.path()), None).is_empty());
+        std::fs::create_dir_all(&examples_dir).expect("examples directory");
+        std::fs::write(examples_dir.join("one.md"), "---\ntags: [one]\n---\none\n").expect("one example");
+        few_shot_cache().force_metadata_poll();
+        assert_eq!(FewShotStore::load(Some(workspace.path()), None).len(), 1);
+
+        std::fs::remove_file(examples_dir.join("one.md")).expect("remove example");
+        few_shot_cache().force_metadata_poll();
+        assert!(FewShotStore::load(Some(workspace.path()), None).is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn expired_cache_entry_reparses_even_when_metadata_is_unchanged() {
+        few_shot_cache().clear();
+        let workspace = tempfile::tempdir().expect("workspace");
+        let examples_dir = workspace.path().join(PROMPTS_PARENT).join(EXAMPLES_DIR);
+        std::fs::create_dir_all(&examples_dir).expect("examples directory");
+        std::fs::write(examples_dir.join("ttl.md"), "---\ntags: [ttl]\n---\nold\n").expect("old example");
+
+        let first = FewShotStore::load(Some(workspace.path()), None);
+        assert_eq!(first.examples[0].body, "old");
+        std::fs::write(examples_dir.join("ttl.md"), "---\ntags: [ttl]\n---\nnew\n").expect("new example");
+        few_shot_cache().force_expiration();
+        let second = FewShotStore::load(Some(workspace.path()), None);
+        assert_eq!(second.examples[0].body, "new");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cache_hit_preserves_rendered_few_shot_prompt() {
+        few_shot_cache().clear();
+        let workspace = tempfile::tempdir().expect("workspace");
+        let examples_dir = workspace.path().join(PROMPTS_PARENT).join(EXAMPLES_DIR);
+        std::fs::create_dir_all(&examples_dir).expect("examples directory");
+        std::fs::write(
+            examples_dir.join("render.md"),
+            "---\ntags: [render]\nsummary: Stable output\n---\nRender this example.\n",
+        )
+        .expect("render example");
+
+        let cold = FewShotStore::load(Some(workspace.path()), None);
+        let cold_selected = cold.select("render", DEFAULT_FEW_SHOT_BUDGET_TOKENS);
+        let cold_rendered = render_few_shot_section(&cold_selected);
+
+        let warm = FewShotStore::load(Some(workspace.path()), None);
+        let warm_selected = warm.select("render", DEFAULT_FEW_SHOT_BUDGET_TOKENS);
+        let warm_rendered = render_few_shot_section(&warm_selected);
+        assert_eq!(cold_rendered, warm_rendered);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[serial_test::serial]
+    async fn concurrent_cache_misses_share_the_parsed_store() {
+        few_shot_cache().clear();
+        let workspace = tempfile::tempdir().expect("workspace");
+        let examples_dir = workspace.path().join(PROMPTS_PARENT).join(EXAMPLES_DIR);
+        std::fs::create_dir_all(&examples_dir).expect("examples directory");
+        std::fs::write(examples_dir.join("concurrent.md"), "---\ntags: [concurrent]\n---\nbody\n").expect("example");
+
+        let (first, second) = tokio::join!(
+            FewShotStore::load_async(Some(workspace.path()), None),
+            FewShotStore::load_async(Some(workspace.path()), None),
+        );
+        assert_eq!(first.examples, second.examples);
     }
 }
