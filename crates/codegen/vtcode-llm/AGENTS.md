@@ -20,7 +20,7 @@
 
 ## Coding Conventions
 
-Providers in `providers/<name>/mod.rs`. Use `anyhow::Result`, `tracing`, not `println!`. Provider-specific types stay local; shared go in `types.rs` or `provider/`.
+Providers in `providers/<name>/mod.rs`. Use `anyhow::Result`, `tracing`, not `println!`. Provider-specific types stay local; shared go in `types.rs` or `provider/`. OpenResponses streaming wire parsing dispatches by `type`; keep hot SSE fields borrowed and update the wire fields and mapping together when adding events.
 ## OpenAI-Compatible Providers
 
 - `providers/openai_compat.rs` owns the shared shell: `OpenAiCompatSpec` (per-provider consts/overrides) + `OpenAiCompatCore<S>` + `impl_openai_compat_provider!`. New compat providers implement a Spec (~50-200 lines), not a full `LLMProvider`.

@@ -36,7 +36,8 @@ surface that other parts of the codebase depend on.
 ## Status line customization
 
 Use the `[ui.status_line]` table to control the prompt status bar. The default
-`auto` mode shows git status and the active model, while `hidden` removes the
-bar entirely. Setting `mode = "command"` runs a user script and renders the
-first line of stdout, allowing full customization of the inline footer. See
+`auto` mode shows git status, the active model, and the current clock time
+(rightmost), while `hidden` removes the bar entirely. Setting `mode = "command"`
+runs a user script and renders the first line of stdout, allowing full
+customization of the inline footer. See
 [`status-line.md`](./status-line.md) for payload details and examples.

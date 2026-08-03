@@ -13,7 +13,7 @@ Detailed runloop recovery and allocator notes live in the [vtcode binary gotchas
 - Keep the binary thin; runtime logic belongs in `vtcode-core`.
 - `mimalloc` is the default allocator; `allocator-jemalloc` opts into `tikv-jemalloc`. Measure with `vtcode bench-allocator` before changing it; see the [allocator guide](../docs/development/ALLOCATOR_MEMORY.md).
 - Install `vtcode_ui::tui::panic_hook` before producing output.
-- `agent/runloop/` is the single-agent loop; `unified/turn/session_loop_runner/mod.rs` is its facade and `orchestration.rs` owns the loop body.
+- `agent/runloop/` is the single-agent loop; `unified/turn/session_loop_runner/mod.rs` is its facade and `orchestration.rs` owns the loop body. Keep status-line command input, persistence, preview, and action policy behind the private child modules of `turn/session/slash_commands/ui/statusline.rs`.
 - Keep transcript/modal editor opens on the bounded runtime coordinator, not queued `/edit` submissions.
 - Keep `/secret` provider/key validation and storage selection behind `turn/session/slash_commands/secrets/storage.rs` and the central resolver.
 - Route batched tool metrics through the shared execution helper so every executed status is recorded.

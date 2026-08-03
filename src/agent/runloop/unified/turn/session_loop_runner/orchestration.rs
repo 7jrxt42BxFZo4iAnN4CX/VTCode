@@ -84,7 +84,7 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
     let mut resume_state = resume;
     let mut _consecutive_idle_cycles = 0;
     let mut last_activity_time: Option<Instant> = None;
-    let mut config_watcher = SimpleConfigWatcher::new(config.workspace.clone());
+    let mut config_watcher = SimpleConfigWatcher::new_with_user_config_paths(config.workspace.clone());
     config_watcher.set_check_interval(15);
     config_watcher.set_debounce_duration(500);
     let live_reload_enabled = live_reload_preserves_session_config(initial_vt_cfg.as_ref(), &config);
@@ -403,15 +403,6 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
         let mut input_status_state = InputStatusState::default();
         let mut dismissed_memory_cleanup_fingerprint: Option<(usize, usize)> = None;
         let mut prefer_latest_queued_input_once = false;
-        crate::agent::runloop::unified::status_line::update_ide_context_source(
-            &mut input_status_state,
-            crate::agent::runloop::unified::session_setup::ide_context_status_label_from_bridge(
-                &context_manager,
-                config.workspace.as_path(),
-                vt_cfg.as_ref(),
-                ide_context_bridge.as_ref(),
-            ),
-        );
         let mut queued_inputs: VecDeque<crate::agent::runloop::unified::inline_events::QueuedInput> =
             VecDeque::with_capacity(8);
         let mut agent_touched_paths = std::collections::BTreeSet::new();

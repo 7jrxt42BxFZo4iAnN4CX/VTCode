@@ -9,6 +9,7 @@
 //! Reference: <https://agentclientprotocol.com/llms.txt>
 
 use hashbrown::HashMap;
+use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -300,7 +301,7 @@ pub struct SessionCancelParams {
 // ============================================================================
 
 /// Session update notification payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SessionUpdateNotification {
     /// Session ID
     pub(crate) session_id: String,
@@ -312,6 +313,129 @@ pub struct SessionUpdateNotification {
     #[serde(flatten)]
     pub(crate) update: SessionUpdate,
 }
+
+impl<'de> Deserialize<'de> for SessionUpdateNotification {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = SessionUpdateNotificationWire::deserialize(deserializer)?;
+        let SessionUpdateNotificationWire {
+            session_id,
+            turn_id,
+            update_type,
+            delta,
+            tool_call,
+            tool_call_id,
+            result,
+            status,
+            code,
+            message,
+            request,
+        } = wire;
+        let update = match update_type.as_str() {
+            "message_delta" => SessionUpdate::MessageDelta {
+                delta: required_update_field(delta, "delta", &update_type).map_err(de::Error::custom)?,
+            },
+            "tool_call_start" => SessionUpdate::ToolCallStart {
+                tool_call: required_update_field(tool_call, "tool_call", &update_type).map_err(de::Error::custom)?,
+            },
+            "tool_call_end" => SessionUpdate::ToolCallEnd {
+                tool_call_id: required_update_field(tool_call_id, "tool_call_id", &update_type)
+                    .map_err(de::Error::custom)?,
+                result: required_present_value(result, "result", &update_type).map_err(de::Error::custom)?,
+            },
+            "turn_complete" => SessionUpdate::TurnComplete {
+                status: required_update_field(status, "status", &update_type).map_err(de::Error::custom)?,
+            },
+            "error" => SessionUpdate::Error {
+                code: required_update_field(code, "code", &update_type).map_err(de::Error::custom)?,
+                message: required_update_field(message, "message", &update_type).map_err(de::Error::custom)?,
+            },
+            "server_request" => SessionUpdate::ServerRequest {
+                request: required_update_field(request, "request", &update_type).map_err(de::Error::custom)?,
+            },
+            _ => return Err(de::Error::unknown_variant(&update_type, SESSION_UPDATE_TYPES)),
+        };
+
+        Ok(Self { session_id, turn_id, update })
+    }
+}
+
+/// Direct wire representation used to avoid buffering the notification map
+/// for the flattened, tagged [`SessionUpdate`] payload.
+#[derive(Debug, Deserialize)]
+struct SessionUpdateNotificationWire {
+    session_id: String,
+    turn_id: String,
+    update_type: String,
+    #[serde(default)]
+    delta: Option<String>,
+    #[serde(default)]
+    tool_call: Option<ToolCallRecord>,
+    #[serde(default)]
+    tool_call_id: Option<String>,
+    #[serde(default)]
+    result: Present<Value>,
+    #[serde(default)]
+    status: Option<TurnStatus>,
+    #[serde(default)]
+    code: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
+    request: Option<ToolExecutionRequest>,
+}
+
+/// Preserves the distinction between a missing field and an explicit JSON
+/// `null` for required values such as a tool result.
+#[derive(Debug)]
+struct Present<T> {
+    value: Option<T>,
+    present: bool,
+}
+
+impl<T> Default for Present<T> {
+    fn default() -> Self {
+        Self { value: None, present: false }
+    }
+}
+
+impl<'de, T> Deserialize<'de> for Present<T>
+where
+    T: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(Self {
+            value: Option::<T>::deserialize(deserializer)?,
+            present: true,
+        })
+    }
+}
+
+fn required_present_value(field: Present<Value>, field_name: &str, update_type: &str) -> Result<Value, String> {
+    if field.present {
+        Ok(field.value.unwrap_or(Value::Null))
+    } else {
+        Err(format!("ACP update {update_type:?} is missing {field_name:?}"))
+    }
+}
+
+fn required_update_field<T>(value: Option<T>, field: &str, update_type: &str) -> Result<T, String> {
+    value.ok_or_else(|| format!("ACP update {update_type:?} is missing {field:?}"))
+}
+
+const SESSION_UPDATE_TYPES: &[&str] = &[
+    "message_delta",
+    "tool_call_start",
+    "tool_call_end",
+    "turn_complete",
+    "error",
+    "server_request",
+];
 
 /// Session update types
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -501,6 +625,72 @@ mod tests {
         let json = serde_json::to_value(&update).unwrap();
         assert_eq!(json["update_type"], "message_delta");
         assert_eq!(json["delta"], "Hello");
+    }
+
+    #[test]
+    fn session_update_notification_deserializes_each_update_shape() {
+        let tool_call = json!({
+            "id": "tc-1",
+            "name": "code_search",
+            "arguments": {"query": "fn main"},
+            "timestamp": "2025-01-01T00:00:00Z"
+        });
+        let request = json!({
+            "request_id": "req-1",
+            "tool_call": tool_call.clone()
+        });
+        let cases = [
+            (json!({"session_id":"s","turn_id":"t","update_type":"message_delta","delta":"hi"}), "message"),
+            (
+                json!({"session_id":"s","turn_id":"t","update_type":"tool_call_start","tool_call":tool_call}),
+                "start",
+            ),
+            (
+                json!({"session_id":"s","turn_id":"t","update_type":"tool_call_end","tool_call_id":"tc-1","result":null}),
+                "end",
+            ),
+            (
+                json!({"session_id":"s","turn_id":"t","update_type":"turn_complete","status":"completed"}),
+                "complete",
+            ),
+            (
+                json!({"session_id":"s","turn_id":"t","update_type":"error","code":"bad_request","message":"nope"}),
+                "error",
+            ),
+            (json!({"session_id":"s","turn_id":"t","update_type":"server_request","request":request}), "request"),
+        ];
+
+        for (payload, expected) in cases {
+            let notification: SessionUpdateNotification =
+                serde_json::from_value(payload).expect("valid session update notification");
+            let actual = match notification.update {
+                SessionUpdate::MessageDelta { .. } => "message",
+                SessionUpdate::ToolCallStart { .. } => "start",
+                SessionUpdate::ToolCallEnd { result, .. } if result.is_null() => "end",
+                SessionUpdate::TurnComplete { .. } => "complete",
+                SessionUpdate::Error { .. } => "error",
+                SessionUpdate::ServerRequest { .. } => "request",
+                _ => "other",
+            };
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn session_update_notification_rejects_missing_payload() {
+        let missing_delta = json!({
+            "session_id": "s",
+            "turn_id": "t",
+            "update_type": "message_delta"
+        });
+        assert!(serde_json::from_value::<SessionUpdateNotification>(missing_delta).is_err());
+
+        let unknown = json!({
+            "session_id": "s",
+            "turn_id": "t",
+            "update_type": "future_update"
+        });
+        assert!(serde_json::from_value::<SessionUpdateNotification>(unknown).is_err());
     }
 
     #[test]

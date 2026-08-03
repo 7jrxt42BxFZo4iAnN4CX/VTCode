@@ -933,6 +933,9 @@ max_identical_in_window = 1
 # Status line mode ("auto", "command", "hidden")
 mode = "auto"
 
+# Show current system time (HH:MM:SS) on the status line
+show_clock = true
+
 # How often to refresh status line (milliseconds)
 refresh_interval_ms = 2000
 

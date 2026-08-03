@@ -54,10 +54,6 @@ impl IdeContextBridge {
     pub(crate) fn snapshot(&self) -> Option<&EditorContextSnapshot> {
         self.snapshot.as_ref()
     }
-
-    pub(crate) fn snapshot_source(&self) -> Option<&Path> {
-        self.source.as_deref()
-    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -109,104 +105,6 @@ pub(crate) fn configured_snapshot<'a>(
     }
 
     Some(snapshot)
-}
-
-pub(crate) fn status_line_editor_label(
-    workspace: &Path,
-    config: Option<&IdeContextConfig>,
-    snapshot: Option<&EditorContextSnapshot>,
-    source: Option<&Path>,
-) -> Option<String> {
-    let show_in_tui = config.is_none_or(|cfg| cfg.enabled && cfg.show_in_tui);
-    if !show_in_tui {
-        return None;
-    }
-
-    let snapshot = configured_snapshot(config, snapshot);
-    let prefix = compact_tui_label_prefix(snapshot, source);
-
-    if let Some(snapshot) = snapshot
-        && let Some(file) = snapshot.active_file.as_ref()
-    {
-        let path = file.display_path(workspace, snapshot.workspace_root.as_deref());
-        let trimmed = path.trim();
-        if !trimmed.is_empty() {
-            return Some(format_status_line_ide_context_label(&prefix, trimmed));
-        }
-    }
-
-    display_ide_context_source(workspace, source).map(|compact| format_status_line_ide_context_label(&prefix, &compact))
-}
-
-fn compact_tui_label_prefix(snapshot: Option<&EditorContextSnapshot>, source: Option<&Path>) -> String {
-    snapshot
-        .and_then(|snapshot| snapshot.editor_name.as_deref())
-        .and_then(normalize_ide_display_name)
-        .map(ToOwned::to_owned)
-        .or_else(|| infer_ide_display_name_from_source(source).map(ToOwned::to_owned))
-        .unwrap_or_else(|| "IDE".to_string())
-}
-
-fn normalize_ide_display_name(name: &str) -> Option<&'static str> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    let normalized = trimmed.to_ascii_lowercase();
-    if normalized.contains("cursor") {
-        Some("Cursor")
-    } else if normalized.contains("kiro") {
-        Some("Kiro")
-    } else if normalized.contains("windsurf") {
-        Some("Windsurf")
-    } else if normalized.contains("vscodium") {
-        Some("VSCodium")
-    } else if normalized.contains("vs code insiders")
-        || normalized.contains("visual studio code insiders")
-        || normalized.contains("code - insiders")
-        || normalized.contains("insider")
-    {
-        Some("VS Code Insiders")
-    } else if normalized.contains("vs code") || normalized.contains("visual studio code") || normalized == "code" {
-        Some("VS Code")
-    } else {
-        None
-    }
-}
-
-fn infer_ide_display_name_from_source(source: Option<&Path>) -> Option<&'static str> {
-    let source = source?;
-    source
-        .components()
-        .filter_map(|component| component.as_os_str().to_str())
-        .find_map(normalize_ide_display_name)
-}
-
-fn format_status_line_ide_context_label(prefix: &str, context: &str) -> String {
-    format!("IDE Context ({prefix}): {}", context.trim())
-}
-
-fn display_ide_context_source(workspace: &Path, source: Option<&Path>) -> Option<String> {
-    let source = source?;
-    let compact = source
-        .strip_prefix(workspace)
-        .ok()
-        .map(|path| path.display().to_string())
-        .or_else(|| {
-            source
-                .file_name()
-                .map(|name| name.to_string_lossy().trim().to_string())
-                .filter(|name| !name.is_empty())
-        })
-        .unwrap_or_else(|| source.display().to_string());
-
-    let compact = compact.trim();
-    if compact.is_empty() {
-        None
-    } else {
-        Some(compact.to_string())
-    }
 }
 
 fn preferred_display_language_for_workspace_with_snapshot(
@@ -425,7 +323,7 @@ mod tests {
     use super::{
         IdeContextBridge, VSCODE_COMPATIBLE_JSON_FILE, configured_snapshot, preferred_display_language_for_workspace,
         preferred_display_language_for_workspace_with_snapshot, read_vscode_compatible_snapshot_from_roots,
-        status_line_editor_label, tui_header_summary,
+        tui_header_summary,
     };
     use serial_test::serial;
     use std::fs;
@@ -573,45 +471,6 @@ mod tests {
 
         assert!(configured_snapshot(Some(&config), Some(&snapshot)).is_none());
         assert!(configured_snapshot(None, Some(&snapshot)).is_some());
-    }
-
-    #[test]
-    fn status_line_editor_label_prefers_active_file_display_path() {
-        let workspace = Path::new("/workspace");
-        let snapshot = EditorContextSnapshot {
-            editor_name: Some("VS Code".to_string()),
-            workspace_root: Some(PathBuf::from("/workspace")),
-            active_file: Some(vtcode_core::EditorFileContext {
-                path: "/workspace/crates/codegen/vtcode-config/src/core/agent.rs".to_string(),
-                language_id: Some("rust".to_string()),
-                line_range: None,
-                dirty: false,
-                truncated: false,
-                selection: None,
-            }),
-            ..EditorContextSnapshot::default()
-        };
-
-        assert_eq!(
-            status_line_editor_label(workspace, None, Some(&snapshot), None).as_deref(),
-            Some("IDE Context (VS Code): crates/codegen/vtcode-config/src/core/agent.rs")
-        );
-    }
-
-    #[test]
-    fn status_line_editor_label_falls_back_to_source_when_snapshot_has_no_active_file() {
-        let workspace = Path::new("/workspace");
-        let snapshot = EditorContextSnapshot {
-            editor_name: Some("Cursor".to_string()),
-            ..EditorContextSnapshot::default()
-        };
-        let source = Path::new("/workspace/.vtcode/ide-context.json");
-
-        assert_eq!(
-            status_line_editor_label(workspace, Some(&IdeContextConfig::default()), Some(&snapshot), Some(source),)
-                .as_deref(),
-            Some("IDE Context (Cursor): .vtcode/ide-context.json")
-        );
     }
 
     #[test]

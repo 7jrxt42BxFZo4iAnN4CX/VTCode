@@ -28,8 +28,7 @@ use crate::agent::runloop::unified::async_mcp_manager::{AsyncMcpManager, approva
 use crate::agent::runloop::unified::external_editor::run_with_event_loop_suspended;
 use crate::agent::runloop::unified::inline_events::InlineLoopAction;
 use crate::agent::runloop::unified::interactive_features::{PromptSuggestionSource, generate_inline_prompt_suggestion};
-use crate::agent::runloop::unified::session_setup::{apply_ide_context_snapshot, ide_context_status_label_from_bridge};
-use crate::agent::runloop::unified::status_line::InputStatusState;
+use crate::agent::runloop::unified::session_setup::apply_ide_context_snapshot;
 use crate::agent::runloop::unified::turn::primary_agent_runtime::{
     PrimaryAgentRuntimeSyncContext, load_primary_agent_specs as load_primary_agent_specs_for_runtime,
     sync_primary_agent_runtime as sync_primary_agent_runtime_context,
@@ -614,10 +613,7 @@ pub(super) fn replace_submitted_input_text(input: &mut SubmittedInput, text: Str
     input.text = text;
 }
 
-pub(super) fn refresh_ide_context_before_user_turn(
-    ctx: &mut InteractionLoopContext<'_>,
-    input_status_state: &mut InputStatusState,
-) {
+pub(super) fn refresh_ide_context_before_user_turn(ctx: &mut InteractionLoopContext<'_>) {
     let latest_editor_snapshot: Option<vtcode_core::EditorContextSnapshot> =
         if let Some(bridge) = ctx.ide_context_bridge.as_mut() {
             match bridge.refresh() {
@@ -637,15 +633,6 @@ pub(super) fn refresh_ide_context_before_user_turn(
         ctx.config.workspace.as_path(),
         ctx.vt_cfg.as_ref(),
         latest_editor_snapshot,
-    );
-    crate::agent::runloop::unified::status_line::update_ide_context_source(
-        input_status_state,
-        ide_context_status_label_from_bridge(
-            ctx.context_manager,
-            ctx.config.workspace.as_path(),
-            ctx.vt_cfg.as_ref(),
-            ctx.ide_context_bridge.as_ref(),
-        ),
     );
 }
 
@@ -1140,12 +1127,8 @@ fn agent_needs_trust(specs: &[vtcode_config::SubagentSpec], name: &str) -> bool 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::runloop::unified::context_manager::ContextManager;
-    use crate::agent::runloop::unified::session_setup::{IdeContextBridge, ide_context_status_label_from_bridge};
-    use hashbrown::HashMap;
-    use std::sync::Arc;
+    use crate::agent::runloop::unified::session_setup::IdeContextBridge;
     use tempfile::TempDir;
-    use tokio::sync::RwLock;
     use vtcode_config::core::permissions::{AgentPermissionsConfig, PermissionDefault};
     use vtcode_config::{SubagentSource, SubagentSpec};
 
@@ -1794,7 +1777,6 @@ mod tests {
         let temp_dir = TempDir::new().expect("temp dir");
         let workspace = temp_dir.path();
         fs::create_dir_all(workspace.join(".vtcode")).expect("create ide context dir");
-        let context_manager = ContextManager::new("sys".into(), (), Arc::new(RwLock::new(HashMap::new())), None);
 
         let snapshot_path = workspace.join(".vtcode/ide-context.json");
         let mut bridge = Some(IdeContextBridge::new(workspace));
@@ -1820,10 +1802,17 @@ mod tests {
 
         let first = refresh_live_ide_context_update(&mut bridge);
         assert!(first.changed);
-        assert_eq!(
-            ide_context_status_label_from_bridge(&context_manager, workspace, None, bridge.as_ref()).as_deref(),
-            Some("IDE Context (VS Code): src/alpha.rs")
-        );
+        let first_active = bridge
+            .as_ref()
+            .expect("bridge")
+            .snapshot()
+            .expect("snapshot")
+            .active_file
+            .as_ref()
+            .expect("active file")
+            .path
+            .clone();
+        assert!(first_active.ends_with("src/alpha.rs"), "expected alpha, got {first_active}");
 
         fs::write(
             &snapshot_path,
@@ -1846,9 +1835,16 @@ mod tests {
 
         let second = refresh_live_ide_context_update(&mut bridge);
         assert!(second.changed);
-        assert_eq!(
-            ide_context_status_label_from_bridge(&context_manager, workspace, None, bridge.as_ref()).as_deref(),
-            Some("IDE Context (VS Code): src/beta.rs")
-        );
+        let second_active = bridge
+            .as_ref()
+            .expect("bridge")
+            .snapshot()
+            .expect("snapshot")
+            .active_file
+            .as_ref()
+            .expect("active file")
+            .path
+            .clone();
+        assert!(second_active.ends_with("src/beta.rs"), "expected beta, got {second_active}");
     }
 }

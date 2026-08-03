@@ -9,6 +9,7 @@ use vtcode_core::llm::provider as uni;
 use vtcode_core::session::SessionId;
 use vtcode_core::utils::ansi::MessageStyle;
 
+use super::interaction_loop::{InteractionLoopContext, InteractionOutcome, InteractionState};
 use crate::agent::runloop::model_picker::ModelPickerProgress;
 use crate::agent::runloop::unified::display::display_user_message;
 use crate::agent::runloop::unified::external_url_guard::ExternalUrlGuardContext;
@@ -16,14 +17,11 @@ use crate::agent::runloop::unified::inline_events::{
     InlineEventLoopResources, InlineInterruptCoordinator, poll_inline_loop_action,
 };
 use crate::agent::runloop::unified::model_selection::{ModelSwitchCompactionTargets, finalize_model_selection};
-use crate::agent::runloop::unified::session_setup::{apply_ide_context_snapshot, ide_context_status_label_from_bridge};
+use crate::agent::runloop::unified::session_setup::apply_ide_context_snapshot;
 use crate::agent::runloop::unified::state::is_follow_up_prompt_like;
 use crate::agent::runloop::unified::turn::session::{
     mcp_lifecycle, memory_prompt, slash_command_handler, tool_dispatch,
 };
-use vtcode_config::loader::SimpleConfigWatcher;
-
-use super::interaction_loop::{InteractionLoopContext, InteractionOutcome, InteractionState};
 use support::{
     InlineLoopActionResolution, apply_live_theme_and_appearance, build_durable_scheduler_daemon,
     build_user_message_content, extract_recent_follow_up_hint, fallback_args_preview,
@@ -32,6 +30,7 @@ use support::{
     stalled_follow_up_recovery_prompt, submitted_images_are_unsupported, sync_mcp_approval_policy_for_context,
 };
 pub(crate) use support::{handle_select_primary_agent, try_resume_latest_session};
+use vtcode_config::loader::SimpleConfigWatcher;
 
 const REPEATED_FOLLOW_UP_DIRECTIVE: &str = "User has asked to continue repeatedly. Do not keep exploring silently. In your next assistant response, provide a concrete status update: completed work, current blocker, and the exact next action. If a recent tool result or tool error already provides `fallback_tool`, `fallback_tool_args`, `hint`, or `next_action`, use that guidance directly instead of retrying the same failing call or asking for more follow-up.";
 const REPEATED_FOLLOW_UP_STALLED_DIRECTIVE: &str = "Previous turn stalled or aborted and the user asked to continue repeatedly. Recover autonomously without asking for more user prompts: identify the likely root cause from recent errors, execute exactly one adjusted strategy, and then provide either a completion summary or a final blocker review with specific next action. If the last tool result or tool error includes `fallback_tool`, `fallback_tool_args`, `hint`, or `next_action`, use that guidance first. Do not repeat a failing tool call when the tool already provided the next step.";
@@ -52,7 +51,7 @@ pub(super) async fn run_interaction_loop_impl(
     let mut durable_scheduler_daemon = None;
     let mut last_durable_scheduler_error = None::<String>;
     let mut durable_scheduler_run = None::<JoinHandle<Result<usize>>>;
-    let mut live_reload_watcher = SimpleConfigWatcher::new(ctx.config.workspace.clone());
+    let mut live_reload_watcher = SimpleConfigWatcher::new_with_user_config_paths(ctx.config.workspace.clone());
     live_reload_watcher.set_check_interval(1);
     live_reload_watcher.set_debounce_duration(200);
     let mut last_status_refresh = Instant::now()
@@ -105,16 +104,6 @@ pub(super) async fn run_interaction_loop_impl(
                     live_ide_context.snapshot.clone(),
                 );
             }
-            crate::agent::runloop::unified::status_line::update_ide_context_source(
-                state.input_status_state,
-                ide_context_status_label_from_bridge(
-                    ctx.context_manager,
-                    ctx.config.workspace.as_path(),
-                    ctx.vt_cfg.as_ref(),
-                    ctx.ide_context_bridge.as_ref(),
-                ),
-            );
-
             let spooled_count = ctx.tool_registry.spooled_files_count().await;
             crate::agent::runloop::unified::status_line::update_spooled_files_count(
                 state.input_status_state,
@@ -618,7 +607,7 @@ pub(super) async fn run_interaction_loop_impl(
         let input = submitted_input.text.as_str();
 
         let refined_content = build_user_message_content(ctx, &submitted_input).await;
-        refresh_ide_context_before_user_turn(ctx, state.input_status_state);
+        refresh_ide_context_before_user_turn(ctx);
 
         display_user_message(ctx.renderer, input)?;
 

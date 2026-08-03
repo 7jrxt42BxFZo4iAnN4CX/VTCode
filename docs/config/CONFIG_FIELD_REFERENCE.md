@@ -785,6 +785,7 @@ python3 scripts/generate_config_field_reference.py
 | `ui.status_line.command_timeout_ms` | `integer` | no | `200` | - |
 | `ui.status_line.mode` | `string` | no | `"auto"` | - |
 | `ui.status_line.refresh_interval_ms` | `integer` | no | `1000` | - |
+| `ui.status_line.show_clock` | `boolean` | no | `true` | Show the current time (`HH:MM:SS`, 24-hour clock) at the right edge of the status line in `auto` mode |
 | `ui.terminal_title.items` | `array \| null` | no | `null` | - |
 | `ui.terminal_title.items[]` | `string` | no | `-` | - |
 | `ui.thinking_display` | `string` | no | `"collapsed"` | Default collapse state of agent thinking/reasoning blocks ("collapsed" or "extended") |

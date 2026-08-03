@@ -12,6 +12,7 @@ use rig::providers::openai::responses_api::streaming::{
     ItemChunkKind as RigResponsesItemChunkKind, ResponseChunkKind as RigResponsesChunkKind,
     StreamingCompletionChunk as RigResponsesStreamingChunk,
 };
+use serde::Deserialize;
 use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -79,6 +80,14 @@ pub(crate) enum ResponsesLifecycleEvent {
     InProgress,
 }
 
+#[derive(Debug, Deserialize)]
+struct ResponsesEventHeader<'a> {
+    #[serde(rename = "type")]
+    event_type: Option<&'a str>,
+    #[serde(borrow)]
+    call_id: Option<&'a str>,
+}
+
 pub(crate) struct ResponsesStreamAdapter;
 
 impl ResponsesStreamAdapter {
@@ -87,51 +96,55 @@ impl ResponsesStreamAdapter {
         Self::parse_sse_data_for_provider("OpenAI", data)
     }
 
-    fn parse_sse_data_for_provider(provider_name: &str, data: &str) -> Result<ResponsesStreamEvent, LLMError> {
+    pub(crate) fn parse_sse_data_for_provider(
+        provider_name: &str,
+        data: &str,
+    ) -> Result<ResponsesStreamEvent, LLMError> {
         let trimmed = data.trim();
         if trimmed.is_empty() || trimmed == "[DONE]" {
             return Ok(ResponsesStreamEvent::Unknown);
         }
 
-        let raw_payload: Value = serde_json::from_str(trimmed)
+        let header: ResponsesEventHeader<'_> = serde_json::from_str(trimmed)
             .map_err(|err| StreamAssemblyError::InvalidPayload(err.to_string()).into_llm_error(provider_name))?;
+        let event_type = header.event_type.ok_or_else(|| {
+            StreamAssemblyError::InvalidPayload("missing Responses stream event type".to_string())
+                .into_llm_error(provider_name)
+        })?;
 
-        if raw_payload.get("type").and_then(Value::as_str) == Some("error") {
+        if event_type == "error" {
+            let raw_payload = parse_raw_payload(provider_name, trimmed)?;
             return Ok(ResponsesStreamEvent::Error {
                 message: response_error_message(&raw_payload)
                     .unwrap_or_else(|| "Unknown error from Responses API".to_string()),
             });
         }
 
-        let policy = response_stream_event_policy(&raw_payload).map_err(|err| err.into_llm_error(provider_name))?;
+        let policy = response_stream_event_policy_for_type(event_type);
+        if policy == ResponsesStreamEventPolicy::DocumentedStatusMarkerNoop {
+            return Ok(ResponsesStreamEvent::Unknown);
+        }
 
         let parsed = match serde_json::from_str::<RigResponsesStreamingChunk>(trimmed) {
             Ok(parsed) => parsed,
             Err(err) if policy == ResponsesStreamEventPolicy::RigSupportedTyped => {
+                let raw_payload = parse_raw_payload(provider_name, trimmed)?;
                 if let Some(event) = adapt_rig_supported_envelope_fallback(&raw_payload) {
                     return Ok(event);
                 }
                 return Err(StreamAssemblyError::InvalidPayload(err.to_string()).into_llm_error(provider_name));
             }
-            Err(_) => return adapt_policy_payload(provider_name, raw_payload),
+            Err(_) => return adapt_policy_payload(provider_name, parse_raw_payload(provider_name, trimmed)?),
         };
 
-        Self::adapt_rig_chunk(provider_name, parsed, raw_payload)
-    }
-
-    pub(crate) fn parse_payload_for_provider(
-        provider_name: &str,
-        payload: Value,
-    ) -> Result<ResponsesStreamEvent, LLMError> {
-        let data = serde_json::to_string(&payload)
-            .map_err(|err| StreamAssemblyError::InvalidPayload(err.to_string()).into_llm_error(provider_name))?;
-        Self::parse_sse_data_for_provider(provider_name, &data)
+        Self::adapt_rig_chunk(provider_name, parsed, header.call_id, trimmed)
     }
 
     fn adapt_rig_chunk(
         provider_name: &str,
         chunk: RigResponsesStreamingChunk,
-        raw_payload: Value,
+        call_id: Option<&str>,
+        raw_data: &str,
     ) -> Result<ResponsesStreamEvent, LLMError> {
         match chunk {
             RigResponsesStreamingChunk::Response(response_chunk) => {
@@ -143,10 +156,14 @@ impl ResponsesStreamAdapter {
                     RigResponsesChunkKind::ResponseInProgress => {
                         Ok(ResponsesStreamEvent::Lifecycle { kind: ResponsesLifecycleEvent::InProgress })
                     }
-                    RigResponsesChunkKind::ResponseCompleted => Ok(ResponsesStreamEvent::CompletedResponse {
-                        response: raw_payload.get("response").cloned().unwrap_or(Value::Null),
-                    }),
+                    RigResponsesChunkKind::ResponseCompleted => {
+                        let raw_payload = parse_raw_payload(provider_name, raw_data)?;
+                        Ok(ResponsesStreamEvent::CompletedResponse {
+                            response: raw_payload.get("response").cloned().unwrap_or(Value::Null),
+                        })
+                    }
                     RigResponsesChunkKind::ResponseFailed | RigResponsesChunkKind::ResponseIncomplete => {
+                        let raw_payload = parse_raw_payload(provider_name, raw_data)?;
                         Ok(ResponsesStreamEvent::Error {
                             message: response_error_message(&raw_payload)
                                 .unwrap_or_else(|| "Unknown error from Responses API".to_string()),
@@ -171,20 +188,13 @@ impl ResponsesStreamAdapter {
                         Ok(ResponsesStreamEvent::ReasoningDelta { delta: delta.delta })
                     }
                     RigResponsesItemChunkKind::OutputItemAdded(output) => {
-                        adapt_output_item(provider_name, output.item, output_index, true, &raw_payload)
+                        adapt_output_item(provider_name, output.item, output_index, true, raw_data)
                     }
                     RigResponsesItemChunkKind::OutputItemDone(output) => {
-                        adapt_output_item(provider_name, output.item, output_index, false, &raw_payload)
+                        adapt_output_item(provider_name, output.item, output_index, false, raw_data)
                     }
                     RigResponsesItemChunkKind::FunctionCallArgsDelta(delta) => {
-                        let item_id = item_id
-                            .or_else(|| raw_payload.get("item_id").and_then(Value::as_str).map(ToOwned::to_owned));
-                        let call_id = raw_payload
-                            .get("call_id")
-                            .and_then(Value::as_str)
-                            .map(ToOwned::to_owned)
-                            .or_else(|| item_id.clone())
-                            .unwrap_or_default();
+                        let call_id = call_id.map(ToOwned::to_owned).or_else(|| item_id.clone()).unwrap_or_default();
 
                         Ok(ResponsesStreamEvent::FunctionCallArgumentsDelta {
                             call_id,
@@ -193,11 +203,16 @@ impl ResponsesStreamAdapter {
                             output_index,
                         })
                     }
-                    _ => adapt_policy_payload(provider_name, raw_payload),
+                    _ => adapt_policy_payload(provider_name, parse_raw_payload(provider_name, raw_data)?),
                 }
             }
         }
     }
+}
+
+fn parse_raw_payload(provider_name: &str, data: &str) -> Result<Value, LLMError> {
+    serde_json::from_str(data)
+        .map_err(|err| StreamAssemblyError::InvalidPayload(err.to_string()).into_llm_error(provider_name))
 }
 
 fn adapt_output_item(
@@ -205,7 +220,7 @@ fn adapt_output_item(
     item: RigResponsesOutput,
     output_index: Option<usize>,
     emit_completed_arguments: bool,
-    raw_payload: &Value,
+    raw_data: &str,
 ) -> Result<ResponsesStreamEvent, LLMError> {
     match item {
         RigResponsesOutput::FunctionCall(function_call) => {
@@ -236,12 +251,15 @@ fn adapt_output_item(
                 })
             }
         }
-        RigResponsesOutput::Unknown(_) => adapt_rig_gap_output_item_envelope(raw_payload).ok_or_else(|| {
-            StreamAssemblyError::InvalidPayload(
-                "Rig returned an unknown Responses output item without eligible raw fallback evidence".to_string(),
-            )
-            .into_llm_error(provider_name)
-        }),
+        RigResponsesOutput::Unknown(_) => {
+            let raw_payload = parse_raw_payload(provider_name, raw_data)?;
+            adapt_rig_gap_output_item_envelope(&raw_payload).ok_or_else(|| {
+                StreamAssemblyError::InvalidPayload(
+                    "Rig returned an unknown Responses output item without eligible raw fallback evidence".to_string(),
+                )
+                .into_llm_error(provider_name)
+            })
+        }
         _ => Ok(ResponsesStreamEvent::Unknown),
     }
 }

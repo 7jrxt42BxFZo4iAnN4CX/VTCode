@@ -1,7 +1,5 @@
 use crate::agent::runloop::ui::build_inline_header_context;
-use crate::agent::runloop::unified::session_setup::ide_context::{
-    IdeContextBridge, status_line_editor_label, tui_header_summary,
-};
+use crate::agent::runloop::unified::session_setup::ide_context::{IdeContextBridge, tui_header_summary};
 use crate::agent::runloop::unified::{context_manager, palettes};
 use crate::agent::runloop::welcome::SessionBootstrap;
 use anyhow::Result;
@@ -174,27 +172,4 @@ pub(crate) fn apply_ide_context_snapshot(
     header_context.editor_context =
         tui_header_summary(workspace, Some(&effective_ide_context_config), snapshot.as_ref());
     handle.set_header_context(header_context.clone());
-}
-
-pub(crate) fn ide_context_status_label(
-    context_manager: &context_manager::ContextManager,
-    workspace: &std::path::Path,
-    vt_cfg: Option<&VTCodeConfig>,
-    snapshot: Option<&vtcode_core::EditorContextSnapshot>,
-    source: Option<&std::path::Path>,
-) -> Option<String> {
-    let effective_ide_context_config =
-        context_manager.effective_ide_context_config_with_base(vt_cfg.map(|cfg| &cfg.ide_context));
-    status_line_editor_label(workspace, Some(&effective_ide_context_config), snapshot, source)
-}
-
-pub(crate) fn ide_context_status_label_from_bridge(
-    context_manager: &context_manager::ContextManager,
-    workspace: &std::path::Path,
-    vt_cfg: Option<&VTCodeConfig>,
-    ide_context_bridge: Option<&IdeContextBridge>,
-) -> Option<String> {
-    ide_context_bridge.and_then(|bridge| {
-        ide_context_status_label(context_manager, workspace, vt_cfg, bridge.snapshot(), bridge.snapshot_source())
-    })
 }

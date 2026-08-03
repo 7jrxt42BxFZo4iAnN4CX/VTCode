@@ -15,7 +15,7 @@ use crate::agent::runloop::unified::overlay_prompt::{OverlayWaitOutcome, wait_fo
 use crate::agent::runloop::unified::palettes::{
     ActivePalette, apply_prompt_style, show_mode_palette, show_sessions_palette, show_theme_palette,
 };
-use crate::agent::runloop::unified::session_setup::{apply_ide_context_snapshot, ide_context_status_label_from_bridge};
+use crate::agent::runloop::unified::session_setup::apply_ide_context_snapshot;
 use crate::agent::runloop::unified::ui_interaction::PlaceholderSpinner;
 
 #[path = "ui/statusline.rs"]
@@ -215,16 +215,6 @@ pub(crate) async fn handle_toggle_ide_context(ctx: SlashCommandContext<'_>) -> R
         ctx.config.workspace.as_path(),
         ctx.vt_cfg.as_ref(),
         latest_editor_snapshot.clone(),
-    );
-
-    crate::agent::runloop::unified::status_line::update_ide_context_source(
-        ctx.input_status_state,
-        ide_context_status_label_from_bridge(
-            ctx.context_manager,
-            ctx.config.workspace.as_path(),
-            ctx.vt_cfg.as_ref(),
-            ctx.ide_context_bridge.as_ref(),
-        ),
     );
 
     let message = match (enabled, latest_editor_snapshot.is_some()) {

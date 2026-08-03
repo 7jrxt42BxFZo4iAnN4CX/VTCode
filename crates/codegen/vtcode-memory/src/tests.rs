@@ -251,3 +251,32 @@ fn scan_fallback_when_manifest_missing() {
     let rebuilt = log.reconstruct_turn(1).expect("reconstruct");
     assert_eq!(rebuilt.len(), 2);
 }
+
+#[test]
+fn scan_skips_malformed_lifecycle_payloads() {
+    let dir = TempDir::new().expect("tempdir");
+    let session_dir = dir.path().join(".vtcode/sessions/sess-invalid");
+    let events_path = session_dir.join("events.jsonl");
+    fs::create_dir_all(&session_dir).expect("mkdir");
+
+    let valid_events = [
+        VersionedThreadEvent::new(ThreadEvent::TurnStarted(TurnStartedEvent::default())),
+        VersionedThreadEvent::new(ThreadEvent::TurnCompleted(TurnCompletedEvent { usage: Usage::default() })),
+    ];
+    let mut lines = vec![
+        r#"{"schema_version":"0.11.0","event":{"type":"thread.started","thread_id":123}}"#.to_string(),
+        r#"{"schema_version":"0.11.0","event":{"type":"turn.started","token_breakdown":"invalid"}}"#.to_string(),
+        r#"{"schema_version":"0.11.0","event":{"type":"turn.completed","usage":{}}}"#.to_string(),
+    ];
+    lines.extend(
+        valid_events
+            .iter()
+            .map(|event| serde_json::to_string(event).expect("serialize")),
+    );
+    fs::write(&events_path, lines.join("\n") + "\n").expect("write raw events");
+
+    let log = SessionEventLog::open(dir.path(), "sess-invalid", DEFAULT_MAX_EVENTS).expect("open");
+    assert_eq!(log.event_count(), 2);
+    assert_eq!(log.turn_count(), 1);
+    assert_eq!(log.reconstruct_turn(1).expect("reconstruct").len(), 2);
+}

@@ -50,14 +50,12 @@ use vtcode_ui::tui::app::{
     SessionOptions, SlashCommandItem, spawn_session_with_options,
 };
 
+pub(crate) use self::header_context::apply_ide_context_snapshot;
 use self::header_context::{HeaderContextInit, initialize_header_context};
-pub(crate) use self::header_context::{apply_ide_context_snapshot, ide_context_status_label_from_bridge};
 pub(crate) use self::local_agents::refresh_local_agents;
 use self::resume_render::render_resume_state_if_present;
 pub(crate) use self::resume_render::{build_structured_resume_lines, render_resume_lines};
 
-#[cfg(test)]
-use self::header_context::ide_context_status_label;
 #[cfg(test)]
 use self::local_agents::{
     background_local_agent_preview_placeholder, delegated_local_agent_preview_placeholder,

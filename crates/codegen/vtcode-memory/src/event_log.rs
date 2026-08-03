@@ -22,6 +22,25 @@ pub const DEFAULT_MAX_EVENTS: usize = 10_000;
 /// Turn boundaries and reads still flush immediately.
 const MAX_WRITE_BUFFER_BYTES: usize = 64 * 1024;
 
+/// Minimal envelope used while rebuilding the turn index.
+///
+/// The index only needs the event discriminator. Deserializing a complete
+/// [`VersionedThreadEvent`] here would allocate every nested tool argument,
+/// output, and thread item even though none of that payload is retained.
+#[derive(Debug, Deserialize)]
+struct VersionedEventKind<'a> {
+    #[serde(rename = "schema_version", borrow)]
+    _schema_version: &'a str,
+    #[serde(borrow)]
+    event: EventKind<'a>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EventKind<'a> {
+    #[serde(rename = "type", borrow)]
+    kind: &'a str,
+}
+
 /// In-memory state protected by a mutex (cheap; appends are infrequent relative
 /// to model inference).
 struct LogState {
@@ -346,17 +365,23 @@ impl SessionEventLog {
             let line_end = pos + n as u64;
             let trimmed = std::str::from_utf8(&buf).unwrap_or("").trim();
             if !trimmed.is_empty()
-                && let Ok(v) = serde_json::from_str::<VersionedThreadEvent>(trimmed)
+                && let Ok(v) = serde_json::from_str::<VersionedEventKind<'_>>(trimmed)
             {
-                let event = v.into_event();
+                let kind = v.event.kind;
+                if requires_full_lifecycle_validation(kind)
+                    && serde_json::from_str::<VersionedThreadEvent>(trimmed).is_err()
+                {
+                    pos = line_end;
+                    continue;
+                }
                 st.manifest.event_count += 1;
-                match &event {
-                    ThreadEvent::ThreadStarted(_) => {
+                match kind {
+                    "thread.started" => {
                         if first_ts.is_none() {
                             first_ts = Some(now_rfc3339());
                         }
                     }
-                    ThreadEvent::TurnStarted(_) => {
+                    "turn.started" => {
                         in_turn = true;
                         let n = st.manifest.turn_count + 1;
                         st.index.entries.push_back(TurnIndexEntry {
@@ -367,7 +392,7 @@ impl SessionEventLog {
                             ts: now_rfc3339(),
                         });
                     }
-                    ThreadEvent::TurnCompleted(_) | ThreadEvent::TurnFailed(_) => {
+                    "turn.completed" | "turn.failed" => {
                         if in_turn {
                             if let Some(entry) = st.index.entries.back_mut() {
                                 entry.end_offset = line_end;
@@ -376,11 +401,11 @@ impl SessionEventLog {
                             in_turn = false;
                             st.manifest.turn_count = st.index.entries.len() as u64;
                         }
-                        match &event {
-                            ThreadEvent::TurnCompleted(_) => {
+                        match kind {
+                            "turn.completed" => {
                                 st.manifest.status = "completed".to_string();
                             }
-                            ThreadEvent::TurnFailed(_) => {
+                            "turn.failed" => {
                                 st.manifest.status = "failed".to_string();
                             }
                             _ => {}
@@ -422,6 +447,10 @@ impl SessionEventLog {
         st.write_buf.clear();
         Ok(())
     }
+}
+
+fn requires_full_lifecycle_validation(kind: &str) -> bool {
+    matches!(kind, "thread.started" | "turn.started" | "turn.completed" | "turn.failed")
 }
 
 impl Drop for SessionEventLog {

@@ -3,8 +3,10 @@
 //! This module defines the semantic streaming events used by the OpenResponses specification.
 //! See <https://www.openresponses.org/specification#streaming> for details.
 
+use serde::de::{self, Deserializer, MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::fmt;
 
 // ============================================================================
 // Streaming Event Types
@@ -70,7 +72,7 @@ pub enum StreamEventType {
 }
 
 /// A streaming event from the OpenResponses API.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct StreamEvent {
     #[serde(rename = "type")]
     event_type: String,
@@ -78,6 +80,183 @@ pub struct StreamEvent {
     sequence_number: u32,
     #[serde(flatten)]
     data: StreamEventData,
+}
+
+impl<'de> Deserialize<'de> for StreamEvent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = StreamEventWire::deserialize(deserializer)?;
+        let (event_type, sequence_number, data) = wire.into_event().map_err(de::Error::custom)?;
+        Ok(Self { event_type, sequence_number, data })
+    }
+}
+
+/// Directly decoded fields for [`StreamEvent`].
+///
+/// This intentionally avoids `flatten` + `untagged`: both require Serde to
+/// buffer the event object before it can decide which payload shape applies.
+/// OpenResponses sends a discriminator for every event, so the fields can be
+/// decoded once and converted to the matching payload without an intermediate
+/// map or repeated variant attempts.
+#[derive(Debug, Default)]
+struct StreamEventWire {
+    event_type: Option<String>,
+    sequence_number: u32,
+    response: Option<Value>,
+    item: Option<Value>,
+    output_index: Option<u32>,
+    item_id: Option<String>,
+    content_index: Option<u32>,
+    call_id: Option<String>,
+    delta: Option<String>,
+    error: Option<StreamError>,
+    extra: Option<serde_json::Map<String, Value>>,
+}
+
+impl StreamEventWire {
+    fn into_event(self) -> Result<(String, u32, StreamEventData), String> {
+        let event_type = required_field(self.event_type.clone(), "type", "stream event")?;
+        let sequence_number = self.sequence_number;
+        let data = self.into_data(&event_type)?;
+        Ok((event_type, sequence_number, data))
+    }
+
+    fn into_data(self, event_type: &str) -> Result<StreamEventData, String> {
+        match event_type {
+            "response.created"
+            | "response.in_progress"
+            | "response.completed"
+            | "response.failed"
+            | "response.incomplete" => Ok(StreamEventData::Response(ResponseEventData { response: self.response })),
+            "response.output_item.added" | "response.output_item.done" => {
+                Ok(StreamEventData::OutputItem(OutputItemEventData {
+                    item: self.item,
+                    output_index: self.output_index,
+                    item_id: self.item_id,
+                }))
+            }
+            "response.output_text.delta"
+            | "response.output_text.done"
+            | "response.reasoning_summary_text.delta"
+            | "response.reasoning_summary_text.done" => Ok(StreamEventData::TextDelta(TextDeltaEventData {
+                delta: required_field(self.delta, "delta", event_type)?,
+                item_id: self.item_id,
+                output_index: self.output_index,
+                content_index: self.content_index,
+            })),
+            "response.function_call_arguments.delta" | "response.function_call_arguments.done" => {
+                Ok(StreamEventData::FunctionCallDelta(FunctionCallDeltaEventData {
+                    delta: required_field(self.delta, "delta", event_type)?,
+                    item_id: self.item_id,
+                    output_index: self.output_index,
+                    call_id: self.call_id,
+                }))
+            }
+            "response.reasoning_content.delta" | "response.reasoning_content.done" => {
+                Ok(StreamEventData::ReasoningContentDelta(ReasoningContentDeltaEventData {
+                    delta: required_field(self.delta, "delta", event_type)?,
+                    item_id: self.item_id,
+                    output_index: self.output_index,
+                }))
+            }
+            "error" => Ok(StreamEventData::Error(ErrorEventData {
+                error: required_field(self.error, "error", event_type)?,
+            })),
+            _ => Ok(StreamEventData::Generic(self.into_generic_value())),
+        }
+    }
+
+    fn into_generic_value(self) -> Value {
+        let Self {
+            response,
+            item,
+            output_index,
+            item_id,
+            content_index,
+            call_id,
+            delta,
+            error,
+            extra,
+            ..
+        } = self;
+        let mut object = extra.unwrap_or_default();
+        insert_optional(&mut object, "response", response);
+        insert_optional(&mut object, "item", item);
+        insert_optional(&mut object, "output_index", output_index);
+        insert_optional(&mut object, "item_id", item_id);
+        insert_optional(&mut object, "content_index", content_index);
+        insert_optional(&mut object, "call_id", call_id);
+        insert_optional(&mut object, "delta", delta);
+        if let Some(error) = error {
+            if let Ok(value) = serde_json::to_value(error) {
+                object.insert("error".to_string(), value);
+            }
+        }
+        Value::Object(object)
+    }
+}
+
+impl<'de> Deserialize<'de> for StreamEventWire {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct StreamEventWireVisitor;
+
+        impl<'de> Visitor<'de> for StreamEventWireVisitor {
+            type Value = StreamEventWire;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an OpenResponses streaming event object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut wire = StreamEventWire::default();
+                while let Some(key) = map.next_key::<&str>()? {
+                    match key {
+                        "type" => wire.event_type = map.next_value()?,
+                        "sequence_number" => wire.sequence_number = map.next_value()?,
+                        "response" => wire.response = map.next_value()?,
+                        "item" => wire.item = map.next_value()?,
+                        "output_index" => wire.output_index = map.next_value()?,
+                        "item_id" => wire.item_id = map.next_value()?,
+                        "content_index" => wire.content_index = map.next_value()?,
+                        "call_id" => wire.call_id = map.next_value()?,
+                        "delta" => wire.delta = map.next_value()?,
+                        "error" => wire.error = map.next_value()?,
+                        _ => {
+                            wire.extra
+                                .get_or_insert_with(serde_json::Map::new)
+                                .insert(key.to_string(), map.next_value()?);
+                        }
+                    }
+                }
+                if wire.event_type.is_none() {
+                    return Err(de::Error::missing_field("type"));
+                }
+                Ok(wire)
+            }
+        }
+
+        deserializer.deserialize_map(StreamEventWireVisitor)
+    }
+}
+
+fn required_field<T>(value: Option<T>, field: &str, event_type: &str) -> Result<T, String> {
+    value.ok_or_else(|| format!("OpenResponses event {event_type:?} is missing {field:?}"))
+}
+
+fn insert_optional<T: Serialize>(object: &mut serde_json::Map<String, Value>, key: &str, value: Option<T>) {
+    if let Some(value) = value
+        && let Ok(value) = serde_json::to_value(value)
+    {
+        object.insert(key.to_string(), value);
+    }
 }
 
 /// Data payload for different streaming events.
@@ -331,6 +510,50 @@ mod tests {
         let line = r#"data: {"type":"response.output_text.delta","sequence_number":1,"delta":"Hello"}"#;
         let event = parse_sse_event(line).unwrap();
         assert_eq!(event.event_type, "response.output_text.delta");
+        assert!(matches!(
+            event.data,
+            StreamEventData::TextDelta(TextDeltaEventData { delta, .. }) if delta == "Hello"
+        ));
+    }
+
+    #[test]
+    fn test_parse_sse_dispatches_payload_by_event_type() {
+        let cases = [
+            (r#"data: {"type":"response.created","response":{"id":"resp_1"}}"#, "response"),
+            (r#"data: {"type":"response.output_item.added","item":{"type":"message"}}"#, "output_item"),
+            (
+                r#"data: {"type":"response.function_call_arguments.delta","delta":"{}","call_id":"call_1"}"#,
+                "function_call",
+            ),
+            (r#"data: {"type":"response.reasoning_content.delta","delta":"think"}"#, "reasoning"),
+            (r#"data: {"type":"error","error":{"code":"bad_request","message":"nope"}}"#, "error"),
+        ];
+
+        for (line, expected) in cases {
+            let event = parse_sse_event(line).expect("valid streaming event");
+            let actual = match event.data {
+                StreamEventData::Response(_) => "response",
+                StreamEventData::OutputItem(_) => "output_item",
+                StreamEventData::FunctionCallDelta(_) => "function_call",
+                StreamEventData::ReasoningContentDelta(_) => "reasoning",
+                StreamEventData::Error(_) => "error",
+                _ => "other",
+            };
+            assert_eq!(actual, expected, "event line: {line}");
+        }
+    }
+
+    #[test]
+    fn test_parse_sse_preserves_unknown_payload_fields() {
+        let line = r#"data: {"type":"response.future_event","sequence_number":7,"custom":{"value":true}}"#;
+        let event = parse_sse_event(line).expect("valid unknown streaming event");
+        assert_eq!(event.event_type, "response.future_event");
+        assert_eq!(event.sequence_number, 7);
+        assert!(matches!(
+            event.data,
+            StreamEventData::Generic(Value::Object(ref object))
+                if object.get("custom") == Some(&serde_json::json!({"value": true}))
+        ));
     }
 
     #[test]

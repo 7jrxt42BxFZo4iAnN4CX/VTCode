@@ -15,6 +15,7 @@ use async_stream::try_stream;
 use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::Client as HttpClient;
+use serde::Deserialize;
 use serde_json::{Value, json};
 use vtcode_config::TimeoutsConfig;
 use vtcode_config::constants::{env_vars, models, urls};
@@ -29,6 +30,40 @@ pub struct OpenResponsesProvider {
     model: String,
     api_key: String,
     model_behavior: Option<ModelConfig>,
+}
+
+/// Borrowed fields used by the native Responses SSE hot path.
+///
+/// Responses events carry a discriminator and a small set of fields consumed
+/// by this provider. Deserializing into `Value` first allocates the complete
+/// event tree, including fields that are ignored by the streaming loop.
+#[derive(Debug, Deserialize)]
+struct NativeStreamEventWire<'a> {
+    #[serde(rename = "type")]
+    event_type: Option<&'a str>,
+    #[serde(borrow)]
+    delta: Option<&'a str>,
+    #[serde(borrow)]
+    item_id: Option<&'a str>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatCompletionStreamEventWire<'a> {
+    #[serde(borrow)]
+    choices: Option<Vec<ChatCompletionChoiceWire<'a>>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatCompletionChoiceWire<'a> {
+    #[serde(borrow)]
+    delta: Option<ChatCompletionDeltaWire<'a>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatCompletionDeltaWire<'a> {
+    #[serde(borrow)]
+    content: Option<&'a str>,
+    tool_calls: Option<Vec<Value>>,
 }
 
 impl OpenResponsesProvider {
@@ -605,20 +640,19 @@ impl OpenResponsesProvider {
                             continue;
                         }
 
-                        if let Ok(payload) = serde_json::from_str::<Value>(trimmed)
-                            && let Some(choices) = payload.get("choices").and_then(|v| v.as_array())
-                                && let Some(choice) = choices.first()
-                                    && let Some(delta) = choice.get("delta") {
-                                        if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
-                                            for ev in aggregator.handle_content(content) {
-                                                yield ev;
-                                            }
-                                        }
+                        if let Ok(payload) = serde_json::from_str::<ChatCompletionStreamEventWire<'_>>(trimmed)
+                            && let Some(delta) = payload.choices.and_then(|choices| choices.into_iter().next()).and_then(|choice| choice.delta)
+                        {
+                            if let Some(content) = delta.content {
+                                for ev in aggregator.handle_content(content) {
+                                    yield ev;
+                                }
+                            }
 
-                                        if let Some(tool_calls) = delta.get("tool_calls").and_then(|tc| tc.as_array()) {
-                                            aggregator.handle_tool_calls(tool_calls);
-                                        }
-                                    }
+                            if let Some(tool_calls) = delta.tool_calls.as_deref() {
+                                aggregator.handle_tool_calls(tool_calls);
+                            }
+                        }
                     }
                 }
             }
@@ -805,12 +839,12 @@ impl LLMProvider for OpenResponsesProvider {
                             continue;
                         }
 
-                        if let Ok(event) = serde_json::from_str::<Value>(trimmed) {
-                            let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                        if let Ok(event) = serde_json::from_str::<NativeStreamEventWire<'_>>(trimmed) {
+                            let event_type = event.event_type.unwrap_or("");
 
                             match event_type {
                                 "response.output_text.delta" => {
-                                    if let Some(delta) = event.get("delta").and_then(|v| v.as_str()) {
+                                    if let Some(delta) = event.delta {
                                         // Use aggregator's sanitizer to extract reasoning tags from content
                                         for ev in aggregator.handle_content(delta) {
                                             yield ev;
@@ -818,10 +852,10 @@ impl LLMProvider for OpenResponsesProvider {
                                     }
                                 }
                                 "response.function_call_arguments.delta" => {
-                                    if let Some(delta) = event.get("delta").and_then(|v| v.as_str()) {
+                                    if let Some(delta) = event.delta {
                                         let tc_json = json!([{
                                             "index": 0,
-                                            "id": event.get("item_id"),
+                                            "id": event.item_id,
                                             "function": { "arguments": delta }
                                         }]);
                                         if let Some(tool_calls) = tc_json.as_array() {
@@ -831,19 +865,19 @@ impl LLMProvider for OpenResponsesProvider {
                                 }
                                 "response.reasoning.delta" => {
                                     // Legacy/simple reasoning event
-                                    if let Some(delta) = event.get("delta").and_then(|v| v.as_str()) {
+                                    if let Some(delta) = event.delta {
                                         yield LLMStreamEvent::Reasoning { delta: delta.to_string() };
                                     }
                                 }
                                 "response.reasoning_content.delta" => {
                                     // Raw reasoning traces (preferred)
-                                    if let Some(delta) = event.get("delta").and_then(|v| v.as_str()) {
+                                    if let Some(delta) = event.delta {
                                         yield LLMStreamEvent::Reasoning { delta: delta.to_string() };
                                     }
                                 }
                                 "response.reasoning_summary_text.delta" => {
                                     // Summary reasoning (fallback when raw not available)
-                                    if let Some(delta) = event.get("delta").and_then(|v| v.as_str()) {
+                                    if let Some(delta) = event.delta {
                                         yield LLMStreamEvent::Reasoning { delta: delta.to_string() };
                                     }
                                 }
@@ -1252,6 +1286,52 @@ data: [DONE]\n\n",
 
         let response = completed.expect("stream should finish with a completed response");
         assert_eq!(response.content.as_deref(), Some("fallback stream"));
+    }
+
+    #[tokio::test]
+    async fn native_stream_decodes_only_fields_consumed_by_the_hot_path() {
+        let Some(server) = start_mock_server_or_skip().await else {
+            return;
+        };
+        let provider = test_provider(&server.uri());
+
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(
+                        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"native stream\",\"ignored\":{\"nested\":true}}\n\n\
+data: {\"type\":\"response.reasoning_content.delta\",\"delta\":\"think\"}\n\n\
+data: [DONE]\n\n",
+                    ),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut stream = provider
+            .stream(LLMRequest {
+                model: "gpt-5".to_string(),
+                messages: vec![Message::user("hello".to_string())].into(),
+                ..Default::default()
+            })
+            .await
+            .expect("native stream should succeed");
+
+        let mut completed = None;
+        while let Some(event) = stream.next().await {
+            match event.expect("stream event should parse") {
+                LLMStreamEvent::Completed { response } => completed = Some(response),
+                LLMStreamEvent::Token { .. }
+                | LLMStreamEvent::Reasoning { .. }
+                | LLMStreamEvent::ReasoningSignature { .. }
+                | LLMStreamEvent::ReasoningStage { .. } => {}
+            }
+        }
+
+        let response = completed.expect("stream should finish with a completed response");
+        assert_eq!(response.content.as_deref(), Some("native stream"));
     }
 
     #[tokio::test]

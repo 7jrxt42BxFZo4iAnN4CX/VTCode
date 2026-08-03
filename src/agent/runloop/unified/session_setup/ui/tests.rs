@@ -1,10 +1,6 @@
 use super::*;
-use hashbrown::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use vtcode_core::persistent_memory::MemoryCleanupStatus;
-use vtcode_core::{EditorContextSnapshot, EditorFileContext};
 
 fn sample_memory_status() -> PersistentMemoryStatus {
     PersistentMemoryStatus {
@@ -285,35 +281,4 @@ fn background_local_agent_preview_uses_status_placeholder() {
     };
 
     assert_eq!(background_local_agent_preview_placeholder(&entry), "Waiting for the subprocess to emit output...");
-}
-
-#[test]
-fn ide_context_status_label_respects_session_override() {
-    let workspace = assert_fs::TempDir::new().expect("workspace");
-    let mut context_manager =
-        context_manager::ContextManager::new("sys".into(), (), Arc::new(RwLock::new(HashMap::new())), None);
-    context_manager.set_workspace_root(workspace.path());
-
-    let snapshot = EditorContextSnapshot {
-        workspace_root: Some(PathBuf::from(workspace.path())),
-        active_file: Some(EditorFileContext {
-            path: workspace.path().join("src/main.rs").display().to_string(),
-            language_id: Some("rust".to_string()),
-            line_range: None,
-            dirty: false,
-            truncated: false,
-            selection: None,
-        }),
-        ..EditorContextSnapshot::default()
-    };
-    context_manager
-        .set_editor_context_snapshot(Some(snapshot.clone()), Some(&vtcode_config::IdeContextConfig::default()));
-
-    assert_eq!(
-        ide_context_status_label(&context_manager, workspace.path(), None, Some(&snapshot), None).as_deref(),
-        Some("IDE Context (IDE): src/main.rs")
-    );
-
-    assert!(!context_manager.toggle_session_ide_context());
-    assert_eq!(ide_context_status_label(&context_manager, workspace.path(), None, Some(&snapshot), None), None);
 }

@@ -147,8 +147,15 @@ where
         self.done
     }
 
+    #[cfg(test)]
     fn handle_payload(&mut self, payload: Value) -> Result<Vec<NormalizedStreamEvent>, LLMError> {
-        let event = ResponsesStreamAdapter::parse_payload_for_provider(self.options.provider_name, payload)?;
+        let serialized = serde_json::to_string(&payload)
+            .map_err(|err| provider_error(self.options.provider_name, format!("invalid stream payload: {err}")))?;
+        self.handle_payload_data(&serialized)
+    }
+
+    fn handle_payload_data(&mut self, payload: &str) -> Result<Vec<NormalizedStreamEvent>, LLMError> {
+        let event = ResponsesStreamAdapter::parse_sse_data_for_provider(self.options.provider_name, payload)?;
         self.handle_event(event)
     }
 
@@ -357,11 +364,7 @@ where
                         continue;
                     }
 
-                    let payload: Value = serde_json::from_str(trimmed_payload).map_err(|err| {
-                        provider_error(provider_name, format!("invalid stream payload: {err}"))
-                    })?;
-
-                    for event in processor.handle_payload(payload)? {
+                    for event in processor.handle_payload_data(trimmed_payload)? {
                         yield event;
                     }
 

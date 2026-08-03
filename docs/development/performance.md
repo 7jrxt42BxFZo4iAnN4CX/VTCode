@@ -18,6 +18,26 @@ VT Code uses a local-first performance workflow. Performance checks are measured
 
 These rules apply to product code and refactors alike. The burden of proof is on the optimization, not on the simpler baseline.
 
+### Serialization and event-log replay
+
+Avoid combining `#[serde(flatten)]` with `#[serde(untagged)]` on frequent,
+discriminator-driven protocol payloads. Serde must buffer the surrounding map
+to decide which flattened shape applies; direct wire structs can decode the
+known fields once and construct the tagged payload afterward. VT Code uses
+this for OpenResponses and ACP streaming notifications. Keep flattening when
+it is the actual contract, such as trace metadata's vendor-extension map.
+
+Keep streaming payloads as borrowed SSE text until a consumer needs an owned
+payload. The normalized Responses adapter now avoids the old
+`Value -> JSON -> Value` round trip; common text, reasoning, tool, and
+lifecycle events use typed decoding, with full payload materialization reserved
+for completion and compatibility fallbacks.
+
+Session-log index rebuilds have an even narrower requirement: they need the
+versioned envelope and `event.type`, not the full event payload. The rebuild
+path therefore skips nested payload materialization, while turn reconstruction
+continues to use the canonical `VersionedThreadEvent` decoder.
+
 ## Local Workflow
 
 ```bash

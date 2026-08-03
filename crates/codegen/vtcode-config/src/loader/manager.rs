@@ -474,6 +474,49 @@ impl ConfigManager {
         &self.layer_stack
     }
 
+    /// Resolve the user-level config file VT Code should write to, preferring
+    /// the enabled user layer, then the provider home paths, then `~`.
+    pub fn preferred_user_config_path(&self) -> Option<PathBuf> {
+        self.layer_stack
+            .layers()
+            .iter()
+            .rev()
+            .find_map(|layer| match &layer.source {
+                ConfigLayerSource::User { file } if layer.is_enabled() => Some(file.clone()),
+                _ => None,
+            })
+            .or_else(|| self.user_config_paths().into_iter().next())
+            .or_else(|| dirs::home_dir().map(|home| home.join(self.config_file_name())))
+    }
+
+    /// Return every supported user-level config path for the loaded config
+    /// filename, including paths that do not exist yet.
+    ///
+    /// Callers that monitor configuration must retain the nonexistent paths:
+    /// a later `None -> Some(mtime)` transition is a real configuration change.
+    pub fn user_config_paths(&self) -> Vec<PathBuf> {
+        let mut paths = defaults::provider::current_config_defaults()
+            .home_config_paths(self.config_file_name())
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        for path in self
+            .layer_stack
+            .layers()
+            .iter()
+            .filter_map(|layer| match (&layer.source, layer.is_enabled()) {
+                (ConfigLayerSource::User { file }, true) => Some(file),
+                _ => None,
+            })
+        {
+            if !paths.iter().any(|existing| existing == path) {
+                paths.push(path.clone());
+            }
+        }
+
+        paths
+    }
+
     /// Get the effective TOML configuration
     pub fn effective_config(&self) -> toml::Value {
         self.layer_stack.effective_config()

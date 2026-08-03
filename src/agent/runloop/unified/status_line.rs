@@ -3,6 +3,7 @@ use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use chrono::Local;
 
 use vtcode_core::config::constants::ui;
 use vtcode_core::config::{StatusLineConfig, StatusLineMode};
@@ -28,7 +29,7 @@ pub(crate) struct InputStatusState {
     pub(crate) context_limit_tokens: Option<usize>,
     pub(crate) context_remaining_tokens: Option<usize>,
     pub(crate) is_cancelling: bool,
-    pub(crate) ide_context_source: Option<String>,
+    pub(crate) clock: Option<String>,
     // Dynamic context discovery status
     pub(crate) spooled_files_count: Option<usize>,
     pub(crate) thread_context: Option<String>,
@@ -88,6 +89,14 @@ pub(crate) fn status_line_shows_auto_components(status_config: Option<&StatusLin
             .unwrap_or(true),
         StatusLineMode::Hidden => false,
     }
+}
+
+pub(crate) fn status_line_shows_clock(status_config: Option<&StatusLineConfig>) -> bool {
+    status_config.map(|cfg| cfg.show_clock).unwrap_or(true)
+}
+
+fn now_statusline_clock() -> String {
+    Local::now().format("%H:%M:%S").to_string()
 }
 
 pub(crate) async fn update_input_status_if_changed(
@@ -155,6 +164,8 @@ pub(crate) async fn update_input_status_if_changed(
         .unwrap_or_else(|_| trimmed_model.to_string());
 
     let mut command_error: Option<anyhow::Error> = None;
+
+    state.clock = status_line_shows_clock(status_config).then(now_statusline_clock);
 
     let (left, right) = match mode {
         StatusLineMode::Hidden => {
@@ -233,13 +244,8 @@ pub(crate) async fn update_input_status_if_changed(
 fn auto_status_layout(state: &InputStatusState) -> BottomStatusLayout {
     let mut layout = BottomStatusLayout::default();
     layout.push_left(state.git_left.clone());
-    layout.right = auto_status_components(
-        state.thread_context.as_deref(),
-        state.ide_context_source.as_deref(),
-        state.is_cancelling,
-        state.spooled_files_count,
-        state,
-    );
+    layout.right =
+        auto_status_components(state.thread_context.as_deref(), state.is_cancelling, state.spooled_files_count, state);
     layout
 }
 
@@ -247,23 +253,15 @@ fn auto_status_layout(state: &InputStatusState) -> BottomStatusLayout {
 #[cfg(test)]
 fn build_model_status_with_context_and_spooled(
     thread_context: Option<&str>,
-    ide_context_source: Option<&str>,
     is_cancelling: bool,
     spooled_files: Option<usize>,
 ) -> Option<String> {
     let default_state = InputStatusState::default();
-    join_status_components(auto_status_components(
-        thread_context,
-        ide_context_source,
-        is_cancelling,
-        spooled_files,
-        &default_state,
-    ))
+    join_status_components(auto_status_components(thread_context, is_cancelling, spooled_files, &default_state))
 }
 
 fn auto_status_components(
     thread_context: Option<&str>,
-    ide_context_source: Option<&str>,
     is_cancelling: bool,
     spooled_files: Option<usize>,
     state: &InputStatusState,
@@ -275,12 +273,6 @@ fn auto_status_components(
 
     parts.push(
         thread_context
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string),
-    );
-    parts.push(
-        ide_context_source
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string),
@@ -304,6 +296,9 @@ fn auto_status_components(
     {
         parts.push(Some(format!("{count} spooled")));
     }
+
+    // Current system time, pinned to the right edge of the status line.
+    parts.push(state.clock.clone());
 
     let mut deduped = Vec::new();
     for value in parts.into_iter().flatten() {
@@ -352,15 +347,10 @@ pub(crate) fn update_spooled_files_count(state: &mut InputStatusState, count: us
     state.spooled_files_count = Some(count);
 }
 
-pub(crate) fn update_ide_context_source(state: &mut InputStatusState, source: Option<String>) {
-    state.ide_context_source = source;
-}
-
 pub(crate) fn update_thread_context(state: &mut InputStatusState, thread_label: &str, local_agent_count: usize) {
     let mut value = thread_label.trim().to_string();
     if local_agent_count > 0 {
-        let suffix =
-            format!("{} local agent{} · ↓ explore", local_agent_count, if local_agent_count == 1 { "" } else { "s" });
+        let suffix = format!("{} agent{}", local_agent_count, if local_agent_count == 1 { "" } else { "s" });
         if value.is_empty() {
             value = suffix;
         } else {
@@ -419,30 +409,21 @@ pub(crate) async fn refresh_balance_info(
 
 #[cfg(test)]
 mod tests {
-    use super::{InputStatusState, build_model_status_with_context_and_spooled, update_thread_context};
+    use super::{
+        InputStatusState, build_model_status_with_context_and_spooled, status_line_shows_clock, update_thread_context,
+    };
+    use vtcode_core::config::StatusLineConfig;
 
     #[test]
     fn status_line_shows_thread_context() {
-        let status = build_model_status_with_context_and_spooled(Some("main"), None, false, None);
+        let status = build_model_status_with_context_and_spooled(Some("main"), false, None);
 
         assert_eq!(status.as_deref(), Some("main"));
     }
 
     #[test]
-    fn status_line_shows_ide_context_source() {
-        let status = build_model_status_with_context_and_spooled(
-            None,
-            Some("IDE Context (VS Code): crates/codegen/vtcode-config/src/core/agent.rs"),
-            false,
-            None,
-        );
-
-        assert_eq!(status.as_deref(), Some("IDE Context (VS Code): crates/codegen/vtcode-config/src/core/agent.rs"));
-    }
-
-    #[test]
     fn status_line_shows_spooled_files() {
-        let status = build_model_status_with_context_and_spooled(None, None, false, Some(3));
+        let status = build_model_status_with_context_and_spooled(None, false, Some(3));
 
         assert_eq!(status.as_deref(), Some("3 spooled"));
     }
@@ -456,10 +437,33 @@ mod tests {
     }
 
     #[test]
-    fn thread_context_shows_local_agent_badge_when_present() {
+    fn thread_context_shows_compact_agent_badge_when_present() {
         let mut state = InputStatusState::default();
         update_thread_context(&mut state, "main", 2);
 
-        assert_eq!(state.thread_context.as_deref(), Some("main · 2 local agents · ↓ explore"));
+        assert_eq!(state.thread_context.as_deref(), Some("main · 2 agents"));
+    }
+
+    #[test]
+    fn status_line_shows_clock_when_set() {
+        let state = InputStatusState {
+            clock: Some("14:30:05".to_string()),
+            ..Default::default()
+        };
+
+        let components = super::auto_status_components(None, false, None, &state);
+
+        assert_eq!(components, vec!["14:30:05"]);
+    }
+
+    #[test]
+    fn status_line_clock_respects_show_clock_config() {
+        assert!(status_line_shows_clock(None), "unset config defaults to showing the clock");
+
+        let on = StatusLineConfig { show_clock: true, ..StatusLineConfig::default() };
+        assert!(status_line_shows_clock(Some(&on)));
+
+        let off = StatusLineConfig { show_clock: false, ..StatusLineConfig::default() };
+        assert!(!status_line_shows_clock(Some(&off)));
     }
 }

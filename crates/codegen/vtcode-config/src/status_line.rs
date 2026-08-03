@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum StatusLineMode {
-    /// Automatic status line: displays git branch, model name, and context remaining (default)
+    /// Automatic status line: displays git branch, model summary, current time, and context indicators (default)
     #[default]
     Auto,
     /// Command mode: executes custom shell command to render status line
@@ -42,6 +42,9 @@ pub struct StatusLineConfig {
     pub refresh_interval_ms: u64,
     #[serde(default = "default_status_line_command_timeout_ms")]
     pub command_timeout_ms: u64,
+    /// Show the current system time (`HH:MM:SS`) on the status line (default: true).
+    #[serde(default = "default_status_line_show_clock")]
+    pub show_clock: bool,
 }
 
 impl StatusLineConfig {
@@ -62,8 +65,16 @@ impl Default for StatusLineConfig {
             command: None,
             refresh_interval_ms: default_status_line_refresh_interval_ms(),
             command_timeout_ms: default_status_line_command_timeout_ms(),
+            show_clock: default_status_line_show_clock(),
         }
     }
+}
+
+/// Returns the default status line clock visibility when not explicitly configured.
+const DEFAULT_STATUS_LINE_SHOW_CLOCK: bool = true;
+
+fn default_status_line_show_clock() -> bool {
+    DEFAULT_STATUS_LINE_SHOW_CLOCK
 }
 
 /// Returns the default status line mode when not explicitly configured.
@@ -85,7 +96,7 @@ fn default_status_line_command_timeout_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::StatusLineMode;
+    use super::{StatusLineConfig, StatusLineMode};
 
     #[derive(Debug, serde::Deserialize)]
     struct Wrapper {
@@ -115,5 +126,23 @@ mod tests {
             let serialized = serde_json::to_string(&mode).expect("serialize");
             assert_eq!(serialized, expected);
         }
+    }
+
+    #[test]
+    fn show_clock_defaults_to_true() {
+        let config = StatusLineConfig::default();
+        assert!(config.show_clock);
+
+        let parsed: StatusLineConfig = toml::from_str("").expect("empty config must parse with defaults");
+        assert!(parsed.show_clock);
+    }
+
+    #[test]
+    fn show_clock_deserializes_when_explicit() {
+        let parsed: StatusLineConfig = toml::from_str("show_clock = false").expect("show_clock = false must parse");
+        assert!(!parsed.show_clock);
+
+        let parsed: StatusLineConfig = toml::from_str("show_clock = true").expect("show_clock = true must parse");
+        assert!(parsed.show_clock);
     }
 }

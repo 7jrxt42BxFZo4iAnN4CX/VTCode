@@ -21,3 +21,4 @@
 ## Testing
 
 - Use `cargo nextest run -p vtcode-memory` and cover ordering, reopen/index reconstruction, retention, and write boundaries.
+- Index rebuild reads the versioned envelope and `event.type`, with targeted full-shape validation for lifecycle events so malformed records cannot create phantom turns; broader decoding belongs to turn reconstruction.
