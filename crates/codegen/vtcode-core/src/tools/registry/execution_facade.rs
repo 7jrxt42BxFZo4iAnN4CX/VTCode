@@ -670,8 +670,8 @@ impl ToolRegistry {
     /// tool registrations and is fully independent of `prevalidated` (a pure
     /// performance flag that skips re-running preflight). Only callers that went
     /// through the harness admission gate (`admit_public_tool_call`) pass
-    /// [`DispatchMode::Harness`]; direct model-originated entry always passes
-    /// [`DispatchMode::ModelPublic`], so a stray `prevalidated=true` can never by
+    /// [`execution_kernel::DispatchMode::Harness`]; direct model-originated entry always passes
+    /// [`execution_kernel::DispatchMode::ModelPublic`], so a stray `prevalidated=true` can never by
     /// itself widen the dispatchable surface.
     async fn execute_public_tool_ref_dispatch(
         &self,

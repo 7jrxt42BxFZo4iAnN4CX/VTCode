@@ -142,6 +142,10 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Architecture, Security Measures, Implementation Details, Testing, Security Philosophy
   - **User Questions**: "What can you tell me about Process Hardening?", "How does Architecture work?", "How does Security Measures work?"
 
+- **File**: `docs/development/runtime-guidance.md`
+  - **Content**: Runtime Guidance and Project Instructions
+  - **User Questions**: "What can you tell me about Runtime Guidance and Project Instructions?"
+
 - **File**: `docs/development/rust-performance-principles.md`
   - **Content**: Rust-Specific Performance Principles for VT Code
   - **Topics**: Table of Contents, Core Insight: Rust Is Not Faster Than C/C++ — It Is *Safer While Being Equally Fast*, Destructive Move Semantics, Aliasing Guarantees (`noalias`), Immutable by Default & `const` Semantics
@@ -180,6 +184,11 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Content**: rg Text Search Quick Reference Card
   - **Topics**: Essential Commands, Common Search Patterns, Smart Patterns by Language, Performance Tips, Output Example
   - **User Questions**: "What can you tell me about rg Text Search Quick Reference Card?", "How does Essential Commands work?", "How does Common Search Patterns work?"
+
+- **File**: `docs/development/vtcode-binary-gotchas.md`
+  - **Content**: vtcode Binary Gotchas
+  - **Topics**: Startup, updates, and allocation, Tool-budget and recovery contracts, Request assembly and planning
+  - **User Questions**: "What can you tell me about vtcode Binary Gotchas?", "How does Startup, updates, and allocation work?", "How does Tool-budget and recovery contracts work?"
 
 - **File**: `docs/development/vtcode-crate-audit.md`
   - **Content**: vtcode-* Crate Audit Report

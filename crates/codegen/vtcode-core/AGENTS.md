@@ -5,7 +5,7 @@
 
 - `core/agent/`: runtime, event recording, runner, progress, harness artifacts; `request_envelope` freezes each segment's prompt and ordered catalog.
 - `tools/`: handlers, registry, policy, execution; `read_file/batch.rs` owns batch admission, bounded fan-out, and ordered assembly while `read_file.rs` owns single-file semantics.
-- `llm/`: re-export facade; providers live in `vtcode-llm`. `exec/events.rs` re-exports canonical `vtcode-exec-events::ThreadEvent`; `prompts/` owns bounded resource caches.
+- `llm/`: re-export facade; providers live in `vtcode-llm`. `exec/events.rs` re-exports canonical `vtcode-exec-events::ThreadEvent`; `prompts/` owns cached static profiles, compiled runtime guidance, and bounded resource caches.
 
 ## Rules
 
@@ -24,6 +24,6 @@
 - `AgentSessionState.messages` is `Arc<Vec<Message>>`; use `messages_mut()`/`Arc::make_mut` for mutations so request and continuation histories stay shared without deep copies.
 - Async plugin, skill, file-tool, planning, persistent-memory, durable-scheduler, and prompt-resource cache-miss paths must use Tokio filesystem APIs or `spawn_blocking` for recursive/synchronous scans, record loading, claim files, persistence, or Git work.
 - `TerminalAppLauncher::launch_editor_target_non_waiting` is for existing-file GUI opens; preserve adapter-specific reuse/location flags and keep temporary-file `/edit` flows on the waiting API.
-- Token/catalog deferral thresholds are correct behavior; warn only when deferral is disabled but beneficial. Shell safety must preserve raw command text when classifying dynamic syntax.
+- Token/catalog deferral thresholds are correct behavior; warn only when deferral is disabled but beneficial. Shell safety must preserve raw command text when classifying dynamic syntax; keep optional SQLite on rusqlite 0.39 until stable cfg_select support is available.
 - `web_fetch` accepts remote HTTP(S) URLs only; local workspace reads must use `read_file`/`unified_file`, and its structured error should direct the model to that fallback. `AnsiRenderer` owns the session-local tool-summary display mode; compact batches flush before non-success summaries and never change the `ThreadEvent` contract.
 - Planning snapshots may retain normal-mode definitions for provider cache stability, but active names stay read-only (`exec_command`, `code_search`, and enabled `request_user_input`); direct `write_stdin`/`apply_patch` calls remain blocked while internal plan persistence stays available.

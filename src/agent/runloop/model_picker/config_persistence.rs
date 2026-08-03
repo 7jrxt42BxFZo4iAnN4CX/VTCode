@@ -115,8 +115,6 @@ mod tests {
     use super::{synced_openai_service_tier, uses_provider_api_key};
     use crate::agent::runloop::model_picker::ModelSelectionResult;
     use vtcode_config::OpenAIServiceTier;
-    use vtcode_config::VTCodeConfig;
-    use vtcode_core::config::loader::ConfigManager;
     use vtcode_core::config::models::Provider;
     use vtcode_core::config::types::ReasoningEffortLevel;
 

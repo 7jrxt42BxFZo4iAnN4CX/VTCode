@@ -577,40 +577,7 @@ pub(crate) fn apply_prompt_style(handle: &InlineHandle) {
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
-    use vtcode_core::config::core::PromptCachingConfig;
-    use vtcode_core::config::models::Provider;
-    use vtcode_core::config::types::{
-        AgentConfig as CoreAgentConfig, ModelSelectionSource, ReasoningEffortLevel, UiSurfacePreference,
-    };
-    use vtcode_core::core::agent::snapshots::{
-        DEFAULT_CHECKPOINTS_ENABLED, DEFAULT_MAX_AGE_DAYS, DEFAULT_MAX_SNAPSHOTS,
-    };
     use vtcode_core::utils::session_archive::{SessionArchiveMetadata, SessionSnapshot};
-
-    fn runtime_config(provider: &str, model: &str) -> CoreAgentConfig {
-        CoreAgentConfig {
-            model: model.to_string(),
-            api_key: "test-key".to_string(),
-            provider: provider.to_string(),
-            api_key_env: Provider::OpenAI.default_api_key_env().to_string(),
-            workspace: std::env::current_dir().expect("current_dir"),
-            verbose: false,
-            quiet: false,
-            theme: theme::DEFAULT_THEME_ID.to_string(),
-            reasoning_effort: ReasoningEffortLevel::default(),
-            ui_surface: UiSurfacePreference::default(),
-            prompt_cache: PromptCachingConfig::default(),
-            model_source: ModelSelectionSource::WorkspaceConfig,
-            custom_api_keys: std::collections::BTreeMap::new(),
-            checkpointing_enabled: DEFAULT_CHECKPOINTS_ENABLED,
-            checkpointing_storage_dir: None,
-            checkpointing_max_snapshots: DEFAULT_MAX_SNAPSHOTS,
-            checkpointing_max_age_days: Some(DEFAULT_MAX_AGE_DAYS),
-            max_conversation_turns: 1000,
-            model_behavior: None,
-            openai_chatgpt_auth: None,
-        }
-    }
 
     #[test]
     fn normalize_config_selection_maps_cycle_prev_to_cycle() {

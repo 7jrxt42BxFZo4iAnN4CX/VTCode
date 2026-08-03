@@ -59,7 +59,7 @@ use std::sync::{Arc, OnceLock};
 /// In ACP 1.0+ the agent emits session notifications by calling
 /// `cx.send_notification(...)` from inside a request handler. To preserve the
 /// original "send update from any method" flow, the bridge stores the active
-/// [`ConnectionHandle`] in a [`OnceLock`] for the lifetime of the connection.
+/// [`zed::connection::ConnectionHandle`] in a [`OnceLock`] for the lifetime of the connection.
 static ACP_CONNECTION: OnceLock<Arc<zed::connection::ConnectionHandle>> = OnceLock::new();
 
 /// Register the global ACP connection from the host protocol.

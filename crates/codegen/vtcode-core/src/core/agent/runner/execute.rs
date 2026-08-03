@@ -262,8 +262,10 @@ impl AgentRunner {
     }
 
     /// Resolve a [`CompletionAssessment`] produced by either
-    /// [`ContinuationController::assess_completion`] (pre-verification) or
-    /// [`ContinuationController::after_verification`] (post-verification) into a
+    /// [`super::continuation::ContinuationController::assess_completion`]
+    /// (pre-verification) or
+    /// [`super::continuation::ContinuationController::after_verification`]
+    /// (post-verification) into a
     /// single [`AssessmentResolution`] the turn loop reacts to.
     ///
     /// This consolidates the previously duplicated match arms for `Accept`,
@@ -385,7 +387,7 @@ impl AgentRunner {
 
     /// Emit `VerificationFailed` (for the first failing command) or
     /// `VerificationPassed` based on the verification run. Reuses
-    /// [`continuation::build_verification_failure_payload`] so the failure
+    /// [`super::continuation::build_verification_failure_payload`] so the failure
     /// headline stays in sync with the continuation prompt builder.
     fn emit_verification_outcome(
         &self,

@@ -758,11 +758,11 @@ mod tests {
         let child_tokens = child_report.token_estimate;
         assert!(parent_tokens > 0, "parent prompt must be non-empty for a meaningful ratio");
         // The composed system-prompt reduction from the lightweight profile is
-        // bounded by the Default-vs-Minimal base-contract difference (both share
-        // `SHARED_CONTRACT_LINES`), so it is ~25% in practice (measured 665 vs
-        // 888 here). The dominant subagent bootstrap win is the tool-schema/MCP
-        // drop, guarded by `mcp_deferral_keeps_first_request_wire_payload_near_baseline`
-        // and `child_config_uses_lightweight_default_profile`. This test pins the
+        // bounded by the shared base-contract content. Universal runtime
+        // guidance is deliberately shared by every profile, so the dominant
+        // subagent bootstrap win remains the tool-schema/MCP drop, guarded by
+        // `mcp_deferral_keeps_first_request_wire_payload_near_baseline` and
+        // `child_config_uses_lightweight_default_profile`. This test pins the
         // system-prompt portion: the child must be materially (and strictly)
         // cheaper, and a regression that bloats the Minimal profile above 80% of
         // the Default composed prompt must fail here.

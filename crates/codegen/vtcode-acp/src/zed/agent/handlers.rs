@@ -8,7 +8,7 @@
 //!
 //! ## Spawn pattern
 //!
-//! [`PromptRequest`](acp::PromptRequest) is the one handler that needs to
+//! [`acp::PromptRequest`] is the one handler that needs to
 //! drive the SACP event loop forward *while* it runs. Per the SACP docs we
 //! therefore use [`ConnectionTo::spawn`] from inside the handler closure,
 //! and the actual prompt logic runs in the spawned task. The spawned task

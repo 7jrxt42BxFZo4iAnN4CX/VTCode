@@ -74,7 +74,7 @@ fn runtime_config() -> CoreAgentConfig {
         workspace: std::env::current_dir().expect("current_dir"),
         verbose: false,
         quiet: false,
-        theme: vtcode_core::ui::theme::DEFAULT_THEME_ID.to_string(),
+        theme: theme::DEFAULT_THEME_ID.to_string(),
         reasoning_effort: ReasoningEffortLevel::default(),
         ui_surface: UiSurfacePreference::default(),
         prompt_cache: PromptCachingConfig::default(),

@@ -161,6 +161,7 @@ are designed to keep the first-request overhead low and per-turn growth bounded.
 ### Authoring guidance
 
 - Keep instruction files (AGENTS.md / CLAUDE.md) focused; they ride on every request.
+- Put universal user-facing behavior in the compiled runtime-guidance section; keep authored instruction files for project-specific maps and maintainer workflows. Authored files are context, not a security boundary.
 - Prefer delegating large searches to subagents with a narrow, explicit tool set
   rather than fanning out broad orchestration.
 - When adding a tool, keep its description between 40 and 1200 characters and include

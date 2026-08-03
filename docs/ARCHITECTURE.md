@@ -43,6 +43,24 @@ Harness primitives in VT Code map to the runtime like this:
 
 `vtcode-exec-events::ThreadEvent` is the authoritative runtime event contract across exec mode, harness logs, and interactive lifecycle emission. Item lifecycle events come from the shared runtime/event builders, while outer `TurnStarted` / `TurnCompleted` / `TurnFailed` events remain wrapper-owned submission boundaries. Follow-up inputs are queued in the runtime and injected one-at-a-time only after a turn reaches an idle boundary.
 
+### Prompt guidance boundaries
+
+VT Code separates universal runtime behavior from project-specific developer
+instructions:
+
+- The compiled, cache-stable guidance in
+  `crates/codegen/vtcode-core/src/prompts/runtime_guidance.rs` applies to every
+  user and every static prompt profile. It contains only concise user-facing
+  behavior and is capped before prompt assembly.
+- `AGENTS.md`, `CLAUDE.md`, and `.vtcode/rules/` remain dynamically loaded
+  project/user instruction maps. Their precedence, path scoping, exclusions,
+  and active-directory behavior are preserved by the instruction loader.
+- Workspace instruction content is user-controlled context, not a security
+  boundary. It cannot replace command policy, sandbox checks, approvals, or
+  correctness-critical validation implemented in code, schemas, tests, and
+  lints. Instruction files are not compiled into the runtime or release
+  archives.
+
 For the public loop semantics and the Agent SDK concept mapping, see [Agent Loop Contract](./guides/agent-loop-contract.md).
 
 The harness configuration is intentionally split across three existing surfaces instead of a new top-level subsystem:

@@ -4,6 +4,17 @@
 
 VT Code is designed with security as a first-class concern. This guide explains the security features, best practices, and how to configure VT Code for maximum safety in your environment.
 
+### Workspace instructions are context, not policy
+
+`AGENTS.md`, `CLAUDE.md`, and `.vtcode/rules/` are dynamically loaded
+user/workspace context. They help the model understand project conventions,
+but they are not a security boundary and cannot grant permissions, bypass
+the sandbox, or replace executable validation. Review instruction files from
+untrusted repositories the same way you review other repository content.
+
+Universal user-facing behavior comes from the compiled runtime-guidance layer,
+which is independent of workspace file contents.
+
 ## Security Architecture
 
 VT Code implements a **defense-in-depth security model** with multiple layers of protection:

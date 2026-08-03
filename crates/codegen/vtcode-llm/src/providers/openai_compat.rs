@@ -119,7 +119,7 @@ pub(crate) trait OpenAiCompatSpec: Sized + Send + Sync + 'static {
     }
 
     /// Whether the request has reasoning enabled (drives sampling
-    /// suppression when [`SUPPRESS_SAMPLING_WHEN_REASONING`] is set).
+    /// suppression when [`OpenAiCompatSpec::SUPPRESS_SAMPLING_WHEN_REASONING`] is set).
     fn reasoning_enabled(_core: &OpenAiCompatCore<Self>, request: &LLMRequest) -> bool {
         request
             .reasoning_effort

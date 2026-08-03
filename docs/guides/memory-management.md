@@ -23,6 +23,15 @@ VT Code loads authored guidance from the lowest-precedence scope to the highest-
 | 6 | Workspace unconditional rules | `<repo>/.vtcode/rules/**/*.md` without `paths` frontmatter | Always-on repository rules. |
 | 7 | Workspace matched rules | Same workspace rule roots, but with matching `paths` frontmatter | File- or directory-scoped repository rules. |
 
+### Compiled runtime guidance
+
+The static prompt also contains a small compiled runtime-guidance section from
+`vtcode-core/src/prompts/runtime_guidance.rs`. It applies to every prompt
+profile and is separate from the authored hierarchy above. `AGENTS.md`,
+`CLAUDE.md`, and rule files are user-controlled context: they can describe
+project conventions, but they cannot override VT Code's tool policy,
+sandboxing, approvals, or other security controls.
+
 ### Path-scoped rules
 
 Rules inside `.vtcode/rules/` can use YAML frontmatter with a `paths` field:

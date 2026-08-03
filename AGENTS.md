@@ -2,6 +2,8 @@
 
 Keep this file concise and under 150 lines. Root guidance belongs here; detailed explanations belong in `docs/`, skills, `.vtcode/memory/`, or crate-local `AGENTS.md` files. For all coding tasks use your judgement to decide an appropriate lower power model and run that in a subagent.
 
+Universal model-facing behavior is compiled in `crates/codegen/vtcode-core/src/prompts/runtime_guidance.rs`. Keep this file and module `AGENTS.md` files focused on project and maintainer guidance; dynamically loaded instruction files are user-controlled context, not a security boundary.
+
 ## Rules
 
 - Conventional Commits (`type(scope): subject`).
@@ -25,6 +27,7 @@ Keep this file concise and under 150 lines. Root guidance belongs here; detailed
 - Architecture/conventions: [docs/guides/code-organization-patterns.md](docs/guides/code-organization-patterns.md), [docs/guides/async-architecture.md](docs/guides/async-architecture.md), [docs/development/rust-performance-principles.md](docs/development/rust-performance-principles.md).
 - Tools/security: [docs/development/grep-tool-guide.md](docs/development/grep-tool-guide.md), [docs/development/grep-quick-reference.md](docs/development/grep-quick-reference.md), [docs/development/COMMAND_SECURITY_MODEL.md](docs/development/COMMAND_SECURITY_MODEL.md), [docs/guides/security.md](docs/guides/security.md).
 - Harness/agent behavior: [docs/guides/agent-loop-contract.md](docs/guides/agent-loop-contract.md), [docs/harness/INDEX.md](docs/harness/INDEX.md), [docs/harness/CORE_BELIEFS.md](docs/harness/CORE_BELIEFS.md), [docs/harness/ARCHITECTURAL_INVARIANTS.md](docs/harness/ARCHITECTURAL_INVARIANTS.md), [docs/harness/AGENT_LEGIBILITY_GUIDE.md](docs/harness/AGENT_LEGIBILITY_GUIDE.md).
+- Prompt/runtime boundaries: [docs/development/runtime-guidance.md](docs/development/runtime-guidance.md).
 - Planning and automation: [docs/guides/planning-workflow.md](docs/guides/planning-workflow.md), [docs/guides/full-automation.md](docs/guides/full-automation.md), [docs/development/EXECUTION_POLICY.md](docs/development/EXECUTION_POLICY.md).
 - Loop engineering: [docs/project/PLAN-loop-engineering.md](docs/project/PLAN-loop-engineering.md) — worktree isolation, propose/verify sub-agents, loop state persistence, cost guardrails.
 - Models/providers: [docs/development/ADDING_MODELS.md](docs/development/ADDING_MODELS.md), [docs/development/MODEL_ADDITION_WORKFLOW.md](docs/development/MODEL_ADDITION_WORKFLOW.md), [docs/development/MODEL_ADDITION_CHECKLIST.md](docs/development/MODEL_ADDITION_CHECKLIST.md).

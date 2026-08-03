@@ -141,6 +141,27 @@ fn generate_completions(stage_dir: &Path) -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
+const RELEASE_ROOT_ENTRIES: &[&str] = &["completions", "man", "vtcode"];
+
+fn reject_workspace_instruction_files(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if !path.is_dir() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        if matches!(entry.file_name().to_str(), Some("AGENTS.md" | "CLAUDE.md")) {
+            return Err(format!("workspace instruction file in release stage: {}", entry_path.display()).into());
+        }
+        if entry.file_type()?.is_dir() {
+            reject_workspace_instruction_files(&entry_path)?;
+        }
+    }
+
+    Ok(())
+}
+
 fn create_archive(
     _workspace_root: &Path,
     out_dir: &Path,
@@ -154,6 +175,13 @@ fn create_archive(
         entries.push(name);
     }
     entries.sort();
+
+    for entry in &entries {
+        if !RELEASE_ROOT_ENTRIES.contains(&entry.as_str()) {
+            return Err(format!("unexpected release entry `{entry}`").into());
+        }
+    }
+    reject_workspace_instruction_files(stage_dir)?;
 
     // Archive from stage_dir parent so entries have no directory prefix.
     // The native updater discovers the executable by its exact name.
@@ -349,4 +377,87 @@ fn check_file_deps(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_root(label: &str) -> PathBuf {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock").as_nanos();
+        env::temp_dir().join(format!("vtcode-xtask-{label}-{}-{timestamp}", std::process::id()))
+    }
+
+    #[test]
+    fn release_archive_contains_only_distribution_assets() {
+        let root = test_root("archive-smoke");
+        let stage_dir = root.join("stage");
+        let out_dir = root.join("out");
+        fs::create_dir_all(stage_dir.join("man/man1")).expect("man directory");
+        fs::create_dir_all(stage_dir.join("completions/bash")).expect("completion directory");
+        fs::create_dir_all(&out_dir).expect("output directory");
+        fs::write(stage_dir.join("vtcode"), "binary").expect("binary");
+        fs::write(stage_dir.join("man/man1/vtcode.1"), "man page").expect("man page");
+        fs::write(stage_dir.join("completions/bash/vtcode"), "completion").expect("completion");
+
+        let archive = out_dir.join("vtcode-smoke.tar.gz");
+        create_archive(&root, &out_dir, &archive, &stage_dir).expect("archive");
+
+        let listing = Command::new("tar")
+            .args(["-tzf", archive.to_str().expect("archive path")])
+            .output()
+            .expect("tar listing");
+        assert!(listing.status.success(), "tar listing failed: {:?}", listing.status);
+        let entries = String::from_utf8_lossy(&listing.stdout);
+        let normalized_entries = entries.lines().map(|entry| entry.trim_end_matches('/'));
+        for entry in normalized_entries {
+            assert!(
+                RELEASE_ROOT_ENTRIES
+                    .iter()
+                    .any(|root_entry| { entry == *root_entry || entry.starts_with(&format!("{root_entry}/")) }),
+                "unexpected archive entry: {entry}"
+            );
+            assert!(!entry.ends_with("AGENTS.md"));
+        }
+        assert!(entries.lines().any(|entry| entry.trim_end_matches('/') == "vtcode"));
+        assert!(entries.lines().any(|entry| entry.ends_with("man/man1/vtcode.1")));
+        assert!(entries.lines().any(|entry| entry.ends_with("completions/bash/vtcode")));
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn release_archive_rejects_unexpected_instruction_files() {
+        let root = test_root("archive-allowlist");
+        let stage_dir = root.join("stage");
+        let out_dir = root.join("out");
+        fs::create_dir_all(&stage_dir).expect("stage directory");
+        fs::create_dir_all(&out_dir).expect("output directory");
+        fs::write(stage_dir.join("vtcode"), "binary").expect("binary");
+        fs::write(stage_dir.join("AGENTS.md"), "maintainer guidance").expect("instruction file");
+
+        let archive = out_dir.join("vtcode-allowlist.tar.gz");
+        let error = create_archive(&root, &out_dir, &archive, &stage_dir).expect_err("unexpected file must fail");
+        assert!(error.to_string().contains("unexpected release entry `AGENTS.md`"));
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn release_archive_rejects_nested_instruction_files() {
+        let root = test_root("archive-nested-allowlist");
+        let stage_dir = root.join("stage");
+        let out_dir = root.join("out");
+        fs::create_dir_all(stage_dir.join("man/man1")).expect("man directory");
+        fs::create_dir_all(&out_dir).expect("output directory");
+        fs::write(stage_dir.join("vtcode"), "binary").expect("binary");
+        fs::write(stage_dir.join("man/AGENTS.md"), "maintainer guidance").expect("instruction file");
+
+        let archive = out_dir.join("vtcode-nested-allowlist.tar.gz");
+        let error = create_archive(&root, &out_dir, &archive, &stage_dir).expect_err("nested file must fail");
+        assert!(error.to_string().contains("workspace instruction file in release stage"));
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
 }

@@ -14,6 +14,7 @@ pub mod render;
 pub(crate) mod resource_cache;
 pub mod resources;
 pub mod runtime_contract;
+pub(crate) mod runtime_guidance;
 pub mod sections;
 pub mod static_prompts;
 pub mod system;

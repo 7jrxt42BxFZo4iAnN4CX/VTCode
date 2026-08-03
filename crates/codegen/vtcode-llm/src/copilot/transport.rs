@@ -20,9 +20,9 @@
 //! ## Backpressure
 //!
 //! The write channel is bounded (capacity 64) to prevent unbounded memory growth
-//! if the subprocess is slow to consume stdin. [`send_raw`](Self::send_raw) uses
-//! `try_send` and returns an error if the channel is full, rather than blocking
-//! or growing without bound.
+//! if the subprocess is slow to consume stdin. [`StdioTransport::send_raw`]
+//! uses `try_send` and returns an error if the channel is full, rather than
+//! blocking or growing without bound.
 
 use std::collections::HashMap;
 use std::fmt;

@@ -16,7 +16,7 @@ VT Code's prompt system follows the four pillars of *Section 18.3 (Prompt
 Architecture)* of the agentic-AI guide:
 
 1. **System-prompt design** (18.3.1) — persona, capabilities, constraints,
-   and output format assembled once per segment.
+   universal runtime guidance, and output format assembled once per segment.
 2. **Dynamic assembly** (18.3.2) — modular, cache-friendly composition at
    segment creation from the base prompt, instruction appendix, runtime
    contract, recovery mode, harness limits, tool catalog, and primary-agent
@@ -39,7 +39,8 @@ immutable `system_prompt` in this order:
 
 1. **Base system prompt** — `vtcode_core::prompts::system::generate_system_instruction`
    (with `Default / Minimal / Lightweight / Specialized` variants cached
-   via `OnceLock`).
+   via `OnceLock`). Each cached profile includes the deterministic compiled
+   runtime-guidance section from `prompts/runtime_guidance.rs` exactly once.
 2. **INSTRUCTIONS** appendix — `AGENTS.md`, `CLAUDE.md`, and other
    project-scoped instruction files discovered by
    `project_doc::build_instruction_appendix_with_context`.
