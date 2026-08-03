@@ -2,6 +2,26 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.141.11 - 2026-08-03
+
+### Highlights
+#### Bug Fixes
+
+- Tolerate malformed lines during turn reconstruction (1b6385eb) 
+#### Documentation
+
+- Add OmniRoute integration guide  (22323fa3) (@diegosouzapw)
+- Add @diegosouzapw as latest contributor (2b132e75) 
+- Refine agent rules and add cache-miss and planning notes (afe67757) 
+#### Features
+
+- Add caching for prompt resources and file search (623e7b84) 
+- Compile shared runtime guidance (0763cd8b) 
+- Require validated persisted plans before approval (4e288db9) 
+### Other Changes
+#### Performance
+
+- Optimize parsing and config reloads (0ad2af0b) 
 ## 0.141.10 - 2026-08-01
 
 ### Highlights
