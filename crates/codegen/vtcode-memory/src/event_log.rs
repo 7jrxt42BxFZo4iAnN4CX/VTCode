@@ -290,7 +290,15 @@ impl SessionEventLog {
             if line.is_empty() {
                 continue;
             }
-            let v: VersionedThreadEvent = serde_json::from_str(line).map_err(SessionStoreError::Json)?;
+            // The index scan only validates the event envelope (plus the
+            // lifecycle shape) so it can rebuild cheaply. A line accepted by
+            // the scan can therefore still fail full decoding here; skip it
+            // instead of failing the whole reconstruction (revert, compaction,
+            // and analytics must not break on a single malformed record).
+            let v: VersionedThreadEvent = match serde_json::from_str(line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
             events.push(v.into_event());
         }
         Ok(events)
