@@ -27,6 +27,7 @@ Before using this extension, you need to have the VT Code CLI installed:
 cargo install vtcode
 
 # Or with Homebrew
+brew trust vinhnx/tap
 brew install vinhnx/tap/vtcode
 
 # Or with NPM

@@ -21,6 +21,7 @@ cargo install vtcode
 #### Homebrew (macOS)
 
 ```bash
+brew trust vinhnx/tap
 brew install vinhnx/tap/vtcode
 ```
 

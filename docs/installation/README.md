@@ -26,6 +26,7 @@ Windows release builds are currently best-effort and may lag behind macOS/Linux.
 ### Homebrew (macOS & Linux)
 
 ```bash
+brew trust vinhnx/tap
 brew install vinhnx/tap/vtcode
 
 # Optional after brew install
@@ -52,7 +53,7 @@ npm install -g @vinhnx/vtcode --registry=https://npm.pkg.github.com
 | Method               | Platforms         | Command                                                               | Notes                                 |
 | -------------------- | ----------------- | --------------------------------------------------------------------- | ------------------------------------- |
 | **Native Installer** | macOS, Linux, WSL | See Quick Install above                                               | Recommended, auto-detects platform    |
-| **Homebrew**         | macOS, Linux      | `brew install vinhnx/tap/vtcode`                                      | Package manager, easy updates         |
+| **Homebrew**         | macOS, Linux      | `brew trust vinhnx/tap && brew install vinhnx/tap/vtcode`              | Package manager, easy updates         |
 | **Cargo**            | All               | `cargo install vtcode`                                                | Build from source, latest dev version |
 | **npm**              | All               | `npm install -g @vinhnx/vtcode --registry=https://npm.pkg.github.com` | JavaScript package manager            |
 | **npx**              | All               | `npx @vinhnx/vtcode`                                                  | No installation, run directly         |

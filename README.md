@@ -40,6 +40,7 @@ VT Code is a Rust coding agent built for long-running autonomous workflows. It h
 Install via homebrew
 
 ```yaml
+brew trust vinhnx/tap
 brew install vinhnx/tap/vtcode
 ```
 
