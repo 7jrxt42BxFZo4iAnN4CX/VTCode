@@ -159,7 +159,7 @@ impl ContinuationController {
             if let Some(reloaded) = self.load_tracker().await? {
                 reloaded
             } else {
-                self.note_progress_stall();
+                self.note_progress_stall().await;
                 return Ok(CompletionAssessment::Continue {
                     reason: "Task tracker could not be loaded.".to_string(),
                     prompt: "Continue working. The harness task tracker is missing, so do not stop yet.".to_string(),
@@ -246,7 +246,7 @@ impl ContinuationController {
                 .await?;
             }
 
-            self.note_progress_stall();
+            self.note_progress_stall().await;
             return Ok(CompletionAssessment::Continue {
                 reason: summary,
                 prompt: build_verification_failure_prompt(failure),
@@ -316,18 +316,30 @@ impl ContinuationController {
     /// Record a setback/stall (no-op without an attached monitor).
     /// After recording, checks whether a context reset should be triggered
     /// based on the configured stall threshold and context reset mode.
-    fn note_progress_stall(&mut self) {
-        if let Some(monitor) = &mut self.progress {
+    async fn note_progress_stall(&mut self) {
+        let stall_count = {
+            let Some(monitor) = &mut self.progress else {
+                return;
+            };
             monitor.record_stall();
-            // Check if the consecutive stall count has crossed the context
-            // reset threshold. If so, write a reset manifest so the next
-            // session starts from a clean context.
-            crate::core::agent::context_reset::maybe_write_reset_on_stall(
-                &self.workspace_root,
-                monitor.consecutive_stalls(),
-                self.context_reset_mode.as_str(),
-                self.context_reset_stall_threshold,
-            );
+            monitor.consecutive_stalls()
+        };
+        let workspace_root = self.workspace_root.clone();
+        let reset_mode = self.context_reset_mode.as_str().to_owned();
+        let threshold = self.context_reset_stall_threshold;
+
+        // Check if the consecutive stall count has crossed the context reset
+        // threshold. If so, write a reset manifest without blocking the
+        // executor so the next session starts from a clean context.
+        if let Err(error) = crate::core::agent::context_reset::maybe_write_reset_on_stall_async(
+            &workspace_root,
+            stall_count,
+            &reset_mode,
+            threshold,
+        )
+        .await
+        {
+            tracing::warn!(error = %error, "Failed to write context reset manifest after stall");
         }
     }
 

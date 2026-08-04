@@ -20,7 +20,8 @@ pub use config::{
     normalize_background_child_max_turns, normalize_child_max_turns, prepare_child_runtime_config,
 };
 pub use model::{
-    agent_type_for_spec, load_memory_appendix, load_primary_memory_appendix, load_primary_memory_appendix_async,
+    agent_type_for_spec, load_memory_appendix, load_memory_appendix_async, load_primary_memory_appendix,
+    load_primary_memory_appendix_async,
 };
 pub use prompt::{
     contains_explicit_delegation_request, contains_explicit_model_request, delegated_task_requires_clarification,

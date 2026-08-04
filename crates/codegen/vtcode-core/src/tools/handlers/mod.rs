@@ -64,6 +64,7 @@ pub mod planning_task_tracker;
 pub mod planning_workflow;
 pub mod read_file;
 pub mod session_tool_catalog;
+mod session_tool_projection;
 pub mod shell_handler;
 pub mod task_tracker;
 pub mod task_tracking;

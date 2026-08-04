@@ -5,18 +5,22 @@ use std::num::NonZero;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use criterion::Criterion;
 use criterion::criterion_group;
 use criterion::criterion_main;
+use criterion::{BatchSize, Criterion};
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
+use vtcode_core::config::types::CapabilityLevel;
+use vtcode_core::config::{ToolDocumentationMode, ToolProfile};
 use vtcode_core::core::agent::harness_kernel::{
     HarnessRequestPlanInput, PreparedToolBatch, PreparedToolCall, build_harness_request_plan,
 };
 use vtcode_core::llm::provider::{Message, ToolChoice, ToolDefinition};
 use vtcode_core::prompts::{FewShotExample, FewShotStore, resolve_system_prompt_layers, sort_tool_definitions};
+use vtcode_core::tools::handlers::{SessionSurface, SessionToolCatalog, SessionToolsConfig, ToolModelCapabilities};
 use vtcode_core::tools::registry::SessionToolCatalogState;
-use vtcode_indexer::file_search::{FileIndexCache, FileSearchConfig, run_with_index};
+use vtcode_core::tools::registry::ToolRegistration;
+use vtcode_indexer::file_search::{FileIndexCache, FileSearchConfig, run, run_with_index};
 
 fn sample_tool(name: &str) -> ToolDefinition {
     ToolDefinition::function(
@@ -37,6 +41,40 @@ fn sample_tools(count: usize) -> Arc<Vec<ToolDefinition>> {
 
 fn sample_messages(count: usize) -> Vec<Message> {
     (0..count).map(|index| Message::user(format!("message {index}"))).collect()
+}
+
+fn benchmark_tool_catalog() -> SessionToolCatalog {
+    let registrations = (0..128)
+        .map(|index| {
+            ToolRegistration::new(
+                format!("catalog_projection_{index:03}"),
+                CapabilityLevel::CodeSearch,
+                false,
+                |_, _| Box::pin(async { Ok(serde_json::Value::Null) }),
+            )
+            .with_description(format!(
+                "Project a repeated catalog tool with a realistic description for benchmark iteration {index}."
+            ))
+            .with_parameter_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Workspace-relative path."},
+                    "query": {"type": "string", "description": "Search query."}
+                }
+            }))
+        })
+        .collect();
+    SessionToolCatalog::rebuild_from_registrations(registrations)
+}
+
+fn benchmark_tool_catalog_config() -> SessionToolsConfig {
+    SessionToolsConfig::full_public(
+        SessionSurface::AgentRunner,
+        CapabilityLevel::CodeSearch,
+        ToolDocumentationMode::Progressive,
+        ToolModelCapabilities::default(),
+    )
+    .with_tool_profile(ToolProfile::AdvancedVtCode)
 }
 
 fn request_plan_benchmark(c: &mut Criterion) {
@@ -114,6 +152,18 @@ fn tool_catalog_projection_benchmark(c: &mut Criterion) {
             })
         })
     });
+
+    let catalog = benchmark_tool_catalog();
+    let catalog_config = benchmark_tool_catalog_config();
+    let _ = catalog.schema_entries(catalog_config.clone());
+    let _ = catalog.model_tools(catalog_config.clone());
+    c.bench_function("agent_harness_tool_catalog_projection_repeat", |b| {
+        b.iter(|| {
+            let schemas = catalog.schema_entries(catalog_config.clone());
+            let definitions = catalog.model_tools(catalog_config.clone());
+            black_box((schemas.len(), definitions.len()))
+        })
+    });
 }
 
 fn prompt_resource_cache_hit_benchmark(c: &mut Criterion) {
@@ -168,19 +218,40 @@ fn tool_definition_sorting_benchmark(c: &mut Criterion) {
     });
 }
 
-fn indexed_file_search_scoring_benchmark(c: &mut Criterion) {
+fn file_search_benchmarks(c: &mut Criterion) {
     let workspace = tempfile::tempdir().expect("benchmark workspace");
-    for index in 0..256 {
-        let path = workspace.path().join(format!("src/module_{index:03}/widget_{index:03}.rs"));
-        std::fs::create_dir_all(path.parent().expect("benchmark parent")).expect("benchmark directory");
-        std::fs::write(path, "fn widget() {}\n").expect("benchmark source");
+    for module in 0..64 {
+        for file in 0..64 {
+            let path = workspace.path().join(format!("src/module_{module:02}/widget_{file:02}.rs"));
+            std::fs::create_dir_all(path.parent().expect("benchmark parent")).expect("benchmark directory");
+            std::fs::write(path, "fn widget() {}\n").expect("benchmark source");
+        }
     }
 
-    let cache = FileIndexCache::new(workspace.path().to_path_buf(), Vec::new(), false, 2);
     let runtime = Runtime::new().expect("criterion tokio runtime");
-    let warm_config = indexed_search_config(workspace.path());
+    c.bench_function("agent_harness_file_search_uncached", |b| {
+        b.iter(|| {
+            let result = run(indexed_search_config(workspace.path())).expect("uncached file search");
+            black_box((result.matches.len(), result.total_match_count))
+        })
+    });
+
+    c.bench_function("agent_harness_file_index_build", |b| {
+        b.iter_batched(
+            || FileIndexCache::new(workspace.path().to_path_buf(), Vec::new(), false, 4),
+            |cache| {
+                let result = runtime
+                    .block_on(run_with_index(indexed_search_config(workspace.path()), &cache))
+                    .expect("file index build");
+                black_box((result.matches.len(), result.total_match_count))
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
+    let cache = FileIndexCache::new(workspace.path().to_path_buf(), Vec::new(), false, 4);
     runtime
-        .block_on(run_with_index(warm_config, &cache))
+        .block_on(run_with_index(indexed_search_config(workspace.path()), &cache))
         .expect("warm indexed search");
 
     c.bench_function("indexed_file_search_scoring_cache_hit", |b| {
@@ -199,7 +270,7 @@ fn indexed_search_config(workspace: &std::path::Path) -> FileSearchConfig {
         limit: NonZero::new(32).expect("non-zero limit"),
         search_directory: workspace.to_path_buf(),
         exclude: Vec::new(),
-        threads: NonZero::new(2).expect("non-zero threads"),
+        threads: NonZero::new(4).expect("non-zero threads"),
         cancel_flag: Arc::new(AtomicBool::new(false)),
         compute_indices: false,
         respect_gitignore: false,
@@ -214,6 +285,6 @@ criterion_group!(
     prompt_resource_cache_hit_benchmark,
     few_shot_selection_benchmark,
     tool_definition_sorting_benchmark,
-    indexed_file_search_scoring_benchmark
+    file_search_benchmarks
 );
 criterion_main!(benches);

@@ -287,7 +287,7 @@ pub(crate) async fn initialize_session(
         full_auto_allowlist = Some(tool_registry.current_full_auto_allowlist().await.unwrap_or_default());
     }
 
-    let trajectory = build_trajectory_logger(&config.workspace, vt_cfg);
+    let trajectory = build_trajectory_logger(&config.workspace, vt_cfg).await;
     let available_subagents = if let Some(controller) = subagent_controller.as_ref() {
         controller
             .effective_specs()

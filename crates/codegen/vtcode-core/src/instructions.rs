@@ -171,7 +171,7 @@ impl MatchContext {
                 continue;
             }
 
-            let is_dir = normalized.is_dir();
+            let is_dir = tokio::fs::metadata(&normalized).await.is_ok_and(|metadata| metadata.is_dir());
             let key = format!("{relative}:{is_dir}");
             if seen.insert(key) {
                 candidates.push(MatchCandidate { relative_path: relative, is_dir });
@@ -211,14 +211,14 @@ struct ExclusionMatcher {
 }
 
 impl ExclusionMatcher {
-    fn compile(project_root: &Path, home_dir: Option<&Path>, raw_patterns: &[String]) -> Result<Self> {
+    async fn compile(project_root: &Path, home_dir: Option<&Path>, raw_patterns: &[String]) -> Result<Self> {
         let mut patterns = Vec::with_capacity(raw_patterns.len());
         for raw in raw_patterns {
             let trimmed = raw.trim();
             if trimmed.is_empty() {
                 continue;
             }
-            let resolved = resolve_pattern(trimmed, project_root, home_dir)?;
+            let resolved = resolve_pattern(trimmed, project_root, home_dir).await?;
             let pattern = Pattern::new(&resolved)
                 .with_context(|| format!("Failed to compile instruction exclude pattern `{trimmed}`"))?;
             patterns.push(pattern);
@@ -469,7 +469,7 @@ pub fn format_instruction_path(path: &Path, project_root: &Path, home_dir: Optio
 pub async fn discover_instruction_sources(options: &InstructionDiscoveryOptions<'_>) -> Result<Vec<InstructionSource>> {
     let mut sources = Vec::with_capacity(16);
     let mut seen_paths = HashSet::new();
-    let excludes = ExclusionMatcher::compile(options.project_root, options.home_dir, options.exclude_patterns)?;
+    let excludes = ExclusionMatcher::compile(options.project_root, options.home_dir, options.exclude_patterns).await?;
     let match_context = MatchContext::new(options.project_root, options.match_paths).await;
 
     if let Some(home) = options.home_dir {
@@ -508,8 +508,12 @@ pub async fn discover_instruction_sources(options: &InstructionDiscoveryOptions<
         }
     }
 
-    let root = canonicalize_with_context(options.project_root, "project root")?;
-    let mut cursor = canonicalize_with_context(options.current_dir, "working directory")?;
+    let root = canonicalize_async(options.project_root)
+        .await
+        .with_context(|| format!("Failed to canonicalize project root {}", options.project_root.display()))?;
+    let mut cursor = canonicalize_async(options.current_dir)
+        .await
+        .with_context(|| format!("Failed to canonicalize working directory {}", options.current_dir.display()))?;
     if !cursor.starts_with(&root) {
         cursor = root.clone();
     }
@@ -575,7 +579,7 @@ pub async fn read_instruction_bundle(
         return Ok(None);
     }
 
-    let allowed_import_roots = allowed_import_roots(options.project_root, options.home_dir)?;
+    let allowed_import_roots = allowed_import_roots(options.project_root, options.home_dir).await?;
     let import_max_depth = options.import_max_depth.max(1);
 
     // expand_instruction_contents performs blocking filesystem I/O (read_to_string,
@@ -709,7 +713,9 @@ async fn normalize_instruction_candidate(candidate: &Path, excludes: &ExclusionM
         return Ok(None);
     }
 
-    let canonical = canonicalize_with_context(candidate, "instruction candidate")?;
+    let canonical = canonicalize_async(candidate)
+        .await
+        .with_context(|| format!("Failed to canonicalize instruction candidate {}", candidate.display()))?;
     if excludes.matches(&canonical) {
         return Ok(None);
     }
@@ -832,7 +838,7 @@ async fn expand_instruction_patterns(
     let mut seen = HashSet::new();
 
     for pattern in patterns {
-        let resolved = resolve_pattern(pattern, project_root, home_dir)?;
+        let resolved = resolve_pattern(pattern, project_root, home_dir).await?;
         let glob_matches: Vec<PathBuf> = glob(&resolved)
             .with_context(|| format!("Failed to expand instruction pattern `{pattern}`"))?
             .filter_map(|entry| match entry {
@@ -866,13 +872,15 @@ async fn expand_instruction_patterns(
     Ok(paths)
 }
 
-fn resolve_pattern(pattern: &str, project_root: &Path, home_dir: Option<&Path>) -> Result<String> {
+async fn resolve_pattern(pattern: &str, project_root: &Path, home_dir: Option<&Path>) -> Result<String> {
     if let Some(stripped) = pattern.strip_prefix("~/") {
         let home = home_dir
             .ok_or_else(|| anyhow!("Cannot expand `~` in instruction pattern `{pattern}` without a home directory"))?;
         let resolved = home.join(stripped);
-        if !contains_glob_meta(stripped) && resolved.exists() {
-            return Ok(canonicalize_with_context(&resolved, "instruction pattern")?
+        if !contains_glob_meta(stripped) && tokio::fs::try_exists(&resolved).await.unwrap_or(false) {
+            return Ok(canonicalize_async(&resolved)
+                .await
+                .with_context(|| format!("Failed to canonicalize instruction pattern {}", resolved.display()))?
                 .to_string_lossy()
                 .into_owned());
         }
@@ -886,8 +894,10 @@ fn resolve_pattern(pattern: &str, project_root: &Path, home_dir: Option<&Path>) 
         project_root.join(candidate)
     };
 
-    if !contains_glob_meta(pattern) && full_path.exists() {
-        return Ok(canonicalize_with_context(&full_path, "instruction pattern")?
+    if !contains_glob_meta(pattern) && tokio::fs::try_exists(&full_path).await.unwrap_or(false) {
+        return Ok(canonicalize_async(&full_path)
+            .await
+            .with_context(|| format!("Failed to canonicalize instruction pattern {}", full_path.display()))?
             .to_string_lossy()
             .into_owned());
     }
@@ -1266,21 +1276,35 @@ fn resolve_import_path(import: &str, containing_file: &Path, allowed_roots: &[Pa
     Ok(Some(canonical))
 }
 
-fn allowed_import_roots(project_root: &Path, home_dir: Option<&Path>) -> Result<Vec<PathBuf>> {
+async fn allowed_import_roots(project_root: &Path, home_dir: Option<&Path>) -> Result<Vec<PathBuf>> {
     let mut roots = Vec::new();
-    roots.push(canonicalize_with_context(project_root, "project root import root")?);
+    roots.push(
+        canonicalize_async(project_root)
+            .await
+            .with_context(|| format!("Failed to canonicalize project root import root {}", project_root.display()))?,
+    );
 
     if let Some(home) = home_dir {
-        roots.push(canonicalize_with_context(home, "home import root")?);
+        roots.push(
+            canonicalize_async(home)
+                .await
+                .with_context(|| format!("Failed to canonicalize home import root {}", home.display()))?,
+        );
 
         let vtcode_dir = home.join(".vtcode");
-        if vtcode_dir.exists() {
-            roots.push(canonicalize_with_context(&vtcode_dir, "vtcode user import root")?);
+        if tokio::fs::try_exists(&vtcode_dir).await.unwrap_or(false) {
+            roots.push(
+                canonicalize_async(&vtcode_dir).await.with_context(|| {
+                    format!("Failed to canonicalize vtcode user import root {}", vtcode_dir.display())
+                })?,
+            );
         }
 
         let legacy_dir = home.join(GLOBAL_CONFIG_DIRECTORY);
-        if legacy_dir.exists() {
-            roots.push(canonicalize_with_context(&legacy_dir, "legacy vtcode user import root")?);
+        if tokio::fs::try_exists(&legacy_dir).await.unwrap_or(false) {
+            roots.push(canonicalize_async(&legacy_dir).await.with_context(|| {
+                format!("Failed to canonicalize legacy vtcode user import root {}", legacy_dir.display())
+            })?);
         }
     }
 

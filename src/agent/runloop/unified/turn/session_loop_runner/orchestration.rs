@@ -40,7 +40,7 @@ use vtcode_core::core::agent::steering::SteeringMessage;
 
 use super::archive::{create_session_archive, refresh_runtime_debug_context_for_next_session, workspace_archive_label};
 use super::handoff::{
-    PLAN_APPROVED_EXECUTION_DIRECTIVE, PLAN_APPROVED_EXECUTION_INPUT, apply_primary_agent_tool_policy_overrides,
+    PLAN_APPROVED_EXECUTION_INPUT, apply_primary_agent_tool_policy_overrides, build_approved_plan_execution_prompt,
     select_approved_plan_execution_agent,
 };
 use super::metrics::{
@@ -839,11 +839,8 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                         }
                         renderer.line(MessageStyle::Info, "Executing approved plan...")?;
 
-                        let mut execution_directive = PLAN_APPROVED_EXECUTION_DIRECTIVE.to_string();
-                        if let Some(seed) = plan_seed {
-                            execution_directive.push_str("\n\nApproved plan context:\n");
-                            execution_directive.push_str(&seed);
-                        }
+                        let execution_directive =
+                            build_approved_plan_execution_prompt(execution_context, plan_seed.as_deref());
                         runtime
                             .state
                             .messages_mut()
@@ -1141,11 +1138,8 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                         handle.set_activity_state(ActivityState::StartingBuild);
                     }
                     approved_plan_execution_turn = true;
-                    let mut execution_directive = PLAN_APPROVED_EXECUTION_DIRECTIVE.to_string();
-                    if let Some(seed) = plan_seed {
-                        execution_directive.push_str("\n\nApproved plan context:\n");
-                        execution_directive.push_str(&seed);
-                    }
+                    let execution_directive =
+                        build_approved_plan_execution_prompt(plan_execution_context, plan_seed.as_deref());
                     runtime
                         .state
                         .messages_mut()

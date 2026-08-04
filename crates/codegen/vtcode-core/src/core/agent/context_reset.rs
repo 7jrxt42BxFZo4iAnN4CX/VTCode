@@ -1,5 +1,5 @@
 //! Context reset logic for long-running harness sessions.
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::Path;
 
 const CONTEXT_RESET_DIR: &str = ".vtcode/tasks";
@@ -86,6 +86,19 @@ pub fn write_manifest(workspace_root: &Path, manifest: &ContextResetManifest) ->
     Ok(true)
 }
 
+/// Write a context-reset manifest without blocking the async executor.
+pub async fn write_manifest_async(workspace_root: &Path, manifest: &ContextResetManifest) -> Result<bool> {
+    let dir = workspace_root.join(CONTEXT_RESET_DIR);
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .with_context(|| format!("create context reset directory {}", dir.display()))?;
+    let path = dir.join(CONTEXT_RESET_FILE);
+    tokio::fs::write(&path, manifest.to_markdown())
+        .await
+        .with_context(|| format!("write context reset manifest {}", path.display()))?;
+    Ok(true)
+}
+
 pub fn read_manifest(workspace_root: &Path) -> Option<ContextResetManifest> {
     let p = workspace_root.join(CONTEXT_RESET_DIR).join(CONTEXT_RESET_FILE);
     let c = std::fs::read_to_string(&p).ok()?;
@@ -114,6 +127,19 @@ pub fn maybe_write_reset_after_compaction(workspace_root: &Path, mode: &str) -> 
     write_manifest(workspace_root, &m).unwrap_or(false)
 }
 
+/// Write the compaction-triggered reset manifest without blocking the runtime.
+pub async fn maybe_write_reset_after_compaction_async(workspace_root: &Path, mode: &str) -> Result<bool> {
+    if mode != "on_compaction" {
+        return Ok(false);
+    }
+    let manifest = ContextResetManifest {
+        triggered_at: chrono::Utc::now().to_rfc3339(),
+        trigger: "compaction".into(),
+        stall_count: 0,
+    };
+    write_manifest_async(workspace_root, &manifest).await
+}
+
 pub fn maybe_write_reset_on_stall(workspace_root: &Path, stall_count: u32, mode: &str, threshold: u32) {
     if let ContextResetDecision::Reset { stall_count: sc, .. } = should_reset(mode, false, stall_count, threshold) {
         let m = ContextResetManifest {
@@ -125,9 +151,28 @@ pub fn maybe_write_reset_on_stall(workspace_root: &Path, stall_count: u32, mode:
     }
 }
 
+/// Write the stall-triggered reset manifest without blocking the runtime.
+pub async fn maybe_write_reset_on_stall_async(
+    workspace_root: &Path,
+    stall_count: u32,
+    mode: &str,
+    threshold: u32,
+) -> Result<bool> {
+    let ContextResetDecision::Reset { stall_count: sc, .. } = should_reset(mode, false, stall_count, threshold) else {
+        return Ok(false);
+    };
+    let manifest = ContextResetManifest {
+        triggered_at: chrono::Utc::now().to_rfc3339(),
+        trigger: "stall".into(),
+        stall_count: sc,
+    };
+    write_manifest_async(workspace_root, &manifest).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
     #[test]
     fn off_always_continues() {
         assert!(matches!(should_reset("off", true, 10, 2), ContextResetDecision::Continue));
@@ -156,5 +201,38 @@ mod tests {
     #[test]
     fn manifest_from_empty_is_none() {
         assert!(ContextResetManifest::from_markdown("").is_none());
+    }
+
+    #[tokio::test]
+    async fn async_manifest_writer_preserves_manifest_contents() {
+        let workspace = TempDir::new().expect("workspace");
+        let manifest = ContextResetManifest {
+            triggered_at: "2026-01-01T00:00:00Z".into(),
+            trigger: "compaction".into(),
+            stall_count: 0,
+        };
+
+        assert!(write_manifest_async(workspace.path(), &manifest).await.expect("write manifest"));
+        let loaded = read_manifest(workspace.path()).expect("read manifest");
+        assert_eq!(loaded.triggered_at, manifest.triggered_at);
+        assert_eq!(loaded.trigger, manifest.trigger);
+        assert_eq!(loaded.stall_count, manifest.stall_count);
+    }
+
+    #[tokio::test]
+    async fn async_reset_helpers_only_write_for_matching_modes() {
+        let workspace = TempDir::new().expect("workspace");
+
+        assert!(
+            !maybe_write_reset_after_compaction_async(workspace.path(), "off")
+                .await
+                .expect("compaction mode")
+        );
+        assert!(
+            !maybe_write_reset_on_stall_async(workspace.path(), 1, "on_stall", 2)
+                .await
+                .expect("stall threshold")
+        );
+        assert!(read_manifest(workspace.path()).is_none());
     }
 }

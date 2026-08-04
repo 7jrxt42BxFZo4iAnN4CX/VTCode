@@ -270,6 +270,32 @@ Pattern 4 ("Collapsing states") yielded one match in `crates/codegen/vtcode-core
 - Re-scan after the next `rust-toolchain.toml` bump to see how many candidates the upstream `coroutine_resume` work has obsoleted.
 - If the upstream Project Goal lands an `unwind = abort` / `panic = abort` switch that drops the `Panicked` state, evaluate whether `release-profile-strict` should opt in for binary-size sensitive embeds (tracked here, not actioned).
 
+### 17) Runtime-boundary I/O follow-up (August 2026)
+
+The runtime-focused optimization pass tightened the remaining async I/O
+boundaries without changing public wire contracts:
+
+- Instruction discovery uses Tokio canonicalization, metadata, existence, and
+  directory checks. Recursive instruction expansion remains in
+  `spawn_blocking`, where its synchronous tree walk and reads belong.
+- Child-agent memory appendices now have an async loader used by the child loop;
+  the synchronous loader remains available for compatibility, and both paths
+  share the same rendering and error behavior.
+- Persistent-memory preference, repository, rollout, and note reads use
+  `tokio::try_join!` where independent, then assemble results in the existing
+  source order. Cleanup/consolidation preserve their error context and write
+  ordering.
+- Context-reset manifests are written with async Tokio filesystem APIs from
+  compaction and continuation paths; the synchronous helpers remain available
+  for compatibility callers.
+- Trajectory logger session setup uses an async writer constructor; retention
+  rotation and pruning run on the blocking pool, while the synchronous logger
+  constructors remain available for compatibility and tests.
+
+The changes intentionally leave `ThreadEvent`, session history, and tool wire
+schemas unchanged. Remaining synchronous filesystem work is either a deliberate
+compatibility helper or isolated inside `spawn_blocking`.
+
 ## Validation
 
 Executed:

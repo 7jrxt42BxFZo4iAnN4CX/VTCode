@@ -2,7 +2,7 @@ use super::AgentRunner;
 use crate::compaction::auto::{AutoCompactionInput, auto_compact_messages};
 use crate::compaction::memory_envelope::{MemoryEnvelopePlacement, local_compaction_config};
 use crate::core::agent::compaction_checkpoint::write_compaction_checkpoint_async;
-use crate::core::agent::context_reset::maybe_write_reset_after_compaction;
+use crate::core::agent::context_reset::maybe_write_reset_after_compaction_async;
 use crate::core::agent::conversation::conversation_from_messages;
 use crate::core::agent::session::AgentSessionState;
 use crate::exec::events::CompactionTrigger;
@@ -79,9 +79,12 @@ impl AgentRunner {
         // than the compacted summary. This is distinct from compaction:
         // compaction preserves conversational continuity; context reset
         // deliberately discards it to clear noise and bad assumptions.
-        let reset_mode = self.config().agent.harness.context_reset_mode.as_str();
-        if maybe_write_reset_after_compaction(self._workspace.as_path(), reset_mode) {
-            info!("Context reset manifest written after compaction (mode: {})", reset_mode);
+        let reset_mode = self.config().agent.harness.context_reset_mode.as_str().to_owned();
+        let workspace = self._workspace.clone();
+        match maybe_write_reset_after_compaction_async(workspace.as_path(), &reset_mode).await {
+            Ok(true) => info!("Context reset manifest written after compaction (mode: {})", reset_mode),
+            Ok(false) => {}
+            Err(error) => warn!(error = %error, "Failed to write context reset manifest after compaction"),
         }
 
         event_recorder.compact_boundary(

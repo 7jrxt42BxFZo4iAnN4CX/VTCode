@@ -279,7 +279,8 @@ impl SubagentController {
         runner.set_tool_definitions_override(filtered_tools);
         runner.enable_full_auto(&allowed_tools).await;
 
-        let memory_appendix = load_memory_appendix(&self.config.workspace_root, spec.name.as_str(), spec.memory)?;
+        let memory_appendix =
+            load_memory_appendix_async(&self.config.workspace_root, spec.name.as_str(), spec.memory).await?;
         let mut task = Task::new(format!("subagent-{}", spec.name), format!("Subagent {}", spec.name), prompt);
         task.instructions = Some(compose_subagent_instructions(&spec, memory_appendix));
 

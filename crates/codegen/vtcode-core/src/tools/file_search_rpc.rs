@@ -210,8 +210,9 @@ impl FileSearchRpcHandler {
         }
 
         // Build configuration
+        let max_results = file_search_bridge::effective_max_results(request.max_results);
         let config = FileSearchConfig::new(request.pattern, request.workspace_root)
-            .with_limit(request.max_results)
+            .with_limit(max_results)
             .respect_gitignore(request.respect_gitignore);
 
         // Perform search
@@ -232,7 +233,7 @@ impl FileSearchRpcHandler {
         Ok(json!({
             "matches": matches,
             "total_match_count": results.total_match_count,
-            "truncated": matches.len() >= request.max_results,
+            "truncated": matches.len() >= max_results,
         }))
     }
 
@@ -249,8 +250,9 @@ impl FileSearchRpcHandler {
         }
 
         // Build configuration (empty pattern lists all files)
+        let max_results = file_search_bridge::effective_max_results(request.max_results);
         let mut config = FileSearchConfig::new(String::new(), request.workspace_root)
-            .with_limit(request.max_results)
+            .with_limit(max_results)
             .respect_gitignore(request.respect_gitignore);
 
         for pattern in request.exclude_patterns {

@@ -19,6 +19,24 @@ use vtcode_indexer::file_search::{
 
 pub use vtcode_indexer::file_search::MatchType as FileMatchType;
 
+/// Maximum number of paths returned by the file-search bridge.
+///
+/// The bridge is used by request-facing integrations, so keeping the limit
+/// bounded also bounds the per-worker fuzzy-search heaps and owned path text.
+pub const MAX_FILE_SEARCH_RESULTS: usize = 1_000;
+
+/// Normalize an externally supplied result limit before it reaches the
+/// parallel indexer.
+pub const fn effective_max_results(requested: usize) -> usize {
+    if requested == 0 {
+        1
+    } else if requested > MAX_FILE_SEARCH_RESULTS {
+        MAX_FILE_SEARCH_RESULTS
+    } else {
+        requested
+    }
+}
+
 /// Configuration for file search operations
 #[derive(Debug, Clone)]
 pub struct FileSearchConfig {
@@ -60,7 +78,7 @@ impl FileSearchConfig {
 
     /// Set maximum number of results
     pub fn with_limit(mut self, limit: usize) -> Self {
-        self.max_results = limit;
+        self.max_results = effective_max_results(limit);
         self
     }
 
@@ -96,7 +114,7 @@ impl FileSearchConfig {
 pub fn search_files(config: FileSearchConfig, cancel_flag: Option<Arc<AtomicBool>>) -> Result<FileSearchResults> {
     let cancel = cancel_flag.unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
 
-    let limit = NonZero::new(config.max_results).unwrap_or(NonZero::<usize>::MIN);
+    let limit = NonZero::new(effective_max_results(config.max_results)).unwrap_or(NonZero::<usize>::MIN);
     let threads = NonZero::new(config.num_threads).unwrap_or(NonZero::<usize>::MIN);
 
     file_search_run(vtcode_indexer::file_search::FileSearchConfig {

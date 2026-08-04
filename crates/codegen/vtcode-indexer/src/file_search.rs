@@ -37,7 +37,7 @@ use std::collections::BinaryHeap;
 use std::num::NonZero;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
 
 use rayon::prelude::*;
@@ -108,13 +108,15 @@ impl FileIndex {
         let walker = build_parallel_walker(search_directory, exclude, threads, respect_gitignore, true)?;
 
         // Collect all files and directories
-        let files_arc = Arc::new(Mutex::new(Vec::new()));
-        let dirs_arc = Arc::new(Mutex::new(Vec::new()));
+        let worker_results = Arc::new(Mutex::new(Vec::new()));
 
         walker.run(|| {
-            let files_clone = files_arc.clone();
-            let dirs_clone = dirs_arc.clone();
             let search_dir = search_directory.to_path_buf();
+            let mut state = IndexWorkerGuard {
+                results: Arc::clone(&worker_results),
+                files: Vec::new(),
+                directories: Vec::new(),
+            };
 
             Box::new(move |result| {
                 let entry = match result {
@@ -127,9 +129,9 @@ impl FileIndex {
                     && !rel_path.is_empty()
                 {
                     if entry.file_type().is_some_and(|file_type| file_type.is_dir()) {
-                        dirs_clone.lock().push(rel_path.to_string());
+                        state.directories.push(rel_path.to_string());
                     } else {
-                        files_clone.lock().push(rel_path.to_string());
+                        state.files.push(rel_path.to_string());
                     }
                 }
 
@@ -137,14 +139,19 @@ impl FileIndex {
             })
         });
 
-        let files = Arc::try_unwrap(files_arc)
-            .map_err(|arc| {
-                anyhow::anyhow!("failed to unwrap files arc, {} references remain", Arc::strong_count(&arc))
+        let worker_results = Arc::try_unwrap(worker_results)
+            .map_err(|results| {
+                anyhow::anyhow!("file index worker results still referenced: {}", Arc::strong_count(&results))
             })?
             .into_inner();
-        let directories = Arc::try_unwrap(dirs_arc)
-            .map_err(|arc| anyhow::anyhow!("failed to unwrap dirs arc, {} references remain", Arc::strong_count(&arc)))?
-            .into_inner();
+        let (files, directories) =
+            worker_results
+                .into_iter()
+                .fold((Vec::new(), Vec::new()), |(mut files, mut directories), result| {
+                    files.extend(result.files);
+                    directories.extend(result.directories);
+                    (files, directories)
+                });
 
         let mut interner = vtcode_commons::StringInterner::new();
         let mut path_texts_by_id = Vec::with_capacity(files.len() + directories.len());
@@ -539,6 +546,72 @@ struct BestMatchesList {
     haystack_buf: Vec<char>,
     /// Pre-computed pattern - avoids per-match UTF-32 conversion
     pattern: PatternStorage,
+    owned_matches: BinaryHeap<Reverse<OwnedMatchCandidate>>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct OwnedMatchCandidate {
+    score: u32,
+    path: String,
+    match_type: MatchType,
+}
+
+impl Ord for OwnedMatchCandidate {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.score
+            .cmp(&other.score)
+            .then_with(|| other.path.cmp(&self.path))
+            .then_with(|| other.match_type.cmp(&self.match_type))
+    }
+}
+
+impl PartialOrd for OwnedMatchCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+struct SearchAggregation {
+    matches: BinaryHeap<Reverse<OwnedMatchCandidate>>,
+    total_match_count: usize,
+}
+
+struct IndexWorkerResult {
+    files: Vec<String>,
+    directories: Vec<String>,
+}
+
+struct IndexWorkerGuard {
+    results: Arc<Mutex<Vec<IndexWorkerResult>>>,
+    files: Vec<String>,
+    directories: Vec<String>,
+}
+
+impl Drop for IndexWorkerGuard {
+    fn drop(&mut self) {
+        self.results.lock().push(IndexWorkerResult {
+            files: std::mem::take(&mut self.files),
+            directories: std::mem::take(&mut self.directories),
+        });
+    }
+}
+
+struct SearchWorkerGuard {
+    results: Arc<Mutex<SearchAggregation>>,
+    best_list: BestMatchesList,
+    total_match_count: usize,
+    limit: usize,
+}
+
+impl Drop for SearchWorkerGuard {
+    fn drop(&mut self) {
+        let worker_matches = std::mem::take(&mut self.best_list.owned_matches);
+        let mut results = self.results.lock();
+        results.total_match_count += self.total_match_count;
+        for Reverse(candidate) in worker_matches {
+            push_owned_match(&mut results.matches, self.limit, candidate);
+        }
+    }
 }
 
 /// Stores a pattern in the optimal form for Utf32Str creation.
@@ -566,6 +639,7 @@ impl BestMatchesList {
             matcher: nucleo_matcher::Matcher::new(nucleo_matcher::Config::DEFAULT),
             haystack_buf: Vec::with_capacity(256),
             pattern,
+            owned_matches: BinaryHeap::new(),
         }
     }
 
@@ -592,6 +666,49 @@ impl BestMatchesList {
     fn record_scored_match(&mut self, path_id: StringId, score: u32, match_type: MatchType) {
         push_top_match(&mut self.matches, self.limit, score, path_id, match_type);
     }
+
+    fn record_owned_match(&mut self, path: &str, score: u32, match_type: MatchType) {
+        if self.owned_matches.len() == self.limit {
+            let Some(Reverse(worst)) = self.owned_matches.peek() else {
+                return;
+            };
+            if !owned_match_is_better(score, path, match_type, worst) {
+                return;
+            }
+        }
+
+        push_owned_match(
+            &mut self.owned_matches,
+            self.limit,
+            OwnedMatchCandidate { score, path: path.to_owned(), match_type },
+        );
+    }
+}
+
+fn push_owned_match(
+    matches: &mut BinaryHeap<Reverse<OwnedMatchCandidate>>,
+    limit: usize,
+    candidate: OwnedMatchCandidate,
+) {
+    if matches.len() == limit {
+        let Some(Reverse(worst)) = matches.peek() else {
+            return;
+        };
+        if !owned_match_is_better(candidate.score, candidate.path.as_str(), candidate.match_type, worst) {
+            return;
+        }
+        matches.pop();
+    }
+
+    matches.push(Reverse(candidate));
+}
+
+fn owned_match_is_better(score: u32, path: &str, match_type: MatchType, worst: &OwnedMatchCandidate) -> bool {
+    score
+        .cmp(&worst.score)
+        .then_with(|| worst.path.as_str().cmp(path))
+        .then_with(|| worst.match_type.cmp(&match_type))
+        .is_gt()
 }
 
 fn push_top_match(
@@ -803,30 +920,18 @@ fn run_with_policy(
 
     let walker = build_parallel_walker(search_directory, exclude, threads, respect_gitignore, follow_links)?;
 
-    let interner = Arc::new(Mutex::new(vtcode_commons::StringInterner::new()));
-
-    // Create per-worker result collection using Arc + Mutex for thread safety.
-    // Each worker gets exactly one instance - no sharing between workers.
-    let best_matchers_per_worker: Vec<Arc<Mutex<BestMatchesList>>> = (0..threads)
-        .map(|_| Arc::new(Mutex::new(BestMatchesList::new(limit, &config.pattern_text))))
-        .collect();
-
-    let total_match_count = Arc::new(AtomicUsize::new(0));
-
-    // Run parallel traversal - the closure is called once per worker thread.
-    // We use a local counter to assign each worker a unique index.
-    let worker_counter = AtomicUsize::new(0);
-    let worker_count = best_matchers_per_worker.len();
+    let worker_results = Arc::new(Mutex::new(SearchAggregation { matches: BinaryHeap::new(), total_match_count: 0 }));
     walker.run(|| {
-        let worker_id = worker_counter.fetch_add(1, Ordering::Relaxed) % worker_count;
-        let best_list = best_matchers_per_worker[worker_id].clone();
-        let cancel_flag_clone = cancel_flag.clone();
-        let total_match_count_clone = total_match_count.clone();
-        let interner_clone = interner.clone();
+        let mut state = SearchWorkerGuard {
+            results: Arc::clone(&worker_results),
+            best_list: BestMatchesList::new(limit, &config.pattern_text),
+            total_match_count: 0,
+            limit,
+        };
 
         Box::new(move |result| {
             // Check cancellation flag periodically
-            if cancel_flag_clone.load(Ordering::Relaxed) {
+            if cancel_flag.load(Ordering::Relaxed) {
                 return ignore::WalkState::Quit;
             }
 
@@ -857,53 +962,54 @@ fn run_with_policy(
             }
 
             // Try to add to results - no contention with other workers
-            {
-                let mut list = best_list.lock();
-                let Some(score) = list.score_path(path_to_match) else {
-                    return ignore::WalkState::Continue;
-                };
-                let path_id = interner_clone.lock().intern(path_to_match);
-                list.record_scored_match(path_id, score, match_type);
-                total_match_count_clone.fetch_add(1, Ordering::Relaxed);
-            }
+            let Some(score) = state.best_list.score_path(path_to_match) else {
+                return ignore::WalkState::Continue;
+            };
+            state.best_list.record_owned_match(path_to_match, score, match_type);
+            state.total_match_count += 1;
 
             ignore::WalkState::Continue
         })
     });
 
-    // Merge worker-local top-K heaps into one final top-K heap.
-    let worker_heaps: Vec<BinaryHeap<Reverse<(u32, StringId, MatchType)>>> = best_matchers_per_worker
+    let results = Arc::try_unwrap(worker_results)
+        .map_err(|results| {
+            anyhow::anyhow!("file search worker results still referenced: {}", Arc::strong_count(&results))
+        })?
+        .into_inner();
+    let total_match_count = results.total_match_count;
+    let mut candidates = results
+        .matches
         .into_iter()
-        .map(|arc| std::mem::take(&mut arc.lock().matches))
-        .collect();
-    let merged_matches = merge_top_k(worker_heaps, limit);
+        .map(|Reverse(candidate)| candidate)
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| left.path.cmp(&right.path))
+            .then_with(|| left.match_type.cmp(&right.match_type))
+    });
+    candidates.truncate(limit);
 
     // Build final results
-    let interner_guard = interner.lock();
-    let matches = merged_matches
-        .into_sorted_vec()
+    let matches = candidates
         .into_iter()
-        .filter_map(|Reverse((score, path_id, match_type))| {
-            let path = interner_guard.get(path_id)?.to_string();
-            Some(FileMatch {
-                score,
-                path,
-                match_type,
-                indices: if compute_indices { Some(Vec::new()) } else { None },
-            })
+        .map(|candidate| FileMatch {
+            score: candidate.score,
+            path: candidate.path,
+            match_type: candidate.match_type,
+            indices: if compute_indices { Some(Vec::new()) } else { None },
         })
         .collect();
 
-    Ok(FileSearchResults {
-        matches,
-        total_match_count: total_match_count.load(Ordering::Relaxed),
-    })
+    Ok(FileSearchResults { matches, total_match_count })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        FileIndexCache, FileSearchConfig, MatchType, run_bounded_no_follow, run_bounded_no_follow_with_visit,
+        FileIndexCache, FileSearchConfig, MatchType, run, run_bounded_no_follow, run_bounded_no_follow_with_visit,
         run_with_index,
     };
     use std::num::NonZero;
@@ -1067,6 +1173,90 @@ mod tests {
 
         assert!(!old_paths.contains(&"new_widget.rs"));
         assert!(new_paths.contains(&"new_widget.rs"));
+    }
+
+    fn uncached_search_config(
+        workspace: &std::path::Path,
+        pattern: &str,
+        limit: usize,
+        cancel_flag: Arc<AtomicBool>,
+    ) -> FileSearchConfig {
+        FileSearchConfig {
+            pattern_text: pattern.to_string(),
+            limit: NonZero::new(limit).expect("non-zero limit"),
+            search_directory: workspace.to_path_buf(),
+            exclude: Vec::new(),
+            threads: NonZero::new(4).expect("non-zero threads"),
+            cancel_flag,
+            compute_indices: false,
+            respect_gitignore: false,
+        }
+    }
+
+    #[test]
+    fn uncached_parallel_search_aggregates_worker_paths_and_counts() {
+        let workspace = TempDir::new().expect("workspace");
+        for index in 0..64 {
+            std::fs::create_dir(workspace.path().join(format!("widget_dir_{index:03}"))).expect("fixture directory");
+            std::fs::write(workspace.path().join(format!("widget_file_{index:03}.rs")), "fn widget() {}\n")
+                .expect("fixture source");
+        }
+
+        let results = run(uncached_search_config(workspace.path(), "widget", 32, Arc::new(AtomicBool::new(false))))
+            .expect("uncached parallel search");
+
+        assert_eq!(results.total_match_count, 128);
+        assert_eq!(results.matches.len(), 32);
+        let unique_paths = results
+            .matches
+            .iter()
+            .map(|candidate| candidate.path.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(unique_paths.len(), results.matches.len());
+        assert!(results.matches.iter().all(|candidate| candidate.path.contains("widget")));
+    }
+
+    #[test]
+    fn uncached_parallel_search_honors_cancellation() {
+        let workspace = TempDir::new().expect("workspace");
+        for index in 0..32 {
+            std::fs::write(workspace.path().join(format!("widget_{index:03}.rs")), "fn widget() {}\n")
+                .expect("fixture source");
+        }
+        let cancel_flag = Arc::new(AtomicBool::new(true));
+
+        let results = run(uncached_search_config(workspace.path(), "widget", 16, cancel_flag))
+            .expect("cancelled uncached search");
+
+        assert!(results.matches.is_empty());
+        assert_eq!(results.total_match_count, 0);
+    }
+
+    #[test]
+    fn uncached_equal_score_results_are_lexically_ordered_and_repeatable() {
+        let workspace = TempDir::new().expect("workspace");
+        for name in ["a_x.rs", "b_x.rs", "c_x.rs", "d_x.rs", "e_x.rs"] {
+            std::fs::write(workspace.path().join(name), "fn x() {}\n").expect("fixture source");
+        }
+
+        let search = || {
+            run(uncached_search_config(workspace.path(), "x", 3, Arc::new(AtomicBool::new(false))))
+                .expect("uncached equal-score search")
+                .matches
+                .into_iter()
+                .map(|candidate| (candidate.score, candidate.path))
+                .collect::<Vec<_>>()
+        };
+
+        let expected = search();
+        for _ in 0..20 {
+            assert_eq!(search(), expected);
+        }
+        assert!(
+            expected.windows(2).all(|window| {
+                window[0].0 > window[1].0 || (window[0].0 == window[1].0 && window[0].1 <= window[1].1)
+            })
+        );
     }
 
     fn bounded_paths(workspace: &std::path::Path) -> Vec<String> {

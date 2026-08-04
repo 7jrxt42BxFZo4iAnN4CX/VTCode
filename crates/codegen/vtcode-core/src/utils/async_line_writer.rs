@@ -74,6 +74,18 @@ impl AsyncLineWriter {
         )
     }
 
+    /// Create a new line writer without performing synchronous setup on the
+    /// async executor.
+    pub async fn new_async(path: PathBuf) -> Result<Self> {
+        Self::new_async_with_limits(
+            path,
+            defaults::DEFAULT_TRAJECTORY_LOG_CHANNEL_CAPACITY,
+            defaults::DEFAULT_TRAJECTORY_LOG_BUFFER_BYTES,
+            Duration::from_millis(defaults::DEFAULT_TRAJECTORY_LOG_FLUSH_INTERVAL_MS),
+        )
+        .await
+    }
+
     fn new_with_limits(
         path: PathBuf,
         channel_capacity: usize,
@@ -92,6 +104,33 @@ impl AsyncLineWriter {
             .open(&path)
             .with_context(|| format!("Failed to create log file: {}", path.display()))?;
 
+        Ok(Self::spawn_actor(path, channel_capacity, buffer_bytes, flush_interval))
+    }
+
+    async fn new_async_with_limits(
+        path: PathBuf,
+        channel_capacity: usize,
+        buffer_bytes: usize,
+        flush_interval: Duration,
+    ) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("Failed to create log directory: {}", parent.display()))?;
+        }
+
+        // Create the file eagerly so callers can observe it immediately.
+        tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .await
+            .with_context(|| format!("Failed to create log file: {}", path.display()))?;
+
+        Ok(Self::spawn_actor(path, channel_capacity, buffer_bytes, flush_interval))
+    }
+
+    fn spawn_actor(path: PathBuf, channel_capacity: usize, buffer_bytes: usize, flush_interval: Duration) -> Self {
         let (sender, receiver) = mpsc::channel(channel_capacity.max(1));
         let reserved_bytes = Arc::new(AtomicUsize::new(0));
         let diagnostics = Arc::new(Diagnostics::default());
@@ -112,12 +151,12 @@ impl AsyncLineWriter {
             .await;
         });
 
-        Ok(Self {
+        Self {
             sender,
             reserved_bytes,
             diagnostics,
             max_buffer_bytes: buffer_bytes.max(1),
-        })
+        }
     }
 
     /// Queue a line for writing. Drops the line if either bound is exhausted.
@@ -294,6 +333,18 @@ mod tests {
         let diagnostics = writer.diagnostics();
         assert_eq!(diagnostics.dropped_lines, 2);
         assert_eq!(diagnostics.dropped_bytes, 15);
+    }
+
+    #[tokio::test]
+    async fn async_constructor_creates_parent_and_file() {
+        let temp_dir = TempDir::new().expect("temp directory");
+        let path = temp_dir.path().join("nested").join("trajectory.jsonl");
+        let writer = AsyncLineWriter::new_async(path.clone()).await.expect("writer");
+
+        assert!(path.exists());
+        writer.write_line("async setup".to_owned());
+        writer.flush().await;
+        assert_eq!(fs::read_to_string(path).expect("read log"), "async setup\n");
     }
 
     #[tokio::test]

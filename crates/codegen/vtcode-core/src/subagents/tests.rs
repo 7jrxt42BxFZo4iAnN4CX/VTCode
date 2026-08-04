@@ -1120,6 +1120,26 @@ fn load_memory_appendix_renders_compact_summary() {
     assert!(!appendix.contains("## Preferences"));
 }
 
+#[tokio::test]
+async fn async_load_memory_appendix_matches_sync_output() {
+    let temp = TempDir::new().expect("tempdir");
+    let memory_dir = temp.path().join(".vtcode/agent-memory/reviewer");
+    std::fs::create_dir_all(&memory_dir).expect("memory dir");
+    std::fs::write(
+        memory_dir.join("MEMORY.md"),
+        "# Reviewer Memory\n\n- Keep the patch focused.\n- Run nextest before the workspace gate.\n",
+    )
+    .expect("write memory");
+
+    let sync =
+        load_memory_appendix(temp.path(), "reviewer", Some(SubagentMemoryScope::Project)).expect("sync appendix");
+    let asynchronous = load_memory_appendix_async(temp.path(), "reviewer", Some(SubagentMemoryScope::Project))
+        .await
+        .expect("async appendix");
+
+    assert_eq!(asynchronous, sync);
+}
+
 #[test]
 fn load_primary_memory_appendix_reads_existing_memory_without_write_guidance() {
     let temp = TempDir::new().expect("tempdir");

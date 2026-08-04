@@ -489,11 +489,11 @@ pub async fn scaffold_persistent_memory(
 async fn write_classified_memory(
     files: &PersistentMemoryFiles,
     classified: &ClassifiedFacts,
+    notes: &[MemoryNoteSummary],
     runtime_config: Option<&RuntimeAgentConfig>,
     vt_cfg: Option<&VTCodeConfig>,
     workspace_root: &Path,
 ) -> Result<Vec<PathBuf>> {
-    let notes = read_note_summaries(&files.notes_dir).await?;
     let mut created_files = Vec::new();
     async fn write_if_missing(path: &Path, contents: String, created_files: &mut Vec<PathBuf>) -> Result<()> {
         if !tokio::fs::try_exists(path).await.unwrap_or(false) {
@@ -517,7 +517,7 @@ async fn write_classified_memory(
     .await?;
     write_if_missing(
         &files.memory_file,
-        render_memory_index(&classified.preferences, &classified.repository_facts, &notes, 0),
+        render_memory_index(&classified.preferences, &classified.repository_facts, notes, 0),
         &mut created_files,
     )
     .await?;
@@ -527,10 +527,10 @@ async fn write_classified_memory(
         workspace_root,
         &classified.preferences,
         &classified.repository_facts,
-        &notes,
+        notes,
     )
     .await
-    .unwrap_or_else(|| render_memory_summary(&classified.preferences, &classified.repository_facts, &notes));
+    .unwrap_or_else(|| render_memory_summary(&classified.preferences, &classified.repository_facts, notes));
     write_if_missing(&files.summary_file, summary, &mut created_files).await?;
     Ok(created_files)
 }
@@ -567,7 +567,8 @@ pub async fn cleanup_persistent_memory(
     }
 
     let _lock = MemoryLock::acquire(&files.lock_file).await?;
-    let candidates = collect_cleanup_candidates(&files).await?;
+    let (candidates, notes) =
+        tokio::try_join!(collect_cleanup_candidates(&files), read_note_summaries(&files.notes_dir))?;
     let classified = if candidates.is_empty() {
         ClassifiedFacts {
             preferences: Vec::new(),
@@ -579,8 +580,15 @@ pub async fn cleanup_persistent_memory(
 
     let removed_rollout_files = remove_rollout_markdown_files(&files.rollout_summaries_dir).await?;
     // Write is critical; propagate errors
-    write_classified_memory(&files, &classified, Some(runtime_config), vt_cfg, runtime_config.workspace.as_path())
-        .await?;
+    write_classified_memory(
+        &files,
+        &classified,
+        &notes,
+        Some(runtime_config),
+        vt_cfg,
+        runtime_config.workspace.as_path(),
+    )
+    .await?;
 
     Ok(Some(PersistentMemoryCleanupReport {
         directory: files.directory,
@@ -1115,10 +1123,12 @@ async fn collect_memory_matches(
 }
 
 async fn collect_all_memory_matches(files: &PersistentMemoryFiles) -> Result<Vec<PersistentMemoryMatch>> {
-    let prefs = read_topic_records(&files.preferences_file, MemoryTopic::Preferences).await?;
-    let repo = read_topic_records(&files.repository_facts_file, MemoryTopic::RepositoryFacts).await?;
-    let rollout = read_rollout_records(&files.rollout_summaries_dir).await?;
-    let notes = read_note_summaries(&files.notes_dir).await?;
+    let (prefs, repo, rollout, notes) = tokio::try_join!(
+        read_topic_records(&files.preferences_file, MemoryTopic::Preferences),
+        read_topic_records(&files.repository_facts_file, MemoryTopic::RepositoryFacts),
+        read_rollout_records(&files.rollout_summaries_dir),
+        read_note_summaries(&files.notes_dir),
+    )?;
 
     let mut matches = Vec::new();
     for r in prefs.into_iter().chain(repo).chain(rollout.0).chain(rollout.1) {
@@ -1146,9 +1156,11 @@ async fn collect_all_memory_matches(files: &PersistentMemoryFiles) -> Result<Vec
 }
 
 async fn collect_cleanup_candidates(files: &PersistentMemoryFiles) -> Result<Vec<GroundedFactRecord>> {
-    let prefs = read_topic_records(&files.preferences_file, MemoryTopic::Preferences).await?;
-    let repo = read_topic_records(&files.repository_facts_file, MemoryTopic::RepositoryFacts).await?;
-    let rollout = read_rollout_records(&files.rollout_summaries_dir).await?;
+    let (prefs, repo, rollout) = tokio::try_join!(
+        read_topic_records(&files.preferences_file, MemoryTopic::Preferences),
+        read_topic_records(&files.repository_facts_file, MemoryTopic::RepositoryFacts),
+        read_rollout_records(&files.rollout_summaries_dir),
+    )?;
     Ok(prefs.into_iter().chain(repo).chain(rollout.0).chain(rollout.1).collect())
 }
 
@@ -1271,15 +1283,19 @@ async fn consolidate_memory_files(
     workspace_root: &Path,
     files: &PersistentMemoryFiles,
 ) -> Result<ConsolidationResult> {
-    let pending_files = list_pending_rollout_files_async(&files.rollout_summaries_dir).await?;
-    let prefs_existing = read_topic_records(&files.preferences_file, MemoryTopic::Preferences).await?;
-    let repo_existing = read_topic_records(&files.repository_facts_file, MemoryTopic::RepositoryFacts).await?;
-    let rollout = read_rollout_records(&files.rollout_summaries_dir).await?;
+    let (pending_files, prefs_existing, repo_existing, rollout, notes) = tokio::try_join!(
+        list_pending_rollout_files_async(&files.rollout_summaries_dir),
+        read_topic_records(&files.preferences_file, MemoryTopic::Preferences),
+        read_topic_records(&files.repository_facts_file, MemoryTopic::RepositoryFacts),
+        read_rollout_records(&files.rollout_summaries_dir),
+        read_note_summaries(&files.notes_dir),
+    )?;
     let classified = ClassifiedFacts {
         preferences: merge_topic_facts(prefs_existing.into_iter().chain(rollout.0).collect()),
         repository_facts: merge_topic_facts(repo_existing.into_iter().chain(rollout.1).collect()),
     };
-    let created_files = write_classified_memory(files, &classified, runtime_config, vt_cfg, workspace_root).await?;
+    let created_files =
+        write_classified_memory(files, &classified, &notes, runtime_config, vt_cfg, workspace_root).await?;
     let mut added_facts = 0usize;
     for p in &pending_files {
         if let Ok(c) = tokio::fs::read_to_string(p).await {

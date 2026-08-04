@@ -7,7 +7,9 @@ use crate::config::types::CapabilityLevel;
 use crate::llm::provider::{ToolDefinition, ToolNamespace, ToolSearchAlgorithm};
 use crate::llm::providers::gemini::wire::FunctionDeclaration;
 use crate::tool_policy::ToolPolicy;
-use crate::tools::handlers::compact::{MCP_TOOL_DESCRIPTION_MAX_LEN, compact_parameters, compact_tool_description};
+use crate::tools::handlers::compact::MCP_TOOL_DESCRIPTION_MAX_LEN;
+#[cfg(test)]
+use crate::tools::handlers::compact::{compact_parameters, compact_tool_description};
 use crate::tools::mcp::MCP_QUALIFIED_TOOL_PREFIX;
 use crate::tools::registry::{ToolHandler as RegistryToolHandler, ToolRegistration};
 use crate::tools::tool_intent::ToolSurfaceKind;
@@ -16,9 +18,10 @@ use rustc_hash::FxHashSet;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use vtcode_utility_tool_specs::{parse_tool_input_schema, with_max_output_tokens_parameter};
 
+use super::session_tool_projection::{ToolEntryProjection, ToolProjectionCache};
 use super::tool_handler::{ConfiguredToolSpec, ResponsesApiTool, ToolSpec};
 
 pub use crate::config::ToolProfile;
@@ -373,41 +376,23 @@ pub struct ToolSchemaEntry {
 }
 
 /// The session's tool catalog containing all available tools.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SessionToolCatalog {
     entries: Vec<ToolCatalogEntry>,
+    projection_cache: Arc<ToolProjectionCache>,
 }
 
-/// Estimate the visible tool-schema token count for deferral budgeting.
-///
-/// Uses a compacted representation matching what would be sent on the wire,
-/// then divides by a conservative 4 characters-per-token ratio. This keeps
-/// huge single-server MCP schemas from being sent eagerly even when their
-/// tool count is below the numeric threshold.
-fn estimate_schema_tokens(entries: &[&ToolCatalogEntry], config: &SessionToolsConfig) -> usize {
-    entries
-        .iter()
-        .map(|entry| {
-            let description = compact_tool_description(
-                entry.description.as_str(),
-                config.documentation_mode,
-                entry.max_description_length,
-            );
-            let parameters = compact_parameters(entry.parameters.clone(), config.documentation_mode);
-            let entry = ToolSchemaEntry {
-                name: entry.public_name.clone(),
-                description,
-                parameters,
-            };
-            serde_json::to_string(&entry).map(|s| s.len() / 4).unwrap_or(0)
-        })
-        .sum()
+impl Default for SessionToolCatalog {
+    fn default() -> Self {
+        Self::new(Vec::new())
+    }
 }
 
 impl SessionToolCatalog {
     /// Creates a new catalog from the given entries.
     pub fn new(entries: Vec<ToolCatalogEntry>) -> Self {
-        Self { entries }
+        let projection_cache = Arc::new(ToolProjectionCache::new(entries.len()));
+        Self { entries, projection_cache }
     }
 
     /// Rebuilds the catalog from tool registrations.
@@ -421,25 +406,29 @@ impl SessionToolCatalog {
 
         let mut seen_public_names = FxHashSet::default();
         entries.retain(|entry| seen_public_names.insert(entry.public_name.clone()));
-        Self { entries }
+        Self::new(entries)
     }
 
     /// Returns the names of all public tools visible with the given config.
     pub fn public_tool_names(&self, config: SessionToolsConfig) -> Vec<String> {
-        self.filtered_entries(&config).map(|entry| entry.public_name.clone()).collect()
+        self.visible_entry_indices(&config)
+            .into_iter()
+            .map(|index| self.entries[index].public_name.clone())
+            .collect()
     }
 
     /// Returns schema entries for all visible tools.
     pub fn schema_entries(&self, config: SessionToolsConfig) -> Vec<ToolSchemaEntry> {
-        self.filtered_entries(&config)
-            .map(|entry| ToolSchemaEntry {
-                name: entry.public_name.clone(),
-                description: compact_tool_description(
-                    entry.description.as_str(),
-                    config.documentation_mode,
-                    entry.max_description_length,
-                ),
-                parameters: compact_parameters(entry.parameters.clone(), config.documentation_mode),
+        self.visible_entry_indices(&config)
+            .into_iter()
+            .map(|index| {
+                let entry = &self.entries[index];
+                let projection = self.projection(index, entry, config.documentation_mode);
+                ToolSchemaEntry {
+                    name: entry.public_name.clone(),
+                    description: projection.description().to_owned(),
+                    parameters: projection.parameters().clone(),
+                }
             })
             .collect()
     }
@@ -458,15 +447,15 @@ impl SessionToolCatalog {
 
     /// Returns tool definitions for the LLM, including deferred loading support.
     pub fn model_tools(&self, config: SessionToolsConfig) -> Vec<ToolDefinition> {
-        let filtered_entries = self.filtered_entries(&config).collect::<Vec<_>>();
-        let deferable_tool_count = filtered_entries
+        let visible_entry_indices = self.visible_entry_indices(&config);
+        let deferable_tool_count = visible_entry_indices
             .iter()
-            .filter(|entry| should_defer_tool_loading(entry, &config))
+            .filter(|&&index| should_defer_tool_loading(&self.entries[index], &config))
             .count();
-        let estimated_schema_tokens = estimate_schema_tokens(&filtered_entries, &config);
-        let has_mcp_tools = filtered_entries
+        let estimated_schema_tokens = self.estimate_schema_tokens(&visible_entry_indices, config.documentation_mode);
+        let has_mcp_tools = visible_entry_indices
             .iter()
-            .any(|entry| matches!(entry.source, ToolCatalogSource::Mcp));
+            .any(|&index| matches!(self.entries[index].source, ToolCatalogSource::Mcp));
         // Hosted policies (Anthropic/OpenAI) rely on `defer_loading` markers in
         // the wire payload, so they defer whenever the policy is enabled. The
         // client-local policy instead OMITS deferred definitions from the wire;
@@ -493,7 +482,7 @@ impl SessionToolCatalog {
             static DEFERRAL_DISABLED_WARNING: OnceLock<()> = OnceLock::new();
             if DEFERRAL_DISABLED_WARNING.set(()).is_ok() {
                 tracing::warn!(
-                    available_tools = filtered_entries.len(),
+                    available_tools = visible_entry_indices.len(),
                     deferable_tools = deferable_tool_count,
                     has_mcp_tools,
                     estimated_schema_tokens,
@@ -507,18 +496,16 @@ impl SessionToolCatalog {
             }
         }
 
-        let mut tools = Vec::new();
+        let mut tools = Vec::with_capacity(visible_entry_indices.len() + if expose_tools_directly { 0 } else { 1 });
         let mut has_deferred_tools = false;
 
-        for entry in filtered_entries {
+        for index in visible_entry_indices {
+            let entry = &self.entries[index];
+            let projection = self.projection(index, entry, config.documentation_mode);
             let defer_loading = should_defer_tool_loading(entry, &config);
             match entry.kind {
                 CatalogToolKind::ApplyPatch if config.model_capabilities.supports_apply_patch_tool => {
-                    let mut tool = ToolDefinition::apply_patch(compact_tool_description(
-                        entry.description.as_str(),
-                        config.documentation_mode,
-                        entry.max_description_length,
-                    ));
+                    let mut tool = ToolDefinition::apply_patch(projection.description().to_owned());
                     if defer_loading && !expose_tools_directly {
                         tool = tool.with_defer_loading(true);
                         has_deferred_tools = true;
@@ -531,12 +518,8 @@ impl SessionToolCatalog {
                     } else {
                         ToolDefinition::function(
                             entry.public_name.clone(),
-                            compact_tool_description(
-                                entry.description.as_str(),
-                                config.documentation_mode,
-                                entry.max_description_length,
-                            ),
-                            compact_parameters(entry.parameters.clone(), config.documentation_mode),
+                            projection.description().to_owned(),
+                            projection.parameters().clone(),
                         )
                     };
                     if defer_loading && !expose_tools_directly {
@@ -575,8 +558,31 @@ impl SessionToolCatalog {
         &self.entries
     }
 
-    fn filtered_entries(&self, config: &SessionToolsConfig) -> impl Iterator<Item = &ToolCatalogEntry> {
-        self.entries.iter().filter(move |entry| entry.is_visible(config))
+    fn estimate_schema_tokens(&self, entry_indices: &[usize], documentation_mode: ToolDocumentationMode) -> usize {
+        entry_indices
+            .iter()
+            .map(|&index| {
+                self.projection(index, &self.entries[index], documentation_mode)
+                    .serialized_token_estimate()
+            })
+            .sum()
+    }
+
+    fn projection(
+        &self,
+        entry_index: usize,
+        entry: &ToolCatalogEntry,
+        documentation_mode: ToolDocumentationMode,
+    ) -> &ToolEntryProjection {
+        self.projection_cache.get_or_init(entry_index, entry, documentation_mode)
+    }
+
+    fn visible_entry_indices(&self, config: &SessionToolsConfig) -> Vec<usize> {
+        self.entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| entry.is_visible(config).then_some(index))
+            .collect()
     }
 }
 
@@ -1479,6 +1485,100 @@ mod tests {
             compacted["properties"]["questions"]["items"]["properties"]["options"]["items"]["required"],
             json!(["label", "description"])
         );
+    }
+
+    #[test]
+    fn cached_projections_preserve_schema_and_deferral_across_documentation_modes() {
+        let exec_command = registration(tools::EXEC_COMMAND)
+            .with_description("Run a command. Use the workspace shell safely.")
+            .with_parameter_schema(json!({
+                "type": "object",
+                "properties": {
+                    "cmd": {"type": "string", "description": "Command to run."}
+                },
+                "required": ["cmd"]
+            }));
+        let mcp_tool = registration("mcp::context7::search")
+            .with_catalog_source(ToolCatalogSource::Mcp)
+            .with_llm_visibility(false)
+            .with_description(
+                "Search the documentation server. This description is intentionally longer than minimal mode.",
+            )
+            .with_parameter_schema(json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Documentation query."}
+                }
+            }))
+            .with_aliases(["mcp__context7__search"]);
+        let catalog = SessionToolCatalog::rebuild_from_registrations(vec![exec_command, mcp_tool]);
+
+        for documentation_mode in [
+            ToolDocumentationMode::Minimal,
+            ToolDocumentationMode::Progressive,
+            ToolDocumentationMode::Full,
+        ] {
+            let config = SessionToolsConfig::full_public(
+                SessionSurface::AgentRunner,
+                CapabilityLevel::CodeSearch,
+                documentation_mode,
+                ToolModelCapabilities::default(),
+            )
+            .with_tool_profile(ToolProfile::AdvancedVtCode)
+            .with_deferred_tool_policy(DeferredToolPolicy::client_local(Vec::new()));
+
+            let expected_schema = catalog
+                .entries()
+                .iter()
+                .filter(|entry| entry.is_visible(&config))
+                .map(|entry| ToolSchemaEntry {
+                    name: entry.public_name.clone(),
+                    description: compact_tool_description(
+                        entry.description.as_str(),
+                        documentation_mode,
+                        entry.max_description_length,
+                    ),
+                    parameters: compact_parameters(entry.parameters.clone(), documentation_mode),
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(catalog.schema_entries(config.clone()), expected_schema);
+
+            let visible_entries = catalog
+                .entries()
+                .iter()
+                .filter(|entry| entry.is_visible(&config))
+                .collect::<Vec<_>>();
+            let estimated_schema_tokens = expected_schema
+                .iter()
+                .map(|entry| serde_json::to_string(entry).expect("serialize expected schema").len() / 4)
+                .sum();
+            let deferable_tool_count = visible_entries
+                .iter()
+                .filter(|entry| should_defer_tool_loading(entry, &config))
+                .count();
+            let expose_tools_directly = config.deferred_tool_policy.is_client_local()
+                && !catalog_would_benefit_from_deferral(
+                    visible_entries
+                        .iter()
+                        .any(|entry| matches!(entry.source, ToolCatalogSource::Mcp)),
+                    deferable_tool_count,
+                    estimated_schema_tokens,
+                );
+            let definitions = catalog.model_tools(config.clone());
+
+            for entry in visible_entries {
+                let expected_deferred = should_defer_tool_loading(entry, &config) && !expose_tools_directly;
+                let definition = definitions
+                    .iter()
+                    .find(|tool| tool.function_name() == entry.public_name)
+                    .unwrap_or_else(|| panic!("missing model definition for {}", entry.public_name));
+                let actual_deferred = definition.defer_loading == Some(true);
+                assert_eq!(actual_deferred, expected_deferred, "deferral changed for {}", entry.public_name);
+            }
+
+            assert_eq!(catalog.model_tools(config.clone()), definitions);
+            assert!(definitions.iter().any(|tool| tool.function_name() == tools::EXEC_COMMAND));
+        }
     }
 
     #[test]

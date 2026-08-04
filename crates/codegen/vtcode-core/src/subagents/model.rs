@@ -333,7 +333,42 @@ pub fn load_memory_appendix(
 
     let content =
         std::fs::read_to_string(&memory_file).with_context(|| format!("Failed to read {}", memory_file.display()))?;
-    let (excerpt, truncated) = memory_excerpt(&content);
+    Ok(Some(render_memory_appendix(&memory_file, &content)))
+}
+
+/// Async variant of [`load_memory_appendix`] for child-agent prompt assembly.
+///
+/// Directory creation, existence checks, and file reads use Tokio's filesystem
+/// boundary so launching a child agent does not block an executor worker.
+pub async fn load_memory_appendix_async(
+    workspace_root: &Path,
+    agent_name: &str,
+    scope: Option<SubagentMemoryScope>,
+) -> Result<Option<String>> {
+    let Some(scope) = scope else {
+        return Ok(None);
+    };
+
+    let memory_dir = agent_memory_dir(workspace_root, agent_name, scope);
+    tokio::fs::create_dir_all(&memory_dir)
+        .await
+        .with_context(|| format!("Failed to create subagent memory directory {}", memory_dir.display()))?;
+    let memory_file = memory_dir.join("MEMORY.md");
+    if !tokio::fs::try_exists(&memory_file).await.unwrap_or(false) {
+        return Ok(Some(format!(
+            "Persistent memory file: {}. Create or update `MEMORY.md` with concise reusable notes when you discover stable repository conventions.",
+            memory_file.display()
+        )));
+    }
+
+    let content = tokio::fs::read_to_string(&memory_file)
+        .await
+        .with_context(|| format!("Failed to read {}", memory_file.display()))?;
+    Ok(Some(render_memory_appendix(&memory_file, &content)))
+}
+
+fn render_memory_appendix(memory_file: &Path, content: &str) -> String {
+    let (excerpt, truncated) = memory_excerpt(content);
     let highlights = extract_memory_highlights(&excerpt, SUBAGENT_MEMORY_HIGHLIGHT_LIMIT);
     let mut appendix = String::new();
     appendix.push_str(&format!(
@@ -355,7 +390,7 @@ pub fn load_memory_appendix(
         appendix.push_str("\nMemory indexing stopped after the configured startup budget.");
     }
 
-    Ok(Some(appendix))
+    appendix
 }
 
 /// Loads a read-only memory appendix for the primary agent from a subagent's memory scope.

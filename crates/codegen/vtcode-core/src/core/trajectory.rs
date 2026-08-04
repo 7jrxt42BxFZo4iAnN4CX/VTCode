@@ -47,6 +47,12 @@ impl TrajectoryLogger {
         Self::with_retention(workspace, TrajectoryRetention::default())
     }
 
+    /// Create a trajectory logger without blocking the async executor during
+    /// retention maintenance or file setup.
+    pub async fn new_async(workspace: &Path) -> Self {
+        Self::with_retention_async(workspace, TrajectoryRetention::default()).await
+    }
+
     /// Create a trajectory logger with a custom retention policy.
     pub fn with_retention(workspace: &Path, retention: TrajectoryRetention) -> Self {
         let dir = workspace.join(".vtcode").join("logs");
@@ -54,6 +60,26 @@ impl TrajectoryLogger {
         prune_trajectory_logs_best_effort(&dir, retention);
         let path = dir.join("trajectory.jsonl");
         let writer = AsyncLineWriter::new(path).ok().map(Arc::new);
+        let enabled = writer.is_some();
+        Self { enabled, writer }
+    }
+
+    /// Create a trajectory logger asynchronously. Synchronous retention work
+    /// is isolated on Tokio's blocking pool, and the writer uses async setup.
+    pub async fn with_retention_async(workspace: &Path, retention: TrajectoryRetention) -> Self {
+        let dir = workspace.join(".vtcode").join("logs");
+        let retention_dir = dir.clone();
+        if let Err(error) = tokio::task::spawn_blocking(move || {
+            rotate_current_trajectory(&retention_dir);
+            prune_trajectory_logs_best_effort(&retention_dir, retention);
+        })
+        .await
+        {
+            tracing::debug!(error = %error, "Failed to prepare trajectory retention asynchronously");
+        }
+
+        let path = dir.join("trajectory.jsonl");
+        let writer = AsyncLineWriter::new_async(path).await.ok().map(Arc::new);
         let enabled = writer.is_some();
         Self { enabled, writer }
     }
@@ -285,6 +311,18 @@ mod tests {
         assert_eq!(record["class"], "standard");
         assert_eq!(record["input_preview"], "test user input for logging");
         assert!(record["ts"].is_number());
+    }
+
+    #[tokio::test]
+    async fn test_async_trajectory_logger_log_route_integration() {
+        let temp_dir = TempDir::new().unwrap();
+        let logger = TrajectoryLogger::new_async(temp_dir.path()).await;
+
+        logger.log_route(1, "test-model", "standard", "async setup");
+        logger.flush().await;
+
+        let log_path = temp_dir.path().join(".vtcode/logs/trajectory.jsonl");
+        assert_eq!(fs::read_to_string(log_path).unwrap().lines().count(), 1);
     }
 
     #[tokio::test]

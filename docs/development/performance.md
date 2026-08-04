@@ -189,6 +189,15 @@ reparse unchanged resources. Indexed searches read an immutable path-text table
 by `StringId`; incremental updates publish a new table so searches holding an
 older index remain safe.
 
+The same target also includes uncached filesystem workloads:
+`agent_harness_file_search_uncached` measures parallel traversal and bounded
+candidate aggregation, while `agent_harness_file_index_build` measures a full
+index construction per iteration. `agent_harness_tool_catalog_projection_repeat`
+measures repeated schema/model-tool projection after the catalog is warm; its
+projection cache is private to an immutable catalog and keyed by documentation
+mode. These benchmarks expose repeated work and synchronization cost rather
+than serving as universal CI thresholds.
+
 Compare repeated local medians rather than adding a noisy hard gate:
 
 ```bash
