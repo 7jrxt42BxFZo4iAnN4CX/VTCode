@@ -3,7 +3,7 @@
 //! Implements the JSON-RPC 2.0 request/response format used by the A2A protocol,
 //! along with A2A-specific RPC method constants.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 use super::errors::A2aErrorCode;
@@ -360,7 +360,7 @@ pub struct TaskPushNotificationConfig {
 // ============================================================================
 
 /// Base wrapper for streaming message response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SendStreamingMessageResponse {
     /// Event data (one of MessageEvent, TaskStatusUpdateEvent, TaskArtifactUpdateEvent)
@@ -368,8 +368,22 @@ pub struct SendStreamingMessageResponse {
     pub(crate) event: StreamingEvent,
 }
 
+impl<'de> Deserialize<'de> for SendStreamingMessageResponse {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // The wrapper only carries the flattened `event`, so its wire shape is
+        // exactly `StreamingEvent`'s. Delegating avoids the `#[serde(flatten)]`
+        // buffer that the derived Deserialize would allocate before dispatching
+        // on the `type` tag.
+        let event = StreamingEvent::deserialize(deserializer)?;
+        Ok(Self { event })
+    }
+}
+
 /// Streaming event types (discriminated by 'type' field)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum StreamingEvent {
     /// Message event from agent
@@ -424,6 +438,69 @@ pub enum StreamingEvent {
     /// Catch-all for unknown streaming event types added by the A2A spec.
     #[serde(other)]
     Unknown,
+}
+
+impl<'de> Deserialize<'de> for StreamingEvent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // The A2A stream sends a `type` discriminator on every event, so the
+        // fields are decoded in a single pass and the matching variant is
+        // constructed afterwards. This avoids the two layers of buffering that
+        // the derived `#[serde(tag = "type")]` + `#[serde(flatten)]` path
+        // performs: an internally-tagged enum buffers the whole event into a
+        // `Map<String, Value>` before dispatching, and the enclosing wrapper's
+        // `flatten` buffers it again.
+        let wire = StreamingEventWire::deserialize(deserializer)?;
+        match wire.event_type.as_str() {
+            "message" => Ok(StreamingEvent::Message {
+                message: wire.message.ok_or_else(|| serde::de::Error::missing_field("message"))?,
+                context_id: wire.context_id,
+                kind: wire.kind.unwrap_or_else(default_message_kind),
+                r#final: wire.r#final.unwrap_or(false),
+            }),
+            "task-status" => Ok(StreamingEvent::TaskStatus {
+                task_id: wire.task_id.ok_or_else(|| serde::de::Error::missing_field("task_id"))?,
+                context_id: wire.context_id,
+                status: wire.status.ok_or_else(|| serde::de::Error::missing_field("status"))?,
+                kind: wire.kind.unwrap_or_else(default_status_kind),
+                r#final: wire.r#final.unwrap_or(false),
+            }),
+            "task-artifact" => Ok(StreamingEvent::TaskArtifact {
+                task_id: wire.task_id.ok_or_else(|| serde::de::Error::missing_field("task_id"))?,
+                artifact: wire.artifact.ok_or_else(|| serde::de::Error::missing_field("artifact"))?,
+                append: wire.append.unwrap_or(false),
+                last_chunk: wire.last_chunk.unwrap_or(false),
+                r#final: wire.r#final.unwrap_or(false),
+            }),
+            // Matches the derived `#[serde(other)]` catch-all.
+            _ => Ok(StreamingEvent::Unknown),
+        }
+    }
+}
+
+/// Flat wire shape for [`StreamingEvent`] (see [`StreamingEvent::deserialize`]).
+///
+/// Declares every variant field directly so no event map is buffered. Field
+/// aliases accept both the internal snake_case spelling and the A2A spec's
+/// camelCase form, so the decoder is robust to either serialization.
+#[derive(Deserialize)]
+struct StreamingEventWire {
+    #[serde(rename = "type")]
+    event_type: String,
+    message: Option<super::types::Message>,
+    #[serde(alias = "taskId")]
+    task_id: Option<String>,
+    status: Option<super::types::TaskStatus>,
+    artifact: Option<super::types::Artifact>,
+    #[serde(alias = "contextId")]
+    context_id: Option<String>,
+    kind: Option<String>,
+    r#final: Option<bool>,
+    append: Option<bool>,
+    #[serde(alias = "lastChunk")]
+    last_chunk: Option<bool>,
 }
 
 fn default_message_kind() -> String {

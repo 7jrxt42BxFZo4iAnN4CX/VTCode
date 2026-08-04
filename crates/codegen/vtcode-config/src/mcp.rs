@@ -1,7 +1,7 @@
 use crate::env_helpers::default_enabled;
 use hashbrown::HashMap;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
 use vtcode_auth::McpOAuthConfig;
 
@@ -320,7 +320,7 @@ pub enum McpRendererProfile {
 
 /// Configuration for a single MCP provider
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct McpProviderConfig {
     /// Provider name (used for identification)
     pub name: String,
@@ -345,6 +345,93 @@ pub struct McpProviderConfig {
     /// Startup timeout in milliseconds for this provider
     #[serde(default)]
     pub startup_timeout_ms: Option<u64>,
+}
+
+impl<'de> Deserialize<'de> for McpProviderConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Deserialize every provider + transport field in a single pass.
+        // `#[serde(flatten)]` + `#[serde(untagged)]` on `transport` would force
+        // Serde to buffer the whole provider object into a `Map<String, Value>`
+        // and then trial-deserialize each transport variant. A provider has only
+        // two mutually-exclusive transport forms — stdio (`command` + `args`) or
+        // HTTP (`endpoint`) — so the fields are decoded directly and the
+        // transport enum is constructed afterwards, matching the untagged
+        // Stdio-then-Http precedence.
+        let wire = McpProviderConfigWire::deserialize(deserializer)?;
+
+        let transport = if let (Some(command), Some(args)) = (wire.command, wire.args) {
+            McpTransportConfig::Stdio(McpStdioServerConfig {
+                command,
+                args,
+                working_directory: wire.working_directory,
+            })
+        } else if let Some(endpoint) = wire.endpoint {
+            McpTransportConfig::Http(McpHttpServerConfig {
+                endpoint,
+                api_key_env: wire.api_key_env,
+                oauth: wire.oauth,
+                protocol_version: wire.protocol_version,
+                http_headers: wire.http_headers,
+                env_http_headers: wire.env_http_headers,
+            })
+        } else {
+            return Err(serde::de::Error::custom(
+                "MCP provider must specify either a stdio `command` (with `args`) or an HTTP `endpoint`",
+            ));
+        };
+
+        Ok(McpProviderConfig {
+            name: wire.name,
+            transport,
+            env: wire.env,
+            enabled: wire.enabled,
+            max_concurrent_requests: wire.max_concurrent_requests,
+            startup_timeout_ms: wire.startup_timeout_ms,
+        })
+    }
+}
+
+/// Flat wire shape for [`McpProviderConfig`] (see [`McpProviderConfig::deserialize`]).
+///
+/// Every transport field is declared directly so no intermediate map is
+/// buffered. Fields belonging to the unused transport variant simply stay at
+/// their `Option`/default values and are ignored when constructing the
+/// [`McpTransportConfig`].
+#[derive(Deserialize)]
+struct McpProviderConfigWire {
+    name: String,
+    // stdio transport
+    #[serde(default)]
+    command: Option<String>,
+    #[serde(default)]
+    args: Option<Vec<String>>,
+    #[serde(default)]
+    working_directory: Option<String>,
+    // http transport
+    #[serde(default)]
+    endpoint: Option<String>,
+    #[serde(default)]
+    api_key_env: Option<String>,
+    #[serde(default)]
+    oauth: Option<McpOAuthConfig>,
+    #[serde(default = "default_mcp_protocol_version")]
+    protocol_version: String,
+    #[serde(default, alias = "headers")]
+    http_headers: HashMap<String, String>,
+    #[serde(default)]
+    env_http_headers: HashMap<String, String>,
+    // provider-level
+    #[serde(default)]
+    env: HashMap<String, String>,
+    #[serde(default = "default_provider_enabled")]
+    enabled: bool,
+    #[serde(default = "default_provider_max_concurrent")]
+    max_concurrent_requests: usize,
+    #[serde(default)]
+    startup_timeout_ms: Option<u64>,
 }
 
 impl Default for McpProviderConfig {
@@ -969,5 +1056,88 @@ mod tests {
             Some(McpRendererProfile::SequentialThinking)
         );
         assert_eq!(config.renderer_for_tool("mcp_unknown"), None);
+    }
+
+    #[test]
+    fn test_mcp_provider_config_http_transport_from_toml() {
+        // HTTP provider, discriminated by `endpoint`. Locks in the flat-wire
+        // deserialize path (no `#[serde(flatten)]` + `#[serde(untagged)]`
+        // buffering) for the HTTP transport branch.
+        let toml_str = r#"
+name = "deepwiki"
+enabled = true
+endpoint = "https://mcp.deepwiki.com/mcp"
+protocol_version = "2024-11-05"
+max_concurrent_requests = 3
+
+[http_headers]
+Authorization = "Bearer token"
+"#;
+        let provider: McpProviderConfig = toml::from_str(toml_str).expect("http provider must parse");
+
+        assert_eq!(provider.name, "deepwiki");
+        assert!(provider.enabled);
+        assert_eq!(provider.max_concurrent_requests, 3);
+        match provider.transport {
+            McpTransportConfig::Http(http) => {
+                assert_eq!(http.endpoint, "https://mcp.deepwiki.com/mcp");
+                assert_eq!(http.protocol_version, "2024-11-05");
+                assert_eq!(http.http_headers.get("Authorization"), Some(&"Bearer token".to_string()));
+            }
+            McpTransportConfig::Stdio(_) => panic!("expected HTTP transport"),
+        }
+    }
+
+    #[test]
+    fn test_mcp_provider_config_stdio_transport_from_toml() {
+        let toml_str = r#"
+name = "time"
+command = "uvx"
+args = ["mcp-server-time"]
+working_directory = "/tmp"
+"#;
+        let provider: McpProviderConfig = toml::from_str(toml_str).expect("stdio provider must parse");
+        match provider.transport {
+            McpTransportConfig::Stdio(stdio) => {
+                assert_eq!(stdio.command, "uvx");
+                assert_eq!(stdio.args, vec!["mcp-server-time"]);
+                assert_eq!(stdio.working_directory.as_deref(), Some("/tmp"));
+            }
+            McpTransportConfig::Http(_) => panic!("expected stdio transport"),
+        }
+    }
+
+    #[test]
+    fn test_mcp_provider_config_stdio_wins_when_both_transports_present() {
+        // Replicates the untagged Stdio-then-Http precedence: `command` + `args`
+        // select stdio even when `endpoint` is also set.
+        let toml_str = r#"
+name = "mixed"
+command = "uvx"
+args = ["mcp-server-time"]
+endpoint = "https://example.com/mcp"
+"#;
+        let provider: McpProviderConfig = toml::from_str(toml_str).expect("mixed provider must parse");
+        assert!(matches!(provider.transport, McpTransportConfig::Stdio(_)));
+    }
+
+    #[test]
+    fn test_mcp_provider_config_http_fallback_when_command_lacks_args() {
+        // `command` without `args` cannot form a stdio transport, so the
+        // presence of `endpoint` selects HTTP (matches untagged fallback).
+        let toml_str = r#"
+name = "fallback"
+command = "uvx"
+endpoint = "https://example.com/mcp"
+"#;
+        let provider: McpProviderConfig = toml::from_str(toml_str).expect("fallback provider must parse");
+        assert!(matches!(provider.transport, McpTransportConfig::Http(_)));
+    }
+
+    #[test]
+    fn test_mcp_provider_config_rejects_missing_transport() {
+        let toml_str = "name = \"bare\"";
+        let result: Result<McpProviderConfig, _> = toml::from_str(toml_str);
+        assert!(result.is_err(), "provider without command/endpoint must error");
     }
 }
