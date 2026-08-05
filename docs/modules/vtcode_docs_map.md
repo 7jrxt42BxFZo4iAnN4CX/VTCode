@@ -500,8 +500,8 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/providers/PROVIDER_GUIDES.md`
   - **Content**: Provider Guides
-  - **Topics**: Provider whitelisting, Google Gemini, OpenAI, Anthropic, GitHub Copilot
-  - **User Questions**: "What can you tell me about Provider Guides?", "How does Provider whitelisting work?", "How does Google Gemini work?"
+  - **Topics**: Provider whitelisting, Custom providers, Google Gemini, OpenAI, Anthropic
+  - **User Questions**: "What can you tell me about Provider Guides?", "How does Provider whitelisting work?", "How does Custom providers work?"
 
 - **File**: `docs/providers/llamacpp.md`
   - **Content**: llama.cpp Provider Guide

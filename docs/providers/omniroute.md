@@ -32,6 +32,7 @@ display_name = "OmniRoute"
 base_url = "http://localhost:20128/v1"
 api_key_env = "OMNIROUTE_API_KEY"
 model = "auto"
+# context_window = 256000 # Optional; default is 128000 tokens
 ```
 
 Then run VT Code normally:
@@ -82,6 +83,9 @@ models = ["auto", "auto/coding"]
 - Request timeouts use VT Code's global `[timeouts]` configuration.
 - Cross-provider failover is handled by the OmniRoute model or combo selected
   in `default_model`; VT Code treats OmniRoute as one custom endpoint.
+- Custom providers default to a 128K context window. If your routed models
+  support a larger window, set `context_window` in tokens so context reporting,
+  automatic compaction, and preflight token checks use the real limit.
 
 ## Remote and Container Setups
 

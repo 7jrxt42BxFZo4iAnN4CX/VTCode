@@ -32,6 +32,9 @@ base_url = "https://api.atlascloud.ai/v1"
 api_key_env = "ATLASCLOUD_API_KEY"
 model = "deepseek-ai/DeepSeek-V3-0324"
 
+# Optional: declare the context window in tokens (default is 128000).
+# context_window = 256000
+
 # Optional: list available models for the model picker.
 # models = [
 #     "deepseek-ai/DeepSeek-V3-0324",
@@ -62,6 +65,10 @@ vtcode ask "Summarize this repository"
 - VT Code registers `[[custom_providers]]` as OpenAI-compatible providers.
 - Custom providers bypass the built-in model catalog check, so Atlas-specific
   model IDs work as long as the upstream endpoint accepts them.
+- Custom providers default to a 128K context window. If your selected models
+  support a larger window, set `context_window` in tokens (for example
+  `context_window = 256000`) so context reporting, automatic compaction, and
+  preflight token checks use the real limit.
 
 ## Model Selection Notes
 

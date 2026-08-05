@@ -24,6 +24,32 @@ Whitelist entries may be a built-in provider key or a `name` from `[[custom_prov
 
 See the [Configuration guide](../config/config.md#provider-whitelisting) for full details.
 
+## Custom providers
+
+Any OpenAI-compatible endpoint can be added with `[[custom_providers]]` without
+a dedicated runtime provider. Each entry has a stable `name`, a
+`display_name`, a `base_url`, an optional `api_key_env`, a default `model`, and
+an optional `context_window` in tokens:
+
+```toml
+[[custom_providers]]
+name = "mycorp"
+display_name = "MyCorp"
+base_url = "https://llm.corp.example/v1"
+api_key_env = "MYCORP_API_KEY"
+model = "gpt-5-mini"
+context_window = 256000   # optional; defaults to 128000 tokens
+```
+
+`context_window` is the provider capability in tokens and drives the context
+size shown in the UI, automatic compaction, and preflight token checks. When
+omitted, custom providers retain the 128000-token default. The separate
+`context.max_context_tokens` setting remains an independent lower session
+budget.
+
+Worked examples: [Atlas Cloud](./atlascloud.md) and [OmniRoute](./omniroute.md).
+See the [Configuration guide](../config/config.md#custom_providers) for full details.
+
 ## Google Gemini
 
 -   Configuration details are covered in the main [Getting Started guide](../user-guide/getting-started.md#api-requirements).

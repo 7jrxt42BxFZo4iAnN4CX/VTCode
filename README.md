@@ -89,7 +89,7 @@ vtcode update                  # self-update
 
 ## Providers
 
-VT Code supports 21+ LLM providers out of the box, plus any OpenAI-compatible API via `[[custom_providers]]`.
+VT Code supports 21+ LLM providers out of the box, plus any OpenAI-compatible API via `[[custom_providers]]`. Custom providers can declare their model context window in tokens with `context_window`; when omitted they default to 128K. The configured value drives the context size shown in the UI, automatic compaction thresholds, and preflight token checks.
 
 | Category            | Providers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -99,6 +99,27 @@ VT Code supports 21+ LLM providers out of the box, plus any OpenAI-compatible AP
 | **Other**           | [GitHub Copilot](./docs/providers/PROVIDER_GUIDES.md#github-copilot) · [Anthropic API Compat](./docs/providers/PROVIDER_GUIDES.md#anthropic-api-compatibility-server) · [Poolside](./docs/providers/PROVIDER_GUIDES.md#poolside)                                                                                                                                                                                                                                                                                                                      |
 
 Read: [Provider Guides](./docs/providers/PROVIDER_GUIDES.md).
+
+### Custom providers
+
+Use `[[custom_providers]]` to add any OpenAI-compatible endpoint (a private
+gateway, an aggregator such as Atlas Cloud or OmniRoute, or an internal
+inference cluster):
+
+```toml
+[[custom_providers]]
+name = "mycorp"
+display_name = "MyCorp"
+base_url = "https://llm.corp.example/v1"
+api_key_env = "MYCORP_API_KEY"
+model = "gpt-5-mini"
+context_window = 256000   # optional; defaults to 128000 tokens
+```
+
+`context_window` is the provider capability in tokens. The separate
+`context.max_context_tokens` setting can still impose a lower session budget.
+See [Configuration](./docs/config/CONFIG_FIELD_REFERENCE.md) for the full field
+reference.
 
 ### Provider governance
 
