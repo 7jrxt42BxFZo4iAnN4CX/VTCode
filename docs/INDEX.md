@@ -6,6 +6,7 @@ Last reviewed: 2026-06-28
 
 ## Start Here
 
+- [Community Wiki](https://github.com/vinhnx/VTCode/wiki) - Getting started, configuration, providers, local models, skills, MCP, automation, security, and FAQ.
 - [Documentation Hub](README.md) - Main user/developer overview.
 - [Harness Index](harness/INDEX.md) - Agent operating model, quality scoring, and debt tracking.
 - [Zen Alignment](harness/ZEN_ALIGNMENT.md) - Full all-19 principle mapping and rollout.

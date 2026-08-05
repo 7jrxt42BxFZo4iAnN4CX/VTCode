@@ -319,10 +319,12 @@ cargo clippy && cargo fmt
 
 - **GitHub Issues** - Report bugs and request features
 - **GitHub Discussions** - Community discussions and support
+- **Community Wiki** - [VT Code Wiki](https://github.com/vinhnx/VTCode/wiki) - getting started, configuration, providers, local models, skills, MCP, automation, security, and FAQ
 - **Documentation** - Comprehensive guides and tutorials
 
 ### Community Resources
 
+- **[Community Wiki](https://github.com/vinhnx/VTCode/wiki)** - getting started, configuration, providers, local models, skills, MCP, automation, security, and FAQ
 - **[Main README](../README.md)** - Project overview and quick reference
 - **[GitHub Repository](https://github.com/vinhnx/vtcode)** - Source code and collaboration
 - **[Discussions](https://github.com/vinhnx/vtcode/discussions)** - Community support

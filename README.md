@@ -75,6 +75,7 @@ vtcode update                  # self-update
 
 ## Documentation
 
+- [**Wiki**](https://github.com/vinhnx/VTCode/wiki): community wiki — getting started, configuration, providers, local models, skills, MCP, automation, security, and FAQ
 - [**Interactive TUI**](./docs/user-guide/interactive-mode.md): primary agents, slash commands (`/model`, `/review`, `/mcp`, `/skills`, `/theme`, `/compact`)
 - [**Full automation**](./docs/guides/full-automation.md): `--full-auto` CLI, plan-build-evaluate harness, subagents, and scheduled tasks
 - [**Providers**](./docs/providers/PROVIDER_GUIDES.md): setup guides for all 21 providers
