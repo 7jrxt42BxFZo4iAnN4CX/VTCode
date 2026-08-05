@@ -2,6 +2,29 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.141.12 - 2026-08-05
+
+### Highlights
+#### Documentation
+
+- Add brew trust step for Homebrew install (df33688b) 
+- Add @xcrong as latest contributor (4b34804e) 
+- Document context_window for custom providers (6e924ddb) 
+#### Features
+
+- Support custom provider context windows  (bc1f6c0c) (@xcrong)
+- Add directory listing cache keyed by workspace and input (c128f0f4) 
+### Other Changes
+#### Other
+
+- Update TODO (a89953f6) 
+#### Performance
+
+- Implement custom Deserialize for A2A streaming events (59d8eb95) 
+- Optimize runtime paths and file search (4f1b8870) 
+#### Refactors
+
+- Derive Deserialize for streaming response types (e59722ca) 
 ## 0.141.11 - 2026-08-03
 
 ### Highlights
