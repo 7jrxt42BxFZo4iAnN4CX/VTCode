@@ -189,6 +189,16 @@ reparse unchanged resources. Indexed searches read an immutable path-text table
 by `StringId`; incremental updates publish a new table so searches holding an
 older index remain safe.
 
+Workspace tool registration also retains the effective persistent-memory
+configuration from its startup parse. Memory tool calls no longer reload and
+reparse `vtcode.toml`; this follows the same snapshot policy as the web-tool
+and output-spooler settings while preserving the disabled-memory guard.
+
+Basic directory-list cache keys include the canonical workspace and every
+response-shaping filter and pagination value. A cached listing therefore stays
+local to its workspace and cannot satisfy a request with a different list
+shape; the async path reuses its single metadata result for directory checks.
+
 The same target also includes uncached filesystem workloads:
 `agent_harness_file_search_uncached` measures parallel traversal and bounded
 candidate aggregation, while `agent_harness_file_index_build` measures a full

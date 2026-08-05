@@ -55,6 +55,53 @@ pub(super) fn list_entry_matches(
 }
 
 impl FileOpsTool {
+    fn directory_cache_key(&self, input: &ListInput) -> String {
+        fn push_component(key: &mut String, value: &str) {
+            key.push_str(&value.len().to_string());
+            key.push(':');
+            key.push_str(value);
+            key.push('|');
+        }
+
+        let mut key = String::from("dir_list:v2:");
+        push_component(&mut key, &self.canonical_workspace_root().to_string_lossy());
+        push_component(&mut key, &input.path);
+        push_component(&mut key, if input.include_hidden { "hidden" } else { "visible" });
+        push_component(
+            &mut key,
+            input
+                .glob_pattern
+                .as_deref()
+                .map(str::trim)
+                .filter(|pattern| !pattern.is_empty())
+                .unwrap_or_default(),
+        );
+        push_component(&mut key, input.name_pattern.as_deref().unwrap_or("*"));
+        push_component(
+            &mut key,
+            if input.case_sensitive.unwrap_or(true) {
+                "case"
+            } else {
+                "nocase"
+            },
+        );
+        push_component(&mut key, &input.max_items.to_string());
+        push_component(&mut key, &input.page.unwrap_or(1).max(1).to_string());
+        push_component(&mut key, &input.per_page.unwrap_or(20).max(1).to_string());
+
+        let response_format = if input
+            .response_format
+            .as_deref()
+            .is_none_or(|format| format.eq_ignore_ascii_case("concise"))
+        {
+            "concise"
+        } else {
+            "detailed"
+        };
+        push_component(&mut key, response_format);
+        key
+    }
+
     pub(super) async fn execute_basic_list(&self, input: &ListInput) -> Result<Value> {
         use crate::tools::cache::FILE_CACHE;
 
@@ -70,12 +117,7 @@ impl FileOpsTool {
         let base_is_file = base_metadata.as_ref().is_some_and(std::fs::Metadata::is_file);
 
         // Try to get result from cache first for directories
-        let cache_key = format!(
-            "dir_list:{}:hidden={}:glob={}",
-            input.path,
-            input.include_hidden,
-            input.glob_pattern.as_deref().unwrap_or("")
-        );
+        let cache_key = self.directory_cache_key(input);
         if base_is_dir && let Some(cached_result) = FILE_CACHE.get_directory(&cache_key).await {
             return Ok(cached_result);
         }
@@ -107,7 +149,7 @@ impl FileOpsTool {
                 "path": relative_path,
                 "type": "file"
             }));
-        } else if base.is_dir() {
+        } else if base_is_dir {
             let mut entries = tokio::fs::read_dir(&base).await.with_context(|| {
                 format!("Failed to read directory: {}. Workspace root: {}", input.path, self.workspace_root.display())
             })?;
@@ -277,7 +319,7 @@ impl FileOpsTool {
         let out = builder.build_json();
 
         // Cache the result for directories (TTL is 5 minutes in FILE_CACHE)
-        if base.is_dir() {
+        if base_is_dir {
             FILE_CACHE.put_directory(cache_key, out.clone()).await;
         }
 
@@ -416,5 +458,43 @@ mod tests {
 
         assert!(err.contains("Did you mean"));
         assert!(err.contains("src/agent"));
+    }
+
+    #[tokio::test]
+    async fn basic_list_cache_respects_filter_shape() {
+        let temp_dir = TempDir::new().expect("workspace tempdir");
+        let list_dir = temp_dir.path().join("cache-key-shape");
+        fs::create_dir_all(&list_dir).expect("create list dir");
+        fs::write(list_dir.join("alpha.rs"), "alpha").expect("write alpha");
+        fs::write(list_dir.join("beta.rs"), "beta").expect("write beta");
+
+        let grep_manager = std::sync::Arc::new(GrepSearchManager::new(temp_dir.path().to_path_buf()));
+        let file_ops = FileOpsTool::new(temp_dir.path().to_path_buf(), grep_manager);
+        let base_input = |name_pattern| ListInput {
+            path: "cache-key-shape".to_string(),
+            max_items: 20,
+            page: None,
+            per_page: None,
+            response_format: None,
+            include_hidden: false,
+            glob_pattern: None,
+            mode: None,
+            name_pattern,
+            content_pattern: None,
+            file_extensions: None,
+            case_sensitive: None,
+        };
+
+        let alpha = file_ops
+            .execute_basic_list(&base_input(Some("alpha".to_string())))
+            .await
+            .expect("alpha list should succeed");
+        assert_eq!(alpha["items"][0]["name"], "alpha.rs");
+
+        let beta = file_ops
+            .execute_basic_list(&base_input(Some("beta".to_string())))
+            .await
+            .expect("beta list should succeed");
+        assert_eq!(beta["items"][0]["name"], "beta.rs");
     }
 }

@@ -1,4 +1,3 @@
-use crate::config::ConfigManager;
 use crate::config::constants::tools;
 use crate::tools::file_tracker::FileTracker;
 use crate::tools::native_memory;
@@ -229,10 +228,13 @@ impl ToolRegistry {
     pub(super) fn memory_executor(&self, args: Value) -> BoxFuture<'_, Result<Value>> {
         Box::pin(async move {
             let workspace_root = self.workspace_root_owned();
-            let config = ConfigManager::load_from_workspace(&workspace_root)
-                .map(|manager| manager.config().clone())
-                .unwrap_or_default();
-            native_memory::execute_with_vt_config(&workspace_root, &config, args).await
+            native_memory::execute_with_persistent_memory_config(
+                &workspace_root,
+                self.persistent_memory_config.as_ref(),
+                self.persistent_memory_enabled,
+                args,
+            )
+            .await
         })
     }
 

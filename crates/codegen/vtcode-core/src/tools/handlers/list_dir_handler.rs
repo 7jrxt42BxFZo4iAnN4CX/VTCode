@@ -75,11 +75,11 @@ impl ListDirHandler {
         args: &ListDirArgs,
         depth: usize,
     ) -> Result<Vec<DirEntry>, ToolCallError> {
-        if !path.exists() {
-            return Err(ToolCallError::respond(format!("Directory not found: {}", path.display())));
-        }
-
-        if !path.is_dir() {
+        let metadata = match tokio::fs::metadata(path).await {
+            Ok(metadata) => metadata,
+            Err(_) => return Err(ToolCallError::respond(format!("Directory not found: {}", path.display()))),
+        };
+        if !metadata.is_dir() {
             return Err(ToolCallError::respond(format!("Not a directory: {}", path.display())));
         }
 
@@ -87,6 +87,7 @@ impl ListDirHandler {
         if args.recursive && depth >= max_depth {
             return Ok(Vec::new());
         }
+        let pattern = args.pattern.as_deref().and_then(|pattern| glob::Pattern::new(pattern).ok());
 
         let mut entries = Vec::new();
         let mut dir_entries = tokio::fs::read_dir(path)
@@ -107,14 +108,14 @@ impl ListDirHandler {
             }
 
             // Apply pattern filter
-            if let Some(pattern) = &args.pattern
-                && !glob::Pattern::new(pattern).map(|p| p.matches(&file_name)).unwrap_or(true)
+            if let Some(pattern) = &pattern
+                && !pattern.matches(&file_name)
             {
                 continue;
             }
 
             let metadata = entry.metadata().await.ok();
-            let is_dir = entry_path.is_dir();
+            let is_dir = metadata.as_ref().is_some_and(std::fs::Metadata::is_dir);
 
             let dir_entry = DirEntry {
                 name: file_name.clone(),
@@ -241,6 +242,8 @@ pub fn create_list_dir_tool() -> super::tool_handler::ToolSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn list_dir_handler_disables_sandbox_retry() {
@@ -266,5 +269,30 @@ mod tests {
         assert_eq!(format_size(1536), "1.5KB");
         assert_eq!(format_size(1048576), "1.0MB");
         assert_eq!(format_size(1073741824), "1.0GB");
+    }
+
+    #[tokio::test]
+    async fn list_directory_filters_entries_with_async_metadata() {
+        let temp_dir = TempDir::new().expect("workspace tempdir");
+        fs::create_dir(temp_dir.path().join("nested")).expect("nested directory");
+        fs::write(temp_dir.path().join("main.rs"), "fn main() {}\n").expect("rust file");
+        fs::write(temp_dir.path().join("notes.md"), "notes\n").expect("markdown file");
+
+        let args = ListDirArgs {
+            path: None,
+            show_hidden: false,
+            recursive: false,
+            max_depth: None,
+            pattern: Some("*.rs".to_string()),
+        };
+        let entries = ListDirHandler::new()
+            .list_directory(&temp_dir.path().to_path_buf(), &args, 0)
+            .await
+            .expect("directory listing should succeed");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "main.rs");
+        assert!(!entries[0].is_dir);
+        assert!(entries[0].size.is_some());
     }
 }

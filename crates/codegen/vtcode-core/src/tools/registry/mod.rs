@@ -140,6 +140,9 @@ const DEFAULT_LOOP_DETECT_WINDOW: usize = 5;
 #[derive(Clone)]
 pub struct ToolRegistry {
     inventory: ToolInventory,
+    /// Persistent-memory settings captured with the workspace tool snapshot.
+    persistent_memory_config: Arc<crate::config::PersistentMemoryConfig>,
+    persistent_memory_enabled: bool,
     edited_file_monitor: Arc<EditedFileMonitor>,
     policy_gateway: Arc<ToolPolicyGateway>,
     pty_sessions: PtySessionManager,

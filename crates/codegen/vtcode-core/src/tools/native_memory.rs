@@ -100,13 +100,28 @@ pub async fn execute(workspace_root: &Path, config: &PersistentMemoryConfig, arg
 }
 
 pub async fn execute_with_vt_config(workspace_root: &Path, vt_cfg: &VTCodeConfig, args: Value) -> Result<Value> {
-    if !vt_cfg.persistent_memory_enabled() {
+    execute_with_persistent_memory_config(
+        workspace_root,
+        &vt_cfg.agent.persistent_memory,
+        vt_cfg.persistent_memory_enabled(),
+        args,
+    )
+    .await
+}
+
+pub(crate) async fn execute_with_persistent_memory_config(
+    workspace_root: &Path,
+    config: &PersistentMemoryConfig,
+    enabled: bool,
+    args: Value,
+) -> Result<Value> {
+    if !enabled {
         bail!(
             "Persistent memory is disabled. Enable features.memories and agent.persistent_memory.enabled to use /memories"
         );
     }
 
-    execute(workspace_root, &vt_cfg.agent.persistent_memory, args).await
+    execute(workspace_root, config, args).await
 }
 
 async fn prepare_root(workspace_root: &Path, config: &PersistentMemoryConfig) -> Result<PathBuf> {
@@ -235,25 +250,28 @@ async fn execute_request(
 
 async fn view(root: &Path, path: &str) -> Result<String> {
     let resolved = resolve_virtual_path(root, path)?;
-    if !tokio::fs::try_exists(&resolved.absolute).await.unwrap_or(false) {
-        if path == MEMORIES_ROOT {
-            return Ok("Directory /memories is empty.".to_string());
+    let metadata = match tokio::fs::metadata(&resolved.absolute).await {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if path == MEMORIES_ROOT {
+                return Ok("Directory /memories is empty.".to_string());
+            }
+            bail!("{path} does not exist");
         }
-        bail!("{path} does not exist");
-    }
-
-    let metadata = tokio::fs::metadata(&resolved.absolute)
-        .await
-        .with_context(|| format!("Failed to stat {path}"))?;
+        Err(error) => return Err(error).with_context(|| format!("Failed to stat {path}")),
+    };
     if metadata.is_dir() {
         let mut entries = tokio::fs::read_dir(&resolved.absolute)
             .await
             .with_context(|| format!("Failed to list {path}"))?;
         let mut names = Vec::new();
         while let Some(entry) = entries.next_entry().await? {
-            let entry_path = entry.path();
             let file_name = entry.file_name().to_string_lossy().to_string();
-            let suffix = if entry_path.is_dir() { "/" } else { "" };
+            let suffix = if entry.file_type().await.map(|file_type| file_type.is_dir()).unwrap_or(false) {
+                "/"
+            } else {
+                ""
+            };
             names.push(format!("{file_name}{suffix}"));
         }
         names.sort();

@@ -285,6 +285,13 @@ boundaries without changing public wire contracts:
   `tokio::try_join!` where independent, then assemble results in the existing
   source order. Cleanup/consolidation preserve their error context and write
   ordering.
+- The registry captures the effective persistent-memory configuration during
+  its workspace tool-config parse, so each memory-tool call avoids reparsing
+  `vtcode.toml`; the existing disabled-memory guard remains in place.
+- Basic and legacy directory listings reuse awaited metadata instead of making
+  synchronous `Path` probes on the runtime thread; list filters compile once
+  per directory, and the basic-list cache key includes workspace and
+  response-shaping inputs to prevent cross-workspace hits.
 - Context-reset manifests are written with async Tokio filesystem APIs from
   compaction and continuation paths; the synchronous helpers remain available
   for compatibility callers.

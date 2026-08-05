@@ -8,7 +8,7 @@ use std::sync::RwLock;
 
 use parking_lot::Mutex;
 
-use crate::config::PtyConfig;
+use crate::config::{PersistentMemoryConfig, PtyConfig};
 use crate::core::memory_pool::MemoryPool;
 use crate::tool_policy::ToolPolicyManager;
 use crate::tools::handlers::PlanningWorkflowState;
@@ -45,6 +45,8 @@ fn spooler_config_from_dynamic_context(config: &DynamicContextConfig) -> Spooler
 struct WorkspaceToolConfig {
     tool: ToolConfigSnapshot,
     spooler: SpoolerConfig,
+    persistent_memory: PersistentMemoryConfig,
+    persistent_memory_enabled: bool,
 }
 
 /// Load the config needed by tool registration in one parse. Falls back to
@@ -52,13 +54,21 @@ struct WorkspaceToolConfig {
 /// registration.
 fn load_workspace_tool_config(workspace_root: &Path) -> WorkspaceToolConfig {
     match ConfigManager::load_from_workspace(workspace_root) {
-        Ok(manager) => WorkspaceToolConfig {
-            tool: ToolConfigSnapshot {
-                web_search: manager.config().tools.web_search.clone(),
-                web_fetch: manager.config().tools.web_fetch.clone(),
-            },
-            spooler: spooler_config_from_dynamic_context(&manager.config().context.dynamic),
-        },
+        Ok(manager) => {
+            let config = manager.config();
+            let persistent_memory_enabled = config.persistent_memory_enabled();
+            let mut persistent_memory = config.agent.persistent_memory.clone();
+            persistent_memory.enabled = persistent_memory_enabled;
+            WorkspaceToolConfig {
+                tool: ToolConfigSnapshot {
+                    web_search: config.tools.web_search.clone(),
+                    web_fetch: config.tools.web_fetch.clone(),
+                },
+                spooler: spooler_config_from_dynamic_context(&config.context.dynamic),
+                persistent_memory,
+                persistent_memory_enabled,
+            }
+        }
         Err(err) => {
             tracing::warn!(
                 workspace = %workspace_root.display(),
@@ -117,7 +127,12 @@ impl ToolRegistry {
                     WorkspaceToolConfig::default()
                 }
             };
-        let tool_config = workspace_config.tool;
+        let WorkspaceToolConfig {
+            tool: tool_config,
+            spooler: spooler_config,
+            persistent_memory: persistent_memory_config,
+            persistent_memory_enabled,
+        } = workspace_config;
         let edited_file_monitor = Arc::new(crate::tools::edited_file_monitor::EditedFileMonitor::new());
         let inventory = ToolInventory::new(workspace_root.clone(), Arc::clone(&edited_file_monitor));
         let planning_workflow_state = PlanningWorkflowState::new(workspace_root.clone());
@@ -137,7 +152,7 @@ impl ToolRegistry {
         let metrics = Arc::new(crate::metrics::MetricsCollector::new());
         let hot_cache_size = std::num::NonZeroUsize::new(optimization_config.tool_registry.hot_cache_size)
             .unwrap_or(std::num::NonZeroUsize::MIN);
-        let output_spooler = Arc::new(ToolOutputSpooler::with_config(&workspace_root, workspace_config.spooler));
+        let output_spooler = Arc::new(ToolOutputSpooler::with_config(&workspace_root, spooler_config));
 
         // Pre-allocate FxHashMaps with expected capacity for typical MCP tool sets.
         // Most sessions register 10-50 MCP tools; start with room for 32 to
@@ -147,6 +162,8 @@ impl ToolRegistry {
 
         let registry = Self {
             inventory,
+            persistent_memory_config: Arc::new(persistent_memory_config),
+            persistent_memory_enabled,
             edited_file_monitor,
             policy_gateway: Arc::new(policy_gateway),
             pty_sessions,
@@ -244,5 +261,23 @@ tool_output_threshold = "oops"
         assert_eq!(config.threshold_bytes, DynamicContextConfig::default().tool_output_threshold);
         assert_eq!(config.max_files, SpoolerConfig::default().max_files);
         assert_eq!(config.max_age_secs, SpoolerConfig::default().max_age_secs);
+    }
+
+    #[tokio::test]
+    async fn tool_registry_captures_effective_memory_config() {
+        let temp = tempdir().expect("workspace");
+        std::fs::write(
+            temp.path().join("vtcode.toml"),
+            "[features]\nmemories = true\n\n[agent.persistent_memory]\nenabled = true\n",
+        )
+        .expect("workspace config");
+
+        let snapshot = load_workspace_tool_config(temp.path());
+        assert!(snapshot.persistent_memory_enabled);
+        assert!(snapshot.persistent_memory.enabled);
+
+        let registry = ToolRegistry::new(temp.path().to_path_buf()).await;
+        assert!(registry.persistent_memory_enabled);
+        assert!(registry.persistent_memory_config.enabled);
     }
 }
