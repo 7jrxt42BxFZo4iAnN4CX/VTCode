@@ -94,6 +94,25 @@ pub(crate) use plan_approval::{
 pub(crate) use recovery::maybe_condense_truncated_plan;
 pub(crate) use task_tracker::{TaskTrackerHandoff, create_task_tracker_from_active_plan};
 
+/// Build a one-shot repair directive from validator-owned feedback. The
+/// feedback (produced by `PlanValidationReport::repair_feedback()`) is bounded
+/// — no raw plan lines — and always includes the canonical step format so the
+/// model knows the exact contract. The policy prose (one repair, no tool calls,
+/// re-emit `<proposed_plan>`) is owned by this facade.
+///
+/// Both the initial-plan rejection path (`response_handling.rs`) and the
+/// later-turn approval rejection path (`exit_trigger.rs`) use this helper so
+/// the model receives consistent format guidance from every repair surface.
+pub(crate) fn build_plan_repair_directive(feedback: &str) -> String {
+    format!(
+        "Planning recovery: the proposed plan was rejected. Repair it once using concrete repository evidence. \
+         {feedback}\n\n\
+         Re-emit exactly one compact `<proposed_plan>` with Summary, numbered Implementation Steps in the canonical \
+         form, Test Cases and Validation, and Assumptions and Defaults. Resolve every open decision. Do not emit tool \
+         calls or ask for approval until the artifact is complete."
+    )
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ValidatedPlanArtifact {
     pub(crate) plan_file: PathBuf,
@@ -107,8 +126,14 @@ pub(crate) enum PlanArtifactError {
     Missing,
     #[error("failed to read persisted plan {path}: {source}")]
     Read { path: PathBuf, source: std::io::Error },
-    #[error("persisted plan is not ready for approval: {reasons}")]
-    Invalid { reasons: String },
+    #[error("invalid plan artifact: {reasons}")]
+    Invalid {
+        reasons: String,
+        // Boxed to keep `PlanArtifactError` under the `result_large_err`
+        // threshold — the report carries four Vecs and is only needed on the
+        // error path, not the hot path.
+        report: Box<PlanValidationReport>,
+    },
     #[error("failed to persist plan draft: {reason}")]
     Persistence { reason: String },
 }
@@ -117,9 +142,21 @@ impl ValidatedPlanArtifact {
     pub(crate) fn from_text(plan_file: PathBuf, text: String) -> Result<Self, PlanArtifactError> {
         let validation = validate_plan_content(&text);
         if !validation.is_ready() {
-            return Err(PlanArtifactError::Invalid { reasons: validation.reasons().join("; ") });
+            return Err(PlanArtifactError::Invalid {
+                reasons: validation.reasons().join("; "),
+                report: Box::new(validation),
+            });
         }
         Ok(Self { plan_file, text, validation })
+    }
+
+    /// Construct a `ValidatedPlanArtifact` from an already-validated report,
+    /// skipping a redundant revalidation of the same immutable text. The caller
+    /// must guarantee `validation.is_ready()` (enforced by debug_assert in
+    /// non-release builds and by the persistence layer in all builds).
+    pub(crate) fn from_validated(plan_file: PathBuf, text: String, validation: PlanValidationReport) -> Self {
+        debug_assert!(validation.is_ready(), "from_validated called with a non-ready validation report");
+        Self { plan_file, text, validation }
     }
 }
 

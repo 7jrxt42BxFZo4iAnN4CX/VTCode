@@ -1,14 +1,13 @@
 use super::*;
 use crate::agent::runloop::unified::planning_workflow::{
-    PlanArtifactError, ValidatedPlanArtifact, emit_plan_ready_events, persist_plan_draft, persisted_plan_is_ready,
-    validate_plan_content,
+    PlanArtifactError, PlanValidationReport, ValidatedPlanArtifact, build_plan_repair_directive,
+    emit_plan_ready_events, persist_plan_draft, persisted_plan_is_ready, validate_plan_content,
 };
 use crate::agent::runloop::unified::ui_interaction_stream_helpers::render_compact_reasoning_block;
 
 const DENIED_INTERVIEW_PLAN_SYNTHESIS_RETRY_DIRECTIVE: &str = "Planning recovery: the interactive interview is unavailable, and the previous response did not contain a completed plan. Do not ask another question or offer approval yet. Emit exactly one compact `<proposed_plan>` now from the repository evidence already in this conversation; include Summary, numbered `Action -> files/symbols -> verify:` steps, Validation, and short Assumptions. Do not emit tool calls.";
 
 const PLAN_PSEUDO_TOOL_CALL_REPROMPT_DIRECTIVE: &str = "Planning: the previous response contained tool-call markup that was not executed — XML tool-call text is not a tool call. If you need more repository evidence, invoke tools through the tool-call channel now. Otherwise present the completed plan as one compact `<proposed_plan>` (Summary, numbered `Action -> files/symbols -> verify:` steps, Validation, short Assumptions). Do not emit XML tool-call markup as text.";
-const INVALID_PLAN_REPAIR_DIRECTIVE: &str = "Planning recovery: the proposed plan is incomplete or still contains unresolved placeholders. Repair the persisted plan once using concrete repository evidence. Include Summary, numbered Implementation Steps, Test Cases and Validation, and Assumptions and Defaults. Resolve every open decision and do not ask for approval until the artifact is complete.";
 
 /// Detect whether a planning-mode text response is a clarifying question
 /// posed to the user rather than a plan or research prose. The deterministic
@@ -42,7 +41,14 @@ impl<'a> TurnProcessingContext<'a> {
         tracing::warn!(target: "vtcode.planning_workflow", error = %error, "plan artifact rejected before approval");
         if allow_repair && self.plan_session.plan_validation_repair_allowed() {
             self.plan_session.mark_plan_validation_repair_used();
-            self.push_system_message(INVALID_PLAN_REPAIR_DIRECTIVE);
+            // Extract validator-owned feedback from the error so the model
+            // receives actionable, format-specific guidance instead of a
+            // generic "repair the plan" message.
+            let feedback = match &error {
+                PlanArtifactError::Invalid { report, .. } => report.repair_feedback(),
+                _ => PlanValidationReport::default().repair_feedback(),
+            };
+            self.push_system_message(build_plan_repair_directive(&feedback));
             return Ok(TurnHandlerOutcome::Continue);
         }
         self.renderer.line(
@@ -448,7 +454,10 @@ impl<'a> TurnProcessingContext<'a> {
             // follow the event's plan_file can read the completed draft.
             let validation = validate_plan_content(&plan_text);
             if !validation.is_ready() {
-                let error = PlanArtifactError::Invalid { reasons: validation.reasons().join("; ") };
+                let error = PlanArtifactError::Invalid {
+                    reasons: validation.reasons().join("; "),
+                    report: Box::new(validation),
+                };
                 return self.reject_plan_artifact(error, !tool_free_recovery_pass);
             }
 
@@ -459,20 +468,24 @@ impl<'a> TurnProcessingContext<'a> {
                     return self.reject_plan_artifact(error, false);
                 }
             };
-            if !persisted.validation.is_ready() {
-                let error = PlanArtifactError::Invalid { reasons: persisted.validation.reasons().join("; ") };
-                return self.reject_plan_artifact(error, !tool_free_recovery_pass);
-            }
+            // `persist_plan_draft` already validated the same immutable text
+            // before writing, so re-checking `persisted.validation.is_ready()`
+            // here is redundant. The persisted-readiness gate below rereads the
+            // file from disk and verifies sidecar trackers exist — that check
+            // is NOT redundant and stays.
             if !persisted_plan_is_ready(&self.tool_registry.planning_workflow_state()).await {
                 let error = PlanArtifactError::Persistence {
                     reason: "plan, sidecar tracker, and workspace tracker were not published completely".to_string(),
                 };
                 return self.reject_plan_artifact(error, false);
             }
-            let plan = match ValidatedPlanArtifact::from_text(persisted.plan_file.clone(), plan_text.clone()) {
-                Ok(plan) => plan,
-                Err(error) => return self.reject_plan_artifact(error, !tool_free_recovery_pass),
-            };
+            // Construct from the already-validated report instead of
+            // re-parsing the same immutable text a fourth time.
+            let plan = ValidatedPlanArtifact::from_validated(
+                persisted.plan_file.clone(),
+                plan_text.clone(),
+                persisted.validation.clone(),
+            );
             let plan_state = self.tool_registry.planning_workflow_state();
             emit_plan_ready_events(
                 self.plan_session,

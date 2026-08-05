@@ -21,8 +21,8 @@ pub mod state;
 // `handlers/mod.rs`, `task_tracker.rs`, `planning_task_tracker.rs`,
 // `continuation.rs`, `turn/context.rs`, and `turn/.../plan_seed.rs`.
 pub use artifacts::{
-    PlanValidationReport, generate_tracker_markdown_from_plan, merge_plan_content, plan_file_for_tracker_file,
-    tracker_file_for_plan_file, validate_plan_content,
+    CANONICAL_STEP_FORMAT, PlanValidationReport, generate_tracker_markdown_from_plan, merge_plan_content,
+    plan_file_for_tracker_file, tracker_file_for_plan_file, validate_plan_content,
 };
 pub use persistence::{PersistedPlanDraft, persist_plan_draft, sync_tracker_into_plan_file};
 pub use start::StartPlanningTool;
@@ -517,5 +517,122 @@ Keep the existing valid draft intact.
 
         let after = tokio::fs::read_to_string(&persisted.plan_file).await.unwrap();
         assert_eq!(after, before, "invalid candidates must not overwrite a valid draft");
+    }
+
+    // --- repair_feedback tests ---
+
+    #[test]
+    fn repair_feedback_includes_canonical_step_format() {
+        let report = validate_plan_content("## Summary\nIncomplete.\n");
+        let feedback = report.repair_feedback();
+        assert!(
+            feedback.contains("Action -> files: [path/to/file.rs] -> verify: [cargo check]"),
+            "repair feedback must include the canonical step format example"
+        );
+        assert!(
+            feedback.contains("concrete file path or symbol"),
+            "repair feedback must instruct the model to use concrete references"
+        );
+    }
+
+    #[test]
+    fn repair_feedback_for_prose_plan_names_step_count_and_concrete_target_issue() {
+        // This is the exact bug scenario from checkpoint turn_900: the model
+        // generated prose-style steps with no `->` arrows, no `files:` markers,
+        // and no `verify:` markers. The repair feedback must tell the model
+        // how many steps are invalid and that they lack concrete targets.
+        let prose_plan = r#"# Improve launch time
+
+## Summary
+Improve vtcode launch time by profiling and deferring nonessential startup work.
+
+## Implementation Steps
+1. Profile actual startup first
+2. Make startup lazy where possible
+3. Revisit tokio runtime setup
+4. Audit config and asset loading
+5. Re-evaluate compile/link impact
+6. Validate with one observable metric
+
+## Test Cases and Validation
+1. Track the same startup marker before and after each change.
+
+## Assumptions and Defaults
+1. Keep existing behavior.
+"#;
+        let report = validate_plan_content(prose_plan);
+        assert!(!report.is_ready());
+        assert_eq!(report.implementation_step_count, 6);
+        assert_eq!(report.invalid_implementation_steps.len(), 6);
+
+        let feedback = report.repair_feedback();
+        assert!(
+            feedback.contains("6 of 6 implementation step(s)"),
+            "feedback must report the exact count of invalid steps: {feedback}"
+        );
+        assert!(
+            feedback.contains("concrete target or verification"),
+            "feedback must explain the target/verification issue: {feedback}"
+        );
+        assert!(
+            feedback.contains("concrete file path or symbol"),
+            "feedback must instruct concrete references: {feedback}"
+        );
+    }
+
+    #[test]
+    fn repair_feedback_does_not_echo_raw_open_decision_text() {
+        // The open_decisions field contains user/model-controlled text. The
+        // repair feedback must NOT echo it verbatim — only a bounded count.
+        let plan = r#"# Plan
+
+## Summary
+Do the thing.
+
+## Implementation Steps
+1. Act -> files: [src/lib.rs] -> verify: [cargo check]
+
+## Test Cases and Validation
+1. Run cargo check.
+
+## Assumptions and Defaults
+1. Keep existing behavior.
+Next open decision: should we use the foo bar baz approach or the qux approach?
+"#;
+        let report = validate_plan_content(plan);
+        assert!(!report.is_ready());
+        assert!(!report.open_decisions.is_empty());
+
+        let feedback = report.repair_feedback();
+        assert!(feedback.contains("unresolved decision marker(s)"), "feedback must mention the decision count");
+        assert!(!feedback.contains("foo bar baz"), "feedback must NOT echo raw open-decision text");
+        assert!(!feedback.contains("qux"), "feedback must NOT echo raw open-decision text");
+    }
+
+    #[test]
+    fn repair_feedback_for_valid_plan_still_includes_format() {
+        let valid_plan = r#"# Valid
+
+## Summary
+A valid plan.
+
+## Implementation Steps
+1. Do it -> files: [src/lib.rs] -> verify: [cargo check]
+
+## Test Cases and Validation
+1. Run cargo check.
+
+## Assumptions and Defaults
+1. Keep existing behavior.
+"#;
+        let report = validate_plan_content(valid_plan);
+        assert!(report.is_ready());
+        // Even for a valid plan, repair_feedback should include the canonical
+        // format (it's a fallback path, not normally called for valid plans).
+        let feedback = report.repair_feedback();
+        assert!(
+            feedback.contains("Action -> files: [path/to/file.rs] -> verify: [cargo check]"),
+            "canonical format should always be present"
+        );
     }
 }

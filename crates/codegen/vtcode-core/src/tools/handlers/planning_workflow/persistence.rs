@@ -275,7 +275,7 @@ fn render_initial_plan_file_content(
         content.push_str(&format!("Description: {description}\n"));
     }
     content.push('\n');
-    content.push_str("> Planning workflow is active. Research first, then materialize one compact `<proposed_plan>` spec here (fit ~1500 tokens; steps as `Action -> files -> verify:`, prefer file:symbol refs over prose).\n");
+    content.push_str("> Planning workflow is active. Research first, then materialize one compact `<proposed_plan>` spec here (fit ~1500 tokens; steps as `Action -> files: [path] -> verify: [command]`, prefer file:symbol refs over prose).\n");
     content.push_str(&format!(
         "> Suggested validation defaults: build/lint {}; tests {}.\n",
         validation_hints.build_and_lint, validation_hints.tests

@@ -11,6 +11,11 @@ use std::path::{Path, PathBuf};
 pub(super) const PLAN_TRACKER_START: &str = "<!-- vtcode:plan-tracker:start -->";
 pub(super) const PLAN_TRACKER_END: &str = "<!-- vtcode:plan-tracker:end -->";
 
+/// The canonical one-line step format that produces reliable validation and
+/// tracker generation. All repair directives reference this so the model gets
+/// the same contract from every prompt surface.
+pub const CANONICAL_STEP_FORMAT: &str = "1. Action -> files: [path/to/file.rs] -> verify: [cargo check]";
+
 const PLACEHOLDER_TOKENS: [&str; 18] = [
     "[step]",
     "[paths]",
@@ -88,6 +93,61 @@ impl PlanValidationReport {
             reasons.push("no assumptions or defaults".to_string());
         }
         reasons
+    }
+
+    /// Produce bounded, validator-owned diagnostics for a repair directive.
+    ///
+    /// Unlike `reasons()`, which joins raw `open_decisions` lines (user/model
+    /// controlled text), this method emits only validator-owned category
+    /// summaries and step counts. It always includes the canonical step format
+    /// so the model knows the exact contract to follow. This is safe to inject
+    /// into a system message because every string here is validator-authored.
+    pub fn repair_feedback(&self) -> String {
+        let mut feedback = Vec::new();
+
+        if !self.missing_sections.is_empty() {
+            feedback.push(format!("missing required section(s): {}", self.missing_sections.join(", ")));
+        }
+        if !self.placeholder_tokens.is_empty() {
+            feedback.push(format!("contains {} unresolved placeholder token(s)", self.placeholder_tokens.len()));
+        }
+        if !self.open_decisions.is_empty() {
+            feedback.push(format!("contains {} unresolved decision marker(s)", self.open_decisions.len()));
+        }
+        if !self.invalid_implementation_steps.is_empty() {
+            // Step numbers are parsed digits and reason strings are
+            // validator-owned, so this is safe to echo.
+            feedback.push(format!(
+                "{} of {} implementation step(s) lack a concrete target or verification: {}",
+                self.invalid_implementation_steps.len(),
+                self.implementation_step_count,
+                self.invalid_implementation_steps.join("; ")
+            ));
+        }
+        if !self.summary_present {
+            feedback.push("summary is empty".to_string());
+        }
+        if self.implementation_step_count == 0 {
+            feedback.push("no implementation steps".to_string());
+        }
+        if self.validation_item_count == 0 {
+            feedback.push("no validation items".to_string());
+        }
+        if self.assumption_count == 0 {
+            feedback.push("no assumptions or defaults".to_string());
+        }
+
+        let mut result = if feedback.is_empty() {
+            "The plan has validation issues".to_string()
+        } else {
+            format!("Plan validation issues: {}", feedback.join("; "))
+        };
+        result.push_str("\n\nRewrite every implementation step in this canonical one-line form:\n");
+        result.push_str(CANONICAL_STEP_FORMAT);
+        result.push_str(
+            "\nEach step MUST name a concrete file path or symbol (not prose) and a concrete verify command.",
+        );
+        result
     }
 }
 
