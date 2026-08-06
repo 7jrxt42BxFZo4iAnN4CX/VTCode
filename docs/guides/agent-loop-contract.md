@@ -98,15 +98,42 @@ ratio default).
 
 To preserve conversational continuity, every compacted history keeps:
 
-- a **continuity tail** — the most recent turn retained verbatim so the model
-  keeps "what it was just doing" (last assistant action and any in-progress
-  tool calls);
+- a **continuity tail** — approximately 20,000 estimated tokens of the newest
+  complete user/assistant/tool protocol groups retained verbatim. Incomplete
+  trailing tool calls are dropped, and an oversized individual message is
+  represented by a bounded preview/spool reference;
 - the structured **session memory envelope** injected at the boundary (see
   Resume and fork continuity).
+
+The soft compaction threshold is 90% of the effective hard threshold. Reaching
+it marks compaction pending and defers the work to the next outer turn
+boundary. The hard threshold compacts before the next model request. No hidden
+summary model call is issued in the middle of an active tool loop.
 
 The fork/branch history builder (`build_summarized_fork_history`) deliberately
 omits the continuity tail and produces a minimal resume artifact (envelope +
 summary + retained users only).
+
+### Long-running command waits and durable steering
+
+`write_stdin` and `unified_exec` accept an explicit `action: "wait"`. A wait
+blocks until the process exits or its requested deadline expires, then returns
+one bounded result. A deadline does not terminate an in-progress process; the
+returned session ID is reusable for a later wait. Wait time is excluded from
+the ordinary per-turn harness wall-clock budget, while cancellation, shutdown,
+safety policy, and the configured long-running-command ceiling remain active.
+
+Command responses never expose unbounded accumulated `raw_output`. They return
+a bounded preview plus total bytes, truncation state, exit state, and a spool
+path when the output file is available. `spool_complete` is false while an
+active session is still writing and the path is a readable partial snapshot.
+When an exited session is still draining, the path is withheld and
+`spool_pending` is set until a later wait completes the output spool.
+
+Steering follow-ups are persisted as UUID-tagged intents. The schema-v3 session
+envelope keeps at most 16 pending intents and a 64-ID applied window. Recovery
+replays only pending IDs absent from both the applied window and tagged user
+history; the public `FollowUpInput(String)` message shape remains unchanged.
 
 ## Budget and Limits
 

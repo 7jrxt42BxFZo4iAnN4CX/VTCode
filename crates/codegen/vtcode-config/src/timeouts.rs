@@ -16,6 +16,9 @@ pub struct TimeoutsConfig {
     /// Maximum duration (in seconds) for streaming API responses.
     #[serde(default = "TimeoutsConfig::default_streaming_ceiling_seconds")]
     pub streaming_ceiling_seconds: u64,
+    /// Maximum duration (in seconds) for an explicit long-running command wait.
+    #[serde(default = "TimeoutsConfig::default_long_running_command_ceiling_seconds")]
+    pub long_running_command_ceiling_seconds: u64,
     /// Percentage (0-100) of the ceiling after which the UI should warn.
     #[serde(default = "TimeoutsConfig::default_warning_threshold_percent")]
     pub warning_threshold_percent: u8,
@@ -37,6 +40,7 @@ impl Default for TimeoutsConfig {
             pty_ceiling_seconds: Self::default_pty_ceiling_seconds(),
             mcp_ceiling_seconds: Self::default_mcp_ceiling_seconds(),
             streaming_ceiling_seconds: Self::default_streaming_ceiling_seconds(),
+            long_running_command_ceiling_seconds: Self::default_long_running_command_ceiling_seconds(),
             warning_threshold_percent: Self::default_warning_threshold_percent(),
             adaptive_decay_ratio: Self::default_decay_ratio(),
             adaptive_success_streak: Self::default_success_streak(),
@@ -62,6 +66,10 @@ impl TimeoutsConfig {
 
     const fn default_streaming_ceiling_seconds() -> u64 {
         600
+    }
+
+    const fn default_long_running_command_ceiling_seconds() -> u64 {
+        3_600
     }
 
     const fn default_warning_threshold_percent() -> u8 {
@@ -131,6 +139,13 @@ impl TimeoutsConfig {
             Self::MIN_CEILING_SECONDS
         );
 
+        ensure!(
+            self.long_running_command_ceiling_seconds == 0
+                || self.long_running_command_ceiling_seconds >= Self::MIN_CEILING_SECONDS,
+            "timeouts.long_running_command_ceiling_seconds must be at least {} seconds (or 0 to disable)",
+            Self::MIN_CEILING_SECONDS
+        );
+
         Ok(())
     }
 }
@@ -160,6 +175,7 @@ mod tests {
         assert_eq!(config.pty_ceiling_seconds, 300);
         assert_eq!(config.mcp_ceiling_seconds, 120);
         assert_eq!(config.streaming_ceiling_seconds, 600);
+        assert_eq!(config.long_running_command_ceiling_seconds, 3_600);
         assert_eq!(config.warning_threshold_percent, 80);
         assert!(config.validate().is_ok());
     }

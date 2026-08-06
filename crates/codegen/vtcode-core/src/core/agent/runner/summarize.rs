@@ -44,6 +44,8 @@ impl AgentRunner {
                 placement: MemoryEnvelopePlacement::BeforeLastUserOrSummary,
                 prefire: None,
                 auto_compact_suppressed: &mut session_state.auto_compact_suppressed,
+                force_compaction: false,
+                steering_update: None,
             },
             Arc::make_mut(&mut session_state.messages),
         )

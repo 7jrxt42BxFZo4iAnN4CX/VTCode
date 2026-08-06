@@ -1,13 +1,13 @@
 use super::*;
 use crate::agent::runloop::unified::planning_workflow::{
-    PlanArtifactError, PlanValidationReport, ValidatedPlanArtifact, build_plan_repair_directive,
-    emit_plan_ready_events, persist_plan_draft, persisted_plan_is_ready, validate_plan_content,
+    PlanArtifactError, ValidatedPlanArtifact, emit_plan_ready_events, persist_plan_draft, persisted_plan_is_ready,
+    plan_repair_directive_for_error, validate_plan_content,
 };
 use crate::agent::runloop::unified::ui_interaction_stream_helpers::render_compact_reasoning_block;
 
-const DENIED_INTERVIEW_PLAN_SYNTHESIS_RETRY_DIRECTIVE: &str = "Planning recovery: the interactive interview is unavailable, and the previous response did not contain a completed plan. Do not ask another question or offer approval yet. Emit exactly one compact `<proposed_plan>` now from the repository evidence already in this conversation; include Summary, numbered `Action -> files/symbols -> verify:` steps, Validation, and short Assumptions. Do not emit tool calls.";
+const DENIED_INTERVIEW_PLAN_SYNTHESIS_RETRY_DIRECTIVE: &str = "Planning recovery: the interactive interview is unavailable, and the previous response did not contain a completed plan. Do not ask another question or offer approval yet. Emit exactly one compact `<proposed_plan>` now from the repository evidence already in this conversation; include Summary, numbered steps in the form `Action -> files: [path] -> verify: [command]`, Validation, and short Assumptions. Do not emit tool calls.";
 
-const PLAN_PSEUDO_TOOL_CALL_REPROMPT_DIRECTIVE: &str = "Planning: the previous response contained tool-call markup that was not executed — XML tool-call text is not a tool call. If you need more repository evidence, invoke tools through the tool-call channel now. Otherwise present the completed plan as one compact `<proposed_plan>` (Summary, numbered `Action -> files/symbols -> verify:` steps, Validation, short Assumptions). Do not emit XML tool-call markup as text.";
+const PLAN_PSEUDO_TOOL_CALL_REPROMPT_DIRECTIVE: &str = "Planning: the previous response contained tool-call markup that was not executed — XML tool-call text is not a tool call. If you need more repository evidence, invoke tools through the tool-call channel now. Otherwise present the completed plan as one compact `<proposed_plan>` (Summary, numbered steps in the form `Action -> files: [path] -> verify: [command]`, Validation, short Assumptions). Do not emit XML tool-call markup as text.";
 
 /// Detect whether a planning-mode text response is a clarifying question
 /// posed to the user rather than a plan or research prose. The deterministic
@@ -41,14 +41,10 @@ impl<'a> TurnProcessingContext<'a> {
         tracing::warn!(target: "vtcode.planning_workflow", error = %error, "plan artifact rejected before approval");
         if allow_repair && self.plan_session.plan_validation_repair_allowed() {
             self.plan_session.mark_plan_validation_repair_used();
-            // Extract validator-owned feedback from the error so the model
-            // receives actionable, format-specific guidance instead of a
-            // generic "repair the plan" message.
-            let feedback = match &error {
-                PlanArtifactError::Invalid { report, .. } => report.repair_feedback(),
-                _ => PlanValidationReport::default().repair_feedback(),
-            };
-            self.push_system_message(build_plan_repair_directive(&feedback));
+            // The error→feedback mapping and one-shot policy prose live in the
+            // planning facade so this initial-plan rejection path and the
+            // later-turn approval rejection path share identical guidance.
+            self.push_system_message(plan_repair_directive_for_error(&error));
             return Ok(TurnHandlerOutcome::Continue);
         }
         self.renderer.line(

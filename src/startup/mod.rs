@@ -623,7 +623,13 @@ mod validation_tests {
     }
 
     fn save_workspace_config(workspace: &Path, config: &VTCodeConfig) {
-        ConfigManager::save_config_to_path(workspace.join("vtcode.toml"), config).expect("save workspace config");
+        let path = workspace.join("vtcode.toml");
+        ConfigManager::save_config_to_path(&path, config).expect("save workspace config");
+        let mut file = fs::OpenOptions::new()
+            .append(true)
+            .open(path)
+            .expect("open workspace config for isolation marker");
+        writeln!(file, "\n[workspace]\nuse_root_config = true").expect("write isolation marker");
     }
 
     #[test]
@@ -900,6 +906,8 @@ mod validation_tests {
         let env_guard = env_lock::lock();
         let temp = TempDir::new().expect("temp dir");
         let workspace = temp.path().to_path_buf();
+        fs::write(workspace.join("vtcode.toml"), "[workspace]\nuse_root_config = true\n")
+            .expect("write isolated workspace config");
 
         env_guard.set_var("OPENAI_API_KEY", "test");
         let args = Cli::parse_from([
@@ -921,6 +929,8 @@ mod validation_tests {
         let env_guard = env_lock::lock();
         let temp = TempDir::new().expect("temp dir");
         let workspace = temp.path().to_path_buf();
+        fs::write(workspace.join("vtcode.toml"), "[workspace]\nuse_root_config = true\n")
+            .expect("write isolated workspace config");
 
         env_guard.set_var("OPENAI_API_KEY", "test");
         let args = Cli::parse_from([
@@ -945,6 +955,8 @@ mod validation_tests {
         let env_guard = env_lock::lock();
         let temp = TempDir::new().expect("temp dir");
         let workspace = temp.path().to_path_buf();
+        fs::write(workspace.join("vtcode.toml"), "[workspace]\nuse_root_config = true\n")
+            .expect("write isolated workspace config");
 
         env_guard.set_var("OPENAI_API_KEY", "test");
         let args = Cli::parse_from([
@@ -968,6 +980,8 @@ mod validation_tests {
         let env_guard = env_lock::lock();
         let temp = TempDir::new().expect("temp dir");
         let workspace = temp.path().to_path_buf();
+        fs::write(workspace.join("vtcode.toml"), "[workspace]\nuse_root_config = true\n")
+            .expect("write isolated workspace config");
 
         env_guard.set_var("OPENAI_API_KEY", "test");
         let args = Cli::parse_from([

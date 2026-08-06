@@ -37,6 +37,14 @@ pub struct MessageMetadata {
     /// Origin of this message: "user_input", "llm_response", "tool_result",
     /// "system", or "synthetic".
     source: Option<String>,
+
+    /// Stable identity of the queued steering intent that produced this user
+    /// message, when the message was injected by runtime steering.
+    ///
+    /// This field is optional so older history files and ordinary user
+    /// messages remain wire-compatible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    intent_id: Option<String>,
 }
 
 impl MessageMetadata {
@@ -48,6 +56,7 @@ impl MessageMetadata {
             compression_status: CompressionStatus::Uncompressed,
             estimated_tokens,
             source: Some("user_input".into()),
+            intent_id: None,
         }
     }
 
@@ -59,6 +68,7 @@ impl MessageMetadata {
             compression_status: CompressionStatus::Uncompressed,
             estimated_tokens,
             source: Some("llm_response".into()),
+            intent_id: None,
         }
     }
 
@@ -70,6 +80,7 @@ impl MessageMetadata {
             compression_status: CompressionStatus::Uncompressed,
             estimated_tokens,
             source: Some("tool_result".into()),
+            intent_id: None,
         }
     }
 
@@ -81,6 +92,7 @@ impl MessageMetadata {
             compression_status: CompressionStatus::Uncompressed,
             estimated_tokens,
             source: Some("system".into()),
+            intent_id: None,
         }
     }
 
@@ -92,7 +104,21 @@ impl MessageMetadata {
             compression_status: CompressionStatus::Uncompressed,
             estimated_tokens,
             source: Some("synthetic".into()),
+            intent_id: None,
         }
+    }
+
+    /// Associate this metadata with a queued steering intent.
+    #[must_use]
+    pub fn with_intent_id(mut self, intent_id: impl Into<String>) -> Self {
+        self.intent_id = Some(intent_id.into());
+        self
+    }
+
+    /// Return the steering intent identity associated with this message.
+    #[must_use]
+    pub fn intent_id(&self) -> Option<&str> {
+        self.intent_id.as_deref()
     }
 
     /// Mark this message as compressed, recording the original and new token counts.
@@ -180,6 +206,7 @@ mod tests {
         assert_eq!(meta.compression_status, CompressionStatus::Uncompressed);
         assert_eq!(meta.estimated_tokens, 50);
         assert_eq!(meta.source.as_deref(), Some("user_input"));
+        assert_eq!(meta.intent_id(), None);
     }
 
     #[test]
@@ -220,5 +247,17 @@ mod tests {
         let json = serde_json::to_string(&status).unwrap();
         let deserialized: CompressionStatus = serde_json::from_str(&json).unwrap();
         assert_eq!(status, deserialized);
+    }
+
+    #[test]
+    fn test_intent_id_is_optional_and_serde_compatible() {
+        let meta = MessageMetadata::user_input(1000, 50).with_intent_id("intent-1");
+        let json = serde_json::to_string(&meta).unwrap();
+        let restored: MessageMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.intent_id(), Some("intent-1"));
+
+        let legacy = r#"{"timestamp":1000,"importance_score":0.5,"compression_status":"uncompressed","estimated_tokens":50,"source":"user_input"}"#;
+        let restored: MessageMetadata = serde_json::from_str(legacy).unwrap();
+        assert_eq!(restored.intent_id(), None);
     }
 }

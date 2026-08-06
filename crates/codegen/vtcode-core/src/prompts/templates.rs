@@ -46,10 +46,10 @@ impl PromptTemplates {
     pub fn tool_usage_prompt_for_profile(profile: ResolvedShellPromptProfile) -> String {
         match profile {
             ResolvedShellPromptProfile::UnixLike => {
-                "Tools: use exec_command.cmd for Unix-like shell commands, including `ls`, `rg`, `find`, `cat`, `sed`, `awk`, build tools, test tools, and validation; use write_stdin for active command sessions; use apply_patch for file edits when exposed by the model. VT Code does not rewrite GNU flags for macOS BSD tools.".to_string()
+                "Tools: use exec_command.cmd for Unix-like shell commands, including `ls`, `rg`, `find`, `cat`, `sed`, `awk`, build tools, test tools, and validation; use write_stdin for active command sessions and action `wait` for long builds instead of repeated polls; use apply_patch for file edits when exposed by the model. VT Code does not rewrite GNU flags for macOS BSD tools.".to_string()
             }
             ResolvedShellPromptProfile::PowerShell => {
-                "Tools: use exec_command.cmd for native PowerShell commands, including `Get-ChildItem`, `Select-String`, `Get-Content`, `Where-Object`, build tools, test tools, and validation; use write_stdin for active command sessions; use apply_patch for file edits when exposed by the model. Use WSL for Unix-like workflows on Windows; VT Code does not translate Unix command flags to PowerShell.".to_string()
+                "Tools: use exec_command.cmd for native PowerShell commands, including `Get-ChildItem`, `Select-String`, `Get-Content`, `Where-Object`, build tools, test tools, and validation; use write_stdin for active command sessions and action `wait` for long builds instead of repeated polls; use apply_patch for file edits when exposed by the model. Use WSL for Unix-like workflows on Windows; VT Code does not translate Unix command flags to PowerShell.".to_string()
             }
         }
     }

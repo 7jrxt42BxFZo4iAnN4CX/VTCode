@@ -79,7 +79,13 @@ impl ToolRegistry {
         // These legacy direct mutation/session surfaces are never admitted
         // during planning. Read-only command/session exploration remains
         // available through argument-validated command tools.
-        if matches!(canonical, tools::WRITE_STDIN | tools::APPLY_PATCH) {
+        if canonical == tools::APPLY_PATCH
+            || (canonical == tools::WRITE_STDIN
+                && !matches!(
+                    crate::tools::command_args::write_stdin_dispatch(args),
+                    Ok(crate::tools::command_args::WriteStdinDispatch::Wait)
+                ))
+        {
             return false;
         }
 
@@ -215,6 +221,9 @@ mod tests {
                 .is_planning_active_allowed(tools::APPLY_PATCH, &json!({"patch": "*** Begin Patch\n*** End Patch"}))
         );
         assert!(!registry.is_planning_active_allowed(tools::WRITE_STDIN, &json!({"session_id": "run-1", "chars": ""})));
+        assert!(
+            registry.is_planning_active_allowed(tools::WRITE_STDIN, &json!({"action": "wait", "session_id": "run-1"}))
+        );
         Ok(())
     }
 

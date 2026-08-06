@@ -163,12 +163,12 @@ const RECOVERY_TOOL_CALL_RETRY_DIRECTIVE: &str = "Recovery: tools are disabled, 
 /// Without this, the model treats the tool-free recovery pass as another
 /// research step and emits `<invoke>`/`<tool_call>` markup instead of a plan
 /// (observed in checkpoints turn_648 and turn_650).
-const POST_TOOL_RECOVERY_REASON_PLAN_MODE: &str = "Planning research completed, but the final plan synthesis failed (transient provider error). Tools are disabled. Produce the `<proposed_plan>` NOW from the context and tool outputs already in this conversation: keep each step to a single line (`Action -> files/symbols -> verify:`), prefer file:symbol references, and do NOT emit any tool calls or tool-call markup.";
+const POST_TOOL_RECOVERY_REASON_PLAN_MODE: &str = "Planning research completed, but the final plan synthesis failed (transient provider error). Tools are disabled. Produce the `<proposed_plan>` NOW from the context and tool outputs already in this conversation: keep each step to a single line (`Action -> files: [path] -> verify: [command]`), prefer file:symbol references, and do NOT emit any tool calls or tool-call markup.";
 /// Plan-mode variant of [`RECOVERY_TOOL_CALL_RETRY_DIRECTIVE`]. The generic
 /// directive only says \"respond with plain text\"; in plan mode the agent must
 /// instead finalize the `<proposed_plan>` from gathered research, otherwise it
 /// loops emitting `<invoke>` research calls during the tool-free recovery pass.
-const RECOVERY_TOOL_CALL_RETRY_DIRECTIVE_PLAN_MODE: &str = "Recovery: in plan mode, tools are disabled and you must finalize the plan. Emit ONLY the `<proposed_plan>` now from the research already gathered in this conversation — each step on a single line (`Action -> files/symbols -> verify:`), no prose, no tool calls, and no `<tool_call>`/`<invoke>`/`<function=...>` markup.";
+const RECOVERY_TOOL_CALL_RETRY_DIRECTIVE_PLAN_MODE: &str = "Recovery: in plan mode, tools are disabled and you must finalize the plan. Emit ONLY the `<proposed_plan>` now from the research already gathered in this conversation — each step on a single line (`Action -> files: [path] -> verify: [command]`), no prose, no tool calls, and no `<tool_call>`/`<invoke>`/`<function=...>` markup.";
 const APPROVED_PLAN_STALE_PAUSE_RECOVERY_DIRECTIVE: &str = "Approved-plan execution recovery: the previous response incorrectly claimed that tools were disabled or implementation was paused. The planning approval is complete and the write-capable build agent is active. Continue with the next concrete implementation action now; use task_tracker and execute an edit or verification command. Do not respond with a pause/status message and do not ask for another confirmation.";
 
 /// Count how many assistant text responses the model has emitted in this
@@ -691,6 +691,11 @@ pub(crate) async fn run_turn_loop(
 
         let active_model = ctx.config.model.clone();
         let harness_snapshot = ctx.tool_registry.harness_context_snapshot();
+        let steering_update = vtcode_core::compaction::memory_envelope::SessionMemoryEnvelopeUpdate {
+            pending_intents: Some(ctx.runtime_steering.pending_follow_up_intents_snapshot()),
+            applied_intent_ids: ctx.runtime_steering.applied_follow_up_intent_ids().iter().cloned().collect(),
+            ..Default::default()
+        };
         match crate::agent::runloop::unified::turn::compaction::maybe_auto_compact_history(
             crate::agent::runloop::unified::turn::compaction::CompactionContext::new(
                 ctx.provider_client.as_ref(),
@@ -706,7 +711,8 @@ pub(crate) async fn run_turn_loop(
                 working_history,
                 ctx.session_stats,
                 ctx.context_manager,
-            ),
+            )
+            .with_steering_update(steering_update),
         )
         .await
         {

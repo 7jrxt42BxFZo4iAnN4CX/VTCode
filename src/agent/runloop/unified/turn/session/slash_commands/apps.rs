@@ -708,6 +708,8 @@ fn persist_editor_workflow_choices(workspace: &Path, choices: EditorWorkflowChoi
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use tempfile::tempdir;
 
@@ -762,6 +764,8 @@ mod tests {
     #[test]
     fn persist_editor_workflow_choices_writes_preferred_editor_fields() {
         let workspace = tempdir().expect("workspace");
+        fs::write(workspace.path().join("vtcode.toml"), "[workspace]\nuse_root_config = true\n")
+            .expect("write isolated workspace config");
 
         persist_editor_workflow_choices(
             workspace.path(),

@@ -1,6 +1,9 @@
 use crate::core::agent::events::{EventSink, SharedLifecycleEmitter};
 use crate::core::agent::session::AgentSessionState;
-use crate::core::agent::steering::SteeringMessage;
+use crate::core::agent::steering::{
+    FollowUpQueueFull, MAX_APPLIED_FOLLOW_UP_INTENT_IDS, MAX_QUEUED_FOLLOW_UP_INTENTS, QueuedFollowUpIntent,
+    SteeringMessage,
+};
 use crate::exec::events::{ThreadEvent, ToolCallStatus, ToolOutcome};
 use crate::llm::provider::{
     AssistantPhase, FinishReason, LLMProvider, LLMRequest, LLMResponse, NormalizedStreamEvent, ToolCall,
@@ -10,6 +13,7 @@ use crate::llm::providers::gemini::wire::{Content, Part};
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::StreamExt;
+use std::collections::HashSet;
 use std::collections::VecDeque;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::error::TryRecvError;
@@ -185,7 +189,9 @@ impl RuntimeModelAdapter for ProviderRuntimeModelAdapter<'_> {
 /// Manages steering messages (stop, pause, resume, follow-up inputs) for a running agent turn.
 pub struct RuntimeSteering {
     steering_receiver: Option<UnboundedReceiver<SteeringMessage>>,
-    queued_follow_up_inputs: VecDeque<String>,
+    queued_follow_up_inputs: VecDeque<QueuedFollowUpIntent>,
+    in_flight_follow_up_intents: VecDeque<QueuedFollowUpIntent>,
+    applied_follow_up_intent_ids: VecDeque<String>,
 }
 
 impl Default for RuntimeSteering {
@@ -199,6 +205,8 @@ impl RuntimeSteering {
         Self {
             steering_receiver,
             queued_follow_up_inputs: VecDeque::new(),
+            in_flight_follow_up_intents: VecDeque::new(),
+            applied_follow_up_intent_ids: VecDeque::new(),
         }
     }
 
@@ -219,16 +227,89 @@ impl RuntimeSteering {
 
     /// Dequeue the next follow-up user input, if any are pending.
     pub fn pop_follow_up_input(&mut self) -> Option<String> {
+        self.pop_follow_up_intent().map(|intent| intent.into_parts().1)
+    }
+
+    /// Dequeue the next identified follow-up intent.
+    pub fn pop_follow_up_intent(&mut self) -> Option<QueuedFollowUpIntent> {
         self.queued_follow_up_inputs.pop_front()
     }
 
-    /// Queue a follow-up user input to be consumed after the current turn completes.
-    pub fn queue_follow_up_input(&mut self, input: String) {
-        self.queued_follow_up_inputs.push_back(input);
+    /// Queue a follow-up user input. The boolean is `false` when the FIFO is
+    /// full; callers that need the error detail should use the `try_` variant.
+    pub fn queue_follow_up_input(&mut self, input: String) -> bool {
+        match self.try_queue_follow_up_input(input) {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!(%error, "Rejected follow-up steering intent");
+                false
+            }
+        }
+    }
+
+    /// Queue a follow-up user input and return an explicit overflow error.
+    pub fn try_queue_follow_up_input(&mut self, input: String) -> Result<(), FollowUpQueueFull> {
+        self.try_queue_follow_up_intent(QueuedFollowUpIntent::new(input))
+    }
+
+    /// Queue a recovered intent without changing its stable identity.
+    pub fn try_queue_follow_up_intent(&mut self, intent: QueuedFollowUpIntent) -> Result<(), FollowUpQueueFull> {
+        if self.queued_follow_up_inputs.len() + self.in_flight_follow_up_intents.len() >= MAX_QUEUED_FOLLOW_UP_INTENTS {
+            return Err(FollowUpQueueFull { capacity: MAX_QUEUED_FOLLOW_UP_INTENTS });
+        }
+        self.queued_follow_up_inputs.push_back(intent);
+        Ok(())
+    }
+
+    /// Mark an intent as applied after its tagged user message is stored.
+    pub fn acknowledge_follow_up_intent(&mut self, intent_id: impl Into<String>) {
+        if self.applied_follow_up_intent_ids.len() >= MAX_APPLIED_FOLLOW_UP_INTENT_IDS {
+            self.applied_follow_up_intent_ids.pop_front();
+        }
+        self.applied_follow_up_intent_ids.push_back(intent_id.into());
+    }
+
+    #[must_use]
+    pub fn applied_follow_up_intent_ids(&self) -> &VecDeque<String> {
+        &self.applied_follow_up_intent_ids
+    }
+
+    #[must_use]
+    pub fn pending_follow_up_intents(&self) -> &VecDeque<QueuedFollowUpIntent> {
+        &self.queued_follow_up_inputs
+    }
+
+    /// Return all accepted intents that are not yet represented by durable
+    /// session history, including the intent currently being processed.
+    #[must_use]
+    pub fn pending_follow_up_intents_snapshot(&self) -> Vec<QueuedFollowUpIntent> {
+        self.queued_follow_up_inputs
+            .iter()
+            .chain(self.in_flight_follow_up_intents.iter())
+            .cloned()
+            .collect()
+    }
+
+    /// Mark intents whose tagged user messages have been durably checkpointed
+    /// as applied. Until this is called, the intents remain in the pending
+    /// snapshot so a crash cannot lose them between history and envelope IO.
+    pub fn acknowledge_durable_follow_up_intents(&mut self) {
+        while let Some(intent) = self.in_flight_follow_up_intents.pop_front() {
+            self.acknowledge_follow_up_intent(intent.id());
+        }
+    }
+
+    /// Release intents after their tagged messages have been applied when no
+    /// history archive exists. This frees FIFO capacity for the in-process
+    /// session without adding applied IDs that could falsely imply crash
+    /// durability.
+    pub fn release_in_flight_follow_up_intents_without_persistence(&mut self) {
+        self.in_flight_follow_up_intents.clear();
     }
 
     pub fn clear_pending_follow_up_inputs(&mut self) {
         self.queued_follow_up_inputs.clear();
+        self.in_flight_follow_up_intents.clear();
     }
 
     /// Poll the steering channel for control signals during the current turn.
@@ -265,7 +346,9 @@ impl RuntimeSteering {
                     paused = true;
                 }
                 Ok(SteeringMessage::FollowUpInput(input)) => {
-                    self.queued_follow_up_inputs.push_back(input);
+                    if let Err(error) = self.try_queue_follow_up_input(input) {
+                        tracing::warn!(%error, "Rejected follow-up steering intent");
+                    }
                 }
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => {
                     return if paused {
@@ -288,7 +371,9 @@ impl RuntimeSteering {
                 Some(SteeringMessage::Resume) => return RuntimeControl::Continue,
                 Some(SteeringMessage::SteerStop) => return RuntimeControl::StopRequested,
                 Some(SteeringMessage::FollowUpInput(input)) => {
-                    self.queued_follow_up_inputs.push_back(input);
+                    if let Err(error) = self.try_queue_follow_up_input(input) {
+                        tracing::warn!(%error, "Rejected follow-up steering intent");
+                    }
                 }
                 Some(SteeringMessage::Pause) => {}
                 None => return RuntimeControl::Continue,
@@ -551,10 +636,15 @@ impl AgentRuntime {
         self.steering.has_pending_follow_up_inputs()
     }
 
-    /// Pop the next queued follow-up input and add it as a user message, returning the input text.
+    /// Pop the next queued follow-up input, add a tagged user message, and
+    /// retain the intent until the enclosing history checkpoint succeeds.
     pub fn run_until_idle(&mut self) -> Option<String> {
-        let input = self.steering.pop_follow_up_input()?;
-        self.state.add_user_message(input.clone());
+        let intent = self.steering.pop_follow_up_intent()?;
+        let (intent_id, input) = intent.into_parts();
+        self.state.add_user_message_with_intent(input.clone(), Some(intent_id.clone()));
+        self.steering
+            .in_flight_follow_up_intents
+            .push_back(QueuedFollowUpIntent::from_parts(intent_id, input.clone()));
         Some(input)
     }
 
@@ -562,7 +652,50 @@ impl AgentRuntime {
     /// iteration, causing the session loop to start a new turn with this input
     /// without waiting for the user to type anything.
     pub fn queue_follow_up_input(&mut self, input: String) {
-        self.steering.queue_follow_up_input(input);
+        let _ = self.steering.queue_follow_up_input(input);
+    }
+
+    /// Queue a follow-up input while exposing FIFO overflow to the caller.
+    pub fn try_queue_follow_up_input(&mut self, input: String) -> Result<(), FollowUpQueueFull> {
+        self.steering.try_queue_follow_up_input(input)
+    }
+
+    /// Restore the durable steering snapshot after loading session history.
+    /// Pending intents already represented by a tagged user message, or
+    /// already in the applied-ID window, are skipped; identical text with a
+    /// different ID is intentionally retained.
+    pub fn restore_follow_up_state(
+        &mut self,
+        pending_intents: impl IntoIterator<Item = QueuedFollowUpIntent>,
+        applied_intent_ids: impl IntoIterator<Item = String>,
+    ) -> Result<(), FollowUpQueueFull> {
+        let mut applied = HashSet::new();
+        for intent_id in applied_intent_ids {
+            if applied.insert(intent_id.clone()) {
+                self.steering.acknowledge_follow_up_intent(intent_id);
+            }
+        }
+        let represented: HashSet<String> = self
+            .state
+            .messages
+            .iter()
+            .filter_map(|message| message.metadata.as_ref().and_then(|metadata| metadata.intent_id()))
+            .map(ToOwned::to_owned)
+            .collect();
+
+        for intent in pending_intents {
+            if applied.contains(intent.id()) || represented.contains(intent.id()) {
+                continue;
+            }
+            self.steering.try_queue_follow_up_intent(intent)?;
+        }
+        Ok(())
+    }
+
+    /// Access the intent IDs acknowledged by this runtime for checkpointing.
+    #[must_use]
+    pub fn applied_follow_up_intent_ids(&self) -> &VecDeque<String> {
+        self.steering.applied_follow_up_intent_ids()
     }
 
     /// Drop follow-up inputs belonging to the discarded execution context.
@@ -967,6 +1100,91 @@ mod tests {
             Some("second".to_string())
         );
         assert!(!runtime.has_pending_follow_up_inputs());
+    }
+
+    #[test]
+    fn follow_up_queue_has_bounded_identity_preserving_fifo() {
+        let mut steering = RuntimeSteering::default();
+        for index in 0..MAX_QUEUED_FOLLOW_UP_INTENTS {
+            assert!(steering.try_queue_follow_up_input(format!("input-{index}")).is_ok());
+        }
+        let error = steering
+            .try_queue_follow_up_input("overflow".to_string())
+            .expect_err("overflow must be reported");
+        assert_eq!(error.capacity, MAX_QUEUED_FOLLOW_UP_INTENTS);
+
+        let first = steering.pop_follow_up_intent().expect("first intent should exist");
+        let second = steering.pop_follow_up_intent().expect("second intent should exist");
+        assert_ne!(first.id(), second.id());
+        assert_eq!(first.text(), "input-0");
+        assert_eq!(second.text(), "input-1");
+    }
+
+    #[test]
+    fn run_until_idle_tags_and_acknowledges_follow_up_intent() {
+        let state = AgentSessionState::new("session".to_string(), 16, 4, 128_000);
+        let mut runtime = AgentRuntime::new(state, None, None);
+        runtime
+            .try_queue_follow_up_input("steer me".to_string())
+            .expect("intent should be accepted");
+
+        assert_eq!(runtime.run_until_idle().as_deref(), Some("steer me"));
+        let message = runtime.state.messages.last().expect("tagged message should exist");
+        let intent_id = message
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.intent_id())
+            .expect("follow-up message should carry intent identity")
+            .to_string();
+        assert!(runtime.applied_follow_up_intent_ids().is_empty());
+        assert_eq!(runtime.steering.pending_follow_up_intents_snapshot().len(), 1);
+        runtime.steering.acknowledge_durable_follow_up_intents();
+        assert_eq!(runtime.applied_follow_up_intent_ids().back(), Some(&intent_id));
+    }
+
+    #[test]
+    fn recovery_replays_only_unrepresented_intent_ids() {
+        let pending = QueuedFollowUpIntent::from_parts("intent-pending", "finish the request");
+        let same_text_different_id = QueuedFollowUpIntent::from_parts("intent-distinct", pending.text());
+
+        let mut interrupted =
+            AgentRuntime::new(AgentSessionState::new("session".to_string(), 16, 4, 128_000), None, None);
+        interrupted
+            .restore_follow_up_state([pending.clone(), same_text_different_id.clone()], Vec::new())
+            .expect("unwritten intents should be recoverable");
+        assert_eq!(interrupted.steering.pending_follow_up_intents().len(), 2);
+        assert_eq!(interrupted.steering.pending_follow_up_intents()[0], pending);
+        assert_eq!(interrupted.steering.pending_follow_up_intents()[1], same_text_different_id);
+
+        let mut restarted_state = AgentSessionState::new("session".to_string(), 16, 4, 128_000);
+        restarted_state.add_user_message_with_intent(pending.text().to_string(), Some(pending.id().to_string()));
+        let mut restarted = AgentRuntime::new(restarted_state, None, None);
+        restarted
+            .restore_follow_up_state([pending.clone(), same_text_different_id], Vec::new())
+            .expect("distinct pending intent should fit the recovery queue");
+
+        assert_eq!(restarted.steering.pending_follow_up_intents().len(), 1);
+        assert_eq!(restarted.steering.pending_follow_up_intents()[0].id(), "intent-distinct");
+    }
+
+    #[test]
+    fn no_archive_release_reuses_follow_up_capacity_without_applied_ids() {
+        let state = AgentSessionState::new("session".to_string(), 16, 4, 128_000);
+        let mut runtime = AgentRuntime::new(state, None, None);
+        for index in 0..MAX_QUEUED_FOLLOW_UP_INTENTS {
+            runtime
+                .try_queue_follow_up_input(format!("input-{index}"))
+                .expect("intent should be accepted");
+        }
+
+        for _ in 0..MAX_QUEUED_FOLLOW_UP_INTENTS {
+            runtime.run_until_idle().expect("queued intent should become a user message");
+        }
+        assert!(runtime.try_queue_follow_up_input("overflow".to_string()).is_err());
+
+        runtime.steering.release_in_flight_follow_up_intents_without_persistence();
+        assert!(runtime.try_queue_follow_up_input("after-release".to_string()).is_ok());
+        assert!(runtime.applied_follow_up_intent_ids().is_empty());
     }
 
     #[tokio::test]

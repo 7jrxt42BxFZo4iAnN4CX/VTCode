@@ -27,6 +27,10 @@ pub(crate) struct SystemPromptParams {
 struct ContextStats {
     /// Current prompt-side token pressure used for compaction checks.
     total_token_usage: usize,
+    /// Set when pressure crosses the soft compaction threshold. The flag is
+    /// intentionally separate from token usage so a boundary can consume it
+    /// without changing the provider-reported accounting.
+    compaction_pending: bool,
 }
 
 /// Simplified ContextManager without context trim and compaction functionality
@@ -198,6 +202,32 @@ impl ContextManager {
         self.cached_stats.total_token_usage
     }
 
+    /// Derive the internal soft threshold from the effective hard threshold.
+    /// This is deliberately not configurable: it only schedules work at a
+    /// safe boundary and must not change the request/cache shape.
+    pub(crate) fn compaction_soft_threshold(hard_threshold: Option<usize>) -> Option<usize> {
+        hard_threshold.map(|threshold| threshold.saturating_sub(threshold / 10).max(1))
+    }
+
+    pub(crate) fn mark_compaction_pending_at_soft_threshold(&mut self, hard_threshold: Option<usize>) -> bool {
+        let Some(soft_threshold) = Self::compaction_soft_threshold(hard_threshold) else {
+            return false;
+        };
+        if self.current_token_usage() < soft_threshold {
+            return false;
+        }
+        self.cached_stats.compaction_pending = true;
+        true
+    }
+
+    pub(crate) fn compaction_pending(&self) -> bool {
+        self.cached_stats.compaction_pending
+    }
+
+    pub(crate) fn take_compaction_pending(&mut self) -> bool {
+        std::mem::take(&mut self.cached_stats.compaction_pending)
+    }
+
     pub(crate) fn context_usage_percent(&self, max_context_tokens: usize) -> u8 {
         if max_context_tokens == 0 {
             return 0;
@@ -222,6 +252,7 @@ impl ContextManager {
 
     /// Cap prompt-pressure tracking after local history compaction.
     pub(crate) fn cap_token_usage_after_compaction(&mut self, threshold: Option<usize>) {
+        self.cached_stats.compaction_pending = false;
         self.cached_stats.total_token_usage = match threshold {
             Some(limit) if limit > 0 => self.cached_stats.total_token_usage.min(limit),
             Some(_) | None => 0,

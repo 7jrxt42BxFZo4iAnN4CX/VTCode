@@ -53,6 +53,44 @@ pub fn redact_secrets(input: String) -> String {
     r4.into_owned()
 }
 
+/// Incrementally redact streamed output without retaining the full stream.
+///
+/// A bounded suffix is held between chunks so a secret split at an IO
+/// boundary is still matched by the same redaction rules as a complete line.
+#[derive(Debug, Default)]
+pub struct StreamingSecretRedactor {
+    pending: String,
+}
+
+const STREAMING_REDACTION_CARRY_BYTES: usize = 1_024;
+
+impl StreamingSecretRedactor {
+    /// Redact and return the safe prefix of `chunk`. The returned string may
+    /// be empty while the bounded carry window is being filled.
+    pub fn push(&mut self, chunk: &str) -> String {
+        self.pending.push_str(chunk);
+        if self.pending.len() <= STREAMING_REDACTION_CARRY_BYTES {
+            if !self.pending.contains('\n') {
+                return String::new();
+            }
+        }
+
+        let carry_split = self.pending.len().saturating_sub(STREAMING_REDACTION_CARRY_BYTES);
+        let line_split = self.pending.rfind('\n').map(|index| index + 1).unwrap_or(0);
+        let mut split_at = carry_split.max(line_split);
+        while split_at > 0 && !self.pending.is_char_boundary(split_at) {
+            split_at -= 1;
+        }
+        let prefix: String = self.pending.drain(..split_at).collect();
+        redact_secrets(prefix)
+    }
+
+    /// Redact and return the final carried suffix.
+    pub fn finish(self) -> String {
+        redact_secrets(self.pending)
+    }
+}
+
 #[allow(clippy::panic)]
 fn compile_regex(pattern: &str) -> Regex {
     match Regex::new(pattern) {
@@ -138,5 +176,16 @@ mod tests {
         let input = "Hello world, this is normal text".to_string();
         let output = redact_secrets(input);
         assert_eq!(output, "Hello world, this is normal text");
+    }
+
+    #[test]
+    fn redacts_secrets_split_across_stream_chunks() {
+        let mut redactor = StreamingSecretRedactor::default();
+        let mut output = redactor.push("password=superse");
+        output.push_str(&redactor.push("cretvalue\n"));
+        output.push_str(&redactor.finish());
+
+        assert_eq!(output, "password=[REDACTED_SECRET]\n");
+        assert!(!output.contains("supersecretvalue"));
     }
 }

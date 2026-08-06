@@ -11,6 +11,7 @@ const COMMAND_VALUE_TYPE_ERROR: &str = "command must be a string or array of str
 pub(crate) enum WriteStdinDispatch {
     Write,
     Poll,
+    Wait,
 }
 
 impl WriteStdinDispatch {
@@ -19,12 +20,20 @@ impl WriteStdinDispatch {
         match self {
             Self::Write => "write",
             Self::Poll => "poll",
+            Self::Wait => "wait",
         }
     }
 }
 
 pub(crate) fn write_stdin_dispatch(args: &Value) -> Result<WriteStdinDispatch, &'static str> {
     let payload = args.as_object().ok_or("write_stdin requires a JSON object")?;
+    if payload
+        .get("action")
+        .and_then(Value::as_str)
+        .is_some_and(|action| action.eq_ignore_ascii_case("wait"))
+    {
+        return Ok(WriteStdinDispatch::Wait);
+    }
     let chars = payload
         .get("chars")
         .and_then(Value::as_str)
@@ -184,7 +193,7 @@ pub fn command_session_missing_required_args(args: &Value) -> Vec<&'static str> 
         if interactive_input_text(args).is_none() {
             missing.push("input or chars or text");
         }
-    } else if command_session_action_in(args, &["poll", "continue", "close"]) {
+    } else if command_session_action_in(args, &["poll", "wait", "continue", "close"]) {
         if session_id_text(args).is_none() {
             missing.push("session_id");
         }
@@ -606,6 +615,14 @@ mod tests {
     fn write_stdin_dispatch_distinguishes_write_from_poll() {
         assert_eq!(write_stdin_dispatch(&json!({"chars": ""})), Ok(WriteStdinDispatch::Poll));
         assert_eq!(write_stdin_dispatch(&json!({"chars": "  status\n"})), Ok(WriteStdinDispatch::Write));
+    }
+
+    #[test]
+    fn write_stdin_dispatch_accepts_explicit_wait_without_chars() {
+        assert_eq!(
+            write_stdin_dispatch(&json!({"action": "wait", "session_id": "run-1"})),
+            Ok(WriteStdinDispatch::Wait)
+        );
     }
 
     #[test]

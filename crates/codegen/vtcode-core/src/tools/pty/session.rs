@@ -167,6 +167,11 @@ pub(super) struct PtySessionHandle {
     pub(super) metadata: VTCodePtySession,
     pub(super) last_input: Mutex<Option<CommandEchoState>>,
     pub(super) _zsh_exec_bridge: Option<crate::zsh_exec_bridge::ZshExecBridgeSession>,
+    pub(super) output_total_bytes: Arc<std::sync::atomic::AtomicU64>,
+    pub(super) output_spool_failed: Arc<AtomicBool>,
+    pub(super) output_spool_ready: Arc<AtomicBool>,
+    pub(super) output_spool_finished: Arc<AtomicBool>,
+    pub(super) output_spool_path: String,
 }
 
 impl PtySessionHandle {
@@ -329,7 +334,9 @@ impl PtySessionHandle {
     /// AND the reader thread has finished pushing data.
     pub(super) fn is_output_drained(&self) -> bool {
         let scrollback = self.scrollback.lock();
-        !scrollback.has_pending() && self.reader_completed.load(Ordering::Acquire)
+        !scrollback.has_pending()
+            && self.reader_completed.load(Ordering::Acquire)
+            && self.output_spool_finished.load(Ordering::Acquire)
     }
 
     fn strip_command_echo(&self, text: String) -> String {

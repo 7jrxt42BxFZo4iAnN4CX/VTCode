@@ -33,7 +33,7 @@ use super::execution_kernel;
 use super::normalize_tool_output;
 use super::{
     ExecSettlementMode, ExecutionPolicySnapshot, ToolErrorType, ToolExecutionError, ToolExecutionOutcome,
-    ToolExecutionRecord, ToolExecutionRequest, ToolHandler, ToolRegistry,
+    ToolExecutionRecord, ToolExecutionRequest, ToolHandler, ToolRegistry, ToolTimeoutCategory,
 };
 use vtcode_config::constants::execution::{LOOP_THROTTLE_MAX_MS, LOOP_THROTTLE_REGISTRY_BASE_MS};
 
@@ -500,7 +500,8 @@ impl ToolRegistry {
         if tool_name == tools::WRITE_STDIN {
             return matches!(
                 crate::tools::command_args::write_stdin_dispatch(args),
-                Ok(crate::tools::command_args::WriteStdinDispatch::Poll)
+                Ok(crate::tools::command_args::WriteStdinDispatch::Poll
+                    | crate::tools::command_args::WriteStdinDispatch::Wait,)
             );
         }
 
@@ -947,7 +948,7 @@ impl ToolRegistry {
             return Err(anyhow!(error_msg).context("tool denied by circuit breaker"));
         }
 
-        let timeout_category = self.timeout_category_for(&tool_name).await;
+        let timeout_category = self.timeout_category_for_args(&tool_name, args).await;
 
         if let Some(backoff) = self.should_circuit_break(timeout_category) {
             warn!(
@@ -1477,7 +1478,16 @@ impl ToolRegistry {
         // Execute the appropriate tool based on its type
         // The _pty_guard will automatically decrement the session count when dropped
         let execution_started_at = Instant::now();
-        let effective_timeout = self.effective_timeout(timeout_category);
+        // Explicit command waits enforce their own deadline inside the command
+        // session executor. Do not wrap them in a second equal deadline here:
+        // response draining and settlement need a little time after the child
+        // wait returns, and an outer timeout must not terminate a reusable
+        // in-progress session.
+        let effective_timeout = if timeout_category == ToolTimeoutCategory::LongRunningCommand {
+            None
+        } else {
+            self.effective_timeout(timeout_category)
+        };
         let effective_timeout_ms = effective_timeout.map(|d| d.as_millis() as u64);
 
         let fail_open = self.optimization_config.tool_registry.middleware_fail_open;
@@ -1537,6 +1547,9 @@ impl ToolRegistry {
                     crate::tools::command_args::WriteStdinDispatch::Poll => {
                         self.execute_command_session_poll_for_tool(exec_args, exec_settlement_mode, tools::WRITE_STDIN)
                             .await
+                    }
+                    crate::tools::command_args::WriteStdinDispatch::Wait => {
+                        self.execute_command_session_wait(exec_args).await
                     }
                 }
             } else if let Some(registration) = self.inventory.registration_for(&tool_name) {

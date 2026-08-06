@@ -1,7 +1,7 @@
 mod memory_envelope;
 mod recovery_preview;
 
-pub(crate) use self::memory_envelope::refresh_session_memory_envelope;
+pub(crate) use self::memory_envelope::{refresh_session_memory_envelope, refresh_session_memory_envelope_async};
 pub(crate) use self::recovery_preview::build_recovery_context_previews_with_workspace;
 
 pub(crate) use vtcode_core::compaction::memory_envelope::{
@@ -9,9 +9,12 @@ pub(crate) use vtcode_core::compaction::memory_envelope::{
     build_session_memory_envelope, build_zero_cost_summarized_fork_history, configured_retained_user_messages,
     dedup_repeated_file_reads_for_local_compaction, default_memory_envelope_path_for_session,
     derive_continuity_summary, effective_compaction_threshold, has_latest_memory_envelope,
-    insert_memory_envelope_message, latest_memory_envelope_path_for_session, load_latest_memory_envelope,
-    local_compaction_config, persist_memory_envelope, read_task_tracker_snapshot, resolve_compaction_threshold,
+    insert_memory_envelope_message, latest_memory_envelope_path_for_session,
+    latest_memory_envelope_path_for_session_async, load_latest_memory_envelope, load_latest_memory_envelope_async,
+    local_compaction_config, persist_memory_envelope_async, persist_memory_envelope_async_with_update,
+    read_task_tracker_snapshot, read_task_tracker_snapshot_async, resolve_compaction_threshold,
     should_persist_memory_envelope, strip_existing_memory_envelope, write_memory_envelope_to_path,
+    write_memory_envelope_to_path_async,
 };
 
 // Test-only symbols referenced by the runloop compaction test suite.
@@ -24,7 +27,6 @@ pub(crate) use vtcode_core::persistent_memory::{GroundedFactRecord, dedup_latest
 
 use anyhow::Result;
 use serde_json::{Value, json};
-use std::fs;
 use std::path::{Path, PathBuf};
 use vtcode_commons::preview::{condense_text_bytes, tail_preview_text};
 use vtcode_core::compaction::auto::{AutoCompactionInput, auto_compact_messages};
@@ -102,6 +104,7 @@ pub(crate) struct CompactionState<'a> {
     history: &'a mut Vec<Message>,
     session_stats: &'a mut SessionStats,
     context_manager: &'a mut ContextManager,
+    steering_update: Option<SessionMemoryEnvelopeUpdate>,
 }
 
 impl<'a> CompactionState<'a> {
@@ -110,7 +113,22 @@ impl<'a> CompactionState<'a> {
         session_stats: &'a mut SessionStats,
         context_manager: &'a mut ContextManager,
     ) -> Self {
-        Self { history, session_stats, context_manager }
+        Self {
+            history,
+            session_stats,
+            context_manager,
+            steering_update: None,
+        }
+    }
+
+    pub(crate) fn with_steering_update(mut self, steering_update: SessionMemoryEnvelopeUpdate) -> Self {
+        self.steering_update = Some(steering_update);
+        self
+    }
+
+    fn with_optional_steering_update(mut self, steering_update: Option<SessionMemoryEnvelopeUpdate>) -> Self {
+        self.steering_update = steering_update;
+        self
     }
 }
 
@@ -161,7 +179,7 @@ pub(crate) async fn build_summarized_fork_history(
     }
 
     let mut source_history = source_history.to_vec();
-    let source_envelope = load_latest_memory_envelope(workspace_root, source_session_id);
+    let source_envelope = load_latest_memory_envelope_async(workspace_root, source_session_id).await;
     if let Some(envelope) = source_envelope.as_ref() {
         strip_existing_memory_envelope(&mut source_history);
         insert_memory_envelope_message(&mut source_history, envelope, MemoryEnvelopePlacement::Start);
@@ -184,7 +202,7 @@ pub(crate) async fn build_summarized_fork_history(
         .await?
     };
 
-    let _ = persist_memory_envelope(
+    let _ = persist_memory_envelope_async(
         workspace_root,
         target_session_id,
         vt_cfg,
@@ -194,7 +212,8 @@ pub(crate) async fn build_summarized_fork_history(
         MemoryEnvelopePersistence::InMemoryOnly,
         MemoryEnvelopePlacement::Start,
         source_envelope.as_ref(),
-    )?;
+    )
+    .await?;
 
     Ok(compacted)
 }
@@ -284,7 +303,12 @@ async fn run_manual_compaction(
         lifecycle_hooks,
         harness_emitter,
     } = context;
-    let CompactionState { history, session_stats, context_manager } = state;
+    let CompactionState {
+        history,
+        session_stats,
+        context_manager,
+        steering_update,
+    } = state;
 
     // `--native-only` preserves the legacy strict behavior: refuse unless the
     // provider exposes a real standalone compaction endpoint (OpenAI
@@ -321,7 +345,7 @@ async fn run_manual_compaction(
             lifecycle_hooks,
             harness_emitter,
         },
-        CompactionState::new(history, session_stats, context_manager),
+        CompactionState::new(history, session_stats, context_manager).with_optional_steering_update(steering_update),
         CompactionPlan {
             trigger,
             boundary_reason: boundary_reason_for_compaction_trigger(trigger),
@@ -386,7 +410,12 @@ async fn compact_history_segment_in_place_with_boundary(
         lifecycle_hooks,
         harness_emitter,
     } = context;
-    let CompactionState { history, session_stats, context_manager } = state;
+    let CompactionState {
+        history,
+        session_stats,
+        context_manager,
+        steering_update,
+    } = state;
 
     let previous_response_chain_present = session_stats.previous_response_id_for(provider.name(), model).is_some();
     let mut compaction_input = history.clone();
@@ -435,7 +464,7 @@ async fn compact_history_segment_in_place_with_boundary(
             lifecycle_hooks,
             harness_emitter,
         },
-        CompactionState::new(history, session_stats, context_manager),
+        CompactionState::new(history, session_stats, context_manager).with_optional_steering_update(steering_update),
         plan,
         original_history,
         previous_response_chain_present,
@@ -467,7 +496,12 @@ async fn apply_compacted_history(
         lifecycle_hooks,
         harness_emitter,
     } = context;
-    let CompactionState { history, session_stats, context_manager } = state;
+    let CompactionState {
+        history,
+        session_stats,
+        context_manager,
+        steering_update,
+    } = state;
 
     let original_len = original_history.len();
     if let Some(lifecycle_hooks) = lifecycle_hooks {
@@ -482,7 +516,7 @@ async fn apply_compacted_history(
     let mut compacted = compacted;
     let compacted_len = compacted.len();
     let touched_files = session_stats.recent_touched_files();
-    let envelope = persist_memory_envelope(
+    let envelope = persist_memory_envelope_async_with_update(
         workspace_root,
         session_id,
         vt_cfg,
@@ -492,11 +526,14 @@ async fn apply_compacted_history(
         plan.envelope_mode.persistence,
         plan.envelope_mode.placement,
         None,
-    )?;
+        steering_update.as_ref(),
+    )
+    .await?;
     let history_artifact_path = envelope.as_ref().and_then(|item| item.history_artifact_path.clone());
     let segment_transition = begin_segment.then(|| session_stats.begin_request_segment(plan.boundary_reason));
     *history = compacted;
     session_stats.clear_previous_response_chain_for(provider.name(), model);
+    context_manager.take_compaction_pending();
     context_manager.cap_token_usage_after_compaction(effective_compaction_threshold(vt_cfg, provider, model));
     if let Some(ref envelope) = envelope {
         tracing::info!(
@@ -564,7 +601,12 @@ async fn compact_history_before_index_in_place(
         lifecycle_hooks,
         harness_emitter,
     } = context;
-    let CompactionState { history, session_stats, context_manager } = state;
+    let CompactionState {
+        history,
+        session_stats,
+        context_manager,
+        steering_update,
+    } = state;
 
     if preserve_from_index == 0 {
         return Ok(None);
@@ -582,7 +624,8 @@ async fn compact_history_before_index_in_place(
                 lifecycle_hooks,
                 harness_emitter,
             },
-            CompactionState::new(history, session_stats, context_manager),
+            CompactionState::new(history, session_stats, context_manager)
+                .with_optional_steering_update(steering_update),
             plan,
         )
         .await;
@@ -602,7 +645,8 @@ async fn compact_history_before_index_in_place(
             lifecycle_hooks,
             harness_emitter: None,
         },
-        CompactionState::new(&mut prefix, session_stats, context_manager),
+        CompactionState::new(&mut prefix, session_stats, context_manager)
+            .with_optional_steering_update(steering_update),
         plan,
         false,
     )
@@ -711,12 +755,6 @@ pub(crate) async fn maybe_auto_compact_history(
     context: CompactionContext<'_>,
     state: CompactionState<'_>,
 ) -> Result<Option<CompactionOutcome>> {
-    use std::time::Instant;
-    use vtcode_core::compaction::two_pass::{
-        TWO_PASS_DEFAULT_SPLIT_FRACTION, build_two_pass_pass1_history, fingerprint_prefix, note_for_two_pass_pass2,
-        split_conversation_for_two_pass,
-    };
-
     let CompactionContext {
         provider,
         model,
@@ -727,60 +765,21 @@ pub(crate) async fn maybe_auto_compact_history(
         harness_emitter,
         ..
     } = context;
-    let CompactionState { history, session_stats, context_manager } = state;
+    let CompactionState {
+        history,
+        session_stats,
+        context_manager,
+        steering_update,
+    } = state;
 
     let current_prompt_pressure_tokens = context_manager.current_token_usage();
-
-    // Prefire two-pass: when usage approaches the compaction threshold,
-    // run pass-1 summarization in advance so the cache is ready if
-    // compaction fires this turn.
-    if let Some(threshold) = effective_compaction_threshold(vt_cfg, provider, model) {
-        let prefire_lead = threshold * 10 / 100;
-        let prefire_threshold = threshold.saturating_sub(prefire_lead);
-        if current_prompt_pressure_tokens >= prefire_threshold
-            && !session_stats.prefire.has_cache()
-            && !session_stats.prefire.is_in_flight()
-            && session_stats.prefire.try_begin()
-        {
-            let engine_cfg = local_compaction_config(vt_cfg, false);
-            let split = split_conversation_for_two_pass(history, TWO_PASS_DEFAULT_SPLIT_FRACTION);
-            if split.prefix.is_empty() || split.tail.is_empty() {
-                session_stats.prefire.finish();
-            } else {
-                let prefix = split.prefix.to_vec();
-                let prompt = engine_cfg.summary_prompt.clone();
-                let pass1_history = build_two_pass_pass1_history(&prefix, &prompt);
-                let request = vtcode_core::llm::provider::LLMRequest {
-                    messages: std::sync::Arc::new(pass1_history),
-                    model: model.to_string(),
-                    ..Default::default()
-                };
-                let started = Instant::now();
-                let result = provider.generate(request).await;
-                let pass1_latency_ms = started.elapsed().as_millis() as u64;
-
-                if let Ok(response) = result {
-                    let note1 = note_for_two_pass_pass2(&response.content.unwrap_or_default());
-                    if !note1.trim().is_empty() {
-                        let fingerprint = fingerprint_prefix(split.prefix);
-                        session_stats.prefire.store(vtcode_core::compaction::AsyncCompactionCache {
-                            note1,
-                            prefix_len: split.split_idx,
-                            fingerprint,
-                            model_slug: model.to_string(),
-                            pass1_latency_ms,
-                        });
-                        tracing::info!(
-                            target : "two_pass",
-                            prefix_len = split.split_idx,
-                            pass1_latency_ms,
-                            "two_pass: prefire pass1 cached NOTE1"
-                        );
-                    }
-                }
-                session_stats.prefire.finish();
-            }
-        }
+    let force_compaction = context_manager.compaction_pending();
+    if let Some(hard_threshold) = effective_compaction_threshold(vt_cfg, provider, model)
+        && current_prompt_pressure_tokens < hard_threshold
+        && !force_compaction
+    {
+        context_manager.mark_compaction_pending_at_soft_threshold(Some(hard_threshold));
+        return Ok(None);
     }
 
     // Delegate to the shared compaction orchestrator (used by both runloops).
@@ -801,6 +800,8 @@ pub(crate) async fn maybe_auto_compact_history(
             placement: MemoryEnvelopePlacement::BeforeLastUserOrSummary,
             prefire: Some(&session_stats.prefire),
             auto_compact_suppressed: &mut session_stats.auto_compact_suppressed,
+            force_compaction,
+            steering_update: steering_update.as_ref(),
         },
         &mut compacted_history,
     )

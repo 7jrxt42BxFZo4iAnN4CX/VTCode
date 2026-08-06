@@ -23,3 +23,5 @@
 - `path_cache` is LRU (256) — no fresh canonicalize every call.
 - Unsafe env mutation (`set_var`/`remove_var`) is centralized in `vtcode-commons::env_lock`, serialized by a process-wide mutex, single-threaded startup only.
 - `policy` containment delegates to `vtcode_commons::paths::ensure_path_within_workspace` — `..`-traversal paths are rejected (intentionally stricter than the old `starts_with`).
+- Pipe spooling opts into `SpawnedProcess::reliable_output_rx`, a bounded lossless stream; legacy broadcast subscribers must remain independent of that backpressure path.
+- `wait_with_output` bounds post-exit draining even when a descendant inherits the pipe; never turn that drain back into an unbounded wait.

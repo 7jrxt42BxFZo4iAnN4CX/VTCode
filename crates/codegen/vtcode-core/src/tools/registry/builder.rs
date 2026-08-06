@@ -230,6 +230,9 @@ enabled = true
 tool_output_threshold = 4096
 max_spooled_files = 7
 spool_max_age_secs = 12
+
+[workspace]
+use_root_config = true
 "#,
         )
         .unwrap();
@@ -268,7 +271,7 @@ tool_output_threshold = "oops"
         let temp = tempdir().expect("workspace");
         std::fs::write(
             temp.path().join("vtcode.toml"),
-            "[features]\nmemories = true\n\n[agent.persistent_memory]\nenabled = true\n",
+            "[features]\nmemories = true\n\n[agent.persistent_memory]\nenabled = true\n\n[workspace]\nuse_root_config = true\n",
         )
         .expect("workspace config");
 

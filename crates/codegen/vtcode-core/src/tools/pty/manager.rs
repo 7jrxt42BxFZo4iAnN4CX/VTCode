@@ -3,7 +3,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     mpsc,
 };
 use std::thread;
@@ -14,12 +14,15 @@ use chrono::Utc;
 use parking_lot::{Mutex, RwLock};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use shell_words::join;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::mpsc as tokio_mpsc;
 use tracing::{debug, info, warn};
 
 use super::command_utils::{
     is_long_running_command, is_long_running_command_string, is_sandbox_wrapper_program, is_shell_program,
 };
+use super::formatting::sanitize_session_id;
 use super::manager_utils::{clamp_timeout, exit_status_code, set_command_environment};
 
 use super::screen_backend::PtyScreenState;
@@ -523,6 +526,76 @@ impl PtyManager {
         let screen_state = Arc::new(Mutex::new(PtyScreenState::new(size, self.config.scrollback_lines)));
         let scrollback =
             Arc::new(Mutex::new(PtyScrollback::new(self.config.scrollback_lines, self.config.max_scrollback_bytes)));
+
+        let output_spool_path = self.format_working_dir(
+            &self
+                .workspace_root
+                .join(".vtcode/context/tool_outputs")
+                .join(format!("write_stdin_{}.txt", sanitize_session_id(&session_id))),
+        );
+        let output_spool_file_path = self.workspace_root.join(&output_spool_path);
+        let (output_spool_tx, mut output_spool_rx) = tokio_mpsc::channel::<Vec<u8>>(64);
+        let output_total_bytes = Arc::new(AtomicU64::new(0));
+        let output_total_bytes_for_reader = Arc::clone(&output_total_bytes);
+        let output_spool_failed = Arc::new(AtomicBool::new(false));
+        let output_spool_failed_for_task = Arc::clone(&output_spool_failed);
+        let output_spool_ready = Arc::new(AtomicBool::new(false));
+        let output_spool_ready_for_task = Arc::clone(&output_spool_ready);
+        let output_spool_finished = Arc::new(AtomicBool::new(false));
+        let output_spool_finished_for_task = Arc::clone(&output_spool_finished);
+
+        let output_spool_task = async move {
+            let mut spool_file = if let Some(parent) = output_spool_file_path.parent()
+                && tokio::fs::create_dir_all(parent).await.is_ok()
+            {
+                tokio::fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(&output_spool_file_path)
+                    .await
+                    .ok()
+            } else {
+                None
+            };
+
+            if spool_file.is_none() {
+                output_spool_failed_for_task.store(true, Ordering::Release);
+            } else {
+                output_spool_ready_for_task.store(true, Ordering::Release);
+            }
+            let mut spool_redactor = vtcode_commons::sanitizer::StreamingSecretRedactor::default();
+
+            while let Some(chunk) = output_spool_rx.recv().await {
+                let Some(file) = spool_file.as_mut() else {
+                    continue;
+                };
+                let text = String::from_utf8_lossy(&chunk);
+                let sanitized = spool_redactor.push(&text);
+                if !sanitized.is_empty() && file.write_all(sanitized.as_bytes()).await.is_err() {
+                    output_spool_failed_for_task.store(true, Ordering::Release);
+                    spool_file = None;
+                }
+            }
+
+            if let Some(file) = spool_file.as_mut() {
+                let sanitized = spool_redactor.finish();
+                if (!sanitized.is_empty() && file.write_all(sanitized.as_bytes()).await.is_err())
+                    || file.flush().await.is_err()
+                {
+                    output_spool_failed_for_task.store(true, Ordering::Release);
+                }
+            }
+            output_spool_finished_for_task.store(true, Ordering::Release);
+        };
+
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(output_spool_task);
+        } else {
+            output_spool_failed.store(true, Ordering::Release);
+            output_spool_finished.store(true, Ordering::Release);
+        }
+
         debug!(
             session_id = %session_id,
             rows = size.rows,
@@ -534,6 +607,7 @@ impl PtyManager {
         let reader_completed = Arc::new(AtomicBool::new(false));
         let reader_completed_clone = Arc::clone(&reader_completed);
         let session_name = session_id.clone();
+        let output_spool_tx_for_reader = output_spool_tx;
         // Start unicode monitoring for this session
         UNICODE_MONITOR.start_session();
 
@@ -556,9 +630,11 @@ Ok(0) => {
            session_name, total_bytes, unicode_detection_hits);
     break;
 }
-Ok(bytes_read) => {
-    let chunk = &buffer[..bytes_read];
-    total_bytes += bytes_read;
+                        Ok(bytes_read) => {
+                            let chunk = &buffer[..bytes_read];
+                            total_bytes += bytes_read;
+                            output_total_bytes_for_reader.fetch_add(bytes_read as u64, Ordering::Relaxed);
+                            let _ = output_spool_tx_for_reader.blocking_send(chunk.to_vec());
 
     // Quick unicode detection heuristic
     let likely_unicode = chunk.iter().any(|&b| b >= 0x80);
@@ -645,6 +721,11 @@ info!("PTY session '{}' processed {} unicode characters across {} sessions with 
             metadata: metadata.clone(),
             last_input: Mutex::new(None),
             _zsh_exec_bridge: zsh_exec_bridge,
+            output_total_bytes,
+            output_spool_failed,
+            output_spool_ready,
+            output_spool_finished,
+            output_spool_path,
         }));
 
         Ok(metadata)

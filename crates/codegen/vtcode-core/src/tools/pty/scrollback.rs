@@ -342,6 +342,10 @@ impl PtyScrollback {
             unicode_sessions: self.unicode_sessions,
         }
     }
+
+    pub(super) fn output_truncated(&self) -> bool {
+        self.overflow_detected
+    }
 }
 
 #[derive(Debug, Clone)]

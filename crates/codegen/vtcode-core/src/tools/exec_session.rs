@@ -1,9 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
 use hashbrown::HashMap;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, RwLock, watch};
 use tokio::task::JoinHandle;
 use vtcode_bash_runner::{PipeSpawnOptions, ProcessHandle, spawn_pipe_process_with_options};
@@ -15,32 +17,91 @@ use crate::tools::types::VTCodeExecSession;
 use crate::utils::path::{canonicalize_workspace, ensure_path_within_workspace};
 use crate::zsh_exec_bridge::ZshExecBridgeSession;
 
+const PIPE_OUTPUT_HEAD_BYTES: usize = 8 * 1024;
+const PIPE_OUTPUT_TAIL_BYTES: usize = 8 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PipeOutputStats {
+    pub total_bytes: u64,
+    pub truncated: bool,
+    pub spool_path: String,
+    pub spool_available: bool,
+    pub spool_complete: bool,
+}
+
 #[derive(Default)]
 struct PipeOutputBuffer {
-    pending: Mutex<String>,
+    pending: Mutex<PipeOutputWindow>,
+    total_bytes: AtomicU64,
+    truncated: AtomicBool,
+}
+
+#[derive(Default)]
+struct PipeOutputWindow {
+    head: String,
+    tail: String,
+    total_bytes: u64,
+    truncated: bool,
 }
 
 impl PipeOutputBuffer {
-    async fn append(&self, chunk: &str) {
-        self.pending.lock().await.push_str(chunk);
+    async fn append(&self, chunk: &str, raw_byte_count: usize) {
+        let mut pending = self.pending.lock().await;
+        pending.total_bytes = pending.total_bytes.saturating_add(raw_byte_count as u64);
+        self.total_bytes.fetch_add(raw_byte_count as u64, Ordering::Relaxed);
+        if pending.head.len() < PIPE_OUTPUT_HEAD_BYTES {
+            let remaining = PIPE_OUTPUT_HEAD_BYTES - pending.head.len();
+            let end = chunk.floor_char_boundary(remaining.min(chunk.len()));
+            pending.head.push_str(&chunk[..end]);
+            if end < chunk.len() {
+                pending.truncated = true;
+                self.truncated.store(true, Ordering::Relaxed);
+            }
+        }
+
+        let mut tail = pending.tail.clone();
+        tail.push_str(chunk);
+        if tail.len() > PIPE_OUTPUT_TAIL_BYTES {
+            let start = tail.ceil_char_boundary(tail.len() - PIPE_OUTPUT_TAIL_BYTES);
+            tail.drain(..start);
+            pending.truncated = true;
+            self.truncated.store(true, Ordering::Relaxed);
+        }
+        pending.tail = tail;
     }
 
     async fn peek_pending(&self) -> Option<String> {
         let pending = self.pending.lock().await;
-        if pending.is_empty() {
+        if pending.total_bytes == 0 {
             None
         } else {
-            Some(pending.clone())
+            Some(pending.preview())
         }
     }
 
     async fn drain_pending(&self) -> Option<String> {
         let mut pending = self.pending.lock().await;
-        if pending.is_empty() {
+        if pending.total_bytes == 0 {
             None
         } else {
-            Some(std::mem::take(&mut *pending))
+            Some(std::mem::take(&mut *pending).preview())
         }
+    }
+
+    async fn stats(&self) -> (u64, bool) {
+        (self.total_bytes.load(Ordering::Relaxed), self.truncated.load(Ordering::Relaxed))
+    }
+}
+
+impl PipeOutputWindow {
+    fn preview(&self) -> String {
+        if !self.truncated {
+            return self.head.clone();
+        }
+        if self.head == self.tail {
+            return self.head.clone();
+        }
+        format!("{}\n[output preview truncated]\n{}", self.head, self.tail)
     }
 }
 
@@ -51,6 +112,14 @@ struct PipeSessionRecord {
     output_task: Mutex<Option<JoinHandle<()>>>,
     exit_task: Mutex<Option<JoinHandle<()>>>,
     activity_tx: watch::Sender<u64>,
+    spool: PipeSpoolState,
+}
+
+struct PipeSpoolState {
+    path: String,
+    ready: Arc<AtomicBool>,
+    failed: Arc<AtomicBool>,
+    finished: Arc<AtomicBool>,
 }
 
 impl PipeSessionRecord {
@@ -61,6 +130,7 @@ impl PipeSessionRecord {
         output_task: JoinHandle<()>,
         exit_task: JoinHandle<()>,
         activity_tx: watch::Sender<u64>,
+        spool: PipeSpoolState,
     ) -> Self {
         Self {
             metadata,
@@ -69,6 +139,7 @@ impl PipeSessionRecord {
             output_task: Mutex::new(Some(output_task)),
             exit_task: Mutex::new(Some(exit_task)),
             activity_tx,
+            spool,
         }
     }
 }
@@ -113,7 +184,8 @@ impl PipeSessionManager {
 
         let opts = PipeSpawnOptions::new(program.clone(), working_dir.clone())
             .args(args.clone())
-            .env(env);
+            .env(env)
+            .lossless_output(true);
         let spawned = spawn_pipe_process_with_options(opts)
             .await
             .with_context(|| format!("failed to spawn pipe session '{session_id}'"))?;
@@ -135,26 +207,75 @@ impl PipeSessionManager {
         let handle = Arc::new(spawned.session);
         let output = Arc::new(PipeOutputBuffer::default());
         let output_clone = Arc::clone(&output);
-        let mut output_rx = spawned.output_rx;
+        let mut output_rx = spawned.reliable_output_rx;
         let output_handle = Arc::clone(&handle);
         let (activity_tx, _) = watch::channel(0u64);
         let output_activity_tx = activity_tx.clone();
+        let spool_path = self.format_working_dir(
+            &self
+                .workspace_root
+                .join(".vtcode/context/tool_outputs")
+                .join(format!("write_stdin_{session_id}.txt")),
+        );
+        let spool_file_path = self.workspace_root.join(&spool_path);
+        let spool_ready = Arc::new(AtomicBool::new(false));
+        let spool_ready_for_task = Arc::clone(&spool_ready);
+        let spool_failed = Arc::new(AtomicBool::new(false));
+        let spool_failed_for_task = Arc::clone(&spool_failed);
+        let spool_finished = Arc::new(AtomicBool::new(false));
+        let spool_finished_for_task = Arc::clone(&spool_finished);
         let output_task = tokio::spawn(async move {
+            let mut spool_file =
+                if tokio::fs::create_dir_all(spool_file_path.parent().unwrap_or_else(|| Path::new(".")))
+                    .await
+                    .is_ok()
+                {
+                    tokio::fs::OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(true)
+                        .open(&spool_file_path)
+                        .await
+                        .ok()
+                } else {
+                    None
+                };
+            if spool_file.is_none() {
+                spool_failed_for_task.store(true, Ordering::Release);
+            } else {
+                spool_ready_for_task.store(true, Ordering::Release);
+            }
+            let mut spool_redactor = vtcode_commons::sanitizer::StreamingSecretRedactor::default();
             loop {
                 match tokio::time::timeout(tokio::time::Duration::from_millis(15), output_rx.recv()).await {
-                    Ok(Ok(chunk)) => {
-                        let text = String::from_utf8_lossy(&chunk);
-                        output_clone.append(&text).await;
+                    Ok(Some(chunk)) => {
+                        let text = String::from_utf8_lossy(&chunk).into_owned();
+                        if let Some(file) = spool_file.as_mut() {
+                            let sanitized = spool_redactor.push(&text);
+                            if !sanitized.is_empty() && file.write_all(sanitized.as_bytes()).await.is_err() {
+                                spool_failed_for_task.store(true, Ordering::Release);
+                                spool_file = None;
+                            }
+                        }
+                        output_clone.append(&text, chunk.len()).await;
                         output_activity_tx.send_modify(|version| *version += 1);
                     }
-                    Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
-                    Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => break,
+                    Ok(None) => break,
                     Err(_) if output_handle.has_exited() && output_handle.is_output_drained() => {
                         break;
                     }
                     Err(_) => continue,
                 }
             }
+            if let Some(file) = spool_file.as_mut() {
+                let sanitized = spool_redactor.finish();
+                if (!sanitized.is_empty() && file.write_all(sanitized.as_bytes()).await.is_err())
+                    || file.flush().await.is_err()
+                {
+                    spool_failed_for_task.store(true, Ordering::Release);
+                }
+            }
+            spool_finished_for_task.store(true, Ordering::Release);
         });
         let exit_rx = spawned.exit_rx;
         let exit_activity_tx = activity_tx.clone();
@@ -162,8 +283,20 @@ impl PipeSessionManager {
             let _ = exit_rx.await;
             exit_activity_tx.send_modify(|version| *version += 1);
         });
-        let record =
-            Arc::new(PipeSessionRecord::new(metadata.clone(), handle, output, output_task, exit_task, activity_tx));
+        let record = Arc::new(PipeSessionRecord::new(
+            metadata.clone(),
+            handle,
+            output,
+            output_task,
+            exit_task,
+            activity_tx,
+            PipeSpoolState {
+                path: spool_path,
+                ready: spool_ready,
+                failed: spool_failed,
+                finished: spool_finished,
+            },
+        ));
 
         let mut sessions = self.sessions.write().await;
         sessions.insert(session_id, record);
@@ -178,6 +311,20 @@ impl PipeSessionManager {
         } else {
             Ok(record.output.peek_pending().await)
         }
+    }
+
+    async fn output_stats(&self, session_id: &str) -> Result<PipeOutputStats> {
+        let record = self.session_record(session_id).await?;
+        let (total_bytes, truncated) = record.output.stats().await;
+        let spool_available =
+            record.spool.ready.load(Ordering::Acquire) && !record.spool.failed.load(Ordering::Acquire);
+        Ok(PipeOutputStats {
+            total_bytes,
+            truncated,
+            spool_path: record.spool.path.clone(),
+            spool_available,
+            spool_complete: spool_available && record.spool.finished.load(Ordering::Acquire),
+        })
     }
 
     async fn send_input_to_session(&self, session_id: &str, data: &[u8], append_newline: bool) -> Result<usize> {
@@ -393,6 +540,22 @@ impl ExecSessionManager {
         match record.backend {
             ExecSessionBackend::Pipe => self.pipe_sessions.read_session_output(session_id, drain).await,
             ExecSessionBackend::Pty => self.pty_sessions.manager().read_session_output(session_id, drain),
+        }
+    }
+
+    pub(crate) async fn output_stats(&self, session_id: &str) -> Result<Option<PipeOutputStats>> {
+        let record = self.session_record(session_id).await?;
+        match record.backend {
+            ExecSessionBackend::Pipe => self.pipe_sessions.output_stats(session_id).await.map(Some),
+            ExecSessionBackend::Pty => self.pty_sessions.manager().output_stats(session_id).map(|stats| {
+                stats.map(|stats| PipeOutputStats {
+                    total_bytes: stats.total_bytes,
+                    truncated: stats.truncated,
+                    spool_path: stats.spool_path,
+                    spool_available: stats.spool_available,
+                    spool_complete: stats.spool_complete,
+                })
+            }),
         }
     }
 
@@ -708,7 +871,7 @@ mod tests {
     #[tokio::test]
     async fn pipe_output_buffer_peek_is_idempotent_and_non_consuming() {
         let buffer = super::PipeOutputBuffer::default();
-        buffer.append("hello").await;
+        buffer.append("hello", 5).await;
 
         let first = buffer.peek_pending().await;
         let second = buffer.peek_pending().await;
@@ -719,7 +882,7 @@ mod tests {
     #[tokio::test]
     async fn pipe_output_buffer_drain_returns_exactly_once() {
         let buffer = super::PipeOutputBuffer::default();
-        buffer.append("hello").await;
+        buffer.append("hello", 5).await;
 
         let first = buffer.drain_pending().await;
         let second = buffer.drain_pending().await;
@@ -730,7 +893,7 @@ mod tests {
     #[tokio::test]
     async fn pipe_output_buffer_drain_clears_internal_pending_length() {
         let buffer = super::PipeOutputBuffer::default();
-        buffer.append("hello").await;
+        buffer.append("hello", 5).await;
 
         buffer.drain_pending().await;
         let peek: Option<String> = buffer.peek_pending().await;
@@ -740,11 +903,24 @@ mod tests {
     #[tokio::test]
     async fn pipe_output_buffer_append_after_drain_returns_only_fresh_output() {
         let buffer = super::PipeOutputBuffer::default();
-        buffer.append("first").await;
+        buffer.append("first", 5).await;
         buffer.drain_pending().await;
 
-        buffer.append("second").await;
+        buffer.append("second", 6).await;
         let output = buffer.peek_pending().await;
         assert_eq!(output, Some("second".to_string()));
+    }
+
+    #[tokio::test]
+    async fn pipe_output_buffer_bounds_preview_and_tracks_total_bytes() {
+        let buffer = super::PipeOutputBuffer::default();
+        let chunk = "x".repeat(super::PIPE_OUTPUT_HEAD_BYTES * 4);
+        buffer.append(&chunk, chunk.len()).await;
+
+        let preview = buffer.peek_pending().await.expect("bounded preview");
+        assert!(preview.len() <= super::PIPE_OUTPUT_HEAD_BYTES * 3);
+        let (total_bytes, truncated) = buffer.stats().await;
+        assert_eq!(total_bytes, chunk.len() as u64);
+        assert!(truncated);
     }
 }

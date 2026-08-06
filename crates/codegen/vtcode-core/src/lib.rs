@@ -447,6 +447,8 @@ mod tests {
     async fn test_pty_session_management() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let workspace = temp_dir.path().to_path_buf();
+        std::fs::write(workspace.join("vtcode.toml"), "[workspace]\nuse_root_config = true\n")
+            .expect("write isolated workspace config");
         let registry = ToolRegistry::new(workspace.clone()).await;
         registry.initialize_async().await.expect("Failed to init registry");
 

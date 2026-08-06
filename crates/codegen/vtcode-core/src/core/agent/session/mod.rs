@@ -332,9 +332,19 @@ impl AgentSessionState {
 
     /// Add a user message to the history with metadata.
     pub fn add_user_message(&mut self, text: String) {
+        self.add_user_message_with_intent(text, None);
+    }
+
+    /// Add a user message and optionally tag it with the steering intent that
+    /// produced it. The tag survives message serialization for recovery.
+    pub fn add_user_message_with_intent(&mut self, text: String, intent_id: Option<String>) {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
         let tokens = text.len().saturating_div(4); // rough estimate: ~4 chars per token
         let metadata = crate::core::message_metadata::MessageMetadata::user_input(now, tokens);
+        let metadata = match intent_id {
+            Some(id) => metadata.with_intent_id(id),
+            None => metadata,
+        };
         self.conversation.push(Content::user_text(text.as_str()));
         let msg = Message::user(text).with_metadata(metadata);
         // Role overhead (~4 tokens) + content tokens

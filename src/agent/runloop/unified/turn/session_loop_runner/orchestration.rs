@@ -11,7 +11,7 @@ use vtcode_core::exec::events::ThreadCompletionSubtype;
 use vtcode_core::hooks::{SessionEndReason, SessionStartTrigger};
 use vtcode_core::session::SessionId;
 use vtcode_core::utils::ansi::MessageStyle;
-use vtcode_core::utils::session_archive::{SessionMessage, SessionProgressArgs};
+use vtcode_core::utils::session_archive::{SessionMessage, SessionProgressArgs, SessionProgressPersistenceStatus};
 
 use super::super::{CancelGuard, RECENT_MESSAGE_LIMIT, TerminalCleanupGuard, extract_idle_config};
 use crate::agent::runloop::ResumeSession;
@@ -316,11 +316,24 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
             steering_receiver.take(),
         );
         runtime.state.messages = conversation_history.into();
+        let durable_session_id = tool_registry.harness_context_snapshot().session_id;
+        if let Some(envelope) = vtcode_core::compaction::memory_envelope::load_latest_memory_envelope_async(
+            config.workspace.as_path(),
+            &durable_session_id,
+        )
+        .await
+        {
+            if let Err(error) = runtime.restore_follow_up_state(envelope.pending_intents, envelope.applied_intent_ids) {
+                tracing::warn!(%error, "durable steering queue is full; pending intents were not replayed");
+            }
+        }
         if resume_ref.is_some()
             && let Some(pending_prompt) = take_pending_resumed_user_prompt(runtime.state.messages_mut())
         {
             let (_, runtime_steering) = runtime.split_mut();
-            runtime_steering.queue_follow_up_input(pending_prompt);
+            if let Err(error) = runtime_steering.try_queue_follow_up_input(pending_prompt) {
+                tracing::warn!(%error, "Unable to queue resumed user prompt");
+            }
         }
         let tool_result_cache = execution.tool_result_cache;
         let tool_permission_cache = execution.tool_permission_cache;
@@ -1144,7 +1157,9 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                         .state
                         .messages_mut()
                         .push(vtcode_core::llm::provider::Message::system(execution_directive));
-                    runtime.queue_follow_up_input(PLAN_APPROVED_EXECUTION_INPUT.to_string());
+                    if let Err(error) = runtime.try_queue_follow_up_input(PLAN_APPROVED_EXECUTION_INPUT.to_string()) {
+                        tracing::warn!(%error, "Unable to queue approved-plan execution directive");
+                    }
                     handle.set_activity_state(ActivityState::Building);
                 }
                 if executing_approved_plan {
@@ -1175,20 +1190,6 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                         ),
                     );
                 }
-                if let Err(err) = crate::agent::runloop::unified::turn::compaction::refresh_session_memory_envelope(
-                    config.workspace.as_path(),
-                    &harness_snapshot.session_id,
-                    vt_cfg.as_ref(),
-                    &runtime.state.messages,
-                    &session_stats,
-                    None,
-                ) {
-                    tracing::warn!(
-                        error = %err,
-                        session_id = %harness_snapshot.session_id,
-                        "Failed to refresh session memory envelope after turn"
-                    );
-                }
                 emit_turn_execution_metrics(TurnExecutionMetrics {
                     attempts_made: 1,
                     retry_count: 0,
@@ -1207,6 +1208,8 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                 last_activity_time = Some(Instant::now());
                 vtcode_core::tools::cache::FILE_CACHE.check_pressure_and_evict().await;
                 tool_result_cache.write().await.check_pressure_and_evict();
+                let mut history_checkpoint_succeeded = false;
+                let mut history_persistence_disabled = false;
                 if let Some(archive) = session_archive.as_ref() {
                     let messages: Vec<SessionMessage> =
                         runtime.state.messages.iter().map(SessionMessage::from).collect();
@@ -1224,8 +1227,8 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                     let distinct_tools = session_stats.sorted_tools();
                     let skill_names: Vec<String> = loaded_skills.read().await.keys().cloned().collect();
 
-                    if let Err(err) = archive
-                        .persist_progress_async(SessionProgressArgs {
+                    match archive
+                        .persist_progress_async_with_status(SessionProgressArgs {
                             total_messages: runtime.state.messages.len(),
                             distinct_tools: distinct_tools.clone(),
                             messages,
@@ -1237,8 +1240,52 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                         })
                         .await
                     {
-                        tracing::warn!("Failed to persist session progress: {}", err);
+                        Ok(SessionProgressPersistenceStatus::Persisted(_)) => history_checkpoint_succeeded = true,
+                        Ok(SessionProgressPersistenceStatus::Throttled(path)) => {
+                            tracing::debug!(
+                                path = %path.display(),
+                                "Session progress checkpoint throttled; retaining in-flight steering intents"
+                            );
+                        }
+                        Ok(SessionProgressPersistenceStatus::Disabled(path)) => {
+                            history_persistence_disabled = true;
+                            tracing::debug!(
+                                path = %path.display(),
+                                "Session progress checkpoint skipped because history persistence is disabled"
+                            );
+                        }
+                        Err(err) => tracing::warn!("Failed to persist session progress: {}", err),
                     }
+                }
+                let steering_update = {
+                    let (_, steering) = runtime.split_mut();
+                    if history_checkpoint_succeeded {
+                        steering.acknowledge_durable_follow_up_intents();
+                    } else if session_archive.is_none() || history_persistence_disabled {
+                        steering.release_in_flight_follow_up_intents_without_persistence();
+                    }
+                    vtcode_core::compaction::memory_envelope::SessionMemoryEnvelopeUpdate {
+                        pending_intents: Some(steering.pending_follow_up_intents_snapshot()),
+                        applied_intent_ids: steering.applied_follow_up_intent_ids().iter().cloned().collect(),
+                        ..Default::default()
+                    }
+                };
+                if let Err(err) =
+                    crate::agent::runloop::unified::turn::compaction::refresh_session_memory_envelope_async(
+                        config.workspace.as_path(),
+                        &harness_snapshot.session_id,
+                        vt_cfg.as_ref(),
+                        &runtime.state.messages,
+                        &session_stats,
+                        Some(&steering_update),
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        error = %err,
+                        session_id = %harness_snapshot.session_id,
+                        "Failed to refresh session memory envelope after turn"
+                    );
                 }
                 match &outcome_result {
                     RunLoopTurnLoopResult::Aborted => {

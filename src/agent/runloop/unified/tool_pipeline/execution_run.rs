@@ -265,6 +265,13 @@ pub(crate) async fn run_tool_call_with_args(
         );
         return Ok(outcome);
     }
+    let is_command_session_tool = tool_intent::canonical_command_session_tool_name(name)
+        .is_some_and(|canonical| canonical == tools::UNIFIED_EXEC);
+    let excludes_wait_from_turn_clock =
+        is_command_session_tool && tool_intent::command_session_action_is(effective_args.as_ref(), "wait");
+    if excludes_wait_from_turn_clock {
+        ctx.harness_state.begin_long_running_command_wait();
+    }
     let execution = execute_with_cache_and_streaming(
         ctx.tool_registry,
         ctx.tool_result_cache,
@@ -282,6 +289,9 @@ pub(crate) async fn run_tool_call_with_args(
         !prevalidated,
     )
     .await;
+    if excludes_wait_from_turn_clock {
+        ctx.harness_state.end_long_running_command_wait();
+    }
     let execution_status = resolve_file_conflict_status(
         ctx.tool_registry,
         ctx.tool_result_cache,

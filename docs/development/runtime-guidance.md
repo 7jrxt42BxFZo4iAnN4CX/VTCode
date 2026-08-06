@@ -13,6 +13,34 @@ content from repository instruction files. Profile-specific operating details
 remain in the prompt builder; correctness-critical behavior belongs in runtime
 policy, schemas, tests, or lints.
 
+## Continuity and long-running work
+
+The runtime keeps prompt additions small and cache-stable while preserving the
+newest working context. Automatic compaction uses a non-configurable continuity
+tail target of approximately 20,000 estimated tokens. It retains complete
+user/assistant/tool protocol groups verbatim, removes an incomplete trailing tool
+call, and summarizes only the older prefix. A soft threshold at 90% of the
+effective hard threshold marks compaction pending for the next outer turn
+boundary; the hard threshold compacts before the next model request. Provider
+native compaction results are normalized through the same tail rules, with local
+fallback when the provider does not return a usable tail.
+
+Long-running command sessions have an explicit `wait` action. A wait deadline
+returns a bounded in-progress result without killing the process, so the model
+does not need to spend repeated turns issuing 30-second polls. Full command
+output is written to the tool-output spool; responses expose only a bounded
+preview and its spool metadata. A spool reference is emitted only after its
+file is open and has not reported a write failure; `spool_complete` distinguishes
+an active readable partial snapshot from a fully drained output stream. Exited
+sessions with an unfinished spool retain the session and defer the reference
+until a later wait can safely observe the complete file.
+
+Interactive follow-ups are durable steering intents. Each queued intent has a
+UUID, the session envelope stores at most 16 pending intents and a 64-ID applied
+window, and the intent is acknowledged only after its tagged user message is
+durably checkpointed. Recovery compares IDs in the envelope with tagged history,
+not just instruction text, so duplicate text remains meaningful.
+
 Even when `.vtcode/prompts/system.md` replaces the static base prompt, the
 compiled section is reattached after prompt layers are resolved. This keeps the
 universal baseline present without treating workspace prompt content as a

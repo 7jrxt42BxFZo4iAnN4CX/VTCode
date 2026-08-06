@@ -16,7 +16,7 @@ use vtcode_core::utils::ansi::{AnsiRenderer, MessageStyle};
 
 /// Injected when a planning synthesis is truncated, asking the model to emit a
 /// single compact spec that fits the limit.
-pub(crate) const PLANNING_SYNTHESIS_TRUNCATED_CONDENSE_DIRECTIVE: &str = "Your previous `<proposed_plan>` was cut off at the token limit. Re-emit ONE compact `<proposed_plan>` spec that fits within the limit: keep each step to a single line (`Action -> files/symbols -> verify:`), drop prose, and prefer file:symbol references. Do not repeat the truncated draft.";
+pub(crate) const PLANNING_SYNTHESIS_TRUNCATED_CONDENSE_DIRECTIVE: &str = "Your previous `<proposed_plan>` was cut off at the token limit. Re-emit ONE compact `<proposed_plan>` spec that fits within the limit: keep each step to a single line (`Action -> files: [path] -> verify: [command]`), drop prose, and prefer file:symbol references. Do not repeat the truncated draft.";
 
 /// Maximum number of condense-and-retry passes when a planning synthesis is
 /// truncated. Bounded so a genuinely oversized plan cannot loop forever.

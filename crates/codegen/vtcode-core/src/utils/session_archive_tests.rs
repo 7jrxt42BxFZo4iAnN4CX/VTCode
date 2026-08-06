@@ -784,6 +784,57 @@ async fn search_sessions_finds_keyword_case_insensitively() -> Result<()> {
 
 #[serial_test::serial(session_dir_override)]
 #[tokio::test]
+async fn throttled_async_progress_does_not_claim_durable_checkpoint() -> Result<()> {
+    let _settings_lock = lock_history_test_guard().await;
+    let _history_guard = HistorySettingsGuard::set(HistoryPersistence::File, None);
+    let temp_dir = tempfile::tempdir().context("failed to create temp dir")?;
+    let _guard = EnvGuard::set(SESSION_DIR_ENV, temp_dir.path());
+
+    let metadata = SessionArchiveMetadata::new("ThrottleWS", "/tmp/throttle", "model", "provider", "dark", "medium");
+    let archive = SessionArchive::new(metadata, None).await?;
+    let initial_messages = vec![SessionMessage::new(MessageRole::User, "initial")];
+    let first_status = archive
+        .persist_progress_async_with_status(SessionProgressArgs {
+            total_messages: initial_messages.len(),
+            distinct_tools: Vec::new(),
+            messages: initial_messages.clone(),
+            recent_messages: initial_messages.clone(),
+            turn_number: 1,
+            token_usage: None,
+            max_context_tokens: None,
+            loaded_skills: None,
+        })
+        .await?;
+    assert!(first_status.is_persisted());
+    let stored_before = fs::read_to_string(archive.path()).context("read first progress checkpoint")?;
+
+    let updated_messages = vec![
+        SessionMessage::new(MessageRole::User, "initial"),
+        SessionMessage::new(MessageRole::User, "new steering intent"),
+    ];
+    let second_status = archive
+        .persist_progress_async_with_status(SessionProgressArgs {
+            total_messages: updated_messages.len(),
+            distinct_tools: Vec::new(),
+            messages: updated_messages.clone(),
+            recent_messages: updated_messages,
+            turn_number: 1,
+            token_usage: None,
+            max_context_tokens: None,
+            loaded_skills: None,
+        })
+        .await?;
+    assert!(matches!(second_status, SessionProgressPersistenceStatus::Throttled(_)));
+
+    let stored_after = fs::read_to_string(archive.path()).context("read throttled progress checkpoint")?;
+    assert_eq!(stored_after, stored_before, "throttling must not acknowledge an unwritten message");
+    let snapshot: SessionSnapshot = serde_json::from_str(&stored_after).context("parse progress checkpoint")?;
+    assert_eq!(snapshot.messages, initial_messages);
+    Ok(())
+}
+
+#[serial_test::serial(session_dir_override)]
+#[tokio::test]
 async fn session_archive_skips_writes_when_history_persistence_is_disabled() -> Result<()> {
     let _settings_lock = lock_history_test_guard().await;
     let _history_guard = HistorySettingsGuard::set(HistoryPersistence::None, None);

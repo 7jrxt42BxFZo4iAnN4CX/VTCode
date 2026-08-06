@@ -1,4 +1,5 @@
 use super::*;
+use std::fs;
 
 fn resolve_workspace_spool_path(workspace_root: &Path, raw_path: &str) -> Option<PathBuf> {
     let trimmed = raw_path.trim();

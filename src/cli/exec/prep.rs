@@ -531,6 +531,9 @@ default_primary_agent = "duck"
 
 [agent]
 default_model = "gpt-5"
+
+[workspace]
+use_root_config = true
 "#,
         )
         .expect("resumed config");

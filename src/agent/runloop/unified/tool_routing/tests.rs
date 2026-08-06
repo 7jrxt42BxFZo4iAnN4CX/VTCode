@@ -8,6 +8,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::fs;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
 use vtcode_config::core::PromptCachingConfig;
@@ -46,6 +48,11 @@ fn create_session_with_receiver()
         },
         command_rx,
     )
+}
+
+fn isolate_workspace_config(workspace: &Path) {
+    fs::write(workspace.join("vtcode.toml"), "[workspace]\nuse_root_config = true\n")
+        .expect("write isolated workspace config");
 }
 
 fn drain_appended_lines(
@@ -238,6 +245,7 @@ fn non_shell_display_labels_keep_learning_label_stable() {
 #[tokio::test]
 async fn shell_approval_prefix_rules_persist_to_workspace_config() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    isolate_workspace_config(temp_dir.path());
     let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
     let args = json!({
         "action": "run",
@@ -286,6 +294,7 @@ async fn shell_approval_prefix_rules_persist_to_workspace_config() {
 #[tokio::test]
 async fn shell_approval_prefix_matching_respects_token_boundaries() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    isolate_workspace_config(temp_dir.path());
     let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
     let workspace_root = registry.workspace_root().clone();
     let mut manager = ConfigManager::load_from_workspace(&workspace_root).expect("load workspace config");
@@ -304,6 +313,7 @@ async fn shell_approval_prefix_matching_respects_token_boundaries() {
 #[tokio::test]
 async fn shell_approval_prefix_matching_respects_permission_scope() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    isolate_workspace_config(temp_dir.path());
     let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
     let workspace_root = registry.workspace_root().clone();
     let mut manager = ConfigManager::load_from_workspace(&workspace_root).expect("load workspace config");
@@ -330,6 +340,7 @@ async fn shell_approval_prefix_matching_respects_permission_scope() {
 #[tokio::test]
 async fn legacy_unscoped_shell_prefixes_do_not_match_escalated_runs() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    isolate_workspace_config(temp_dir.path());
     let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
     let workspace_root = registry.workspace_root().clone();
     let mut manager = ConfigManager::load_from_workspace(&workspace_root).expect("load workspace config");
@@ -1912,6 +1923,7 @@ async fn auto_permission_interactive_fallback_notice_is_emitted_once() {
 #[tokio::test]
 async fn skip_confirmations_does_not_bypass_safety_gateway_needs_approval() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    isolate_workspace_config(temp_dir.path());
     let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
     let mut session = create_headless_session();
     let handle = session.clone_inline_handle();

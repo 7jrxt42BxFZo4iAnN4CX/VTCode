@@ -51,9 +51,17 @@ impl ChildTerminator for PipeChildTerminator {
     }
 }
 
-/// Read from an async reader and send chunks to a broadcast channel.
-async fn read_output_stream<R>(mut reader: R, output_tx: broadcast::Sender<Bytes>)
-where
+const RELIABLE_OUTPUT_CHANNEL_CAPACITY: usize = 128;
+
+/// Read from an async reader and send chunks to both compatibility and
+/// optional lossless output channels. The compatibility broadcast is always
+/// independent: callers that only use the legacy receiver must never be able
+/// to stop the child-process pipe from being drained.
+async fn read_output_stream<R>(
+    mut reader: R,
+    output_tx: broadcast::Sender<Bytes>,
+    mut reliable_output_tx: Option<mpsc::Sender<Bytes>>,
+) where
     R: AsyncRead + Unpin,
 {
     let mut buf = vec![0u8; 65_536];
@@ -61,7 +69,16 @@ where
         match reader.read(&mut buf).await {
             Ok(0) => break,
             Ok(n) => {
-                let _ = output_tx.send(Bytes::copy_from_slice(&buf[..n]));
+                let chunk = Bytes::copy_from_slice(&buf[..n]);
+                let _ = output_tx.send(chunk.clone());
+                if let Some(sender) = reliable_output_tx.as_mut()
+                    && sender.send(chunk).await.is_err()
+                {
+                    // A lossless consumer is optional. Once it goes away,
+                    // continue draining the child stream for compatibility
+                    // subscribers instead of deadlocking the child.
+                    reliable_output_tx = None;
+                }
             }
             Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
             Err(_) => break,
@@ -93,6 +110,10 @@ pub struct PipeSpawnOptions {
     arg0: Option<String>,
     /// Stdin mode.
     stdin_mode: PipeStdinMode,
+    /// Enable the bounded lossless stream used by spoolers and
+    /// `wait_with_output`. Legacy callers should leave this disabled so an
+    /// unconsumed reliable receiver cannot apply backpressure.
+    lossless_output: bool,
 }
 
 impl PipeSpawnOptions {
@@ -105,6 +126,7 @@ impl PipeSpawnOptions {
             env: None,
             arg0: None,
             stdin_mode: PipeStdinMode::Piped,
+            lossless_output: false,
         }
     }
 
@@ -129,6 +151,12 @@ impl PipeSpawnOptions {
     /// Set stdin mode.
     pub fn stdin_mode(mut self, mode: PipeStdinMode) -> Self {
         self.stdin_mode = mode;
+        self
+    }
+
+    /// Enable the lossless output stream for a consumer that drains it.
+    pub fn lossless_output(mut self, enabled: bool) -> Self {
+        self.lossless_output = enabled;
         self
     }
 }
@@ -198,6 +226,8 @@ async fn spawn_process_internal(opts: PipeSpawnOptions) -> Result<SpawnedProcess
     let (writer_tx, mut writer_rx) = mpsc::channel::<Vec<u8>>(128);
     let (output_tx, _) = broadcast::channel::<Bytes>(256);
     let initial_output_rx = output_tx.subscribe();
+    let (reliable_output_tx, reliable_output_rx) = mpsc::channel::<Bytes>(RELIABLE_OUTPUT_CHANNEL_CAPACITY);
+    let reliable_output_enabled = opts.lossless_output;
 
     // Spawn writer task
     let writer_handle = if let Some(stdin) = stdin {
@@ -217,17 +247,20 @@ async fn spawn_process_internal(opts: PipeSpawnOptions) -> Result<SpawnedProcess
     // Spawn reader tasks for stdout and stderr
     let stdout_handle = stdout.map(|stdout| {
         let output_tx = output_tx.clone();
+        let reliable_output_tx = opts.lossless_output.then(|| reliable_output_tx.clone());
         tokio::spawn(async move {
-            read_output_stream(BufReader::new(stdout), output_tx).await;
+            read_output_stream(BufReader::new(stdout), output_tx, reliable_output_tx).await;
         })
     });
 
     let stderr_handle = stderr.map(|stderr| {
         let output_tx = output_tx.clone();
+        let reliable_output_tx = opts.lossless_output.then(|| reliable_output_tx.clone());
         tokio::spawn(async move {
-            read_output_stream(BufReader::new(stderr), output_tx).await;
+            read_output_stream(BufReader::new(stderr), output_tx, reliable_output_tx).await;
         })
     });
+    drop(reliable_output_tx);
 
     let mut reader_abort_handles = Vec::new();
     if let Some(ref handle) = stdout_handle {
@@ -284,7 +317,13 @@ async fn spawn_process_internal(opts: PipeSpawnOptions) -> Result<SpawnedProcess
         None,
     );
 
-    Ok(SpawnedProcess { session: handle, output_rx, exit_rx })
+    Ok(SpawnedProcess {
+        session: handle,
+        output_rx,
+        reliable_output_rx,
+        reliable_output_enabled,
+        exit_rx,
+    })
 }
 
 /// Spawn a process using regular pipes (no PTY), returning handles for stdin, output, and exit.
@@ -314,6 +353,7 @@ pub async fn spawn_process(
         env: Some(env.clone()),
         arg0: arg0.clone(),
         stdin_mode: PipeStdinMode::Piped,
+        lossless_output: false,
     };
     spawn_process_internal(opts).await
 }
@@ -335,6 +375,7 @@ pub async fn spawn_process_no_stdin(
         env: Some(env.clone()),
         arg0: arg0.clone(),
         stdin_mode: PipeStdinMode::Null,
+        lossless_output: false,
     };
     spawn_process_internal(opts).await
 }

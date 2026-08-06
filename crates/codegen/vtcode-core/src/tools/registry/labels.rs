@@ -38,6 +38,7 @@ pub fn tool_action_label(tool_name: &str, args: &Value) -> Cow<'static, str> {
             "run" => Cow::Borrowed("Run command"),
             "write" => Cow::Borrowed("Send command input"),
             "poll" => Cow::Borrowed("Read command session"),
+            "wait" => Cow::Borrowed("Wait for command session"),
             "continue" => Cow::Borrowed("Continue command session"),
             "inspect" => Cow::Borrowed("Inspect command output"),
             "list" => Cow::Borrowed("List command sessions"),

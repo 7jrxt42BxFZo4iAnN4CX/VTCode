@@ -38,6 +38,16 @@ pub use preview::PtyPreviewRenderer;
 #[cfg(feature = "tui")]
 pub use types::{PtyCommandRequest, PtyCommandResult, PtyOutputCallback};
 
+/// Bounded-memory metadata for a PTY session's complete output spool.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PtyOutputStats {
+    pub total_bytes: u64,
+    pub truncated: bool,
+    pub spool_path: String,
+    pub spool_available: bool,
+    pub spool_complete: bool,
+}
+
 // ── Shared types (headless) ─────────────────────────────────────────────────
 
 #[cfg(not(feature = "tui"))]
@@ -149,6 +159,10 @@ mod headless_pty {
 
         pub fn read_session_output(&self, _session_id: &str, _drain: bool) -> Result<Option<String>> {
             Err(anyhow!("PTY support disabled in headless build"))
+        }
+
+        pub(crate) fn output_stats(&self, _session_id: &str) -> Result<Option<super::PtyOutputStats>> {
+            Ok(None)
         }
 
         pub fn send_input_to_session(&self, _session_id: &str, _data: &[u8], _append_newline: bool) -> Result<usize> {

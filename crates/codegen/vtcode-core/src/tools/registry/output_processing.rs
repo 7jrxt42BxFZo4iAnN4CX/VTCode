@@ -1,6 +1,7 @@
 //! Tool output processing helpers for ToolRegistry.
 
 use serde_json::{Value, json};
+use vtcode_commons::sanitizer::redact_secrets;
 
 use super::ToolRegistry;
 
@@ -72,6 +73,26 @@ fn limit_spooled_preview(mut value: Value, max_output_tokens: usize) -> Value {
         object.insert("preview_truncated".to_string(), Value::Bool(true));
     }
     value
+}
+
+fn redact_value_strings(value: &mut Value) {
+    match value {
+        Value::String(text) => {
+            let redacted = redact_secrets(std::mem::take(text));
+            *text = redacted;
+        }
+        Value::Array(values) => {
+            for value in values {
+                redact_value_strings(value);
+            }
+        }
+        Value::Object(values) => {
+            for value in values.values_mut() {
+                redact_value_strings(value);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
 }
 
 impl ToolRegistry {
@@ -196,10 +217,21 @@ impl ToolRegistry {
     pub(super) async fn process_tool_output(
         &self,
         tool_name: &str,
-        value: Value,
+        mut value: Value,
         is_mcp: bool,
         max_output_tokens: usize,
     ) -> Value {
+        if value.get("output_spooled").and_then(Value::as_bool) == Some(true) {
+            // A producer may have supplied both a spool marker and inline
+            // fields. Sanitize those fields before trusting the marker; the
+            // marker only describes storage, not the safety of the payload.
+            redact_value_strings(&mut value);
+            if let Some(object) = value.as_object_mut() {
+                object.remove("output_spooled");
+            }
+            return limit_spooled_preview(value, max_output_tokens);
+        }
+
         let spooling_enabled = self.output_spooler.config().enabled;
         let force_spool = should_force_spool(tool_name, &value, is_mcp, spooling_enabled, max_output_tokens);
 
@@ -320,9 +352,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn spooled_marker_does_not_bypass_inline_secret_redaction() {
+        let temp = tempfile::tempdir().unwrap();
+        let registry = ToolRegistry::new(temp.path().to_path_buf()).await;
+        let value = json!({
+            "output_spooled": true,
+            "spool_path": ".vtcode/context/tool_outputs/result.txt",
+            "output": "password=supersecretvalue"
+        });
+
+        let result = registry.process_tool_output("run_pty_cmd", value, false, 100).await;
+
+        assert_eq!(result["output"], "password=[REDACTED_SECRET]");
+        assert_eq!(result["spool_path"], ".vtcode/context/tool_outputs/result.txt");
+        assert!(result.get("output_spooled").is_none());
+    }
+
+    #[tokio::test]
     async fn process_tool_output_skips_force_spool_when_dynamic_context_is_disabled() {
         let temp = tempfile::tempdir().unwrap();
-        std::fs::write(temp.path().join("vtcode.toml"), "[context.dynamic]\nenabled = false\n").unwrap();
+        std::fs::write(
+            temp.path().join("vtcode.toml"),
+            "[context.dynamic]\nenabled = false\n\n[workspace]\nuse_root_config = true\n",
+        )
+        .unwrap();
         let registry = ToolRegistry::new(temp.path().to_path_buf()).await;
         let value = json!({
             "output": "x".repeat(PTY_FORCE_SPOOL_MIN_BYTES + 1),

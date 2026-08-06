@@ -550,6 +550,34 @@ pub struct SessionProgressArgs {
     pub loaded_skills: Option<Vec<String>>,
 }
 
+/// Outcome of an asynchronous session-progress checkpoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionProgressPersistenceStatus {
+    /// The archive file was written successfully.
+    Persisted(PathBuf),
+    /// The call was intentionally skipped by the progress throttle.
+    Throttled(PathBuf),
+    /// History persistence is disabled, so no archive file was written.
+    Disabled(PathBuf),
+}
+
+impl SessionProgressPersistenceStatus {
+    /// Return the archive path associated with this checkpoint attempt.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        match self {
+            Self::Persisted(path) | Self::Throttled(path) | Self::Disabled(path) => path,
+        }
+    }
+
+    /// Return whether this outcome guarantees that the current snapshot was
+    /// written to the archive.
+    #[must_use]
+    pub fn is_persisted(&self) -> bool {
+        matches!(self, Self::Persisted(_))
+    }
+}
+
 impl SessionListing {
     pub fn identifier(&self) -> String {
         self.path
@@ -978,17 +1006,33 @@ impl SessionArchive {
         self.write_snapshot(snapshot)
     }
 
-    pub async fn persist_progress_async(&self, args: SessionProgressArgs) -> Result<PathBuf> {
+    /// Persist progress asynchronously and report whether this call wrote a
+    /// new durable snapshot.
+    ///
+    /// A throttled checkpoint still returns the archive path for diagnostics,
+    /// but it must not be treated as durable by callers that acknowledge
+    /// state only after history has been written.
+    pub async fn persist_progress_async_with_status(
+        &self,
+        args: SessionProgressArgs,
+    ) -> Result<SessionProgressPersistenceStatus> {
         let mut perf = PerfSpan::new("vtcode.perf.session_progress_write_ms");
         perf.tag("mode", "async");
 
+        if !history_persistence_enabled() {
+            return Ok(SessionProgressPersistenceStatus::Disabled(self.path.clone()));
+        }
         if !self.should_persist_progress(args.turn_number)? {
-            return Ok(self.path.clone());
+            return Ok(SessionProgressPersistenceStatus::Throttled(self.path.clone()));
         }
 
         let snapshot = self.build_progress_snapshot(args);
+        let path = self.write_snapshot_async(snapshot).await?;
+        Ok(SessionProgressPersistenceStatus::Persisted(path))
+    }
 
-        self.write_snapshot_async(snapshot).await
+    pub async fn persist_progress_async(&self, args: SessionProgressArgs) -> Result<PathBuf> {
+        Ok(self.persist_progress_async_with_status(args).await?.path().to_path_buf())
     }
 
     fn write_snapshot(&self, snapshot: SessionSnapshot) -> Result<PathBuf> {

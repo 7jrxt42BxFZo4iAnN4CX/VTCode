@@ -23,6 +23,7 @@ const DEFAULT_INSPECT_MAX_MATCHES: usize = 200;
 const MIN_EXEC_YIELD_MS: u64 = 250;
 const MAX_EXEC_YIELD_MS: u64 = 30_000;
 const EXEC_OUTPUT_TRUNCATED_SENTINEL: &str = "\n[Output truncated]";
+const EXEC_CAPTURE_WINDOW_BYTES: usize = 64 * 1024;
 
 // Conservative PTY command policy inspired by bash allow/deny defaults.
 const PTY_DENY_PREFIXES: &[&str] = &[
@@ -85,6 +86,21 @@ pub(super) struct PtyEphemeralCapture {
     pub(super) output: String,
     pub(super) exit_code: Option<i32>,
     pub(super) duration: Duration,
+}
+
+pub(super) fn append_bounded_capture(target: &mut String, chunk: &str) {
+    target.push_str(chunk);
+    if target.len() <= EXEC_CAPTURE_WINDOW_BYTES {
+        return;
+    }
+
+    let half = EXEC_CAPTURE_WINDOW_BYTES / 2;
+    let head_end = floor_exec_char_boundary(target, half);
+    let tail_start = target.len().saturating_sub(half);
+    let tail_start = target.ceil_char_boundary(tail_start);
+    let head = target[..head_end].to_owned();
+    let tail = target[tail_start..].to_owned();
+    *target = format!("{head}\n[output preview truncated]\n{tail}");
 }
 
 pub(super) fn summarized_arg_keys(args: &Value) -> String {
@@ -289,7 +305,6 @@ pub(super) fn build_exec_response(
     let mut response = json!({
         "success": true,
         "output": output,
-        "raw_output": raw_output,
         "wall_time": capture.duration.as_secs_f64(),
     });
     if let Some(count) = matched_count {

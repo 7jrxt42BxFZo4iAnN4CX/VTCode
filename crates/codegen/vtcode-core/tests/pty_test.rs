@@ -677,6 +677,107 @@ async fn test_repeated_write_stdin_empty_polls_observe_fresh_output_and_exit() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn test_write_stdin_wait_deadline_preserves_reusable_session() {
+    let (temp, registry) = temp_registry().await;
+
+    let start = registry
+        .execute_tool(
+            "exec_command",
+            json!({
+                "cmd": "sleep 0.2; printf 'wait-output\\n'; sleep 2",
+                "yield_time_ms": 0,
+            }),
+        )
+        .await
+        .expect("start long-running command");
+    let sid = exec_session_id(&start);
+
+    let in_progress = registry
+        .execute_tool(
+            "write_stdin",
+            json!({
+                "action": "wait",
+                "session_id": sid.as_str(),
+                "wait_timeout_seconds": 1,
+                "max_output_tokens": 16,
+            }),
+        )
+        .await
+        .expect("wait until the explicit deadline");
+
+    assert_eq!(in_progress["success"], true);
+    assert_eq!(in_progress["session_id"].as_str(), Some(sid.as_str()));
+    assert_eq!(in_progress["is_exited"].as_bool(), Some(false));
+
+    let completed = registry
+        .execute_tool(
+            "write_stdin",
+            json!({
+                "action": "wait",
+                "session_id": sid.as_str(),
+                "wait_timeout_seconds": 3,
+                "max_output_tokens": 16,
+            }),
+        )
+        .await
+        .expect("continue waiting on the reusable session");
+
+    assert_eq!(completed["success"], true);
+    assert_eq!(completed["session_id"].as_str(), Some(sid.as_str()));
+    assert_eq!(completed["is_exited"].as_bool(), Some(true));
+    assert_eq!(completed["exit_code"].as_i64(), Some(0));
+    let spool_path = completed["spool_path"]
+        .as_str()
+        .expect("wait should expose the complete output spool");
+    let spooled = fs::read_to_string(temp.path().join(spool_path)).expect("read complete waited output");
+    assert!(spooled.contains("wait-output"), "spooled wait output was: {spooled:?}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_write_stdin_wait_spools_high_volume_pipe_output() {
+    let (temp, registry) = temp_registry().await;
+    let start = registry
+        .execute_tool(
+            "exec_command",
+            json!({
+                "tty": false,
+                "cmd": "i=0; while [ $i -lt 20000 ]; do printf 'line-%05d\\n' \"$i\"; i=$((i+1)); done; sleep 1",
+                "yield_time_ms": 0,
+            }),
+        )
+        .await
+        .expect("start high-volume pipe command");
+    let sid = exec_session_id(&start);
+
+    let completed = registry
+        .execute_tool(
+            "write_stdin",
+            json!({
+                "action": "wait",
+                "session_id": sid.as_str(),
+                "wait_timeout_seconds": 10,
+                "max_output_tokens": 8,
+            }),
+        )
+        .await
+        .expect("wait for high-volume pipe command");
+
+    assert_eq!(completed["success"], true);
+    assert_eq!(completed["is_exited"], true);
+    assert_eq!(completed["exit_code"].as_i64(), Some(0));
+    assert!(completed["output_truncated"].as_bool().is_some(), "wait should expose truncation state");
+    assert!(completed["total_output_bytes"].as_u64().unwrap_or_default() > 200_000);
+
+    let spool_path = completed["spool_path"].as_str().expect("wait should expose pipe spool");
+    let spooled = fs::read_to_string(temp.path().join(spool_path)).expect("read high-volume pipe spool");
+    assert!(spooled.starts_with("line-00000\n"), "first pipe output chunk was lost");
+    assert!(spooled.contains("line-19999\n"), "last pipe output chunk was lost");
+    assert_eq!(spooled.lines().count(), 20_000);
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn test_write_stdin_reports_missing_and_closed_session_ids() {
     let (_temp, registry) = temp_registry().await;
 

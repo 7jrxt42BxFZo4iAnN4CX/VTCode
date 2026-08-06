@@ -103,6 +103,7 @@ impl ToolRegistry {
             ToolTimeoutCategory::Default,
             ToolTimeoutCategory::Pty,
             ToolTimeoutCategory::Mcp,
+            ToolTimeoutCategory::LongRunningCommand,
         ];
         let mut state = self.resiliency.lock();
         for category in categories {

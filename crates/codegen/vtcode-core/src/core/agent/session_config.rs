@@ -80,7 +80,10 @@ mod tests {
     #[test]
     fn captures_origin_metadata_from_workspace_config() -> Result<()> {
         let temp = TempDir::new()?;
-        fs::write(temp.path().join("vtcode.toml"), "[agent]\nprovider = \"openai\"\n")?;
+        fs::write(
+            temp.path().join("vtcode.toml"),
+            "[agent]\nprovider = \"openai\"\n\n[workspace]\nuse_root_config = true\n",
+        )?;
 
         let snapshot = ResolvedSessionConfig::load_from_workspace(temp.path())?;
 
@@ -94,10 +97,10 @@ mod tests {
     fn snapshot_is_immutable_after_disk_changes() -> Result<()> {
         let temp = TempDir::new()?;
         let config_path = temp.path().join("vtcode.toml");
-        fs::write(&config_path, "[agent]\nprovider = \"openai\"\n")?;
+        fs::write(&config_path, "[agent]\nprovider = \"openai\"\n\n[workspace]\nuse_root_config = true\n")?;
 
         let snapshot = ResolvedSessionConfig::load_from_workspace(temp.path())?;
-        fs::write(&config_path, "[agent]\nprovider = \"anthropic\"\n")?;
+        fs::write(&config_path, "[agent]\nprovider = \"anthropic\"\n\n[workspace]\nuse_root_config = true\n")?;
 
         assert_eq!(snapshot.effective().agent.provider, "openai");
 

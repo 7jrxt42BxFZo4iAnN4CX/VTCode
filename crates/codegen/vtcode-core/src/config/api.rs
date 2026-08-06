@@ -412,7 +412,8 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let workspace = temp.path();
         let workspace_config = workspace.join("vtcode.toml");
-        fs::write(&workspace_config, "agent.provider = \"openai\"\n").expect("workspace config");
+        fs::write(&workspace_config, "agent.provider = \"openai\"\n\n[workspace]\nuse_root_config = true\n")
+            .expect("workspace config");
 
         let response = ConfigService::write(ConfigWriteRequest {
             workspace: workspace.to_path_buf(),

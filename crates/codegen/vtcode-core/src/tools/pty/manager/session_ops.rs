@@ -26,6 +26,21 @@ impl PtyManager {
         Ok(handle.read_output(drain))
     }
 
+    pub(crate) fn output_stats(&self, session_id: &str) -> Result<Option<super::super::PtyOutputStats>> {
+        let handle = self.session_handle(session_id)?;
+        let scrollback_truncated = handle.scrollback.lock().output_truncated();
+        let spool_ready = handle.output_spool_ready.load(std::sync::atomic::Ordering::Acquire);
+        let spool_finished = handle.output_spool_finished.load(std::sync::atomic::Ordering::Acquire);
+        let spool_failed = handle.output_spool_failed.load(std::sync::atomic::Ordering::Acquire);
+        Ok(Some(super::super::PtyOutputStats {
+            total_bytes: handle.output_total_bytes.load(std::sync::atomic::Ordering::Relaxed),
+            truncated: scrollback_truncated || spool_failed,
+            spool_path: handle.output_spool_path.clone(),
+            spool_available: spool_ready && !spool_failed,
+            spool_complete: spool_ready && spool_finished && !spool_failed,
+        }))
+    }
+
     /// Check if all output from this PTY session has been consumed.
     pub fn is_output_drained(&self, session_id: &str) -> Result<bool> {
         let handle = self.session_handle(session_id)?;

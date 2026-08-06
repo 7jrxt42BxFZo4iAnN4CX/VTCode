@@ -18,6 +18,8 @@ pub enum ToolTimeoutCategory {
     Pty,
     /// MCP tool execution (moderate timeouts).
     Mcp,
+    /// Explicit waits for long-running command sessions.
+    LongRunningCommand,
 }
 
 impl ToolTimeoutCategory {
@@ -27,6 +29,7 @@ impl ToolTimeoutCategory {
             ToolTimeoutCategory::Default => "standard",
             ToolTimeoutCategory::Pty => "PTY",
             ToolTimeoutCategory::Mcp => "MCP",
+            ToolTimeoutCategory::LongRunningCommand => "long-running command",
         }
     }
 }
@@ -37,6 +40,7 @@ pub struct ToolTimeoutPolicy {
     default_ceiling: Option<Duration>,
     pty_ceiling: Option<Duration>,
     mcp_ceiling: Option<Duration>,
+    long_running_command_ceiling: Option<Duration>,
     warning_fraction: f32,
 }
 
@@ -46,6 +50,7 @@ impl Default for ToolTimeoutPolicy {
             default_ceiling: Some(Duration::from_secs(180)),
             pty_ceiling: Some(Duration::from_secs(300)),
             mcp_ceiling: Some(Duration::from_secs(120)),
+            long_running_command_ceiling: Some(Duration::from_secs(3_600)),
             warning_fraction: 0.75,
         }
     }
@@ -58,6 +63,7 @@ impl ToolTimeoutPolicy {
             default_ceiling: config.ceiling_duration(config.default_ceiling_seconds),
             pty_ceiling: config.ceiling_duration(config.pty_ceiling_seconds),
             mcp_ceiling: config.ceiling_duration(config.mcp_ceiling_seconds),
+            long_running_command_ceiling: config.ceiling_duration(config.long_running_command_ceiling_seconds),
             warning_fraction: config.warning_threshold_fraction().clamp(0.0, 0.99),
         }
     }
@@ -86,6 +92,7 @@ impl ToolTimeoutPolicy {
         Self::validate_ceiling(self.default_ceiling, "default_ceiling_seconds")?;
         Self::validate_ceiling(self.pty_ceiling, "pty_ceiling_seconds")?;
         Self::validate_ceiling(self.mcp_ceiling, "mcp_ceiling_seconds")?;
+        Self::validate_ceiling(self.long_running_command_ceiling, "long_running_command_ceiling_seconds")?;
 
         // Validate warning fraction
         if self.warning_fraction <= 0.0 {
@@ -104,6 +111,7 @@ impl ToolTimeoutPolicy {
             ToolTimeoutCategory::Default => self.default_ceiling,
             ToolTimeoutCategory::Pty => self.pty_ceiling.or(self.default_ceiling),
             ToolTimeoutCategory::Mcp => self.mcp_ceiling.or(self.default_ceiling),
+            ToolTimeoutCategory::LongRunningCommand => self.long_running_command_ceiling.or(self.default_ceiling),
         }
     }
 

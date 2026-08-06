@@ -238,7 +238,7 @@ const MIN_READONLY_IDENTICAL_LIMIT: usize = 2;
 /// limit so high that every identical call immediately hard-blocks.
 const MAX_READONLY_IDENTICAL_LIMIT: usize = 4;
 
-fn spool_path_exists(result: &Value) -> bool {
+fn spool_path_exists(result: &Value, workspace_root: &Path) -> bool {
     let Some(spool_path) = result.get("spool_path").and_then(|v| v.as_str()) else {
         return true;
     };
@@ -248,19 +248,23 @@ fn spool_path_exists(result: &Value) -> bool {
         return path.exists();
     }
 
-    path.exists() || env::current_dir().ok().is_some_and(|cwd| cwd.join(path).exists())
+    workspace_root.join(path).exists()
+        || path.exists()
+        || env::current_dir().ok().is_some_and(|cwd| cwd.join(path).exists())
 }
 
 /// Check whether a spool path is still replayable. Mirrors `spool_path_exists`
 /// but takes the path directly so it can be called from the unified TTL helper
 /// without re-extracting the spool path from the result object.
-fn spool_path_is_replayable(spool_path: &str) -> bool {
+fn spool_path_is_replayable(spool_path: &str, workspace_root: &Path) -> bool {
     let path = Path::new(spool_path);
     if path.is_absolute() {
         return path.exists();
     }
 
-    path.exists() || env::current_dir().ok().is_some_and(|cwd| cwd.join(path).exists())
+    workspace_root.join(path).exists()
+        || path.exists()
+        || env::current_dir().ok().is_some_and(|cwd| cwd.join(path).exists())
 }
 
 /// Whether a TTL replay requires the record to reference a spool file.
@@ -672,13 +676,13 @@ impl ToolExecutionHistory {
             };
 
             if let Some(spool_path) = result.get("spool_path").and_then(Value::as_str) {
-                if mode == ReplayMode::RequireSpool && !spool_path_exists(result) {
+                if mode == ReplayMode::RequireSpool && !spool_path_exists(result, &self.workspace_root) {
                     continue;
                 }
                 // Single source of truth for spool-path existence. Uses the
                 // shared helper so a relative path resolves against the
                 // workspace cwd consistently across all callers.
-                if !spool_path_is_replayable(spool_path) {
+                if !spool_path_is_replayable(spool_path, &self.workspace_root) {
                     continue;
                 }
             } else if mode == ReplayMode::RequireSpool {

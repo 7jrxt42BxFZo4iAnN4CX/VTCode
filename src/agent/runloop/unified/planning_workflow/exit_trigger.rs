@@ -11,8 +11,8 @@ use vtcode_ui::tui::app::{InlineHandle, InlineSession};
 use crate::agent::runloop::unified::planning_workflow::{
     PlanApprovalRequestContext, PlanApprovalRoute, PlanApprovalTelemetryContext, PlanArtifactError,
     PlanExecutionContext, PlanningFinishReason, PlanningIntent, assistant_recently_prompted_implementation,
-    build_plan_repair_directive, complete_approved_plan_handoff, detect_planning_intent, execute_plan_approval,
-    finish_planning_workflow, load_plan_text_for_approval, plan_approval_route,
+    complete_approved_plan_handoff, detect_planning_intent, execute_plan_approval, finish_planning_workflow,
+    load_plan_text_for_approval, plan_approval_route, plan_repair_directive_for_error,
 };
 use crate::agent::runloop::unified::planning_workflow_state::{
     PLANNING_WORKFLOW_NO_APPROVAL_READY_PLAN_HINT, PlanningWorkflowSessionState, short_confirmation_hint_with_fallback,
@@ -21,7 +21,7 @@ use crate::agent::runloop::unified::state::CtrlCState;
 use crate::agent::runloop::unified::turn::context::{TurnHandlerOutcome, TurnLoopResult};
 
 const PLANNING_WORKFLOW_EXIT_TRIGGER_STATUS: &str = "Planning workflow: implementation intent detected from your message. Exiting planning mode and proceeding with execution.";
-const PLANNING_WORKFLOW_MISSING_PLAN_SYNTHESIS_DIRECTIVE: &str = "Planning recovery: implementation was requested, but no completed plan draft exists yet. Do not implement and do not ask for approval. Synthesize exactly one compact `<proposed_plan>` from the repository evidence already gathered, including Summary, numbered `Action -> files/symbols -> verify:` steps, Validation, and short Assumptions. Do not emit tool calls.";
+const PLANNING_WORKFLOW_MISSING_PLAN_SYNTHESIS_DIRECTIVE: &str = "Planning recovery: implementation was requested, but no completed plan draft exists yet. Do not implement and do not ask for approval. Synthesize exactly one compact `<proposed_plan>` from the repository evidence already gathered, including Summary, numbered steps in the form `Action -> files: [path] -> verify: [command]`, Validation, and short Assumptions. Do not emit tool calls.";
 
 pub(crate) struct PlanningExitContext<'a> {
     pub(crate) active_agent_name: &'a str,
@@ -152,17 +152,11 @@ pub(crate) async fn maybe_handle_planning_exit_trigger(
                     tracing::warn!(target: "vtcode.planning_workflow", error = %error, "persisted plan rejected before approval");
                     if plan_session.plan_validation_repair_allowed() {
                         plan_session.mark_plan_validation_repair_used();
-                        // Extract validator-owned feedback from the error so the
-                        // model receives actionable, format-specific guidance
-                        // instead of a generic "repair the plan" message. This
-                        // shares the same directive builder as the initial-plan
-                        // rejection path for consistent format guidance.
-                        let feedback = match &error {
-                            PlanArtifactError::Invalid { report, .. } => report.repair_feedback(),
-                            _ => crate::agent::runloop::unified::planning_workflow::PlanValidationReport::default()
-                                .repair_feedback(),
-                        };
-                        working_history.push(uni::Message::system(build_plan_repair_directive(&feedback)));
+                        // The error→feedback mapping and one-shot policy prose
+                        // live in the planning facade so this later-turn
+                        // approval rejection path and the initial-plan
+                        // rejection path share identical guidance.
+                        working_history.push(uni::Message::system(plan_repair_directive_for_error(&error)));
                     }
                     *auto_finish_planning_attempted = true;
                     return Ok(PlanningTransition::StayInPlanning);

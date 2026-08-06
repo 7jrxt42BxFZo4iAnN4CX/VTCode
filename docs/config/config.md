@@ -12,6 +12,8 @@ VT Code uses a configuration file named `vtcode.toml` that can be placed at the 
 - [External editor](#external-editor)
 - [Fullscreen interaction](#fullscreen-interaction)
 - [Execution environment](#execution-environment)
+- [Long-running command waits](#long-running-command-waits)
+- [Context compaction and session history](#context-compaction-and-session-history)
 - [MCP integration](#mcp-integration)
 - [Security and approvals](#security-and-approvals)
 - [Permissions guide](../guides/permissions.md)
@@ -466,6 +468,28 @@ api_timeout = 120   # 2 minutes
 participant_timeout = 30  # 30 seconds
 ```
 
+### Long-running command waits
+
+The `write_stdin` and `unified_exec` tools support an explicit `wait` action
+for command sessions. A wait deadline returns an in-progress session instead of
+terminating it; call `wait` again with the returned `session_id` to continue
+observing the same process. Waits are excluded from the ordinary per-turn
+harness wall-clock budget, but cancellation and the long-running ceiling still
+apply.
+
+```toml
+[timeouts]
+# Hard upper bound for one explicit command wait (seconds).
+long_running_command_ceiling_seconds = 3600
+```
+
+The requested `wait_timeout_seconds` is clamped to this ceiling. Command output
+is kept memory-bounded; the tool response contains a bounded preview and a
+`spool_path` when the spool file is open and healthy. For an active session,
+`spool_complete = false` identifies a readable partial snapshot. If the
+process has exited before draining finishes, `spool_pending = true` indicates
+that a later wait can observe the completed spool.
+
 ## Context compaction and session history
 
 VT Code has two compaction paths:
@@ -473,10 +497,13 @@ VT Code has two compaction paths:
 - provider-native compaction for providers that support Responses/API-managed compaction
 - local fallback compaction for other providers
 
-Local fallback compaction no longer keeps a mixed recent tail. VT Code rebuilds the preserved history as:
+Local fallback compaction preserves a continuity tail of approximately 20,000
+estimated tokens. The tail is made of complete user/assistant/tool protocol
+groups; an incomplete trailing tool call is dropped. VT Code summarizes only
+the older history prefix and rebuilds the preserved history as:
 
 1. one structured summary message
-2. retained recent real user messages
+2. retained recent real user messages and the continuity tail
 3. the session memory envelope
 
 Summarized session forks reuse that same handoff shape when you choose a summarized fork from `/fork` or pass `--summarize` on a forked CLI flow.
@@ -501,6 +528,8 @@ Notes:
 - `context.dynamic.persist_history = true` lets VT Code persist compaction artifacts and the session memory envelope so later resumes and summarized forks can reuse that context.
 - `context.dynamic.retained_user_messages` controls how many recent real user messages VT Code preserves verbatim on the local fallback compaction path and in summarized forks. The default is `4`.
 - The session memory envelope is VT Code's durable working-memory artifact. It is refreshed at turn boundaries and after completed child-agent results, then persisted beside history artifacts as `.memory.json`.
+- A soft compaction threshold at 90% of the effective hard threshold defers compaction to the next outer turn boundary; the hard threshold compacts before the next model request. Compaction does not issue a hidden summary request from inside an active tool loop.
+- Steering follow-ups are stored in schema-version 3 envelopes as UUID-tagged intents: at most 16 pending intents and the most recent 64 applied IDs are retained for restart recovery.
 
 ## MCP integration
 

@@ -813,9 +813,7 @@ mod tests {
     fn settings_palette_state_loads_workspace_config_directly() {
         let temp = tempfile::tempdir().expect("temp dir");
         let source_path = temp.path().join("vtcode.toml");
-        let mut config = VTCodeConfig::default();
-        config.agent.theme = "ansi".to_string();
-        std::fs::write(&source_path, toml::to_string(&config).expect("config should serialize"))
+        std::fs::write(&source_path, "[workspace]\nuse_root_config = true\n\n[agent]\ntheme = \"ansi\"\n")
             .expect("workspace config should be written");
 
         let state = create_settings_palette_state(temp.path(), &None).expect("settings state should load");

@@ -113,6 +113,7 @@ Press `Alt+O` to open the fullscreen transcript review surface. It builds a plai
 - `/compact edit-prompt` and `/compact reset-prompt` manage the saved default prompt for manual compaction requests.
 - For providers with native Responses compaction, VT Code uses the provider-owned compacted state.
  - For local fallback compaction, VT Code rebuilds history around one structured summary plus retained recent user messages, then injects the session memory envelope.
+ - Automatic compaction also keeps the newest complete protocol groups verbatim in a continuity tail of approximately 20,000 estimated tokens. An interrupted trailing tool call is omitted rather than replayed.
  - Switching the main session model or provider mid-conversation (via `/model`) automatically compacts the existing history before the next turn, so the newly selected model starts from a summary instead of the outgoing model's raw trace. The previous-response chain is cleared so the new model is not chained to the old Responses/cache identity. Reselecting the same model leaves history untouched.
  - `context.dynamic.retained_user_messages` controls that retained-user-message budget; the default is `4`.
 - On the local fallback path, VT Code also deduplicates older repeated single-file reads before summarization so the newest read stays available without repeatedly bloating the prompt.
@@ -165,6 +166,7 @@ When a task is already running, VT Code keeps the active turn alive and lets you
 - `/resume` resumes a paused run while it is active. When idle, `/resume` still opens archived sessions.
 - `/stop` still cancels the active run immediately.
 - `/compact` still works only while the session is idle; it rewrites the stored conversation context for the next turn instead of interrupting the active run.
+- Follow-up steering is assigned an internal intent ID and is checkpointed with the session. Consumed instructions are marked applied only after their tagged user message is written, so a restart does not replay an already durable instruction; identical text with a different intent remains distinct.
 - `/fork` is available while idle and creates a new archived session, leaving the current session unchanged.
 - `Ctrl+B` starts or stops the configured default background subagent when background mode is enabled and `default_agent` is set. Otherwise it opens the Local Agents drawer and shows setup guidance.
 - `Alt+S` opens or focuses the Local Agents drawer.
@@ -224,6 +226,26 @@ Common backgrounded commands include:
 - Package managers (npm, yarn, pnpm)
 - Test runners (jest, pytest)
 - Development servers and other long-running processes
+
+### Waiting for long-running command sessions
+
+For an agent-managed `write_stdin` or `unified_exec` session, use the explicit
+`action = "wait"` operation instead of repeatedly polling every few seconds:
+
+```json
+{"action":"wait","session_id":"build-1","wait_timeout_seconds":300}
+```
+
+The wait deadline is only an observation deadline. If the process is still
+running, VT Code returns an in-progress result with the same reusable session
+ID; a later explicit wait can continue it. The configured
+`timeouts.long_running_command_ceiling_seconds` remains the hard upper bound,
+and cancellation still terminates the process. Model-visible output is bounded
+to a preview and includes the total byte count, truncation state, exit status,
+and `spool_path` when the spool file is open and healthy. An active session may
+set `spool_complete` to `false`; that path is a readable partial snapshot. If
+the process has exited before draining finishes, VT Code withholds the path,
+retains the session, and a later wait can return the completed reference.
 
 ### Bash Mode with `!`
 

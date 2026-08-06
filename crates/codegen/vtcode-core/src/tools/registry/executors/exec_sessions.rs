@@ -3,6 +3,7 @@ use super::{
     ExecRunBackendKind, ExecSettlementMode, ToolRegistry, acquire_executor_rate_limit, annotate_exec_run_response,
 };
 use crate::config::constants::tools;
+use crate::tools::registry::ToolTimeoutCategory;
 use crate::tools::types::VTCodeExecSession;
 use crate::zsh_exec_bridge::ZshExecBridgeSession;
 use anyhow::{Context, Result, anyhow};
@@ -210,6 +211,45 @@ impl ToolRegistry {
         .await
     }
 
+    pub(crate) async fn execute_command_session_wait(&self, args: Value) -> Result<Value> {
+        acquire_executor_rate_limit("write_stdin:wait", 1.0)?;
+
+        let payload = exec_session_payload(&args, "command session wait requires a JSON object")?;
+        let session = self
+            .resolve_exec_session(
+                &args,
+                "command session wait requires a JSON object",
+                "session_id is required for command session wait",
+                "command session wait",
+            )
+            .await?;
+        let ceiling = self
+            .timeout_policy()
+            .ceiling_for(ToolTimeoutCategory::LongRunningCommand)
+            .unwrap_or(Duration::from_secs(3_600));
+        let requested_seconds = payload
+            .get("wait_timeout_seconds")
+            .or_else(|| payload.get("timeout_seconds"))
+            .and_then(Value::as_u64)
+            .map(Duration::from_secs)
+            .unwrap_or(ceiling);
+        let deadline = requested_seconds.min(ceiling);
+        let max_tokens = max_output_tokens_from_payload(payload);
+        let capture = self
+            .wait_for_exec_yield(session.metadata.id.as_str(), deadline, Some(tools::WRITE_STDIN), true)
+            .await;
+        let mut response =
+            build_exec_passthrough_response(&session.metadata, &session.command_display, &capture, max_tokens);
+        response["waited_seconds"] = json!(capture.duration.as_secs_f64());
+        response["wait_deadline_seconds"] = json!(deadline.as_secs());
+        let spool_safe_to_prune = self
+            .attach_pipe_output_metadata(&mut response, session.metadata.id.as_str(), capture.exit_code.is_some())
+            .await?;
+        self.prune_session_if_exited(session.metadata.id.as_str(), capture.exit_code, false, spool_safe_to_prune)
+            .await?;
+        Ok(response)
+    }
+
     pub(super) async fn execute_command_session_continue_internal(
         &self,
         args: Value,
@@ -357,6 +397,20 @@ impl ToolRegistry {
         self.exec_sessions.is_output_drained(session_id)
     }
 
+    async fn attach_pipe_output_metadata(
+        &self,
+        response: &mut Value,
+        session_id: &str,
+        session_exited: bool,
+    ) -> Result<bool> {
+        if let Some(stats) = self.exec_sessions.output_stats(session_id).await? {
+            let safe_to_prune = !stats.spool_available || stats.spool_complete;
+            attach_spool_metadata(response, &stats, session_exited);
+            return Ok(safe_to_prune);
+        }
+        Ok(true)
+    }
+
     fn handle_closed_exec_session(&self, session_metadata: &VTCodeExecSession) {
         if is_pty_exec_session(session_metadata) {
             self.decrement_active_pty_sessions();
@@ -401,7 +455,7 @@ impl ToolRegistry {
                 if let Ok(Some(final_output)) =
                     self.next_exec_session_output(session_id, drain_output, &mut peeked_bytes).await
                 {
-                    output.push_str(&final_output);
+                    append_bounded_capture(&mut output, &final_output);
 
                     if let Some(tool_name) = tool_name
                         && let Some(ref callback) = progress_callback
@@ -418,7 +472,7 @@ impl ToolRegistry {
                 while Instant::now() < drain_deadline {
                     match self.next_exec_session_output(session_id, drain_output, &mut peeked_bytes).await {
                         Ok(Some(extra_output)) => {
-                            output.push_str(&extra_output);
+                            append_bounded_capture(&mut output, &extra_output);
                             if let Some(tool_name) = tool_name
                                 && let Some(ref callback) = progress_callback
                             {
@@ -449,7 +503,7 @@ impl ToolRegistry {
             if let Ok(Some(new_output)) =
                 self.next_exec_session_output(session_id, drain_output, &mut peeked_bytes).await
             {
-                output.push_str(&new_output);
+                append_bounded_capture(&mut output, &new_output);
                 if tool_name.is_some() {
                     pending_lines.push_str(&new_output);
                 }
@@ -531,7 +585,7 @@ impl ToolRegistry {
 
         loop {
             let capture = self.wait_for_exec_yield(session_id, yield_duration, tool_name, true).await;
-            output.push_str(&capture.output);
+            append_bounded_capture(&mut output, &capture.output);
 
             if let Some(exit_code) = capture.exit_code {
                 return Ok(PtyEphemeralCapture {
@@ -588,8 +642,16 @@ impl ToolRegistry {
             Some(session_metadata.id.as_str()),
         )?;
 
-        self.prune_session_if_exited(session_metadata.id.as_str(), capture.exit_code, retain_completed_session)
+        let spool_safe_to_prune = self
+            .attach_pipe_output_metadata(&mut response, session_metadata.id.as_str(), capture.exit_code.is_some())
             .await?;
+        self.prune_session_if_exited(
+            session_metadata.id.as_str(),
+            capture.exit_code,
+            retain_completed_session,
+            spool_safe_to_prune,
+        )
+        .await?;
         annotate_exec_run_response(&mut response, is_git_diff);
 
         Ok(response)
@@ -611,10 +673,13 @@ impl ToolRegistry {
                 settle_until_terminal,
             )
             .await?;
-        let response =
+        let mut response =
             build_exec_passthrough_response(&session.metadata, &session.command_display, &capture, max_tokens);
 
-        self.prune_session_if_exited(session.metadata.id.as_str(), capture.exit_code, false)
+        let spool_safe_to_prune = self
+            .attach_pipe_output_metadata(&mut response, session.metadata.id.as_str(), capture.exit_code.is_some())
+            .await?;
+        self.prune_session_if_exited(session.metadata.id.as_str(), capture.exit_code, false, spool_safe_to_prune)
             .await?;
 
         Ok(response)
@@ -625,8 +690,21 @@ impl ToolRegistry {
         session_id: &str,
         exit_code: Option<i32>,
         retain_completed_session: bool,
+        spool_safe_to_prune: bool,
     ) -> Result<()> {
         if exit_code.is_some() && !retain_completed_session {
+            if !spool_safe_to_prune {
+                // The response observed a healthy but incomplete spool. Keep
+                // the exited session so a later wait can expose its completed
+                // reference, even if the writer finishes before this check.
+                return Ok(());
+            }
+            // Do not abort the output task while it is still flushing the
+            // complete, sanitized spool. A later explicit wait can finish
+            // the checkpoint and safely prune the exited session.
+            if !self.exec_session_output_drained(session_id).await.unwrap_or(false) {
+                return Ok(());
+            }
             self.prune_completed_exec_session(session_id).await?;
         }
         Ok(())
@@ -645,6 +723,23 @@ impl ToolRegistry {
     }
 }
 
+fn attach_spool_metadata(
+    response: &mut Value,
+    stats: &crate::tools::exec_session::PipeOutputStats,
+    session_exited: bool,
+) {
+    response["total_output_bytes"] = json!(stats.total_bytes);
+    response["output_truncated"] = json!(stats.truncated);
+    if stats.spool_available && (stats.spool_complete || !session_exited) {
+        response["spool_path"] = json!(stats.spool_path);
+        response["output_spooled"] = json!(true);
+        response["spool_complete"] = json!(stats.spool_complete);
+    } else if stats.spool_available {
+        response["spool_complete"] = json!(false);
+        response["spool_pending"] = json!(true);
+    }
+}
+
 fn exec_session_payload<'a>(args: &'a Value, object_error: &str) -> Result<&'a serde_json::Map<String, Value>> {
     args.as_object().ok_or_else(|| anyhow!("{object_error}"))
 }
@@ -658,4 +753,71 @@ fn resolve_exec_session_id(
     let _payload = exec_session_payload(args, object_error)?;
     let raw_sid = crate::tools::command_args::session_id_text(args).ok_or_else(|| anyhow!("{session_id_error}"))?;
     Ok(validate_exec_session_id(raw_sid, validation_context)?.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::attach_spool_metadata;
+    use crate::tools::exec_session::PipeOutputStats;
+
+    #[test]
+    fn incomplete_spool_is_not_advertised_as_a_reusable_reference() {
+        let stats = PipeOutputStats {
+            total_bytes: 42,
+            truncated: true,
+            spool_path: ".vtcode/context/tool_outputs/run-1.txt".to_string(),
+            spool_available: true,
+            spool_complete: false,
+        };
+        let mut response = json!({});
+
+        attach_spool_metadata(&mut response, &stats, true);
+
+        assert_eq!(response["total_output_bytes"], 42);
+        assert_eq!(response["output_truncated"], true);
+        assert_eq!(response["spool_complete"], false);
+        assert_eq!(response["spool_pending"], true);
+        assert!(response.get("spool_path").is_none());
+        assert!(response.get("output_spooled").is_none());
+    }
+
+    #[test]
+    fn active_partial_spool_is_advertised_as_a_readable_snapshot() {
+        let stats = PipeOutputStats {
+            total_bytes: 42,
+            truncated: true,
+            spool_path: ".vtcode/context/tool_outputs/run-1.txt".to_string(),
+            spool_available: true,
+            spool_complete: false,
+        };
+        let mut response = json!({});
+
+        attach_spool_metadata(&mut response, &stats, false);
+
+        assert_eq!(response["spool_path"], stats.spool_path);
+        assert_eq!(response["output_spooled"], true);
+        assert_eq!(response["spool_complete"], false);
+        assert!(response.get("spool_pending").is_none());
+    }
+
+    #[test]
+    fn complete_spool_is_advertised_with_a_reference() {
+        let stats = PipeOutputStats {
+            total_bytes: 42,
+            truncated: false,
+            spool_path: ".vtcode/context/tool_outputs/run-1.txt".to_string(),
+            spool_available: true,
+            spool_complete: true,
+        };
+        let mut response = json!({});
+
+        attach_spool_metadata(&mut response, &stats, true);
+
+        assert_eq!(response["spool_path"], stats.spool_path);
+        assert_eq!(response["output_spooled"], true);
+        assert_eq!(response["spool_complete"], true);
+        assert!(response.get("spool_pending").is_none());
+    }
 }

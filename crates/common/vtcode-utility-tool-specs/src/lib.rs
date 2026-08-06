@@ -198,7 +198,7 @@ pub fn exec_command_parameters() -> Value {
         "properties": {
             "cmd": {"type": "string", "description": "Shell command to execute, subject to command policy. Examples include `ls`, `rg`, `find`, `cat`, `sed`, `awk`, build tools, and test tools."},
             "yield_time_ms": {"type": "integer", "description": "Wait before returning output (ms). If the command is still running, the response includes a session_id for write_stdin.", "default": 10000},
-            "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 50000, "default": 10000, "description": "Output token cap. Large or truncated output can return a spool_path for the full output."},
+            "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 50000, "default": 10000, "description": "Output token cap. Large or truncated output can return a spool_path; an active session may set spool_complete=false for a readable partial snapshot, while an exited pending spool is withheld until a later wait."},
             "workdir": {"type": "string", "description": "Working directory."},
             "tty": {"type": "boolean", "description": "Run the command in PTY mode for interactive or terminal-sensitive commands.", "default": false},
             "sandbox_permissions": {
@@ -226,13 +226,20 @@ pub fn exec_command_parameters() -> Value {
 pub fn write_stdin_parameters() -> Value {
     json!({
         "type": "object",
-        "required": ["session_id", "chars"],
+        "required": ["session_id"],
         "properties": {
             "session_id": {"type": "string", "description": "Active execution session id."},
+            "action": {"type": "string", "enum": ["write", "poll", "wait"], "description": "Use wait to block until the command exits or wait_timeout_seconds expires; wait never kills the session."},
             "chars": {"type": "string", "description": "Bytes to write to stdin. Pass an empty string to poll without sending input."},
             "yield_time_ms": {"type": "integer", "description": "Wait before returning fresh session output (ms).", "default": 1000},
-            "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 50000, "default": 10000, "description": "Output token cap for the continuation response. Large or truncated output can return a spool_path for the full output."}
+            "wait_timeout_seconds": {"type": "integer", "minimum": 1, "description": "Explicit wait deadline in seconds. A deadline returns an in-progress session that can be waited on again."},
+            "timeout_seconds": {"type": "integer", "minimum": 1, "description": "Alias for wait_timeout_seconds."},
+            "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 50000, "default": 10000, "description": "Output token cap for the continuation response. Large or truncated output can return a spool_path; the response reports whether an active session has finished writing it."}
         },
+        "anyOf": [
+            {"required": ["chars"]},
+            {"required": ["action"], "properties": {"action": {"const": "wait"}}}
+        ],
         "additionalProperties": false
     })
 }
@@ -436,9 +443,13 @@ mod tests {
         }
 
         let stdin_params = write_stdin_parameters();
-        assert_eq!(stdin_params["required"], json!(["session_id", "chars"]));
+        assert_eq!(stdin_params["required"], json!(["session_id"]));
         assert!(stdin_params["properties"]["session_id"].is_object());
         assert_eq!(stdin_params["properties"]["chars"]["type"], "string");
+        assert_eq!(stdin_params["properties"]["action"]["enum"], json!(["write", "poll", "wait"]));
+        assert!(stdin_params["properties"]["wait_timeout_seconds"].is_object());
+        assert_eq!(stdin_params["anyOf"][1]["required"], json!(["action"]));
+        assert_eq!(stdin_params["anyOf"][1]["properties"]["action"]["const"], "wait");
         assert!(
             stdin_params["properties"]["chars"]["description"]
                 .as_str()

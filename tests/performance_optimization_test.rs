@@ -1,23 +1,30 @@
 #![allow(missing_docs)]
+use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
+use tempfile::tempdir;
 use vtcode_core::config::loader::ConfigManager;
 
 #[test]
 fn test_configuration_caching() {
-    // Test that our configuration caching pattern works
-    let workspace = PathBuf::from(".");
+    // Keep this benchmark-style smoke test independent of the developer's
+    // global config. `use_root_config` also prevents a malformed user layer
+    // from making an otherwise valid workspace fixture fail to load.
+    let temp_workspace = tempdir().expect("create isolated config workspace");
+    fs::write(temp_workspace.path().join("vtcode.toml"), "[workspace]\nuse_root_config = true\n")
+        .expect("write isolated config fixture");
+    let workspace = temp_workspace.path();
 
     // First load
     let start_time = Instant::now();
-    let config1 = ConfigManager::load_from_workspace(&workspace)
+    let config1 = ConfigManager::load_from_workspace(workspace)
         .ok()
         .map(|manager| manager.config().clone());
     let first_load_time = start_time.elapsed();
 
     // Second load using cached path
     let start_time = Instant::now();
-    let config2 = ConfigManager::load_from_workspace(&workspace)
+    let config2 = ConfigManager::load_from_workspace(workspace)
         .ok()
         .map(|manager| manager.config().clone());
     let second_load_time = start_time.elapsed();

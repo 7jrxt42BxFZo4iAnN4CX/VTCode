@@ -6,6 +6,7 @@ pub enum CommandSessionAction {
     Run,
     Write,
     Poll,
+    Wait,
     Continue,
     Inspect,
     List,

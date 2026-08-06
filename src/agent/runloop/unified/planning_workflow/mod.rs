@@ -113,6 +113,21 @@ pub(crate) fn build_plan_repair_directive(feedback: &str) -> String {
     )
 }
 
+/// Resolve a [`PlanArtifactError`] into the bounded repair directive the model
+/// should receive on the single allowed repair pass. This is the single owner
+/// of the error→feedback mapping so the initial-plan rejection path
+/// (`response_handling.rs`) and the later-turn approval rejection path
+/// (`exit_trigger.rs`) cannot diverge: invalid plans get their report-specific
+/// feedback, every other error variant gets the safe generic feedback, and the
+/// one-shot policy prose is always applied by [`build_plan_repair_directive`].
+pub(crate) fn plan_repair_directive_for_error(error: &PlanArtifactError) -> String {
+    let feedback = match error {
+        PlanArtifactError::Invalid { report, .. } => report.repair_feedback(),
+        _ => PlanValidationReport::default().repair_feedback(),
+    };
+    build_plan_repair_directive(&feedback)
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ValidatedPlanArtifact {
     pub(crate) plan_file: PathBuf,
@@ -233,4 +248,155 @@ pub(crate) fn resolve_plan_approval(
         decision,
         automatic,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    const VALID_PLAN: &str = r#"# Plan
+
+## Summary
+A valid plan.
+
+## Implementation Steps
+1. Do it -> files: [src/lib.rs] -> verify: [cargo check]
+
+## Test Cases and Validation
+1. Run cargo check.
+
+## Assumptions and Defaults
+1. Keep existing behavior.
+"#;
+
+    const INVALID_PROSE_PLAN: &str = r#"# Plan
+
+## Summary
+Improve launch time.
+
+## Implementation Steps
+1. Profile actual startup first
+2. Make startup lazy where possible
+
+## Test Cases and Validation
+1. Track the same startup marker.
+
+## Assumptions and Defaults
+1. Keep existing behavior.
+"#;
+
+    // --- plan_repair_directive_for_error tests ---
+
+    #[test]
+    fn repair_directive_for_invalid_error_uses_report_specific_feedback() {
+        // An Invalid error carries a report with the exact step count and
+        // target issue. The directive must surface that report-specific
+        // feedback, not the generic fallback.
+        let report = validate_plan_content(INVALID_PROSE_PLAN);
+        assert!(!report.is_ready());
+        let error = PlanArtifactError::Invalid {
+            reasons: report.reasons().join("; "),
+            report: Box::new(report),
+        };
+        let directive = plan_repair_directive_for_error(&error);
+        assert!(
+            directive.contains("2 of 2 implementation step(s)"),
+            "invalid-error directive must include report-specific step count: {directive}"
+        );
+        assert!(
+            directive.contains("Action -> files: [path/to/file.rs] -> verify: [cargo check]"),
+            "directive must include the canonical step format: {directive}"
+        );
+        assert!(
+            directive.contains("<proposed_plan>"),
+            "directive must instruct re-emitting the proposed_plan block: {directive}"
+        );
+        assert!(
+            directive.contains("Do not emit tool calls"),
+            "directive must enforce the no-tool-call one-shot policy: {directive}"
+        );
+    }
+
+    #[test]
+    fn repair_directive_for_non_invalid_error_uses_safe_generic_feedback() {
+        // Missing / Read / Persistence errors have no report. The directive
+        // must fall back to the generic default feedback, which still includes
+        // the canonical format and policy prose — never empty or unbounded.
+        let error = PlanArtifactError::Missing;
+        let directive = plan_repair_directive_for_error(&error);
+        assert!(
+            directive.contains("Action -> files: [path/to/file.rs] -> verify: [cargo check]"),
+            "generic fallback must still include the canonical step format: {directive}"
+        );
+        assert!(
+            directive.contains("<proposed_plan>"),
+            "generic fallback must still instruct re-emitting the plan: {directive}"
+        );
+        assert!(
+            directive.contains("Do not emit tool calls"),
+            "generic fallback must still enforce the no-tool-call policy: {directive}"
+        );
+        // The generic fallback must NOT claim a specific step count, since the
+        // error variant carries no such information.
+        assert!(
+            !directive.contains("implementation step(s) lack"),
+            "generic fallback must not fabricate step-specific diagnostics: {directive}"
+        );
+    }
+
+    #[test]
+    fn repair_directive_does_not_echo_raw_plan_text() {
+        // The invalid plan's prose steps are model-controlled text. The
+        // directive must only carry validator-owned summaries (counts and
+        // canonical format), never the raw step prose.
+        let report = validate_plan_content(INVALID_PROSE_PLAN);
+        let error = PlanArtifactError::Invalid {
+            reasons: report.reasons().join("; "),
+            report: Box::new(report),
+        };
+        let directive = plan_repair_directive_for_error(&error);
+        assert!(
+            !directive.contains("Profile actual startup first"),
+            "directive must NOT echo raw plan step prose: {directive}"
+        );
+        assert!(!directive.contains("Make startup lazy"), "directive must NOT echo raw plan step prose: {directive}");
+    }
+
+    // --- ValidatedPlanArtifact::from_validated tests ---
+
+    #[test]
+    fn from_validated_preserves_supplied_fields_without_revalidation() {
+        // from_validated trusts the caller's report and must NOT re-parse the
+        // text. We verify this by supplying a ready report alongside text that
+        // would NOT validate on its own — if from_validated revalidated, the
+        // resulting artifact's validation would not be ready.
+        let ready_report = validate_plan_content(VALID_PLAN);
+        assert!(ready_report.is_ready());
+
+        let artifact = ValidatedPlanArtifact::from_validated(
+            PathBuf::from("/tmp/plan.md"),
+            "this text would not pass validation on its own".to_string(),
+            ready_report.clone(),
+        );
+
+        assert_eq!(artifact.plan_file, PathBuf::from("/tmp/plan.md"));
+        assert_eq!(artifact.text, "this text would not pass validation on its own");
+        assert_eq!(artifact.validation, ready_report);
+        assert!(
+            artifact.validation.is_ready(),
+            "from_validated must preserve the supplied ready report without revalidation"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "from_validated called with a non-ready validation report")]
+    fn from_validated_debug_asserts_on_non_ready_report() {
+        // The debug_assert enforces the caller invariant in dev builds: a
+        // non-ready report must never be passed. This is the guardrail that
+        // keeps the skip-revalidation path safe.
+        let non_ready = validate_plan_content(INVALID_PROSE_PLAN);
+        assert!(!non_ready.is_ready());
+        let _ = ValidatedPlanArtifact::from_validated(PathBuf::from("/tmp/plan.md"), "unused".to_string(), non_ready);
+    }
 }

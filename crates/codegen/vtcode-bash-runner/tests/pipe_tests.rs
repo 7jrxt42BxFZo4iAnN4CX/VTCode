@@ -6,6 +6,7 @@
 
 use hashbrown::HashMap;
 use std::path::Path;
+use std::time::Duration;
 
 use vtcode_bash_runner::{
     PipeSpawnOptions, PipeStdinMode, collect_output_until_exit, spawn_pipe_process, spawn_pipe_process_no_stdin,
@@ -96,7 +97,10 @@ async fn test_pipe_process_no_stdin() -> anyhow::Result<()> {
 async fn test_pipe_spawn_options() -> anyhow::Result<()> {
     let (program, args) = shell_command("echo options_test");
 
-    let opts = PipeSpawnOptions::new(program, ".").args(args).stdin_mode(PipeStdinMode::Null);
+    let opts = PipeSpawnOptions::new(program, ".")
+        .args(args)
+        .stdin_mode(PipeStdinMode::Null)
+        .lossless_output(true);
 
     let spawned = spawn_pipe_process_with_options(opts).await?;
 
@@ -123,13 +127,13 @@ async fn test_process_handle_terminate() -> anyhow::Result<()> {
     let spawned = spawn_pipe_process(&program, &args, Path::new("."), &env, &None).await?;
 
     // Give it a moment to start
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Terminate
     spawned.session.terminate();
 
     // Process should be terminated
-    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(spawned.session.has_exited() || spawned.session.is_writer_closed());
 
     Ok(())
@@ -146,7 +150,7 @@ async fn test_pipe_process_detaches_from_parent_session() -> anyhow::Result<()> 
     let spawned = spawn_pipe_process(&program, &args, Path::new("."), &env, &None).await?;
 
     let mut output_rx = spawned.output_rx;
-    let pid_bytes = tokio::time::timeout(tokio::time::Duration::from_millis(500), output_rx.recv()).await??;
+    let pid_bytes = tokio::time::timeout(Duration::from_millis(500), output_rx.recv()).await??;
     let pid_text = String::from_utf8_lossy(&pid_bytes);
     let child_pid: i32 = pid_text
         .split_whitespace()
@@ -201,6 +205,68 @@ async fn test_pipe_drains_stderr() -> anyhow::Result<()> {
 
     assert!(text.contains("stderr_output"), "expected stderr to be captured: {text:?}");
     assert_eq!(code, 0);
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_pipe_reliable_output_preserves_high_volume_stream() -> anyhow::Result<()> {
+    let script = "i=0; while [ $i -lt 20000 ]; do printf 'line-%05d\\n' \"$i\"; i=$((i+1)); done";
+    let (program, args) = shell_command(script);
+    let env: HashMap<String, String> = std::env::vars().collect();
+    let spawned =
+        spawn_pipe_process_with_options(PipeSpawnOptions::new(program, ".").args(args).env(env).lossless_output(true))
+            .await?;
+
+    let (output, code) = spawned.wait_with_output(10_000).await;
+    let text = String::from_utf8_lossy(&output);
+
+    assert_eq!(code, 0, "high-volume process should exit cleanly");
+    assert!(text.starts_with("line-00000\n"), "first output chunk was lost: {:?}", &text[..text.len().min(80)]);
+    assert!(text.contains("line-19999\n"), "last output chunk was lost");
+    assert_eq!(text.lines().count(), 20_000);
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_reliable_wait_bounds_inherited_pipe_drain_after_child_exit() -> anyhow::Result<()> {
+    let (program, args) = shell_command("sleep 10 & exit 0");
+    let env: HashMap<String, String> = std::env::vars().collect();
+    let spawned = spawn_pipe_process_with_options(
+        PipeSpawnOptions::new(program, ".")
+            .args(args)
+            .env(env)
+            .stdin_mode(PipeStdinMode::Null)
+            .lossless_output(true),
+    )
+    .await?;
+
+    let result = tokio::time::timeout(Duration::from_secs(3), spawned.wait_with_output(2_000)).await?;
+    let (_, code) = result;
+    assert_eq!(code, 0, "the direct shell process should exit successfully");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_pipe_legacy_output_receiver_does_not_wait_for_reliable_consumer() -> anyhow::Result<()> {
+    let script = "i=0; while [ $i -lt 20000 ]; do printf 'line-%05d\\n' \"$i\"; i=$((i+1)); done";
+    let (program, args) = shell_command(script);
+    let env: HashMap<String, String> = std::env::vars().collect();
+    let spawned = spawn_pipe_process(&program, &args, Path::new("."), &env, &None).await?;
+
+    // This intentionally leaves `reliable_output_rx` untouched. Public legacy
+    // callers must still drain the child through `output_rx` and receive its
+    // exit notification without being blocked by the opt-in lossless stream.
+    let (output, code) = collect_output_until_exit(spawned.output_rx, spawned.exit_rx, 10_000).await;
+    let text = String::from_utf8_lossy(&output);
+
+    assert_eq!(code, 0);
+    assert!(text.starts_with("line-00000\n"));
+    assert!(text.contains("line-19999\n"));
 
     Ok(())
 }

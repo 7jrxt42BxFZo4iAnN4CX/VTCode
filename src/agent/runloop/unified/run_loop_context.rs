@@ -301,6 +301,10 @@ pub(crate) struct HarnessTurnState {
     pub turn_id: TurnId,
     pub phase: TurnPhase,
     pub turn_started_at: Instant,
+    /// Time spent in explicit command waits is excluded from the ordinary
+    /// per-turn harness wall-clock budget.
+    wait_started_at: Option<Instant>,
+    excluded_wait_duration: Duration,
     pub tool_calls: usize,
     pub blocked_tool_calls: usize,
     pub consecutive_blocked_tool_calls: usize,
@@ -416,6 +420,8 @@ impl HarnessTurnState {
             turn_id,
             phase: TurnPhase::Preparing,
             turn_started_at: Instant::now(),
+            wait_started_at: None,
+            excluded_wait_duration: Duration::ZERO,
             tool_calls: 0,
             blocked_tool_calls: 0,
             consecutive_blocked_tool_calls: 0,
@@ -476,7 +482,27 @@ impl HarnessTurnState {
     }
 
     pub(crate) fn wall_clock_exhausted(&self) -> bool {
-        self.turn_started_at.elapsed() >= self.max_tool_wall_clock
+        self.effective_wall_clock_elapsed() >= self.max_tool_wall_clock
+    }
+
+    fn effective_wall_clock_elapsed(&self) -> Duration {
+        let elapsed = self.turn_started_at.elapsed();
+        let active_wait = self.wait_started_at.map(|started| started.elapsed()).unwrap_or(Duration::ZERO);
+        elapsed.saturating_sub(self.excluded_wait_duration.saturating_add(active_wait))
+    }
+
+    /// Pause ordinary turn wall-clock accounting around an explicit command
+    /// wait. This does not alter tool ceilings or cancellation behavior.
+    pub(crate) fn begin_long_running_command_wait(&mut self) {
+        if self.wait_started_at.is_none() {
+            self.wait_started_at = Some(Instant::now());
+        }
+    }
+
+    pub(crate) fn end_long_running_command_wait(&mut self) {
+        if let Some(started) = self.wait_started_at.take() {
+            self.excluded_wait_duration = self.excluded_wait_duration.saturating_add(started.elapsed());
+        }
     }
 
     pub(crate) fn wall_clock_budget_exhaustion(&self) -> Option<ToolWallClockExhaustion> {

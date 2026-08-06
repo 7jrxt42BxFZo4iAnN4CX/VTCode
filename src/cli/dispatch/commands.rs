@@ -256,6 +256,7 @@ mod tests {
     use super::dispatch_schema_command;
     use crate::startup::StartupContext;
     use clap::Parser;
+    use std::fs;
     use tempfile::TempDir;
     use vtcode_commons::env_lock;
     use vtcode_core::cli::args::{Cli, Commands};
@@ -265,6 +266,8 @@ mod tests {
     async fn schema_dispatch_receives_generic_profile_override_from_startup() {
         let env_guard = env_lock::lock();
         let temp = TempDir::new().expect("temp dir");
+        fs::write(temp.path().join("vtcode.toml"), "[workspace]\nuse_root_config = true\n")
+            .expect("write isolated workspace config");
         env_guard.set_var("OPENAI_API_KEY", "test");
         // The default provider resolved from the built-in config is OpenRouter,
         // so the startup context needs its key to initialize even though this

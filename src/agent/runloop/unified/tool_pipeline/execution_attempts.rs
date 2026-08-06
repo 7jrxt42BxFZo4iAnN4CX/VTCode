@@ -26,6 +26,11 @@ use super::status::ToolExecutionStatus;
 use super::timeout::{TimeoutWarningGuard, create_timeout_error};
 use super::{DEFAULT_TOOL_TIMEOUT, MAX_RETRY_BACKOFF, RETRY_BACKOFF_BASE};
 
+/// The registry owns the actual command-wait deadline. The outer harness
+/// timeout is only a cancellation guard, so leave room for result draining
+/// and response construction after that inner deadline expires.
+const LONG_RUNNING_COMMAND_OUTER_HEADROOM: Duration = Duration::from_secs(5);
+
 #[cfg(test)]
 pub(crate) async fn execute_tool_with_timeout(
     registry: &ToolRegistry,
@@ -129,11 +134,16 @@ async fn execute_tool_with_timeout_ref_mode(
     let fallback_progress_reporter = ProgressReporter::new();
     let progress_reporter = progress_reporter.unwrap_or(&fallback_progress_reporter);
 
-    let timeout_category = registry.timeout_category_for(name).await;
-    let timeout_ceiling = registry
+    let timeout_category = registry.timeout_category_for_args(name, args).await;
+    let configured_timeout = registry
         .timeout_policy()
         .ceiling_for(timeout_category)
         .unwrap_or(DEFAULT_TOOL_TIMEOUT);
+    let timeout_ceiling = if timeout_category == ToolTimeoutCategory::LongRunningCommand {
+        configured_timeout.saturating_add(LONG_RUNNING_COMMAND_OUTER_HEADROOM)
+    } else {
+        configured_timeout
+    };
     let retry_allowed = is_retry_safe_tool(registry, name, args);
     let mut retry_policy =
         RetryPolicy::from_retries(max_tool_retries as u32, RETRY_BACKOFF_BASE, MAX_RETRY_BACKOFF, 2.0);
@@ -440,7 +450,7 @@ async fn run_single_tool_attempt(
                 token.cancel();
                 terminate_active_exec_sessions(registry, name, "timed out").await;
                 progress_reporter.set_message(format!("{name} timed out")).await;
-                let timeout_category = registry.timeout_category_for(name).await;
+                let timeout_category = registry.timeout_category_for_args(name, args).await;
                 break create_timeout_error(name, timeout_category, Some(tool_timeout));
             }
         }

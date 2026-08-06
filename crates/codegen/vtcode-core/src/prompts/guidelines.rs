@@ -57,7 +57,7 @@ pub fn generate_tool_guidelines_for_profile(
         lines.push(shell_task_guidance(shell_profile).to_string());
     }
     if has_stdin {
-        lines.push("- Use `write_stdin` only with an active exec_command session.".to_string());
+        lines.push("- Use `write_stdin` only with an active exec_command session; use action `wait` for long builds instead of repeated polls, call it again after an in-progress deadline, and treat an active `spool_complete: false` reference as readable partial output; an exited pending spool is withheld until a later wait.".to_string());
     }
     if has_exec || has_apply_patch {
         lines.push("- Completion is a checkpoint: keep verification resolved.".to_string());

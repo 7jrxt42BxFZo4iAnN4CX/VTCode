@@ -12,8 +12,9 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::compaction::memory_envelope::{
-    MemoryEnvelopePersistence, MemoryEnvelopePlacement, dedup_repeated_file_reads_for_local_compaction,
-    effective_compaction_threshold, persist_memory_envelope, strip_existing_memory_envelope,
+    MemoryEnvelopePersistence, MemoryEnvelopePlacement, SessionMemoryEnvelopeUpdate,
+    dedup_repeated_file_reads_for_local_compaction, effective_compaction_threshold,
+    persist_memory_envelope_async_with_update, strip_existing_memory_envelope,
 };
 use crate::compaction::two_pass::fingerprint_prefix;
 use crate::compaction::{
@@ -59,6 +60,12 @@ pub struct AutoCompactionInput<'a> {
     /// compaction; any other value gates automatic compaction until cleared
     /// by success, model switch, or explicit `/compact`.
     pub auto_compact_suppressed: &'a mut u8,
+    /// Force a pending soft-threshold compaction at the next outer turn
+    /// boundary. This is set only by the runloop boundary, never by a tool
+    /// loop, so no hidden model call is introduced mid-turn.
+    pub force_compaction: bool,
+    /// Live steering state to snapshot with the compaction envelope.
+    pub steering_update: Option<&'a SessionMemoryEnvelopeUpdate>,
 }
 
 /// Compress `history` in place when automatic compaction should fire.
@@ -85,6 +92,8 @@ pub async fn auto_compact_messages(
         placement,
         prefire,
         auto_compact_suppressed,
+        force_compaction,
+        steering_update,
     } = input;
 
     if !vt_cfg.is_some_and(|cfg| cfg.agent.harness.auto_compaction_enabled) {
@@ -94,7 +103,7 @@ pub async fn auto_compact_messages(
     let Some(threshold) = effective_compaction_threshold(vt_cfg, provider, model) else {
         return Ok(None);
     };
-    if current_token_usage < threshold {
+    if current_token_usage < threshold && !force_compaction {
         return Ok(None);
     }
 
@@ -113,7 +122,7 @@ pub async fn auto_compact_messages(
                 try_two_pass_with_prefire(prefire_state, provider, model, &original_history, &engine_cfg).await?
             {
                 let original_len = original_history.len();
-                let envelope = persist_memory_envelope(
+                let envelope = persist_memory_envelope_async_with_update(
                     workspace_root,
                     session_id,
                     vt_cfg,
@@ -123,7 +132,9 @@ pub async fn auto_compact_messages(
                     MemoryEnvelopePersistence::PersistToDisk,
                     placement,
                     None,
-                )?;
+                    steering_update,
+                )
+                .await?;
                 let history_artifact_path = envelope.as_ref().and_then(|item| item.history_artifact_path.clone());
                 let compacted_len = compacted.len();
                 *history = compacted;
@@ -150,7 +161,10 @@ pub async fn auto_compact_messages(
         };
 
         // Preserve the legacy small-segment short-circuit: skip tiny histories.
-        if !engine_cfg.always_summarize && compaction_history.len() <= engine_cfg.keep_last_messages {
+        if !force_compaction
+            && !engine_cfg.always_summarize
+            && compaction_history.len() <= engine_cfg.keep_last_messages
+        {
             return Ok(None);
         }
 
@@ -162,7 +176,7 @@ pub async fn auto_compact_messages(
         }
 
         let original_len = original_history.len();
-        let envelope = persist_memory_envelope(
+        let envelope = persist_memory_envelope_async_with_update(
             workspace_root,
             session_id,
             vt_cfg,
@@ -172,7 +186,9 @@ pub async fn auto_compact_messages(
             MemoryEnvelopePersistence::PersistToDisk,
             placement,
             None,
-        )?;
+            steering_update,
+        )
+        .await?;
         let history_artifact_path = envelope.as_ref().and_then(|item| item.history_artifact_path.clone());
         let compacted_len = compacted.len();
         *history = compacted;
@@ -252,15 +268,16 @@ async fn try_two_pass_with_prefire(
         return Ok(None);
     }
 
+    let effective_config = crate::compaction::context_bounded_compaction_config(provider, model, history, config);
     let compacted = build_local_compacted_history(
         history,
         &note2,
-        config.retained_user_message_tokens,
-        config.retained_user_messages,
+        effective_config.retained_user_message_tokens,
+        effective_config.retained_user_messages,
         true,
     );
 
-    Ok(Some(compacted))
+    Ok(Some(crate::compaction::bound_compacted_history_to_context(compacted, provider, model)))
 }
 
 #[cfg(test)]
@@ -271,6 +288,31 @@ mod tests {
     use async_trait::async_trait;
 
     struct FailingProvider;
+
+    struct SuccessfulProvider;
+
+    #[async_trait]
+    impl LLMProvider for SuccessfulProvider {
+        fn name(&self) -> &str {
+            "successful"
+        }
+
+        async fn generate(&self, _request: LLMRequest) -> Result<LLMResponse, LLMError> {
+            Ok(LLMResponse::new("successful-model", "summary"))
+        }
+
+        fn supported_models(&self) -> Vec<String> {
+            vec!["successful-model".to_string()]
+        }
+
+        fn validate_request(&self, _request: &LLMRequest) -> Result<(), LLMError> {
+            Ok(())
+        }
+
+        fn effective_context_size(&self, _model: &str) -> usize {
+            4_096
+        }
+    }
 
     #[async_trait]
     impl LLMProvider for FailingProvider {
@@ -320,6 +362,8 @@ mod tests {
                 placement: MemoryEnvelopePlacement::BeforeLastUserOrSummary,
                 prefire: None,
                 auto_compact_suppressed: &mut suppressed,
+                force_compaction: false,
+                steering_update: None,
             },
             &mut history,
         )
@@ -354,6 +398,8 @@ mod tests {
                 placement: MemoryEnvelopePlacement::BeforeLastUserOrSummary,
                 prefire: None,
                 auto_compact_suppressed: &mut suppressed,
+                force_compaction: false,
+                steering_update: None,
             },
             &mut history,
         )
@@ -361,5 +407,55 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(suppressed, SUPPRESS_STICKY);
+    }
+
+    #[tokio::test]
+    async fn automatic_compaction_persists_live_steering_snapshot() {
+        let provider = SuccessfulProvider;
+        let mut vt_cfg = VTCodeConfig::default();
+        vt_cfg.agent.harness.auto_compaction_enabled = true;
+        vt_cfg.context.dynamic.enabled = true;
+        vt_cfg.context.dynamic.persist_history = true;
+        let workspace = tempfile::tempdir().expect("tempdir");
+        let mut history = (0..12)
+            .map(|index| Message::user(format!("request {index}")))
+            .collect::<Vec<_>>();
+        let intent = crate::core::agent::steering::QueuedFollowUpIntent::from_parts("intent-1", "finish the request");
+        let steering_update = SessionMemoryEnvelopeUpdate {
+            pending_intents: Some(vec![intent.clone()]),
+            applied_intent_ids: vec!["applied-1".to_string()],
+            ..Default::default()
+        };
+        let mut suppressed = SUPPRESS_NONE;
+
+        let result = auto_compact_messages(
+            AutoCompactionInput {
+                provider: &provider,
+                model: "successful-model",
+                session_id: "session-1",
+                workspace_root: workspace.path(),
+                vt_cfg: Some(&vt_cfg),
+                current_token_usage: 4_000,
+                touched_files: &[],
+                engine_cfg: CompactionConfig {
+                    keep_last_messages: 0,
+                    ..CompactionConfig::default()
+                },
+                manual_options: ManualCompactionOptions::default(),
+                placement: MemoryEnvelopePlacement::BeforeLastUserOrSummary,
+                prefire: None,
+                auto_compact_suppressed: &mut suppressed,
+                force_compaction: false,
+                steering_update: Some(&steering_update),
+            },
+            &mut history,
+        )
+        .await
+        .expect("automatic compaction should succeed")
+        .expect("automatic compaction should run");
+
+        let envelope = result.envelope.expect("compaction should produce an envelope");
+        assert_eq!(envelope.pending_intents, vec![intent]);
+        assert_eq!(envelope.applied_intent_ids, vec!["applied-1"]);
     }
 }

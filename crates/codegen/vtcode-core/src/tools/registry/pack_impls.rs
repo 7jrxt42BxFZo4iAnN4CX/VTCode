@@ -425,7 +425,7 @@ impl ToolPack for ShellPack {
                 false,
                 ToolRegistry::write_stdin_executor,
             )
-            .with_description("Write characters to an active exec_command session stdin, then poll for fresh output.")
+            .with_description("Write characters to an active exec_command session, poll for fresh output, or use action=wait to block until it exits. Wait deadlines return a reusable in-progress session and never kill the process.")
             .with_parameter_schema(write_stdin_parameters())
             .with_permission(ToolPolicy::Allow),
         ];

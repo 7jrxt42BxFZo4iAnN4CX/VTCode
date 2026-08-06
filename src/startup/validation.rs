@@ -337,6 +337,7 @@ mod tests {
     fn applies_inline_overrides_to_config() -> Result<()> {
         let env_guard = env_lock::lock();
         let temp_dir = TempDir::new()?;
+        std::fs::write(temp_dir.path().join("vtcode.toml"), "[workspace]\nuse_root_config = true\n")?;
         let previous_config_dir = env::var_os("VTCODE_CONFIG");
         env_guard.set_var("VTCODE_CONFIG", temp_dir.path());
 

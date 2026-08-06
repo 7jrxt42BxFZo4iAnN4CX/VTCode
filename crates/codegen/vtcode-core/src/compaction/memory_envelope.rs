@@ -13,6 +13,7 @@ use anyhow::Context;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use tokio::fs as async_fs;
 
 use vtcode_config::constants::context::DEFAULT_COMPACTION_TRIGGER_RATIO;
 use vtcode_config::loader::VTCodeConfig;
@@ -21,14 +22,18 @@ use crate::compaction::CompactionConfig;
 use crate::config::constants::tools as tool_names;
 use crate::context::history_files::{HistoryFileManager, messages_to_history_messages};
 use crate::core::agent::harness_artifacts::{current_task_path, read_evaluation_summary, read_spec_summary};
+use crate::core::agent::steering::{
+    MAX_APPLIED_FOLLOW_UP_INTENT_IDS, MAX_QUEUED_FOLLOW_UP_INTENTS, QueuedFollowUpIntent,
+};
 use crate::llm::provider::{LLMProvider, Message, MessageRole};
 use crate::llm::utils::truncate_to_token_limit;
 use crate::persistent_memory::{GroundedFactRecord, dedup_latest_facts, normalize_whitespace, truncate_for_fact};
 
 pub const MEMORY_ENVELOPE_HEADER: &str = "[Session Memory Envelope]";
 pub const MEMORY_ENVELOPE_SUFFIX: &str = ".memory.json";
-pub const SESSION_MEMORY_ENVELOPE_SCHEMA_VERSION: u32 = 2;
+pub const SESSION_MEMORY_ENVELOPE_SCHEMA_VERSION: u32 = 3;
 pub const MEMORY_LIST_LIMIT: usize = 5;
+pub const APPLIED_INTENT_WINDOW: usize = MAX_APPLIED_FOLLOW_UP_INTENT_IDS;
 pub const DEDUPED_FILE_READ_NOTE: &str = "Older duplicate file read omitted during local compaction; a newer read of the same target slice is retained later in history.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +72,14 @@ pub struct SessionMemoryEnvelope {
     pub verification_todo: Vec<String>,
     #[serde(default)]
     pub delegation_notes: Vec<String>,
+    /// Follow-up steering intents accepted but not yet represented by a
+    /// tagged user message. The list is bounded to preserve FIFO recovery.
+    #[serde(default)]
+    pub pending_intents: Vec<QueuedFollowUpIntent>,
+    /// Recently applied steering IDs used to avoid replaying an already
+    /// durable instruction after restart or compaction.
+    #[serde(default)]
+    pub applied_intent_ids: Vec<String>,
     pub history_artifact_path: Option<String>,
     pub generated_at: String,
 }
@@ -90,6 +103,8 @@ impl SessionMemoryEnvelope {
             && self.open_questions == other.open_questions
             && self.verification_todo == other.verification_todo
             && self.delegation_notes == other.delegation_notes
+            && self.pending_intents == other.pending_intents
+            && self.applied_intent_ids == other.applied_intent_ids
     }
 }
 
@@ -102,6 +117,10 @@ pub struct SessionMemoryEnvelopeUpdate {
     pub open_questions: Vec<String>,
     pub verification_todo: Vec<String>,
     pub delegation_notes: Vec<String>,
+    /// Replace the durable pending-intent snapshot when supplied.
+    pub pending_intents: Option<Vec<QueuedFollowUpIntent>>,
+    /// IDs acknowledged since the previous envelope.
+    pub applied_intent_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
@@ -146,6 +165,10 @@ fn merge_recent_strings(prior: &[String], updates: &[String], limit: usize) -> V
         .filter(|v| !v.is_empty())
         .collect();
     merge_dedup_push(&prior_normalized, updates_normalized, limit, |s| s.to_ascii_lowercase())
+}
+
+fn merge_applied_intent_ids(prior: &[String], updates: &[String]) -> Vec<String> {
+    merge_dedup_push(prior, updates.iter().cloned(), APPLIED_INTENT_WINDOW, |id| id.clone())
 }
 
 fn extract_constraints_from_summary(text: Option<&str>) -> Vec<String> {
@@ -255,6 +278,15 @@ pub fn build_session_memory_envelope(
     );
     let constraints = merge(&constraints, &extract_constraints_from_summary(evaluation_summary.as_deref()));
     let update = envelope_update.cloned().unwrap_or_default();
+    let pending_intents = update
+        .pending_intents
+        .map(|intents| intents.into_iter().take(MAX_QUEUED_FOLLOW_UP_INTENTS).collect())
+        .or_else(|| pe.map(|envelope| envelope.pending_intents.clone()))
+        .unwrap_or_default();
+    let applied_intent_ids = merge_applied_intent_ids(
+        pe.map(|envelope| envelope.applied_intent_ids.as_slice()).unwrap_or(&[]),
+        &update.applied_intent_ids,
+    );
 
     SessionMemoryEnvelope {
         session_id: session_id.to_string(),
@@ -289,6 +321,8 @@ pub fn build_session_memory_envelope(
                 .collect::<Vec<_>>(),
         ),
         delegation_notes: merge(pe.map(|e| e.delegation_notes.as_slice()).unwrap_or(&[]), &update.delegation_notes),
+        pending_intents,
+        applied_intent_ids,
         history_artifact_path: history_artifact_path
             .map(|p| p.display().to_string())
             .or_else(|| pe.and_then(|e| e.history_artifact_path.clone())),
@@ -309,6 +343,36 @@ pub fn persist_memory_envelope(
     persistence: MemoryEnvelopePersistence,
     placement: MemoryEnvelopePlacement,
     seed_envelope: Option<&SessionMemoryEnvelope>,
+) -> anyhow::Result<Option<SessionMemoryEnvelope>> {
+    persist_memory_envelope_with_update(
+        workspace_root,
+        session_id,
+        vt_cfg,
+        original_history,
+        touched_files,
+        compacted,
+        persistence,
+        placement,
+        seed_envelope,
+        None,
+    )
+}
+
+/// Variant of [`persist_memory_envelope`] that applies a live session update
+/// while constructing the envelope. Keeping the compatibility wrapper above
+/// avoids changing synchronous callers that do not track steering state.
+#[allow(clippy::too_many_arguments)]
+pub fn persist_memory_envelope_with_update(
+    workspace_root: &Path,
+    session_id: &str,
+    vt_cfg: Option<&VTCodeConfig>,
+    original_history: &[Message],
+    touched_files: &[String],
+    compacted: &mut Vec<Message>,
+    persistence: MemoryEnvelopePersistence,
+    placement: MemoryEnvelopePlacement,
+    seed_envelope: Option<&SessionMemoryEnvelope>,
+    envelope_update: Option<&SessionMemoryEnvelopeUpdate>,
 ) -> anyhow::Result<Option<SessionMemoryEnvelope>> {
     let should_persist = should_persist_memory_envelope(vt_cfg);
     if original_history.is_empty() || (!should_persist && persistence == MemoryEnvelopePersistence::PersistToDisk) {
@@ -341,11 +405,102 @@ pub fn persist_memory_envelope(
         history_artifact_path.as_ref(),
         prior,
         &task_snapshot,
-        None,
+        envelope_update,
     );
 
     if let Some(hap) = history_artifact_path.as_ref() {
         write_memory_envelope_to_path(&memory_envelope_path_from_history_path(workspace_root, hap), &envelope)?;
+    }
+    apply_memory_envelope(compacted, &envelope, placement);
+    Ok(Some(envelope))
+}
+
+/// Async counterpart to [`persist_memory_envelope`]. Compaction runs on the
+/// async agent loop, so filesystem work must not block the runtime while the
+/// recoverable history artifact or envelope is being written.
+pub async fn persist_memory_envelope_async(
+    workspace_root: &Path,
+    session_id: &str,
+    vt_cfg: Option<&VTCodeConfig>,
+    original_history: &[Message],
+    touched_files: &[String],
+    compacted: &mut Vec<Message>,
+    persistence: MemoryEnvelopePersistence,
+    placement: MemoryEnvelopePlacement,
+    seed_envelope: Option<&SessionMemoryEnvelope>,
+) -> anyhow::Result<Option<SessionMemoryEnvelope>> {
+    persist_memory_envelope_async_with_update(
+        workspace_root,
+        session_id,
+        vt_cfg,
+        original_history,
+        touched_files,
+        compacted,
+        persistence,
+        placement,
+        seed_envelope,
+        None,
+    )
+    .await
+}
+
+/// Async variant of [`persist_memory_envelope_async`] that applies a live
+/// session update while constructing the envelope.
+#[allow(clippy::too_many_arguments)]
+pub async fn persist_memory_envelope_async_with_update(
+    workspace_root: &Path,
+    session_id: &str,
+    vt_cfg: Option<&VTCodeConfig>,
+    original_history: &[Message],
+    touched_files: &[String],
+    compacted: &mut Vec<Message>,
+    persistence: MemoryEnvelopePersistence,
+    placement: MemoryEnvelopePlacement,
+    seed_envelope: Option<&SessionMemoryEnvelope>,
+    envelope_update: Option<&SessionMemoryEnvelopeUpdate>,
+) -> anyhow::Result<Option<SessionMemoryEnvelope>> {
+    let should_persist = should_persist_memory_envelope(vt_cfg);
+    if original_history.is_empty() || (!should_persist && persistence == MemoryEnvelopePersistence::PersistToDisk) {
+        return Ok(None);
+    }
+
+    let task_snapshot = read_task_tracker_snapshot_async(workspace_root).await;
+    let history_artifact_path = if should_persist && persistence == MemoryEnvelopePersistence::PersistToDisk {
+        let mut history_manager = HistoryFileManager::new(workspace_root, session_id);
+        let history_messages = messages_to_history_messages(original_history, 0);
+        let history_result = history_manager
+            .write_history(&history_messages, original_history.len(), "compaction", touched_files, &[])
+            .await
+            .context("write compaction history artifact")?;
+        Some(history_result.file_path)
+    } else {
+        None
+    };
+
+    let loaded = if seed_envelope.is_none() {
+        load_latest_memory_envelope_async(workspace_root, session_id).await
+    } else {
+        None
+    };
+    let prior = seed_envelope.or(loaded.as_ref());
+    let envelope = build_session_memory_envelope(
+        session_id,
+        workspace_root,
+        original_history,
+        touched_files,
+        extract_compaction_summary(compacted, original_history),
+        history_artifact_path.as_ref(),
+        prior,
+        &task_snapshot,
+        envelope_update,
+    );
+
+    if let Some(history_path) = history_artifact_path.as_ref() {
+        write_memory_envelope_to_path_async(
+            &memory_envelope_path_from_history_path(workspace_root, history_path),
+            &envelope,
+        )
+        .await?;
     }
     apply_memory_envelope(compacted, &envelope, placement);
     Ok(Some(envelope))
@@ -486,12 +641,7 @@ fn memory_envelope_file_matches_session(name: &str, session_id: &str) -> bool {
         || (name.starts_with(&format!("{session_prefix}_")) && name.ends_with(MEMORY_ENVELOPE_SUFFIX))
 }
 
-pub fn read_task_tracker_snapshot(workspace_root: &Path) -> TaskTrackerSnapshot {
-    let tracker_path = current_task_path(workspace_root);
-    let Ok(content) = fs::read_to_string(&tracker_path) else {
-        return TaskTrackerSnapshot::default();
-    };
-
+fn parse_task_tracker_snapshot(content: &str) -> TaskTrackerSnapshot {
     let title = content
         .lines()
         .find(|line| line.starts_with("# "))
@@ -502,7 +652,7 @@ pub fn read_task_tracker_snapshot(workspace_root: &Path) -> TaskTrackerSnapshot 
         .take(5)
         .map(normalize_whitespace)
         .collect::<Vec<_>>();
-    let verification_summary = extract_verification_summary(&content, &checklist);
+    let verification_summary = extract_verification_summary(content, &checklist);
     let verification_todo = content
         .lines()
         .filter(|line| line.trim_start().starts_with("- [ ]"))
@@ -522,6 +672,24 @@ pub fn read_task_tracker_snapshot(workspace_root: &Path) -> TaskTrackerSnapshot 
         verification_summary,
         verification_todo,
     }
+}
+
+pub fn read_task_tracker_snapshot(workspace_root: &Path) -> TaskTrackerSnapshot {
+    let tracker_path = current_task_path(workspace_root);
+    fs::read_to_string(&tracker_path)
+        .ok()
+        .map(|content| parse_task_tracker_snapshot(&content))
+        .unwrap_or_default()
+}
+
+/// Read the task tracker without blocking the async runtime.
+pub async fn read_task_tracker_snapshot_async(workspace_root: &Path) -> TaskTrackerSnapshot {
+    let tracker_path = current_task_path(workspace_root);
+    async_fs::read_to_string(tracker_path)
+        .await
+        .ok()
+        .map(|content| parse_task_tracker_snapshot(&content))
+        .unwrap_or_default()
 }
 
 fn extract_verification_summary(content: &str, checklist: &[String]) -> Option<String> {
@@ -639,14 +807,19 @@ fn memory_envelope_paths_for_session(workspace_root: &Path, session_id: &str) ->
                 .is_some_and(|name| memory_envelope_file_matches_session(name, session_id))
         })
         .collect::<Vec<_>>();
-    candidates.sort();
+    candidates.sort_by(|left, right| {
+        let left_modified = fs::metadata(left).and_then(|metadata| metadata.modified()).ok();
+        let right_modified = fs::metadata(right).and_then(|metadata| metadata.modified()).ok();
+        right_modified
+            .cmp(&left_modified)
+            .then_with(|| right.file_name().cmp(&left.file_name()))
+    });
     candidates
 }
 
 pub fn latest_memory_envelope_path_for_session(workspace_root: &Path, session_id: &str) -> Option<PathBuf> {
     memory_envelope_paths_for_session(workspace_root, session_id)
         .into_iter()
-        .rev()
         .find(|path| {
             fs::read_to_string(path)
                 .ok()
@@ -658,6 +831,70 @@ pub fn latest_memory_envelope_path_for_session(workspace_root: &Path, session_id
 pub fn load_latest_memory_envelope(workspace_root: &Path, session_id: &str) -> Option<SessionMemoryEnvelope> {
     let path = latest_memory_envelope_path_for_session(workspace_root, session_id)?;
     let content = fs::read_to_string(path).ok()?;
+    let envelope: SessionMemoryEnvelope = serde_json::from_str(&content).ok()?;
+    if !envelope.session_id.is_empty() && envelope.session_id != session_id {
+        return None;
+    }
+    Some(envelope)
+}
+
+async fn memory_envelope_paths_for_session_async(workspace_root: &Path, session_id: &str) -> Vec<PathBuf> {
+    let history_dir = workspace_root.join(".vtcode").join("history");
+    let mut candidates = Vec::new();
+    let Ok(mut entries) = async_fs::read_dir(history_dir).await else {
+        return candidates;
+    };
+
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        let matches = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| memory_envelope_file_matches_session(name, session_id));
+        if matches {
+            candidates.push(path);
+        }
+    }
+
+    let mut modified = Vec::with_capacity(candidates.len());
+    for path in candidates {
+        let timestamp = async_fs::metadata(&path)
+            .await
+            .ok()
+            .and_then(|metadata| metadata.modified().ok());
+        modified.push((timestamp, path));
+    }
+    modified.sort_by(|(left_time, left_path), (right_time, right_path)| {
+        right_time
+            .cmp(left_time)
+            .then_with(|| right_path.file_name().cmp(&left_path.file_name()))
+    });
+    modified.into_iter().map(|(_, path)| path).collect()
+}
+
+/// Find and deserialize the newest valid envelope without synchronously
+/// scanning historical candidates on the runtime thread.
+pub async fn latest_memory_envelope_path_for_session_async(workspace_root: &Path, session_id: &str) -> Option<PathBuf> {
+    for path in memory_envelope_paths_for_session_async(workspace_root, session_id).await {
+        let Ok(content) = async_fs::read_to_string(&path).await else {
+            continue;
+        };
+        let Ok(envelope) = serde_json::from_str::<SessionMemoryEnvelope>(&content) else {
+            continue;
+        };
+        if envelope.session_id.is_empty() || envelope.session_id == session_id {
+            return Some(path);
+        }
+    }
+    None
+}
+
+pub async fn load_latest_memory_envelope_async(
+    workspace_root: &Path,
+    session_id: &str,
+) -> Option<SessionMemoryEnvelope> {
+    let path = latest_memory_envelope_path_for_session_async(workspace_root, session_id).await?;
+    let content = async_fs::read_to_string(path).await.ok()?;
     let envelope: SessionMemoryEnvelope = serde_json::from_str(&content).ok()?;
     if !envelope.session_id.is_empty() && envelope.session_id != session_id {
         return None;
@@ -707,8 +944,58 @@ pub fn write_memory_envelope_to_path(path: &Path, envelope: &SessionMemoryEnvelo
         fs::create_dir_all(parent).with_context(|| format!("create memory envelope directory {}", parent.display()))?;
     }
     let serialized = serde_json::to_string_pretty(envelope)?;
-    fs::write(path, serialized).with_context(|| format!("write memory envelope {}", path.display()))?;
+    let temporary_path = memory_envelope_temporary_path(path);
+    fs::write(&temporary_path, serialized).with_context(|| format!("write memory envelope {}", path.display()))?;
+    replace_memory_envelope_file(&temporary_path, path)
+        .with_context(|| format!("replace memory envelope {}", path.display()))?;
     Ok(())
+}
+
+/// Atomically replace an envelope from an async context. The temporary file is
+/// created beside the destination so rename remains atomic on the same volume.
+pub async fn write_memory_envelope_to_path_async(path: &Path, envelope: &SessionMemoryEnvelope) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        async_fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("create memory envelope directory {}", parent.display()))?;
+    }
+    let serialized = serde_json::to_string_pretty(envelope)?;
+    let temporary_path = memory_envelope_temporary_path(path);
+    async_fs::write(&temporary_path, serialized)
+        .await
+        .with_context(|| format!("write memory envelope {}", path.display()))?;
+    replace_memory_envelope_file_async(&temporary_path, path)
+        .await
+        .with_context(|| format!("replace memory envelope {}", path.display()))?;
+    Ok(())
+}
+
+fn memory_envelope_temporary_path(path: &Path) -> PathBuf {
+    let suffix = format!("{}.tmp-{}", std::process::id(), Utc::now().timestamp_nanos_opt().unwrap_or_default());
+    let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("session.memory.json");
+    path.with_file_name(format!("{file_name}.{suffix}"))
+}
+
+fn replace_memory_envelope_file(temporary_path: &Path, destination: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    match fs::remove_file(destination) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+
+    fs::rename(temporary_path, destination)
+}
+
+async fn replace_memory_envelope_file_async(temporary_path: &Path, destination: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    match async_fs::remove_file(destination).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+
+    async_fs::rename(temporary_path, destination).await
 }
 
 pub fn has_latest_memory_envelope(workspace_root: &Path, session_id: &str) -> bool {

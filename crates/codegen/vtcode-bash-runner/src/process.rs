@@ -29,6 +29,9 @@ use bytes::Bytes;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::{AbortHandle, JoinHandle};
 
+const POST_EXIT_DRAIN_QUIET_MS: u64 = 50;
+const POST_EXIT_DRAIN_MAX_MS: u64 = 500;
+
 /// Run an async cleanup future from synchronous `Drop`.
 ///
 /// This bridges the gap between sync `Drop` and async resource cleanup.
@@ -304,6 +307,12 @@ pub struct SpawnedProcess {
     pub session: ProcessHandle,
     /// Receiver for stdout/stderr output chunks.
     pub output_rx: broadcast::Receiver<Bytes>,
+    /// Bounded, lossless receiver for consumers that must spool complete
+    /// output. Unlike `output_rx`, this channel applies backpressure to the
+    /// child-process readers instead of dropping lagged chunks.
+    pub reliable_output_rx: mpsc::Receiver<Bytes>,
+    /// Whether the producer is connected to `reliable_output_rx`.
+    pub(crate) reliable_output_enabled: bool,
     /// Receiver for exit code (receives once when process exits).
     pub exit_rx: oneshot::Receiver<i32>,
 }
@@ -313,7 +322,54 @@ impl SpawnedProcess {
     ///
     /// Returns (collected_output, exit_code).
     pub async fn wait_with_output(self, timeout_ms: u64) -> (Vec<u8>, i32) {
-        collect_output_until_exit(self.output_rx, self.exit_rx, timeout_ms).await
+        if self.reliable_output_enabled {
+            collect_reliable_output_until_exit(self.reliable_output_rx, self.exit_rx, timeout_ms).await
+        } else {
+            collect_output_until_exit(self.output_rx, self.exit_rx, timeout_ms).await
+        }
+    }
+}
+
+/// Collect all output from the bounded process stream until exit or timeout.
+async fn collect_reliable_output_until_exit(
+    mut output_rx: mpsc::Receiver<Bytes>,
+    exit_rx: oneshot::Receiver<i32>,
+    timeout_ms: u64,
+) -> (Vec<u8>, i32) {
+    let mut collected = Vec::new();
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_millis(timeout_ms);
+    tokio::pin!(exit_rx);
+
+    loop {
+        tokio::select! {
+            chunk = output_rx.recv() => {
+                if let Some(chunk) = chunk {
+                    collected.extend_from_slice(&chunk);
+                } else {
+                    return (collected, exit_rx.await.unwrap_or(-1));
+                }
+            }
+            res = &mut exit_rx => {
+                let code = res.unwrap_or(-1);
+                // A descendant may inherit stdout/stderr after the direct
+                // child exits. Keep the lossless path bounded just like the
+                // compatibility broadcast path instead of waiting forever
+                // for an inherited pipe descriptor to close.
+                let quiet = tokio::time::Duration::from_millis(POST_EXIT_DRAIN_QUIET_MS);
+                let max_deadline = tokio::time::Instant::now()
+                    + tokio::time::Duration::from_millis(POST_EXIT_DRAIN_MAX_MS);
+                while tokio::time::Instant::now() < max_deadline {
+                    match tokio::time::timeout(quiet, output_rx.recv()).await {
+                        Ok(Some(chunk)) => collected.extend_from_slice(&chunk),
+                        Ok(None) | Err(_) => break,
+                    }
+                }
+                return (collected, code);
+            }
+            _ = tokio::time::sleep_until(deadline) => {
+                return (collected, -1);
+            }
+        }
     }
 }
 
@@ -339,8 +395,9 @@ pub async fn collect_output_until_exit(
             res = &mut exit_rx => {
                 let code = res.unwrap_or(-1);
                 // Drain remaining output briefly after exit
-                let quiet = tokio::time::Duration::from_millis(50);
-                let max_deadline = tokio::time::Instant::now() + tokio::time::Duration::from_millis(500);
+                let quiet = tokio::time::Duration::from_millis(POST_EXIT_DRAIN_QUIET_MS);
+                let max_deadline = tokio::time::Instant::now()
+                    + tokio::time::Duration::from_millis(POST_EXIT_DRAIN_MAX_MS);
 
                 while tokio::time::Instant::now() < max_deadline {
                     match tokio::time::timeout(quiet, output_rx.recv()).await {

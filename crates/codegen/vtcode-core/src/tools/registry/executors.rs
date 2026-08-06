@@ -387,6 +387,7 @@ impl ToolRegistry {
             CommandSessionAction::Run => self.execute_command_session_run_internal(args, exec_settlement_mode).await,
             CommandSessionAction::Write => self.execute_command_session_write(args).await,
             CommandSessionAction::Poll => self.execute_command_session_poll_internal(args, exec_settlement_mode).await,
+            CommandSessionAction::Wait => self.execute_command_session_wait(args).await,
             CommandSessionAction::Continue => {
                 self.execute_command_session_continue_internal(args, exec_settlement_mode).await
             }
@@ -598,6 +599,7 @@ impl ToolRegistry {
                     self.execute_command_session_poll_for_tool(args, ExecSettlementMode::Manual, tools::WRITE_STDIN)
                         .await
                 }
+                crate::tools::command_args::WriteStdinDispatch::Wait => self.execute_command_session_wait(args).await,
             }?;
             Ok(response)
         })

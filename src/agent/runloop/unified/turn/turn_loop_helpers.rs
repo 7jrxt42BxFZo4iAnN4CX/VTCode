@@ -219,7 +219,7 @@ fn emit_loop_hard_cap_break_metric(
 
 pub(super) async fn handle_steering_messages(
     ctx: &mut TurnLoopContext<'_>,
-    _working_history: &mut [uni::Message],
+    working_history: &mut [uni::Message],
     result: &mut TurnLoopResult,
 ) -> Result<bool> {
     let renderer = &mut *ctx.renderer;
@@ -279,7 +279,28 @@ pub(super) async fn handle_steering_messages(
     };
 
     ctx.runtime_steering.set_receiver(Some(receiver));
-    if steering_result? {
+    let steering_interrupted = steering_result?;
+    if !ctx.runtime_steering.pending_follow_up_intents_snapshot().is_empty() {
+        let session_id = ctx.tool_registry.harness_context_snapshot().session_id;
+        let steering_update = vtcode_core::compaction::memory_envelope::SessionMemoryEnvelopeUpdate {
+            pending_intents: Some(ctx.runtime_steering.pending_follow_up_intents_snapshot()),
+            applied_intent_ids: ctx.runtime_steering.applied_follow_up_intent_ids().iter().cloned().collect(),
+            ..Default::default()
+        };
+        if let Err(error) = crate::agent::runloop::unified::turn::compaction::refresh_session_memory_envelope_async(
+            ctx.config.workspace.as_path(),
+            &session_id,
+            ctx.vt_cfg,
+            working_history,
+            ctx.session_stats,
+            Some(&steering_update),
+        )
+        .await
+        {
+            tracing::warn!(%error, session_id = %session_id, "Failed to persist queued steering intent");
+        }
+    }
+    if steering_interrupted {
         return Ok(true);
     }
 
@@ -291,8 +312,13 @@ fn queue_follow_up_input(
     runtime_steering: &mut vtcode_core::core::agent::runtime::RuntimeSteering,
     input: String,
 ) -> Result<()> {
-    display_status(renderer, &format!("Queued Follow-up Input: {input}"))?;
-    runtime_steering.queue_follow_up_input(input);
+    match runtime_steering.try_queue_follow_up_input(input.clone()) {
+        Ok(()) => display_status(renderer, &format!("Queued Follow-up Input: {input}"))?,
+        Err(error) => {
+            tracing::warn!(%error, "Rejected follow-up steering input");
+            display_status(renderer, &format!("Follow-up Input Rejected: {error}"))?;
+        }
+    }
     Ok(())
 }
 

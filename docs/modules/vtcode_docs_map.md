@@ -144,7 +144,8 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/development/runtime-guidance.md`
   - **Content**: Runtime Guidance and Project Instructions
-  - **User Questions**: "What can you tell me about Runtime Guidance and Project Instructions?"
+  - **Topics**: Continuity and long-running work
+  - **User Questions**: "What can you tell me about Runtime Guidance and Project Instructions?", "How does Continuity and long-running work work?"
 
 - **File**: `docs/development/rust-performance-principles.md`
   - **Content**: Rust-Specific Performance Principles for VT Code

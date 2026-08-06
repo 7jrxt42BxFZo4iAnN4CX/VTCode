@@ -432,7 +432,7 @@ mod tests {
             .expect("action enum should exist");
 
         let action_strings: Vec<&str> = action_enum.iter().filter_map(|v| v.as_str()).collect();
-        assert_eq!(action_strings, vec!["run", "poll", "list", "inspect", "continue"]);
+        assert_eq!(action_strings, vec!["run", "poll", "wait", "list", "inspect", "continue"]);
     }
 
     #[test]

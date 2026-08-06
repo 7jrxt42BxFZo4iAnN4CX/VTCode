@@ -17,7 +17,7 @@ pub fn planning_allowed_actions(tool_name: &str) -> Option<&'static [&'static st
     let canonical = canonical_tool_name(tool_name);
     match canonical {
         tools::UNIFIED_FILE => Some(&["read"]),
-        tools::UNIFIED_EXEC => Some(&["run", "poll", "list", "inspect", "continue"]),
+        tools::UNIFIED_EXEC => Some(&["run", "poll", "wait", "list", "inspect", "continue"]),
         // `code`, `write`, and `close` are always mutating and excluded.
         _ => None,
     }
@@ -211,7 +211,7 @@ fn command_session_intent(args: &Value) -> ToolIntent {
     let readonly_unified_action = if command_session_action_is(args, "run") {
         is_readonly_command_session_command(args)
     } else {
-        command_session_action_in(args, &["poll", "list", "inspect"])
+        command_session_action_in(args, &["poll", "wait", "list", "inspect"])
             || (command_session_action_is(args, "continue") && !has_exec_input)
     };
 
@@ -233,6 +233,7 @@ fn exec_command_intent(args: &Value) -> ToolIntent {
 fn write_stdin_intent(args: &Value) -> ToolIntent {
     match crate::tools::command_args::write_stdin_dispatch(args) {
         Ok(crate::tools::command_args::WriteStdinDispatch::Poll) => ToolIntent::read_only(),
+        Ok(crate::tools::command_args::WriteStdinDispatch::Wait) => ToolIntent::read_only(),
         Ok(crate::tools::command_args::WriteStdinDispatch::Write) | Err(_) => ToolIntent::mutating(),
     }
 }

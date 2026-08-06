@@ -334,6 +334,17 @@ fn assert_local_compaction_history_with_user_count(history: &[Message], _retaine
     assert!(history.len() >= 2, "history.len()={} should be at least 2", history.len());
 }
 
+fn assert_history_contains_messages(history: &[Message], expected_messages: &[Message]) {
+    for expected in expected_messages {
+        assert!(
+            history.iter().any(|message| message == expected),
+            "compacted history lost the {:?} message {:?}",
+            expected.role,
+            expected.content.as_text()
+        );
+    }
+}
+
 fn read_file_tool_call(id: &str, path: &str) -> ToolCall {
     ToolCall::function(id.to_string(), tool_names::READ_FILE.to_string(), json!({ "path": path }).to_string())
 }
@@ -386,10 +397,12 @@ async fn manual_compaction_succeeds_without_server_side_support() {
     .expect("history should compact");
 
     assert_eq!(outcome.original_len, 12);
-    // Pre-envelope length: summary + 4 retained user messages + 2-message
-    // continuity tail (the most recent turn is always kept verbatim).
-    assert_eq!(outcome.compacted_len, 7);
+    // This fixture is smaller than the internal continuity-tail target, so
+    // local compaction keeps the complete protocol history and adds the
+    // summary/envelope metadata without dropping any live context.
+    assert!(outcome.compacted_len >= outcome.original_len);
     assert_local_compaction_history(&history, 0);
+    assert_history_contains_messages(&history, &test_history());
     assert_eq!(session_stats.previous_response_id_for("stub", "stub-model"), None);
     assert!(context_manager.current_token_usage() <= 900);
     assert!(latest_memory_envelope_path_for_session(temp.path(), "session-alpha").is_some());
@@ -594,7 +607,8 @@ async fn manual_compaction_compacts_locally_for_non_native_provider() {
     .expect("history should compact");
 
     assert_eq!(outcome.mode, vtcode_core::exec::events::CompactionMode::Local);
-    assert!(history.len() < test_history().len());
+    assert_history_contains_messages(&history, &test_history());
+    assert_local_compaction_history(&history, 0);
 }
 
 #[tokio::test]
@@ -1034,6 +1048,8 @@ fn refresh_session_memory_envelope_merges_existing_continuity_fields() {
         open_questions: vec!["What should summarized forks retain?".to_string()],
         verification_todo: vec!["Confirm refresh runs at turn boundaries.".to_string()],
         delegation_notes: vec!["explorer: looked at compaction flow".to_string()],
+        pending_intents: Vec::new(),
+        applied_intent_ids: Vec::new(),
         history_artifact_path: Some(".vtcode/history/session-alpha_0001.jsonl".to_string()),
         generated_at: "2026-03-14T00:00:00Z".to_string(),
     };
@@ -1199,6 +1215,8 @@ fn refresh_session_memory_envelope_is_throttled_when_nothing_changes() {
         open_questions: vec![],
         verification_todo: vec![],
         delegation_notes: vec![],
+        pending_intents: Vec::new(),
+        applied_intent_ids: Vec::new(),
         history_artifact_path: None,
         generated_at: "2026-03-14T00:00:00Z".to_string(),
     };
@@ -1340,7 +1358,8 @@ async fn recovery_compaction_falls_back_to_local_when_inline_request_errors() {
     .expect("history should compact");
 
     assert_eq!(outcome.mode, vtcode_core::exec::events::CompactionMode::Local);
-    assert!(history.len() < original_len);
+    assert!(outcome.compacted_len >= outcome.original_len);
+    assert_history_contains_messages(&history, &test_history());
 }
 
 #[tokio::test]
@@ -1380,12 +1399,12 @@ async fn auto_compaction_replaces_history_and_clears_response_chain() {
     .expect("history should compact");
 
     assert_eq!(outcome.original_len, 12);
-    // Post-envelope length: summary + 4 retained user messages + 2-message
-    // continuity tail + the injected session memory envelope (index 4).
-    assert_eq!(outcome.compacted_len, 8);
+    // The complete fixture fits within the continuity tail, so compaction
+    // preserves all protocol messages and only adds durable metadata.
+    assert!(outcome.compacted_len >= outcome.original_len);
     assert_local_compaction_history(&history, 4);
+    assert_history_contains_messages(&history, &test_history());
     assert!(history[0].content.as_text().contains("Previous conversation summary"));
-    assert_eq!(history[5].role, MessageRole::User);
     assert_eq!(session_stats.previous_response_id_for("stub", "stub-model"), None);
     assert!(context_manager.current_token_usage() <= 700);
     assert!(latest_memory_envelope_path_for_session(temp.path(), "session-alpha").is_some());
@@ -1423,10 +1442,14 @@ async fn targeted_compaction_preserves_prefix_and_replaces_suffix() {
 
     assert_eq!(&history[..1], preserved_prefix.as_slice());
     assert_eq!(outcome.original_len, 12);
-    // Prefix (1, preserved) + suffix (summary + 4 retained users + continuity
-    // tail). Pre-envelope length.
-    assert_eq!(outcome.compacted_len, 7);
-    assert!(history.len() >= 5);
+    // The suffix fits within the continuity tail, so it remains verbatim after
+    // the preserved prefix rather than being reduced to a message-count-based
+    // approximation.
+    assert!(outcome.compacted_len >= outcome.original_len);
+    // The suffix begins with the assistant/tool completion for the first
+    // group; without its user anchor that partial group belongs in the
+    // summary prefix. Newer complete groups remain verbatim.
+    assert_history_contains_messages(&history, &test_history()[3..]);
     assert!(
         history
             .iter()
@@ -1475,7 +1498,8 @@ async fn recovery_compaction_preserves_current_turn_suffix_and_emits_event() {
     .expect("history should compact");
 
     assert_eq!(history[history.len() - preserved_suffix.len()..], preserved_suffix);
-    assert!(outcome.compacted_len < outcome.original_len);
+    assert!(outcome.compacted_len >= outcome.original_len);
+    assert_history_contains_messages(&history, &test_history());
 
     let content = fs::read_to_string(harness_path).expect("read harness log");
     assert!(content.contains("\"type\":\"thread.compact_boundary\""));
@@ -1547,6 +1571,8 @@ fn inject_latest_memory_envelope_rehydrates_resume_history() {
         open_questions: Vec::new(),
         verification_todo: Vec::new(),
         delegation_notes: Vec::new(),
+        pending_intents: Vec::new(),
+        applied_intent_ids: Vec::new(),
         history_artifact_path: Some(".vtcode/history/resume-session_001.jsonl".to_string()),
         generated_at: "2026-03-14T00:00:00Z".to_string(),
     };
@@ -1583,6 +1609,8 @@ fn inject_latest_memory_envelope_is_session_scoped() {
             open_questions: Vec::new(),
             verification_todo: Vec::new(),
             delegation_notes: Vec::new(),
+            pending_intents: Vec::new(),
+            applied_intent_ids: Vec::new(),
             history_artifact_path: None,
             generated_at: "2026-03-14T00:00:00Z".to_string(),
         };
@@ -1621,6 +1649,8 @@ fn inject_latest_memory_envelope_requires_exact_session_prefix_match() {
             open_questions: Vec::new(),
             verification_todo: Vec::new(),
             delegation_notes: Vec::new(),
+            pending_intents: Vec::new(),
+            applied_intent_ids: Vec::new(),
             history_artifact_path: None,
             generated_at: "2026-03-14T00:00:00Z".to_string(),
         };
@@ -1721,6 +1751,8 @@ fn inject_latest_memory_envelope_uses_exact_session_id_when_prefixes_collide() {
             open_questions: Vec::new(),
             verification_todo: Vec::new(),
             delegation_notes: Vec::new(),
+            pending_intents: Vec::new(),
+            applied_intent_ids: Vec::new(),
             history_artifact_path: None,
             generated_at: "2026-03-14T00:00:00Z".to_string(),
         };
@@ -1759,9 +1791,8 @@ async fn compaction_strips_existing_memory_envelope_before_recompacting() {
     .expect("history should compact");
 
     assert_eq!(outcome.original_len, 12);
-    // Pre-envelope length: summary + 4 retained user messages + 2-message
-    // continuity tail (the most recent turn is always kept verbatim).
-    assert_eq!(outcome.compacted_len, 7);
+    assert!(outcome.compacted_len >= outcome.original_len);
+    assert_history_contains_messages(&history, &test_history());
     assert_eq!(
         history
             .iter()
@@ -1794,6 +1825,8 @@ async fn summarized_fork_history_reuses_compaction_pipeline_and_prior_envelope()
         open_questions: Vec::new(),
         verification_todo: Vec::new(),
         delegation_notes: Vec::new(),
+        pending_intents: Vec::new(),
+        applied_intent_ids: Vec::new(),
         history_artifact_path: Some(".vtcode/history/session-source_0001.jsonl".to_string()),
         generated_at: "2026-03-14T00:00:00Z".to_string(),
     };
@@ -1816,16 +1849,14 @@ async fn summarized_fork_history_reuses_compaction_pipeline_and_prior_envelope()
     .await
     .expect("summarized fork history");
 
-    assert_eq!(compacted.len(), 6);
+    // The fixture fits within the continuity tail, so the fork keeps the
+    // complete protocol history in addition to its summary metadata.
+    assert!(compacted.len() >= 6);
     assert!(compacted[0].content.as_text().contains("[Session Memory Envelope]"));
     assert!(compacted[0].content.as_text().contains("src/lib.rs"));
     assert!(compacted[1].content.as_text().contains("Previous conversation summary"));
     assert_eq!(compacted.iter().filter(|message| message.role == MessageRole::User).count(), 4);
-    assert!(
-        compacted
-            .iter()
-            .all(|message| message.role == MessageRole::System || message.role == MessageRole::User)
-    );
+    assert_history_contains_messages(&compacted, &test_history());
 }
 
 #[tokio::test]
@@ -1849,6 +1880,8 @@ async fn budget_resume_summary_reuses_saved_envelope_without_provider_compaction
         open_questions: Vec::new(),
         verification_todo: Vec::new(),
         delegation_notes: Vec::new(),
+        pending_intents: Vec::new(),
+        applied_intent_ids: Vec::new(),
         history_artifact_path: None,
         generated_at: "2026-03-14T00:00:00Z".to_string(),
     };
@@ -1876,7 +1909,7 @@ async fn budget_resume_summary_reuses_saved_envelope_without_provider_compaction
 }
 
 #[tokio::test]
-async fn local_and_fork_compaction_share_retained_user_budget() {
+async fn local_and_fork_compaction_preserve_continuity_tail() {
     let temp = tempdir().expect("tempdir");
     let provider = LocalCompactionProvider;
     let mut vt_cfg = VTCodeConfig::default();
@@ -1915,7 +1948,8 @@ async fn local_and_fork_compaction_share_retained_user_budget() {
     .await
     .expect("summarized fork history");
 
-    assert_eq!(compacted.iter().filter(|message| message.role == MessageRole::User).count(), 2);
+    assert_eq!(compacted.iter().filter(|message| message.role == MessageRole::User).count(), 4);
+    assert_history_contains_messages(&compacted, &test_history());
 }
 
 #[test]
