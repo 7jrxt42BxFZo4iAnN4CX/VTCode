@@ -12,6 +12,7 @@
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use crate::error::SessionStoreError;
@@ -180,27 +181,27 @@ impl ProgressLedger {
     pub fn to_markdown(&self) -> String {
         let mut out = String::new();
         out.push_str("# Session Progress\n\n");
-        out.push_str(&format!("**Goal:** {}\n", self.goal));
-        out.push_str(&format!("**Completion:** {:.0}%\n", (self.completion_ratio() * 100.0).round()));
-        out.push_str(&format!("**Confidence:** {:.2}\n", self.confidence));
+        let _ = writeln!(out, "**Goal:** {}", self.goal);
+        let _ = writeln!(out, "**Completion:** {:.0}%", (self.completion_ratio() * 100.0).round());
+        let _ = writeln!(out, "**Confidence:** {:.2}", self.confidence);
         if let Some(since) = &self.stalled_since {
-            out.push_str(&format!("**Stalled since:** {since}\n"));
+            let _ = writeln!(out, "**Stalled since:** {since}");
         }
-        out.push_str(&format!("**Updated:** {}\n\n", self.updated_at));
+        let _ = writeln!(out, "**Updated:** {}\n", self.updated_at);
 
         if let Some(prev) = &self.previous_session_id {
-            out.push_str(&format!("**Handed off from:** {prev}\n"));
+            let _ = writeln!(out, "**Handed off from:** {prev}");
         }
         if let Some(summary) = &self.handoff_summary {
-            out.push_str(&format!("**Handoff summary:** {summary}\n"));
+            let _ = writeln!(out, "**Handoff summary:** {summary}");
         }
         if let Some(checkpoint) = &self.git_checkpoint {
-            out.push_str(&format!("**Git checkpoint:** `{checkpoint}`\n"));
+            let _ = writeln!(out, "**Git checkpoint:** `{checkpoint}`");
         }
         if !self.known_issues.is_empty() {
             out.push_str("\n## Known Issues\n\n");
             for issue in &self.known_issues {
-                out.push_str(&format!("- {issue}\n"));
+                let _ = writeln!(out, "- {issue}");
             }
         }
 
@@ -215,7 +216,7 @@ impl ProgressLedger {
                     MilestoneStatus::Blocked => "[!]",
                     MilestoneStatus::Pending => "[ ]",
                 };
-                out.push_str(&format!("{} {} — {}\n", mark, m.id, m.description));
+                let _ = writeln!(out, "{} {} — {}", mark, m.id, m.description);
             }
         }
         out

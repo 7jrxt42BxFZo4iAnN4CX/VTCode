@@ -17,7 +17,7 @@ use crate::tools::handlers::{
 };
 use crate::tools::registry::{ToolMetadata, ToolRegistration, ToolRegistry, native_cgp_tool_factory};
 use crate::tools::traits::Tool;
-use crate::utils::file_utils::read_file_with_context_sync;
+use crate::utils::file_utils::{read_file_with_context, read_file_with_context_sync};
 use anyhow::Context;
 use async_trait::async_trait;
 use hashbrown::{HashMap, HashSet};
@@ -783,7 +783,8 @@ impl Tool for LoadSkillResourceTool {
         }
         if let Some(skill) = skills.get(skill_name) {
             let full_path = resolve_skill_resource_path(&skill.path, resource_path)?;
-            let content = read_file_with_context_sync(&full_path, "skill resource")
+            let content = read_file_with_context(&full_path, "skill resource")
+                .await
                 .context(format!("Failed to read resource at {}", full_path.display()))?;
 
             Ok(serde_json::json!({

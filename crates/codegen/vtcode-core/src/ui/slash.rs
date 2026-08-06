@@ -101,18 +101,31 @@ fn suggestions_for_commands(prefix: &str, commands: &[&'static SlashCommandInfo]
         .iter()
         .copied()
         .filter_map(|info| {
+            // The command set is static `&'static str`, but each lowercased
+            // form was previously recomputed up to 4x per candidate per
+            // keystroke (name + description, once for the fuzzy candidate and
+            // again for position lookups). Build the candidate once from the
+            // lowercased name, remember where the name portion ends, and reuse
+            // that slice plus the lowercased description for positions — two
+            // allocations per candidate instead of four.
             let mut candidate = info.name.to_ascii_lowercase();
-            if !info.description.is_empty() {
+            let name_portion_end = candidate.len();
+            let desc_lower = if info.description.is_empty() {
+                String::new()
+            } else {
+                info.description.to_ascii_lowercase()
+            };
+            if !desc_lower.is_empty() {
                 candidate.push(' ');
-                candidate.push_str(&info.description.to_ascii_lowercase());
+                candidate.push_str(&desc_lower);
             }
 
             if !fuzzy_match(&normalized_query, &candidate) {
                 return None;
             }
 
-            let name_pos = info.name.to_ascii_lowercase().find(&query).unwrap_or(usize::MAX);
-            let desc_pos = info.description.to_ascii_lowercase().find(&query).unwrap_or(usize::MAX);
+            let name_pos = candidate[..name_portion_end].find(&query).unwrap_or(usize::MAX);
+            let desc_pos = desc_lower.find(&query).unwrap_or(usize::MAX);
 
             Some((info, name_pos, desc_pos))
         })

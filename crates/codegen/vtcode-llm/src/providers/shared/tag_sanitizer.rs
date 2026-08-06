@@ -5,6 +5,7 @@
 //! Especially useful for Gemini 3 and GLM-5 models.
 
 use crate::provider::LLMStreamEvent;
+use std::borrow::Cow;
 
 /// Tags that indicate the start of a reasoning block.
 const REASONING_TAGS: &[(&str, &str)] = &[
@@ -43,10 +44,19 @@ impl TagStreamSanitizer {
     pub(crate) fn process_chunk(&mut self, chunk: &str) -> Vec<LLMStreamEvent> {
         let mut events = Vec::new();
         let mut current_pos = 0;
-        let mut chunk_str = String::with_capacity(self.partial_tag.len() + chunk.len());
-        chunk_str.push_str(&self.partial_tag);
-        chunk_str.push_str(chunk);
-        self.partial_tag.clear();
+
+        // In the common case `partial_tag` is empty — most chunks don't end
+        // mid-tag — so we borrow `chunk` directly via `Cow::Borrowed` and
+        // avoid allocating a full combined `String` per content delta.
+        // Only when a partial tag was carried over do we allocate.
+        let mut buffer = std::mem::take(&mut self.partial_tag);
+        let chunk_cow: Cow<str> = if buffer.is_empty() {
+            Cow::Borrowed(chunk)
+        } else {
+            buffer.push_str(chunk);
+            Cow::Owned(buffer)
+        };
+        let chunk_str: &str = &chunk_cow;
 
         while current_pos < chunk_str.len() {
             if !self.in_reasoning {

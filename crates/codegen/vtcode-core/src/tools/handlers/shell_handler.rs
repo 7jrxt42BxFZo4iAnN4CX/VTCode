@@ -131,7 +131,8 @@ impl ToolHandler for ShellHandler {
         let sanitized = output.sanitize_secrets();
 
         // Format output
-        let mut content_text = String::new();
+        use std::fmt::Write as _;
+        let mut content_text = String::with_capacity(sanitized.stdout.len() + sanitized.stderr.len() + 32);
         if !sanitized.stdout.is_empty() {
             content_text.push_str(&sanitized.stdout);
         }
@@ -146,7 +147,7 @@ impl ToolHandler for ShellHandler {
             if !content_text.is_empty() {
                 content_text.push('\n');
             }
-            content_text.push_str(&format!("[exit code: {}]", sanitized.exit_code));
+            let _ = write!(content_text, "[exit code: {}]", sanitized.exit_code);
         }
 
         if content_text.is_empty() {

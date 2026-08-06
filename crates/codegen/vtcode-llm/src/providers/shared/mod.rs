@@ -790,7 +790,7 @@ impl Utf8StreamDecoder {
     /// incomplete multibyte sequence is retained for the next call.
     pub(crate) fn push(&mut self, bytes: &[u8]) -> String {
         self.pending.extend_from_slice(bytes);
-        let mut out = String::new();
+        let mut out = String::with_capacity(bytes.len());
         loop {
             match std::str::from_utf8(&self.pending) {
                 Ok(text) => {

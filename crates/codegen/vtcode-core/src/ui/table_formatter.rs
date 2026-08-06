@@ -78,7 +78,7 @@ impl TableFormatter {
 
         let mut separator = String::from(left);
         for (idx, column) in self.columns.iter().enumerate() {
-            separator.push_str(&line.to_string().repeat(column.width + 2));
+            separator.extend(std::iter::repeat_n(line, column.width + 2));
             if idx < self.columns.len() - 1 {
                 separator.push(junction);
             }
@@ -151,7 +151,7 @@ impl TableFormatter {
         };
         let mut top_border = String::from(left);
         for (idx, column) in self.columns.iter().enumerate() {
-            top_border.push_str(&line.to_string().repeat(column.width + 2));
+            top_border.extend(std::iter::repeat_n(line, column.width + 2));
             if idx < self.columns.len() - 1 {
                 let junction = if self.use_unicode { '┬' } else { '+' };
                 top_border.push(junction);
@@ -172,7 +172,7 @@ impl TableFormatter {
         let (left, right) = if self.use_unicode { ('└', '┘') } else { ('+', '+') };
         let mut bottom_border = String::from(left);
         for (idx, column) in self.columns.iter().enumerate() {
-            bottom_border.push_str(&line.to_string().repeat(column.width + 2));
+            bottom_border.extend(std::iter::repeat_n(line, column.width + 2));
             if idx < self.columns.len() - 1 {
                 let junction = if self.use_unicode { '┴' } else { '+' };
                 bottom_border.push(junction);

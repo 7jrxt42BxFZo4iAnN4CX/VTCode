@@ -17,6 +17,7 @@ use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -591,7 +592,7 @@ impl PlanningTaskTrackerTool {
 
         let mut markdown = format!("# {}\n\n", document.title);
         for (status, description, metadata) in lines {
-            markdown.push_str(&format!("- {} {}\n", status.flat_checkbox(), description));
+            let _ = writeln!(markdown, "- {} {}", status.flat_checkbox(), description);
             append_task_step_metadata(&mut markdown, "", &metadata);
         }
         append_notes_section(&mut markdown, document.notes.as_deref());

@@ -9,6 +9,7 @@
 use crate::config::constants::tools;
 use crate::types::CompactStr;
 use hashbrown::HashMap;
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -277,7 +278,7 @@ impl ToolEmitter {
 
     /// Format output for model consumption
     fn format_output_for_model(&self, output: &ExecToolCallOutput) -> String {
-        let mut result = String::new();
+        let mut result = String::with_capacity(output.stdout.len() + output.stderr.len() + 32);
 
         if !output.stdout.is_empty() {
             result.push_str(&output.stdout);
@@ -294,7 +295,7 @@ impl ToolEmitter {
             if !result.is_empty() {
                 result.push('\n');
             }
-            result.push_str(&format!("[exit code: {}]", output.exit_code));
+            let _ = write!(result, "[exit code: {}]", output.exit_code);
         }
 
         if result.is_empty() {

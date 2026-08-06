@@ -155,6 +155,7 @@ pub fn search_memory(
 
     let lowered = query.to_ascii_lowercase();
     let mut results: Vec<MemorySearchResult> = Vec::new();
+    let session_source = String::from("session");
 
     let entries = std::fs::read_dir(&root).map_err(|e| SessionStoreError::io(root.clone(), e))?;
     for entry in entries.filter_map(Result::ok) {
@@ -167,6 +168,7 @@ pub fn search_memory(
             continue;
         };
         let session_id = entry.file_name().to_string_lossy().into_owned();
+        let memory_path = memory.to_string_lossy().into_owned();
         let created_at = value
             .get("created_at")
             .and_then(|v| v.as_i64())
@@ -183,12 +185,12 @@ pub fn search_memory(
                 }
                 results.push(MemorySearchResult {
                     chunk_id: format!("{session_id}:{idx}"),
-                    path: memory.to_string_lossy().into_owned(),
+                    path: memory_path.clone(),
                     start_line: 0,
                     end_line: 0,
                     score,
                     snippet: fact.to_string(),
-                    source: "session".to_string(),
+                    source: session_source.clone(),
                     created_at,
                 });
             }

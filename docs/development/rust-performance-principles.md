@@ -15,6 +15,7 @@ This document captures the nuance of what makes Rust fast (and where it isn't) i
 - [Safety Enables Aggressive Optimization](#safety-enables-aggressive-optimization)
 - [When Rust Can Be Slower Than C/C++](#when-rust-can-be-slower-than-cc)
 - [Breaking Inter-Iteration Dependencies (Value Speculation)](#breaking-inter-iteration-dependencies-value-speculation)
+- [Branchless Programming: Removing Unpredictable Branches](#branchless-programming-removing-unpredictable-branches)
 - [Checklist for VT Code Hot Paths](#checklist-for-vt-code-hot-paths)
 
 ---
@@ -303,9 +304,9 @@ for i in ..n {
   `volatile` trick from C/++ does not port. The portable equivalent is to
   **carry the predicted state in a local and only touch the container on change.**
 - Applied changes:
-  - `vtcode-memory` `event_log::memchr_newline` — replaced a scalar
-    `Iterator::position` byte scan with the SIMD `memchr` crate (a latency-bound
-    tight loop made data-parallel).
+  - `vtcode-commons` `ansi::strip_ansi` — uses `memchr::memchr` (SIMD) to locate
+    ESC bytes instead of a scalar byte scan (a latency-bound delimiter search
+    made data-parallel).
   - `vtcode-indexer` `query` — scores `files`/`directories` in **parallel
     rayon chunks**, reusing one matcher + haystack buffer per worker thread
     (`map_init`); this realizes the same "more instructions in parallel" goal at
@@ -320,6 +321,121 @@ The source articles warn L1-cache *hits* are almost never the real bottleneck.
 Only apply this family when a profile shows a dependency-bound tight loop.
 Measure before/after (`cargo bench`); revert if the change does not improve.
 
+## Branchless Programming: Removing Unpredictable Branches
+
+A companion to the Value Speculation section above. Both target **branch
+misprediction**, but they fix different shapes of it — and the distinction
+matters because the fixes are not interchangeable:
+
+- **Value speculation** (above): a *carried* value serializes the loop
+  (`j = table[i][j]`). The fix speculates the carried value is *unchanged* and
+  only reloads on a *rare, predictable* branch. The branch stays; we make it
+  easy to guess.
+- **Branchless** (this section): a branch on *unpredictable* data forces the
+  predictor into a coin flip (≈50% misprediction). The fix removes the branch
+  entirely, turning a control dependency into a data dependency.
+
+### The cost of a misprediction
+
+A modern CPU runs a deep pipeline and speculatively executes past branches it
+hasn't resolved yet, guessing the outcome with a branch predictor. A correct
+guess is nearly free; a wrong guess flushes the pipeline and restarts —
+**~15–20 cycles on a typical x86 core**, against ~1 cycle for the comparison
+itself. The penalty is invisible when the branch is predictable (almost always
+taken, or almost always not), and brutal when the outcome is a coin flip.
+
+The diagnostic signature: a filter whose runtime *peaks near 50% selectivity*
+on shuffled data, and is **4–5× faster on the same data sorted** (so the branch
+goes "skip…skip…keep…keep" in two long runs the predictor learns). If sorting
+the input changes the runtime dramatically, misprediction is the villain — not
+allocation, not the work itself. (Preallocation is *not* the fix: it typically
+saves ~2%; the misprediction penalty is the gap.)
+
+### The branchless transform
+
+Replace "decide *whether* to write" with "always write, conditionally advance
+the cursor":
+
+```rust,ignore
+// idiomatic — branch on unpredictable data, ~50% mispredicted
+let out: Vec<f64> = input.iter().copied().filter(|&x| x > threshold).collect();
+
+// branchless — comparison becomes a number, not a fork (~4× faster at 50%)
+let mut out = vec![0.0; input.len()];
+let mut n = 0;
+for &x in input {
+    out[n] = x;                    // unconditional write
+    n += (x > threshold) as usize; // seta: 0 or 1, no branch
+}
+out.truncate(n);
+```
+
+The comparison `(x > threshold) as usize` lowers to a `seta`/`setg` instruction
+that produces 0 or 1 with no fork in the road; a rejected value is simply
+overwritten on the next kept iteration. The bounds check on `out[n]` and the
+loop condition are *still* branches, but they go the same way every iteration,
+so the predictor handles them for free. Only the *unpredictable* branch had to
+go — turning a control dependency into a data dependency.
+
+### It is a trade, not magic — reserve it for measured hot paths
+
+Branchless is **not** universally faster. The source article's benchmark
+(1M random `f64`, Intel i7-10875H):
+
+| kept | idiomatic | branchless |
+| --- | --- | --- |
+| 1%  | 0.59 ms | 1.09 ms |
+| 50% | 3.94 ms | 1.03 ms |
+| 99% | 1.49 ms | 1.11 ms |
+
+At 1% and 99% (well-predicted branches) the idiomatic version *wins*, because
+the branch is nearly free while branchless always pays for N unconditional
+writes. Branchless trades the best case for the worst case, and the worst case
+becomes flat (data-independent). **Only apply it when a profiler points at a
+hot loop *and* the loop branches on data whose outcome is genuinely
+unpredictable** (≈50% selectivity with no learnable pattern). Apply the
+sorted-vs-shuffled diagnostic first; if sorting doesn't change the runtime,
+misprediction is not the problem and branchless won't help.
+
+### When NOT to use it (VT Code-specific)
+
+Most VT Code hot paths are **I/O-bound** (LLM network calls, disk reads, PTY
+output) — a 15–20 cycle misprediction is noise next to a millisecond RTT.
+Branchless is for tight *in-memory* loops, and the current hot paths largely
+aren't:
+
+- **Delimiter byte-scans** (`byte == b'\n'`, `byte == b'\0'`, ESC) → use the
+  `memchr` crate (SIMD), not branchless arithmetic. Delimiters are usually
+  *rare*, so the branch is well-predicted (the idiomatic best case); branchless
+  would make the common no-delimiter case do unnecessary work. `memchr` is
+  already the repo pattern — `vtcode-commons` `ansi::strip_ansi` uses
+  `memchr::memchr` to find ESC bytes, and `vtcode-memory` `event_log` reads
+  lines via `BufReader::read_until(b'\n')` rather than a hand-rolled scan. The
+  PTY scrollback ASCII newline scan and SSE/PTY line splitting fall here.
+- **I/O-paced line loops** (SSE `data:` extraction, JSONL reconstruction) → the
+  loop is paced by network/disk, not a tight CPU scan; per-line parsing dwarfs
+  the branch. Branchless is noise.
+- **Bounded result loops** (`grep_file::finalize_matches` match/context scan,
+  `search_memory` fact filtering) → bounded by `max_results` / session count,
+  and per-element work (JSON `Value::get` HashMap lookup, case-fold +
+  substring search) is orders of magnitude more expensive than a branch.
+  Branchless wouldn't move the needle.
+- **Predictable predicates** (`if line.is_empty() { continue }`,
+  `match serde_json::from_str { Ok => .., Err => continue }` on a valid log) →
+  the branch goes one way almost always; this is the idiomatic best case.
+
+### Decision audit (2026-08-06)
+
+A sweep of the I/O-adjacent hot paths (`vtcode-indexer`, `vtcode-memory`,
+`vtcode-llm` streaming, `vtcode-core` grep/PTY, `vtcode-exec-events`) found
+**no current loop that is both (a) a tight in-memory scan and (b) branching on
+unpredictable data**. Every candidate was classified into one of the "when NOT
+to use it" buckets above. The technique is recorded here so that when a *future*
+profiler trace points at a genuine 50%-selectivity in-memory filter the fix is
+obvious — and so the `memchr`-vs-branchless and value-speculation-vs-branchless
+distinctions are not re-derived. Full candidate-by-candidate reasoning lives in
+`.vtcode/memory/branchless-2026-08-06.md`.
+
 ## Checklist for VT Code Hot Paths
 
 When reviewing or writing a hot path in vtcode:
@@ -330,6 +446,7 @@ When reviewing or writing a hot path in vtcode:
 - [ ] Is the error path marked `#[cold]`?
 - [ ] Is the small hot function marked `#[inline]`?
 - [ ] Does the code use indexed `for i in 0..n` when an iterator would eliminate bounds checks?
+- [ ] If a hot loop branches on per-element data, is the predicate unpredictable (~50% selectivity, no pattern)? If so, consider [branchless](#branchless-programming-removing-unpredictable-branches) — but run the sorted-vs-shuffled diagnostic first, and prefer `memchr` for delimiter scans.
 - [ ] Does the code use `Arc<RwLock<T>>` when `&mut T` or `Box<T>` would suffice?
 - [ ] Is overflow handling explicit (`checked_*`/`saturating_*`/`wrapping_*`) rather than relying on implicit wrap?
 - [ ] Has the performance been measured against baseline before/after?
@@ -343,6 +460,9 @@ When reviewing or writing a hot path in vtcode:
 - [Where Rust Really Shines (Manish Goregaokar)](https://manishearth.github.io/blog/2015/05/03/where-rust-really-shines/)
 - [The Relative Performance of C and Rust (Bryan Cantrill)](https://blog.oxide.computer/relative-performance-c-rust)
 - [Rustc Guide: LLVM noalias](https://rustc-dev-guide.rust-lang.org/backend/misc.html#the-noalias-attribute)
+- [Branchless Rust: Making a Filter 4x Faster by Removing an if](https://www.greyblake.com/blog/branchless-rust/) — Serhii Potapov, 2026 (source of the Branchless section: misprediction cost, the sorted-vs-shuffled diagnostic, the always-write/conditionally-advance transform, and the "trade not magic" caveat).
+- [Why is processing a sorted array faster than processing an unsorted array?](https://stackoverflow.com/questions/11227809) — Stack Overflow, 27K upvotes (the classic misprediction demo).
+- [Mispredicted branches can multiply your running times](https://lemire.me/blog/2019/10/15/mispredicted-branches-can-multiply-your-running-times/) — Daniel Lemire.
 - VT Code internal: `docs/development/performance.md`
 - VT Code internal: `docs/development/performance-hasher-policy.md`
 - VT Code internal: `docs/development/async-performance-audit.md`

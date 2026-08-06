@@ -269,6 +269,8 @@ async fn fetch_markdown(url: &str, timeout_secs: u64, max_bytes: usize) -> Resul
 /// survives encoding. This is intentionally simpler than the full RFC 3986
 /// path-segment set because we know our input is a URL.
 fn percent_encode_path(input: &str) -> String {
+    use std::fmt::Write as _;
+
     let mut out = String::with_capacity(input.len());
     for byte in input.bytes() {
         let unreserved = byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~');
@@ -295,7 +297,9 @@ fn percent_encode_path(input: &str) -> String {
         if unreserved || sub_delim {
             out.push(byte as char);
         } else {
-            out.push_str(&format!("%{byte:02X}"));
+            // Write directly into `out` instead of allocating a temporary
+            // String via format! for every encoded byte.
+            let _ = write!(out, "%{byte:02X}");
         }
     }
     out

@@ -252,13 +252,13 @@ pub(crate) fn create_chat_stream(response: reqwest::Response, model: String) -> 
                         continue;
                     }
 
-                    let payload: Value = serde_json::from_str(trimmed_payload).map_err(|err| {
+                    let mut payload: Value = serde_json::from_str(trimmed_payload).map_err(|err| {
                         StreamAssemblyError::InvalidPayload(err.to_string())
                             .into_llm_error("OpenAI")
                     })?;
 
-                    if let Some(usage_val) = payload.get("usage")
-                        && let Ok(u) = serde_json::from_value::<provider::Usage>(usage_val.clone()) {
+                    if let Some(usage_val) = payload.get_mut("usage")
+                        && let Ok(u) = serde_json::from_value::<provider::Usage>(std::mem::take(usage_val)) {
                             aggregator.set_usage(u);
                         }
 

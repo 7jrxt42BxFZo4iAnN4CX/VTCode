@@ -914,27 +914,41 @@ impl HuggingFaceProvider {
                 }
 
                 while let Some(newline_pos) = buffer.find('\n') {
-                    let line = buffer[..newline_pos].trim().to_string();
-                    buffer.drain(..=newline_pos);
+                    // Borrow the line from `buffer` instead of copying it into a
+                    // `String` per SSE event. The `drain` is deferred until
+                    // `serde_json::from_str` produces an owned `Value`, so the
+                    // borrow (`line`/`data`) is dead before `buffer` mutates.
+                    let line = buffer[..newline_pos].trim();
 
                     if line.is_empty() || line.starts_with(':') {
+                        buffer.drain(..=newline_pos);
                         continue;
                     }
 
-                    let data = if let Some(stripped) = line.strip_prefix("data: ") {
-                        stripped
-                    } else {
-                        continue;
+                    let data = match line.strip_prefix("data: ") {
+                        Some(stripped) => stripped,
+                        None => {
+                            buffer.drain(..=newline_pos);
+                            continue;
+                        }
                     };
 
                     if data == "[DONE]" {
+                        buffer.drain(..=newline_pos);
                         break 'outer;
                     }
 
                     let event: Value = match serde_json::from_str(data) {
                         Ok(v) => v,
-                        Err(_) => continue,
+                        Err(_) => {
+                            buffer.drain(..=newline_pos);
+                            continue;
+                        }
                     };
+
+                    // `event` is now owned; all borrows of `buffer` (via
+                    // `line`/`data`) are dead. Safe to drain the consumed line.
+                    buffer.drain(..=newline_pos);
 
                     if use_responses_api {
                         let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");

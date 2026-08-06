@@ -28,6 +28,7 @@ use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -59,7 +60,7 @@ impl TaskChecklist {
     fn to_markdown(&self) -> String {
         let mut md = format!("# {}\n\n", self.title);
         for item in &self.items {
-            md.push_str(&format!("- {} {}\n", item.status.flat_checkbox(), item.description));
+            let _ = writeln!(md, "- {} {}", item.status.flat_checkbox(), item.description);
             append_task_step_metadata(&mut md, "", &item.metadata);
         }
         append_notes_section(&mut md, self.notes.as_deref());
@@ -71,7 +72,7 @@ impl TaskChecklist {
         for item in &self.items {
             let trimmed = item.description.trim_start();
             let indent = &item.description[..item.description.len() - trimmed.len()];
-            md.push_str(&format!("{}- {} {}\n", indent, item.status.plan_checkbox(), trimmed));
+            let _ = writeln!(md, "{}- {} {}", indent, item.status.plan_checkbox(), trimmed);
             append_task_step_metadata(&mut md, indent, &item.metadata);
         }
         append_notes_section(&mut md, self.notes.as_deref());

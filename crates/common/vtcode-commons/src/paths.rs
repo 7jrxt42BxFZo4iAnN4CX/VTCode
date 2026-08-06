@@ -220,7 +220,7 @@ pub async fn ensure_path_within_workspace_resolved(candidate: &Path, workspace_r
 
 /// Normalize identifiers to ASCII alphanumerics with lowercase output.
 pub fn normalize_ascii_identifier(value: &str) -> String {
-    let mut normalized = String::new();
+    let mut normalized = String::with_capacity(value.len());
     for ch in value.chars() {
         if ch.is_ascii_alphanumeric() {
             normalized.push(ch.to_ascii_lowercase());

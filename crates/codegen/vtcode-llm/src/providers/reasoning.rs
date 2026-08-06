@@ -3,7 +3,11 @@ use serde_json::Value;
 #[derive(Default, Clone)]
 pub struct ReasoningBuffer {
     text: String,
-    last_chunk: Option<String>,
+    /// Byte offset of the last pushed chunk within `text`, used for
+    /// consecutive-duplicate detection without storing a second owned
+    /// `String`. Since `push` only ever appends to `text`, the slice
+    /// `text[start..]` always refers to the most recent chunk.
+    last_chunk_start: Option<usize>,
 }
 
 impl ReasoningBuffer {
@@ -13,14 +17,18 @@ impl ReasoningBuffer {
             return None;
         }
 
-        if self.last_chunk.as_deref() == Some(chunk) {
+        // Compare against the last chunk by slicing `text` at the stored
+        // offset, avoiding a separate owned `String` + clone per token.
+        if let Some(start) = self.last_chunk_start
+            && self.text.get(start..) == Some(chunk)
+        {
             return None;
         }
 
+        let start = self.text.len();
         self.text.push_str(chunk);
-        let owned = chunk.to_string();
-        self.last_chunk = Some(owned.clone());
-        Some(owned)
+        self.last_chunk_start = Some(start);
+        Some(chunk.to_string())
     }
 
     pub(crate) fn finalize(self) -> Option<String> {
@@ -438,5 +446,69 @@ mod tests {
 
         let finalized = buffer.finalize();
         assert_eq!(finalized.as_deref(), Some("Andrej Karpathy's"));
+    }
+
+    // ---- ReasoningBuffer dedup regression tests ----
+    // The `last_chunk_start` offset optimization changed the dedup
+    // mechanism from `Option<String>` comparison to byte-offset slicing.
+    // These tests lock down the exact semantics: consecutive identical
+    // chunks are suppressed, non-consecutive duplicates are kept, empty
+    // chunks never reset the dedup state, and Clone is safe.
+
+    #[test]
+    fn reasoning_buffer_suppresses_consecutive_duplicate_chunks() {
+        let mut buffer = ReasoningBuffer::default();
+        assert_eq!(buffer.push("hello").as_deref(), Some("hello"));
+        // Exact duplicate — must be suppressed.
+        assert_eq!(buffer.push("hello"), None);
+        // Different chunk after duplicate — must be accepted.
+        assert_eq!(buffer.push(" world").as_deref(), Some(" world"));
+        // Finalized text must not contain the duplicate.
+        assert_eq!(buffer.finalize().as_deref(), Some("hello world"));
+    }
+
+    #[test]
+    fn reasoning_buffer_keeps_non_consecutive_duplicate_chunks() {
+        let mut buffer = ReasoningBuffer::default();
+        assert_eq!(buffer.push("A").as_deref(), Some("A"));
+        assert_eq!(buffer.push("B").as_deref(), Some("B"));
+        // "A" again, but not consecutive — must be kept.
+        assert_eq!(buffer.push("A").as_deref(), Some("A"));
+        assert_eq!(buffer.finalize().as_deref(), Some("ABA"));
+    }
+
+    #[test]
+    fn reasoning_buffer_empty_chunks_do_not_reset_dedup_state() {
+        let mut buffer = ReasoningBuffer::default();
+        assert_eq!(buffer.push("chunk").as_deref(), Some("chunk"));
+        // Empty chunk — no-op, must not reset last-chunk tracking.
+        assert_eq!(buffer.push(""), None);
+        // Same chunk after empty — must still be suppressed.
+        assert_eq!(buffer.push("chunk"), None);
+        assert_eq!(buffer.finalize().as_deref(), Some("chunk"));
+    }
+
+    #[test]
+    fn reasoning_buffer_handles_unicode_chunks() {
+        let mut buffer = ReasoningBuffer::default();
+        let unicode = "思考过程";
+        assert_eq!(buffer.push(unicode).as_deref(), Some(unicode));
+        // Unicode duplicate — must be suppressed (byte offset is valid).
+        assert_eq!(buffer.push(unicode), None);
+        assert_eq!(buffer.push(" done").as_deref(), Some(" done"));
+        assert_eq!(buffer.finalize().as_deref(), Some("思考过程 done"));
+    }
+
+    #[test]
+    fn reasoning_buffer_clone_is_safe_then_push() {
+        let mut buffer = ReasoningBuffer::default();
+        buffer.push("first");
+        let mut clone = buffer.clone();
+        // Pushing to the clone must not affect the original.
+        assert_eq!(clone.push("second").as_deref(), Some("second"));
+        // Original still has "first" as last chunk — duplicate suppressed.
+        assert_eq!(buffer.push("first"), None);
+        assert_eq!(buffer.finalize().as_deref(), Some("first"));
+        assert_eq!(clone.finalize().as_deref(), Some("firstsecond"));
     }
 }

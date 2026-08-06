@@ -133,7 +133,8 @@ impl OllamaClient {
                         if let Ok(text) = std::str::from_utf8(&bytes) {
                             buf.push_str(text);
                             while let Some(pos) = buf.find('\n') {
-                                let line = buf.drain(..=pos).collect::<String>();
+                                let line = buf[..pos].to_string();
+                                buf.drain(..=pos + 1);
                                 let text = line.trim();
                                 if text.is_empty() { continue; }
                                 if let Ok(value) = serde_json::from_str::<JsonValue>(text) {

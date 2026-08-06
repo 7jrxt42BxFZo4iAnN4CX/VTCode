@@ -533,16 +533,17 @@ impl SimpleIndexer {
         let mut local = Vec::new();
         for (line_num, line) in content.lines().enumerate() {
             if regex.is_match(line) {
+                let line_content = line.to_string();
                 let matches = if extract_matches {
                     regex.find_iter(line).map(|m| m.as_str().to_string()).collect()
                 } else {
-                    vec![line.to_string()]
+                    vec![line_content.clone()]
                 };
 
                 local.push(SearchResult {
                     file_path: (*file_path).clone(),
                     line_number: line_num + 1,
-                    line_content: line.to_string(),
+                    line_content,
                     matches,
                 });
             }
@@ -589,7 +590,7 @@ impl SimpleIndexer {
             return Ok(String::new());
         }
 
-        let mut result = String::new();
+        let mut result = String::with_capacity(content.len());
         for (line_number, line) in content.lines().enumerate() {
             let line_number = line_number + 1;
             if line_number < start {

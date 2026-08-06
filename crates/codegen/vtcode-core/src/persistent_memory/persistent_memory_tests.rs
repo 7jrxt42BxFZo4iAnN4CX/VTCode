@@ -666,6 +666,91 @@ async fn persistent_memory_parallel_reads_preserve_source_order() {
     );
 }
 
+// Regression test for the O(n) dedup in `collect_all_memory_matches`.
+// Locks down two invariants of the "keep last occurrence with move-to-end
+// ordering" semantics that the O(n²) -> O(n) rewrite must preserve:
+//   1. Duplicate facts (equal after whitespace normalization + ASCII
+//      lowercasing) collapse to a single entry, and the retained entry is
+//      the *last* one in source order (its `source` is the last writer's).
+//   2. Non-duplicate entries keep their relative order, and the collapsed
+//      entry moves to the position of its last occurrence.
+// Concrete: prefs=[A(old), B(b)], repo=[A(new), C(c)] -> [B, A(new), C].
+#[tokio::test]
+async fn collect_all_memory_matches_dedup_keeps_last_occurrence_and_order() {
+    let workspace = tempdir().expect("workspace");
+    let config = enabled_memory_config_for(workspace.path());
+    scaffold_persistent_memory(&config, workspace.path())
+        .await
+        .expect("scaffold")
+        .expect("status");
+    let memory_dir = resolve_persistent_memory_dir(&config, workspace.path())
+        .expect("memory dir")
+        .expect("resolved dir");
+    let files = PersistentMemoryFiles::new(memory_dir);
+
+    // Two preferences: A (with extra spacing, will be overwritten) and B.
+    tokio::fs::write(
+        &files.preferences_file,
+        render_topic_file(
+            MemoryTopic::Preferences,
+            &[
+                GroundedFactRecord {
+                    fact: "Prefer  cargo   nextest".to_string(),
+                    source: encode_topic_source(MemoryTopic::Preferences, "old.md"),
+                },
+                GroundedFactRecord {
+                    fact: "Prefer pnpm for scripts".to_string(),
+                    source: encode_topic_source(MemoryTopic::Preferences, "b.md"),
+                },
+            ],
+        ),
+    )
+    .await
+    .expect("preferences");
+    // Repository facts: A again (different case/spacing, last writer) and C.
+    tokio::fs::write(
+        &files.repository_facts_file,
+        render_topic_file(
+            MemoryTopic::RepositoryFacts,
+            &[
+                GroundedFactRecord {
+                    fact: "prefer cargo nextest".to_string(),
+                    source: encode_topic_source(MemoryTopic::RepositoryFacts, "new.md"),
+                },
+                GroundedFactRecord {
+                    fact: "The repo uses Rust stable".to_string(),
+                    source: encode_topic_source(MemoryTopic::RepositoryFacts, "c.md"),
+                },
+            ],
+        ),
+    )
+    .await
+    .expect("repository facts");
+
+    let matches = collect_all_memory_matches(&files).await.expect("dedup");
+
+    // [A(old), B(b), A(new), C(c)] -> keep last A, move-to-end -> [B, A(new), C]
+    assert_eq!(
+        matches.iter().map(|m| (m.fact.as_str(), m.source.as_str())).collect::<Vec<_>>(),
+        vec![
+            ("Prefer pnpm for scripts", "b.md"),
+            ("prefer cargo nextest", "new.md"),
+            ("The repo uses Rust stable", "c.md"),
+        ],
+        "dedup must keep the last occurrence and move it to its last position"
+    );
+
+    // No duplicate normalized facts survive.
+    let mut normalized: Vec<String> = matches
+        .iter()
+        .map(|m| normalize_whitespace(&m.fact).to_ascii_lowercase())
+        .collect();
+    normalized.sort();
+    let mut deduped = normalized.clone();
+    deduped.dedup();
+    assert_eq!(normalized.len(), deduped.len(), "no duplicate facts should remain");
+}
+
 #[tokio::test]
 async fn persistent_memory_parallel_reads_preserve_error_context() {
     let workspace = tempdir().expect("workspace");

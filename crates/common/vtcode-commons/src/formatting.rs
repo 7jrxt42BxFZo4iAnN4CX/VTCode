@@ -225,7 +225,7 @@ pub fn wrap_text_words(text: &str, first_width: usize, continuation_width: usize
     let mut remaining = trimmed;
     let mut width = first_width.max(1);
 
-    while remaining.chars().count() > width {
+    while remaining.chars().take(width + 1).count() > width {
         let split = split_at_word_boundary(remaining, width);
         let (head, tail) = remaining.split_at(split);
         let head = head.trim();

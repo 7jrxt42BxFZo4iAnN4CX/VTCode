@@ -179,20 +179,22 @@ impl ToolHandler for ListDirHandler {
             return Ok(ToolOutput::simple("Directory is empty."));
         }
 
-        // Format as tree-like output
-        let mut output = String::new();
+        // Format as tree-like output. `write!` into `output` directly avoids
+        // the per-entry temporary `String` that `format!` + `push_str` creates.
+        use std::fmt::Write as _;
+        let mut output = String::with_capacity(entries.len() * 40);
         for entry in &entries {
             let prefix = if entry.is_dir { "📁 " } else { "📄 " };
             let suffix = if entry.is_dir { "/" } else { "" };
 
-            if let Some(size) = entry.size {
-                if !entry.is_dir {
-                    output.push_str(&format!("{}{}{} ({})\n", prefix, entry.name, suffix, format_size(size)));
-                } else {
-                    output.push_str(&format!("{}{}{}\n", prefix, entry.name, suffix));
-                }
+            // Size is only shown for files (not directories); the previous
+            // three-branch structure had two identical fall-through branches.
+            if let Some(size) = entry.size
+                && !entry.is_dir
+            {
+                let _ = writeln!(output, "{}{}{} ({})", prefix, entry.name, suffix, format_size(size));
             } else {
-                output.push_str(&format!("{}{}{}\n", prefix, entry.name, suffix));
+                let _ = writeln!(output, "{}{}{}", prefix, entry.name, suffix);
             }
         }
 

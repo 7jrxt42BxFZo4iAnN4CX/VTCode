@@ -21,6 +21,7 @@ mod fact_extraction;
 mod legacy_migration;
 mod llm_ops;
 mod lock;
+mod reader;
 mod rendering;
 
 pub use fact_extraction::{
@@ -32,6 +33,13 @@ use legacy_migration::{
 };
 use llm_ops::{classify_facts_strict, plan_memory_operation, summarize_memory};
 use lock::MemoryLock;
+use reader::{
+    MemoryNoteSummary, classify_fact, collect_all_memory_matches, collect_cleanup_candidates, collect_memory_matches,
+    count_pending_rollout_summaries, count_pending_rollout_summaries_async, decode_topic_source, encode_topic_source,
+    list_pending_rollout_files_async, list_rollout_markdown_files, list_rollout_markdown_files_async,
+    normalize_memory_query, parse_fact_line, parse_topic_file, read_note_summaries, read_rollout_records,
+    read_topic_records,
+};
 use rendering::{
     render_memory_index, render_memory_summary, render_memory_summary_bullets, render_rollout_summary,
     render_topic_file, unique_rollout_id,
@@ -1102,68 +1110,6 @@ fn looks_like_serialized_payload(text: &str) -> bool {
         || t.contains("<</invoke>")
 }
 
-fn normalize_memory_query(query: &str) -> Option<String> {
-    let normalized = normalize_whitespace(query).to_ascii_lowercase();
-    (!normalized.is_empty()).then_some(normalized)
-}
-
-async fn collect_memory_matches(
-    files: &PersistentMemoryFiles,
-    normalized_query: &str,
-) -> Result<Vec<PersistentMemoryMatch>> {
-    Ok(collect_all_memory_matches(files)
-        .await?
-        .into_iter()
-        .filter(|r| {
-            let nf = normalize_whitespace(&r.fact).to_ascii_lowercase();
-            let ns = normalize_whitespace(&r.source).to_ascii_lowercase();
-            nf.contains(normalized_query) || ns.contains(normalized_query)
-        })
-        .collect())
-}
-
-async fn collect_all_memory_matches(files: &PersistentMemoryFiles) -> Result<Vec<PersistentMemoryMatch>> {
-    let (prefs, repo, rollout, notes) = tokio::try_join!(
-        read_topic_records(&files.preferences_file, MemoryTopic::Preferences),
-        read_topic_records(&files.repository_facts_file, MemoryTopic::RepositoryFacts),
-        read_rollout_records(&files.rollout_summaries_dir),
-        read_note_summaries(&files.notes_dir),
-    )?;
-
-    let mut matches = Vec::new();
-    for r in prefs.into_iter().chain(repo).chain(rollout.0).chain(rollout.1) {
-        let (_, src) = decode_topic_source(&r.source);
-        matches.push(PersistentMemoryMatch { source: src, fact: r.fact });
-    }
-    for n in notes {
-        for h in n.highlights {
-            matches.push(PersistentMemoryMatch { source: n.relative_path.clone(), fact: h });
-        }
-    }
-
-    let mut deduped = Vec::new();
-    for r in matches {
-        let nf = normalize_whitespace(&r.fact).to_ascii_lowercase();
-        if let Some(i) = deduped
-            .iter()
-            .position(|e: &PersistentMemoryMatch| normalize_whitespace(&e.fact).to_ascii_lowercase() == nf)
-        {
-            deduped.remove(i);
-        }
-        deduped.push(r);
-    }
-    Ok(deduped)
-}
-
-async fn collect_cleanup_candidates(files: &PersistentMemoryFiles) -> Result<Vec<GroundedFactRecord>> {
-    let (prefs, repo, rollout) = tokio::try_join!(
-        read_topic_records(&files.preferences_file, MemoryTopic::Preferences),
-        read_topic_records(&files.repository_facts_file, MemoryTopic::RepositoryFacts),
-        read_rollout_records(&files.rollout_summaries_dir),
-    )?;
-    Ok(prefs.into_iter().chain(repo).chain(rollout.0).chain(rollout.1).collect())
-}
-
 async fn write_rollout_summary_pending(rollout_dir: &Path, classified: &ClassifiedFacts) -> Result<PathBuf> {
     tokio::fs::create_dir_all(rollout_dir)
         .await
@@ -1182,99 +1128,9 @@ fn finalize_rollout_summary_path(path: PathBuf) -> PathBuf {
     }
 }
 
-/// List `.md` files under `dir`, optionally filtering by a predicate on the file name.
-fn list_md_files(dir: &Path, filter: impl Fn(&str) -> bool) -> Result<Vec<PathBuf>> {
-    fn walk(dir: &Path, files: &mut Vec<PathBuf>, filter: &impl Fn(&str) -> bool) -> Result<()> {
-        if !dir.exists() {
-            return Ok(());
-        }
-        for entry in std::fs::read_dir(dir).with_context(|| format!("Failed to list {}", dir.display()))? {
-            let path = entry?.path();
-            if path.is_dir() {
-                walk(&path, files, filter)?;
-            } else if path.extension().and_then(|v| v.to_str()) == Some("md")
-                && filter(path.file_name().and_then(|v| v.to_str()).unwrap_or(""))
-            {
-                files.push(path);
-            }
-        }
-        Ok(())
-    }
-    let mut files = Vec::new();
-    walk(dir, &mut files, &filter)?;
-    files.sort();
-    Ok(files)
-}
-
-fn list_pending_rollout_files(rollout_dir: &Path) -> Result<Vec<PathBuf>> {
-    list_md_files(rollout_dir, |n| n.ends_with(".pending.md"))
-}
-
-async fn list_pending_rollout_files_async(rollout_dir: &Path) -> Result<Vec<PathBuf>> {
-    let rollout_dir = rollout_dir.to_path_buf();
-    tokio::task::spawn_blocking(move || list_pending_rollout_files(&rollout_dir))
-        .await
-        .context("Pending rollout scan task panicked")?
-}
-
-fn list_rollout_markdown_files(rollout_dir: &Path) -> Result<Vec<PathBuf>> {
-    list_md_files(rollout_dir, |_| true)
-}
-
-async fn list_rollout_markdown_files_async(rollout_dir: &Path) -> Result<Vec<PathBuf>> {
-    let rollout_dir = rollout_dir.to_path_buf();
-    tokio::task::spawn_blocking(move || list_rollout_markdown_files(&rollout_dir))
-        .await
-        .context("Rollout markdown scan task panicked")?
-}
-
-fn list_note_markdown_files(notes_dir: &Path) -> Result<Vec<PathBuf>> {
-    list_md_files(notes_dir, |_| true)
-}
-
-async fn list_note_markdown_files_async(notes_dir: &Path) -> Result<Vec<PathBuf>> {
-    let notes_dir = notes_dir.to_path_buf();
-    tokio::task::spawn_blocking(move || list_note_markdown_files(&notes_dir))
-        .await
-        .context("Note markdown scan task panicked")?
-}
-
-fn count_pending_rollout_summaries(rollout_dir: &Path) -> Result<usize> {
-    Ok(list_md_files(rollout_dir, |n| n.ends_with(".pending.md"))?.len())
-}
-
-async fn count_pending_rollout_summaries_async(rollout_dir: &Path) -> Result<usize> {
-    Ok(list_pending_rollout_files_async(rollout_dir).await?.len())
-}
-
-async fn read_note_summaries(notes_dir: &Path) -> Result<Vec<MemoryNoteSummary>> {
-    let mut notes = Vec::new();
-    for path in list_note_markdown_files_async(notes_dir).await? {
-        let content = tokio::fs::read_to_string(&path)
-            .await
-            .with_context(|| format!("Failed to read {}", path.display()))?;
-        let relative = path
-            .strip_prefix(notes_dir)
-            .with_context(|| format!("Failed to relativize {}", path.display()))?
-            .to_string_lossy()
-            .replace('\\', "/");
-        notes.push(MemoryNoteSummary {
-            relative_path: format!("{NOTES_DIRNAME}/{relative}"),
-            highlights: extract_memory_highlights(&content, 3),
-        });
-    }
-    Ok(notes)
-}
-
 struct ConsolidationResult {
     created_files: Vec<PathBuf>,
     added_facts: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct MemoryNoteSummary {
-    relative_path: String,
-    highlights: Vec<String>,
 }
 
 async fn consolidate_memory_files(
@@ -1315,48 +1171,6 @@ async fn consolidate_memory_files(
         }
     }
     Ok(ConsolidationResult { created_files, added_facts })
-}
-
-async fn read_topic_records(path: &Path, topic: MemoryTopic) -> Result<Vec<GroundedFactRecord>> {
-    if !tokio::fs::try_exists(path).await.unwrap_or(false) {
-        return Ok(Vec::new());
-    }
-    let contents = tokio::fs::read_to_string(path)
-        .await
-        .with_context(|| format!("Failed to read {}", path.display()))?;
-    Ok(parse_topic_file(&contents)
-        .into_iter()
-        .map(|r| GroundedFactRecord {
-            fact: r.fact,
-            source: encode_topic_source(topic, &r.source),
-        })
-        .collect())
-}
-
-async fn read_rollout_records(rollout_dir: &Path) -> Result<(Vec<GroundedFactRecord>, Vec<GroundedFactRecord>)> {
-    if !tokio::fs::try_exists(rollout_dir).await.unwrap_or(false) {
-        return Ok((Vec::new(), Vec::new()));
-    }
-    let mut prefs = Vec::new();
-    let mut repo_facts = Vec::new();
-    let mut entries = tokio::fs::read_dir(rollout_dir)
-        .await
-        .with_context(|| format!("Failed to list {}", rollout_dir.display()))?;
-    while let Some(entry) = entries.next_entry().await? {
-        let path = entry.path();
-        if path.extension().and_then(|v| v.to_str()) != Some("md") {
-            continue;
-        }
-        let contents = tokio::fs::read_to_string(&path).await?;
-        for record in parse_topic_file(&contents) {
-            let (topic, _) = decode_topic_source(&record.source);
-            match topic.unwrap_or_else(|| classify_fact(&record)) {
-                MemoryTopic::Preferences => prefs.push(record),
-                MemoryTopic::RepositoryFacts => repo_facts.push(record),
-            }
-        }
-    }
-    Ok((prefs, repo_facts))
 }
 
 fn merge_topic_facts(records: Vec<GroundedFactRecord>) -> Vec<GroundedFactRecord> {
@@ -1457,44 +1271,6 @@ async fn remove_rollout_markdown_files(rollout_dir: &Path) -> Result<usize> {
             .with_context(|| format!("Failed to remove {}", p.display()))?;
     }
     Ok(count)
-}
-
-fn parse_topic_file(contents: &str) -> Vec<GroundedFactRecord> {
-    contents
-        .lines()
-        .filter_map(parse_fact_line)
-        .map(|(source, fact)| GroundedFactRecord { source, fact })
-        .collect()
-}
-
-fn parse_fact_line(line: &str) -> Option<(String, String)> {
-    let trimmed = line.trim();
-    let remainder = trimmed.strip_prefix("- [")?;
-    let (source, fact) = remainder.split_once("] ")?;
-    let fact = fact.trim();
-    if fact.is_empty() {
-        return None;
-    }
-    Some((source.trim().to_string(), fact.to_string()))
-}
-
-fn classify_fact(fact: &GroundedFactRecord) -> MemoryTopic {
-    if fact.source == "user_assertion" {
-        MemoryTopic::Preferences
-    } else {
-        MemoryTopic::RepositoryFacts
-    }
-}
-
-fn encode_topic_source(topic: MemoryTopic, source: &str) -> String {
-    format!("{}:{}", topic.slug(), source)
-}
-
-fn decode_topic_source(source: &str) -> (Option<MemoryTopic>, String) {
-    match source.split_once(':') {
-        Some((topic, rest)) => (MemoryTopic::from_slug(topic), rest.trim().to_string()),
-        None => (None, source.to_string()),
-    }
 }
 
 fn memory_plan_facts(plan: &MemoryOpPlan) -> Result<Vec<GroundedFactRecord>> {

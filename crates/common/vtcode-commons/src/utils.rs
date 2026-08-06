@@ -74,7 +74,7 @@ pub fn extract_toml_str(content: &str, key: &str) -> Option<String> {
 /// Get the first meaningful section of the README/markdown as an excerpt
 pub fn extract_readme_excerpt(md: &str, max_len: usize) -> String {
     // Take from start until we pass the first major sections or hit max_len
-    let mut excerpt = String::new();
+    let mut excerpt = String::with_capacity(max_len.min(md.len()));
     for line in md.lines() {
         // Stop if we reach a deep section far into the doc
         if excerpt.len() > max_len {

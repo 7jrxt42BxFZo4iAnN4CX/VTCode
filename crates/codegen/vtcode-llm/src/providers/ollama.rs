@@ -1000,8 +1000,11 @@ impl LLMProvider for OllamaProvider {
                 buffer.extend_from_slice(&chunk);
 
                 while let Some(pos) = buffer.iter().position(|b| *b == b'\n') {
-                    let line_bytes: Vec<u8> = buffer.drain(..=pos).collect();
-                    let line = std::str::from_utf8(&line_bytes)
+                    // Borrow the line directly from `buffer` instead of
+                    // draining into a temporary `Vec<u8>` per SSE line.
+                    // `parse_stream_chunk` returns an owned deserialized
+                    // value, so the borrow ends before we drain.
+                    let line = std::str::from_utf8(&buffer[..pos])
                         .map_err(|err| LLMError::Provider {
                             message: format!("Invalid UTF-8 in Ollama stream: {err}"),
                             metadata: None,
@@ -1009,10 +1012,13 @@ impl LLMProvider for OllamaProvider {
                     let line = line.trim();
 
                     if line.is_empty() {
+                        buffer.drain(..=pos);
                         continue;
                     }
 
                     let parsed = parse_stream_chunk(line)?;
+                    // `parsed` is owned — safe to discard the borrowed line.
+                    buffer.drain(..=pos);
 
                     if let Some(error) = parsed.error {
                         Err(LLMError::Provider {
