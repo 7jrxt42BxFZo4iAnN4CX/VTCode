@@ -24,6 +24,12 @@ const MIN_EXEC_YIELD_MS: u64 = 250;
 const MAX_EXEC_YIELD_MS: u64 = 30_000;
 const EXEC_OUTPUT_TRUNCATED_SENTINEL: &str = "\n[Output truncated]";
 const EXEC_CAPTURE_WINDOW_BYTES: usize = 64 * 1024;
+/// `wait_timeout_seconds` pre-filled into `next_wait_args` for still-running
+/// commands. Generous enough that a typical build completes in one wait call,
+/// while a deadline-expired in-progress session can simply be waited on again.
+/// The hard ceiling is `long_running_command_ceiling_seconds` (default 3600);
+/// this hint stays well below it so a single wait never blocks excessively.
+const DEFAULT_LONG_COMMAND_WAIT_HINT_SECONDS: u64 = 600;
 
 // Conservative PTY command policy inspired by bash allow/deny defaults.
 const PTY_DENY_PREFIXES: &[&str] = &[
@@ -246,6 +252,31 @@ pub(super) fn attach_pty_continuation(response: &mut Value, session_id: &str) {
     response["next_continue_args"] = PtyContinuationArgs::new(session_id).to_value();
 }
 
+/// Attach no-burn wait steering to a still-running command response.
+///
+/// When a run yields with no exit code, the default `next_continue_args` nudges
+/// the model toward short polls — each poll costs a full model round-trip that
+/// merely re-asserts "still running" (the codex $20/h-on-a-long-build failure
+/// mode). `write_stdin` with `action: "wait"` blocks in the harness until exit
+/// or the deadline with *no* model round-trips while waiting, so we surface a
+/// ready-to-use `next_wait_args` and a hint that ranks it ahead of polling.
+fn attach_long_command_wait_steering(response: &mut Value, session_id: &str, elapsed: Duration) {
+    response["next_wait_args"] = json!({
+        "session_id": session_id,
+        "action": "wait",
+        "wait_timeout_seconds": DEFAULT_LONG_COMMAND_WAIT_HINT_SECONDS,
+    });
+    let elapsed_secs = elapsed.as_secs();
+    let hint = format!(
+        "Command still running after {elapsed_secs}s. To avoid burning tokens on short polls, \
+         call `write_stdin` with `next_wait_args` (action:\"wait\") — it blocks until the command \
+         exits or the deadline elapses with no model round-trips while waiting. If the deadline \
+         returns an in-progress session, call `wait` again. Use `next_continue_args` only when \
+         you need to peek at incremental output mid-run."
+    );
+    response["next_action_hint"] = json!(hint);
+}
+
 pub(super) fn clamp_exec_yield_ms(value: Option<u64>, default: u64) -> u64 {
     value.unwrap_or(default).clamp(MIN_EXEC_YIELD_MS, MAX_EXEC_YIELD_MS)
 }
@@ -325,6 +356,7 @@ pub(super) fn build_exec_response(
     }
     if capture.exit_code.is_none() {
         attach_pty_continuation(&mut response, session.id.as_str());
+        attach_long_command_wait_steering(&mut response, session.id.as_str(), capture.duration);
     }
 
     attach_exec_recovery_guidance(&mut response, command, capture.exit_code);

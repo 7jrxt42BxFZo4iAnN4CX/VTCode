@@ -11,6 +11,7 @@ use crate::providers::split_reasoning_from_text;
 pub(crate) use responses_stream::{ResponsesNormalizedStreamOptions, create_responses_normalized_stream};
 pub(crate) use responses_stream::{ResponsesStreamEventPolicy, response_stream_event_policy};
 use serde_json::{Map, Value};
+use std::borrow::Cow;
 pub use tag_sanitizer::TagStreamSanitizer;
 
 pub(crate) fn parse_cached_prompt_tokens_from_usage(
@@ -820,6 +821,46 @@ impl Utf8StreamDecoder {
         }
         out
     }
+
+    /// Appends `bytes` and writes the decodable UTF-8 prefix directly into
+    /// `out`. A trailing incomplete multibyte sequence is retained for the
+    /// next call.
+    ///
+    /// This avoids the intermediate `String` allocation that `push` creates
+    /// when the caller only needs bytes (e.g. feeding an SSE byte buffer).
+    /// The output is identical to `push(bytes).into_bytes()`.
+    pub(crate) fn push_bytes(&mut self, bytes: &[u8], out: &mut Vec<u8>) {
+        self.pending.extend_from_slice(bytes);
+        loop {
+            match std::str::from_utf8(&self.pending) {
+                Ok(text) => {
+                    out.extend_from_slice(text.as_bytes());
+                    self.pending.clear();
+                    break;
+                }
+                Err(err) => {
+                    let valid = err.valid_up_to();
+                    if let Some(valid_bytes) = self.pending.get(..valid) {
+                        // `valid_bytes` is guaranteed valid UTF-8 by `valid_up_to`,
+                        // so a direct byte copy is safe and avoids `from_utf8_lossy`.
+                        out.extend_from_slice(valid_bytes);
+                    }
+                    match err.error_len() {
+                        // Genuinely invalid sequence: emit replacement and skip it.
+                        Some(invalid_len) => {
+                            out.extend_from_slice("\u{FFFD}".as_bytes());
+                            self.pending.drain(..valid + invalid_len);
+                        }
+                        // Incomplete trailing sequence: keep it for the next push.
+                        None => {
+                            self.pending.drain(..valid);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Common helper for processing OpenAI-compatible SSE streams.
@@ -847,7 +888,7 @@ where
 
     while let Some(chunk_result) = byte_stream.next().await {
         let chunk_bytes = chunk_result.map_err(|e| format_network_error(provider_name, &e.to_string()))?;
-        buf.extend_from_slice(decoder.push(&chunk_bytes).as_bytes());
+        decoder.push_bytes(&chunk_bytes, &mut buf);
 
         while let Some((boundary_idx, boundary_len)) = find_sse_boundary_bytes(&buf, offset) {
             let event = std::str::from_utf8(&buf[offset..boundary_idx]).expect("valid utf-8 stream data");
@@ -870,6 +911,13 @@ where
                     }
                 }
             }
+        }
+
+        // Drain the consumed prefix so `buf` stays bounded to the unprocessed
+        // tail rather than growing for the entire stream lifetime.
+        if offset > 0 {
+            buf.drain(..offset);
+            offset = 0;
         }
     }
 
@@ -1001,7 +1049,11 @@ fn append_text_with_reasoning(
 }
 
 #[inline]
-pub(crate) fn extract_data_payload(event: &str) -> Option<String> {
+pub(crate) fn extract_data_payload<'a>(event: &'a str) -> Option<Cow<'a, str>> {
+    // For the common single `data:` line case, return a borrowed slice to
+    // avoid allocating a String per SSE event. Multi-line events are joined
+    // with `\n` as before, requiring an owned String.
+    let mut first: Option<&'a str> = None;
     let mut out = String::new();
 
     for raw_line in event.lines() {
@@ -1011,14 +1063,28 @@ pub(crate) fn extract_data_payload(event: &str) -> Option<String> {
         }
 
         if let Some(value) = line.strip_prefix("data:") {
-            if !out.is_empty() {
-                out.push('\n');
+            let trimmed = value.trim_start();
+            if let Some(first_val) = first {
+                // Second+ data: line — join into the owned buffer.
+                if out.is_empty() {
+                    out.push_str(first_val);
+                }
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(trimmed);
+            } else {
+                first = Some(trimmed);
             }
-            out.push_str(value.trim_start());
         }
     }
 
-    (!out.is_empty()).then_some(out)
+    if !out.is_empty() {
+        return Some(Cow::Owned(out));
+    }
+    // Single data: line — return the borrowed slice (None if empty, matching
+    // the original behaviour where an empty `out` yields `None`).
+    first.filter(|s| !s.is_empty()).map(Cow::Borrowed)
 }
 
 #[inline]
@@ -1252,6 +1318,44 @@ mod tests {
         let event = ": keep-alive\n".to_string() + "data: {\"a\":1}\n" + "data: {\"b\":2}\n";
         let payload = extract_data_payload(&event);
         assert_eq!(payload.as_deref(), Some("{\"a\":1}\n{\"b\":2}"));
+    }
+
+    #[test]
+    fn utf8_stream_decoder_push_bytes_matches_push() {
+        // Complete valid UTF-8 across multiple chunks.
+        let full = "data: {\"hello\":\"world\"}\n\n".as_bytes();
+        let mut dec_str = Utf8StreamDecoder::new();
+        let mut dec_bytes = Utf8StreamDecoder::new();
+        for i in 0..full.len() {
+            let mut out = Vec::new();
+            dec_bytes.push_bytes(std::slice::from_ref(&full[i]), &mut out);
+            let s = dec_str.push(std::slice::from_ref(&full[i]));
+            assert_eq!(out, s.into_bytes(), "byte {i}: push_bytes must match push");
+        }
+        // Both decoders should have empty pending buffers after complete input.
+        let mut tail = Vec::new();
+        dec_bytes.push_bytes(&[], &mut tail);
+        assert!(tail.is_empty());
+    }
+
+    #[test]
+    fn utf8_stream_decoder_push_bytes_handles_split_multibyte() {
+        // Split a multibyte character (U+00E9 = 0xC3 0xA9) across chunks.
+        let mut dec = Utf8StreamDecoder::new();
+        let mut out = Vec::new();
+        dec.push_bytes(&[0xC3], &mut out);
+        assert!(out.is_empty(), "incomplete multibyte should produce no output");
+        dec.push_bytes(&[0xA9, b'h', b'i'], &mut out);
+        assert_eq!(std::str::from_utf8(&out).unwrap(), "\u{00E9}hi");
+    }
+
+    #[test]
+    fn utf8_stream_decoder_push_bytes_emits_replacement_for_invalid() {
+        // 0xFF is never a valid UTF-8 lead byte.
+        let mut dec = Utf8StreamDecoder::new();
+        let mut out = Vec::new();
+        dec.push_bytes(&[b'a', 0xFF, b'b'], &mut out);
+        assert_eq!(std::str::from_utf8(&out).unwrap(), "a\u{FFFD}b");
     }
 
     #[test]

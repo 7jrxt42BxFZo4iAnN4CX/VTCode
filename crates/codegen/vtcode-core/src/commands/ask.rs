@@ -26,7 +26,7 @@ pub async fn handle_ask_command(
 
     let request = LLMRequest {
         messages: Arc::new(vec![Message::user(prompt_text)]),
-        system_prompt: Some(Arc::new(lightweight_instruction_text())),
+        system_prompt: Some(Arc::from(lightweight_instruction_text())),
         model: config.model.clone(),
         ..Default::default()
     };

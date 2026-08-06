@@ -29,8 +29,8 @@ impl PluginTemplate {
 
         // Write the plugin manifest
         let manifest_path = vtcode_plugin_dir.join("plugin.json");
-        let manifest_json = serde_json::to_string_pretty(manifest).map_err(PluginError::JsonError)?;
-        fs::write(&manifest_path, &manifest_json)
+        let manifest_json = serde_json::to_vec_pretty(manifest).map_err(PluginError::JsonError)?;
+        fs::write(&manifest_path, manifest_json)
             .await
             .map_err(|e| PluginError::LoadingError(format!("Failed to write plugin manifest: {e}")))?;
 

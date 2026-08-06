@@ -47,7 +47,7 @@ pub fn create_stream(
                 format_network_error("Anthropic", &anyhow::Error::new(err))
             })?;
 
-            buf.extend_from_slice(decoder.push(&chunk).as_bytes());
+            decoder.push_bytes(&chunk, &mut buf);
 
             while let Some((split_idx, delimiter_len)) = shared::find_sse_boundary_bytes(&buf, offset) {
                 let event = std::str::from_utf8(&buf[offset..split_idx]).expect("valid utf-8 stream data");
@@ -248,6 +248,13 @@ pub fn create_stream(
                         _ => {}
                     }
                 }
+            }
+
+            // Drain the consumed prefix so `buf` stays bounded to the
+            // unprocessed tail rather than growing for the entire stream.
+            if offset > 0 {
+                buf.drain(..offset);
+                offset = 0;
             }
         }
 

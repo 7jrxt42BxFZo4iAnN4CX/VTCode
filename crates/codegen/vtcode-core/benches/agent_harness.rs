@@ -85,7 +85,7 @@ fn request_plan_benchmark(c: &mut Criterion) {
         b.iter(|| {
             black_box(build_harness_request_plan(HarnessRequestPlanInput {
                 messages: Arc::new(messages.clone()),
-                system_prompt: "System prompt\n[Runtime Context]\nturn=12".to_string(),
+                system_prompt: Arc::from("System prompt\n[Runtime Context]\nturn=12"),
                 tools: Some(Arc::clone(&tools)),
                 model: "gpt-5".to_string(),
                 max_tokens: Some(2000),

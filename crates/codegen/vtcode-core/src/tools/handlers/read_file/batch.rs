@@ -260,7 +260,16 @@ async fn read_single_request(handler: &ReadFileHandler, request: &BatchReadReque
 }
 
 fn assemble_content(results: &[BatchReadResult]) -> String {
-    let mut content = String::new();
+    // Reserve capacity for the joined content. Each result contributes at least
+    // a header line plus its range content; estimate conservatively to avoid
+    // repeated reallocations as the String grows.
+    let estimated_bytes: usize = results
+        .iter()
+        .map(|result| {
+            result.file_path.len() + result.ranges.iter().map(|r| r.content.len()).sum::<usize>() + 64 // headers, separators, line numbers
+        })
+        .sum();
+    let mut content = String::with_capacity(estimated_bytes);
     let mut is_first = true;
     for result in results {
         if let Some(error) = &result.error {

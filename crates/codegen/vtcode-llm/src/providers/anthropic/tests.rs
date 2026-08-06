@@ -639,7 +639,7 @@ mod request_builder_tests {
     fn test_convert_to_anthropic_format_reuses_last_explicit_ttl_for_automatic_cache() {
         let request = LLMRequest {
             model: models::CLAUDE_SONNET_4_6.to_string(),
-            system_prompt: Some(Arc::new("system prompt".to_string())),
+            system_prompt: Some(Arc::from("system prompt")),
             messages: vec![Message::user("hello".to_string())].into(),
             ..Default::default()
         };
@@ -668,7 +668,7 @@ mod request_builder_tests {
     fn test_convert_to_anthropic_format_skips_automatic_cache_when_slots_exhausted() {
         let request = LLMRequest {
             model: models::CLAUDE_SONNET_4_6.to_string(),
-            system_prompt: Some(Arc::new("stable system".to_string())),
+            system_prompt: Some(Arc::from("stable system")),
             tools: Some(Arc::new(vec![ToolDefinition::function(
                 "do_work".to_string(),
                 "Do work".to_string(),
@@ -711,7 +711,7 @@ mod request_builder_tests {
     fn test_rolling_anchors_only_last_two_qualifying_messages() {
         let request = LLMRequest {
             model: models::CLAUDE_SONNET_4_6.to_string(),
-            system_prompt: Some(Arc::new("stable system".to_string())),
+            system_prompt: Some(Arc::from("stable system")),
             tools: Some(Arc::new(vec![ToolDefinition::function(
                 "do_work".to_string(),
                 "Do work".to_string(),
@@ -758,7 +758,7 @@ mod request_builder_tests {
     fn test_message_anchoring_skipped_when_tools_and_system_exhaust_breakpoints() {
         let request = LLMRequest {
             model: models::CLAUDE_SONNET_4_6.to_string(),
-            system_prompt: Some(Arc::new("stable system".to_string())),
+            system_prompt: Some(Arc::from("stable system")),
             tools: Some(Arc::new(vec![ToolDefinition::function(
                 "do_work".to_string(),
                 "Do work".to_string(),
@@ -801,7 +801,7 @@ mod request_builder_tests {
     fn test_message_anchoring_uses_remaining_breakpoint_on_newest_message() {
         let request = LLMRequest {
             model: models::CLAUDE_SONNET_4_6.to_string(),
-            system_prompt: Some(Arc::new("stable system".to_string())),
+            system_prompt: Some(Arc::from("stable system")),
             tools: Some(Arc::new(vec![ToolDefinition::function(
                 "do_work".to_string(),
                 "Do work".to_string(),
@@ -843,8 +843,8 @@ mod request_builder_tests {
     fn test_convert_to_anthropic_format_splits_runtime_context_without_caching_tail() {
         let request = LLMRequest {
             model: models::CLAUDE_SONNET_4_6.to_string(),
-            system_prompt: Some(Arc::new(
-                "stable system instructions\n[Runtime Context]\n- turns: 7\n- tool_calls: 3".to_string(),
+            system_prompt: Some(Arc::from(
+                "stable system instructions\n[Runtime Context]\n- turns: 7\n- tool_calls: 3",
             )),
             messages: vec![Message::user("hello".to_string())].into(),
             ..Default::default()
@@ -877,9 +877,8 @@ mod request_builder_tests {
     fn test_convert_to_anthropic_format_splits_editor_only_runtime_context_without_caching_tail() {
         let request = LLMRequest {
             model: models::CLAUDE_SONNET_4_6.to_string(),
-            system_prompt: Some(Arc::new(
-                "stable system instructions\n[Runtime Context]\n## Active Editor Context\n- Active file: src/main.rs"
-                    .to_string(),
+            system_prompt: Some(Arc::from(
+                "stable system instructions\n[Runtime Context]\n## Active Editor Context\n- Active file: src/main.rs",
             )),
             messages: vec![Message::user("hello".to_string())].into(),
             ..Default::default()
@@ -911,7 +910,7 @@ mod request_builder_tests {
     fn test_convert_to_anthropic_format_uses_extended_message_ttl_for_budget_continuations() {
         let request = LLMRequest {
             model: models::CLAUDE_SONNET_4_6.to_string(),
-            system_prompt: Some(Arc::new("stable system instructions".to_string())),
+            system_prompt: Some(Arc::from("stable system instructions")),
             messages: vec![Message::user("resume ".repeat(60))].into(),
             prompt_cache_profile: Some(PromptCacheProfile::BudgetContinuation),
             ..Default::default()
@@ -935,7 +934,7 @@ mod request_builder_tests {
     fn test_convert_to_anthropic_format_hoists_history_system_directives_into_system_prompt() {
         let request = LLMRequest {
             model: models::CLAUDE_SONNET_4_6.to_string(),
-            system_prompt: Some(Arc::new("stable system instructions".to_string())),
+            system_prompt: Some(Arc::from("stable system instructions")),
             messages: vec![
                 Message::user("explore architecture".to_string()),
                 Message::system(

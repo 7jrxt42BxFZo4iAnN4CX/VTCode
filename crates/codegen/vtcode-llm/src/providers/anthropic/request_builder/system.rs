@@ -68,7 +68,7 @@ pub(crate) fn build_system_prompt(
     let mut final_system_prompt = request
         .system_prompt
         .as_ref()
-        .map(|s| s.as_str())
+        .map(|s| s.as_ref())
         .unwrap_or_default()
         .to_string();
 

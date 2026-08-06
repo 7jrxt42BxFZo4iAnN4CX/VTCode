@@ -24,9 +24,16 @@ use crate::llm::provider::Usage as ProviderUsage;
 /// fails to serialize contributes zero bytes rather than failing the whole
 /// estimate, since this is an advisory figure, not a billing-accurate count.
 pub fn estimate_tool_definition_tokens(tools: &[ToolDefinition]) -> u64 {
+    // Reuse a single buffer across all tools instead of allocating a fresh
+    // `String` per definition. The buffer grows once to the largest serialized
+    // tool and stays there for the rest of the call.
+    let mut buf = Vec::new();
     let total_bytes: u64 = tools
         .iter()
-        .map(|tool| serde_json::to_string(tool).map(|json| json.len() as u64).unwrap_or(0))
+        .map(|tool| {
+            buf.clear();
+            serde_json::to_writer(&mut buf, tool).map(|_| buf.len() as u64).unwrap_or(0)
+        })
         .sum();
     total_bytes.div_ceil(4)
 }

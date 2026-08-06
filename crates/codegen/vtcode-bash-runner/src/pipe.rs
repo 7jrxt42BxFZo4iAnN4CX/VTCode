@@ -177,10 +177,13 @@ async fn spawn_process_internal(opts: PipeSpawnOptions) -> Result<SpawnedProcess
     #[cfg(unix)]
     #[expect(
         unsafe_code,
-        reason = "detach_from_tty only calls setpgrp/setpgid to detach the child process from the controlling terminal; it is a pure process-group operation with no undefined behavior"
+        reason = "detach_from_tty only calls setsid/setpgid via safe nix wrappers to detach the child from the controlling terminal; it is a pure process-group operation with no undefined behavior"
     )]
-    // SAFETY:  only invokes /,
-    // which is a pure process-group operation with no undefined behavior.
+    // SAFETY: `pre_exec` runs the closure in the forked child before `exec`,
+    // so only async-signal-safe operations are permitted. `detach_from_tty`
+    // calls `setsid()` (falling back to `setpgid(0, 0)` on EPERM) through safe
+    // `nix` wrappers — both are async-signal-safe POSIX calls that perform no
+    // allocation, no locking, and no mutable aliasing of process memory.
     unsafe {
         command.pre_exec(process_group::detach_from_tty);
     }

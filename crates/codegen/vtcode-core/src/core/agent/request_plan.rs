@@ -27,7 +27,9 @@ pub struct HarnessRequestPlanInput {
     /// Shared conversation history; `Arc` so plan construction is O(1) in
     /// history size (no deep copy per turn).
     pub messages: Arc<Vec<Message>>,
-    pub system_prompt: String,
+    /// Shared system prompt via `Arc<str>` so the per-turn hot path is a
+    /// refcount bump, not a full string clone.
+    pub system_prompt: Arc<str>,
     pub tools: Option<Arc<Vec<ToolDefinition>>>,
     pub model: String,
     pub max_tokens: Option<u32>,
@@ -61,7 +63,7 @@ pub fn build_harness_request_plan(input: HarnessRequestPlanInput) -> HarnessRequ
     let has_tools = tools.is_some();
     let request = LLMRequest {
         messages: input.messages,
-        system_prompt: Some(Arc::new(input.system_prompt)),
+        system_prompt: Some(input.system_prompt),
         tools,
         model: input.model,
         max_tokens: input.max_tokens,

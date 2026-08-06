@@ -289,7 +289,7 @@ impl AnthropicProvider {
                 Some(existing) => format!("{reminder}\n\n{existing}"),
                 None => reminder,
             };
-            request.system_prompt = Some(std::sync::Arc::new(merged_system_prompt));
+            request.system_prompt = Some(std::sync::Arc::from(merged_system_prompt));
         }
         request
     }

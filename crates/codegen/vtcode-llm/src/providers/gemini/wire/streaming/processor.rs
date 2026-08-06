@@ -701,15 +701,7 @@ impl StreamingProcessor {
                     Some(text.clone())
                 }
             }
-            Value::Array(items) => {
-                let mut collected = String::new();
-                for item in items {
-                    if let Some(fragment) = Self::extract_text_from_value(item) {
-                        collected.push_str(&fragment);
-                    }
-                }
-                if collected.is_empty() { None } else { Some(collected) }
-            }
+            Value::Array(items) => Self::extract_text_from_array(items),
             Value::Object(map) => {
                 if let Some(text) = map.get("text").and_then(Value::as_str)
                     && !text.trim().is_empty()
@@ -718,7 +710,7 @@ impl StreamingProcessor {
                 }
 
                 if let Some(parts) = map.get("parts").and_then(Value::as_array)
-                    && let Some(parts_text) = Self::extract_text_from_value(&Value::Array(parts.clone()))
+                    && let Some(parts_text) = Self::extract_text_from_array(parts)
                 {
                     return Some(parts_text);
                 }
@@ -735,6 +727,19 @@ impl StreamingProcessor {
             }
             _ => None,
         }
+    }
+
+    /// Collect text fragments from a JSON array without materializing an
+    /// intermediate `Value::Array` (avoids a `Vec<Value>` clone on the
+    /// fallback extraction path).
+    fn extract_text_from_array(items: &[Value]) -> Option<String> {
+        let mut collected = String::new();
+        for item in items {
+            if let Some(fragment) = Self::extract_text_from_value(item) {
+                collected.push_str(&fragment);
+            }
+        }
+        if collected.is_empty() { None } else { Some(collected) }
     }
 
     /// Report progress towards the timeout threshold

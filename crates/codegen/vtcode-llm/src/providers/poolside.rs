@@ -83,7 +83,7 @@ mod tests {
     fn base_request() -> LLMRequest {
         LLMRequest {
             messages: vec![Message::user("hello".to_string())].into(),
-            system_prompt: Some(Arc::new("system guidance".to_string())),
+            system_prompt: Some(Arc::from("system guidance")),
             model: "malibu-latest".to_string(),
             max_tokens: Some(512),
             temperature: Some(0.5),
@@ -128,7 +128,7 @@ mod tests {
     #[test]
     fn golden_payload_omits_empty_system_prompt() {
         let mut request = base_request();
-        request.system_prompt = Some(Arc::new("   ".to_string()));
+        request.system_prompt = Some(Arc::from("   "));
         request.stream = false;
         let payload = provider().core.convert_request(&request).unwrap();
         let messages = payload["messages"].as_array().unwrap();

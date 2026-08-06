@@ -335,9 +335,8 @@ fn update_skill_index(store_path: &Path, skill_name: &str, version: &str) -> Res
     fs::create_dir_all(store_path)
         .with_context(|| format!("failed to create store dir at {}", store_path.display()))?;
     let index_json =
-        serde_json::to_string_pretty(&index).with_context(|| format!("failed to serialize index for {skill_name}"))?;
-    fs::write(&index_path, &index_json)
-        .with_context(|| format!("failed to write index at {}", index_path.display()))?;
+        serde_json::to_vec_pretty(&index).with_context(|| format!("failed to serialize index for {skill_name}"))?;
+    fs::write(&index_path, index_json).with_context(|| format!("failed to write index at {}", index_path.display()))?;
 
     debug!("Updated skill index at {}", index_path.display());
     Ok(())

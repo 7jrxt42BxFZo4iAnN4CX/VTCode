@@ -130,7 +130,7 @@ impl LLMProvider for GeminiProvider {
                         let chunk = chunk_result
                             .map_err(|err| format_network_error("Gemini", &err))?;
 
-                        buf.extend_from_slice(decoder.push(&chunk).as_bytes());
+                        decoder.push_bytes(&chunk, &mut buf);
 
                         while let Some((split_idx, delimiter_len)) = find_sse_boundary_bytes(&buf, offset) {
                             let event = std::str::from_utf8(&buf[offset..split_idx])
@@ -155,6 +155,14 @@ impl LLMProvider for GeminiProvider {
                             for stream_event in Self::apply_interaction_stream_payload(&mut state, &payload)? {
                                 yield stream_event;
                             }
+                        }
+
+                        // Drain the consumed prefix so `buf` stays bounded to
+                        // the unprocessed tail rather than growing for the
+                        // entire stream lifetime.
+                        if offset > 0 {
+                            buf.drain(..offset);
+                            offset = 0;
                         }
                     }
 

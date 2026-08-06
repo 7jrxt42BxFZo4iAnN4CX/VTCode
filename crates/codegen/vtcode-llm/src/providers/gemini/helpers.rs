@@ -313,10 +313,10 @@ impl GeminiProvider {
                     request
                         .system_prompt
                         .as_ref()
-                        .map(|prompt| prompt.as_str())
+                        .map(|prompt| prompt.as_ref())
                         .or(owned_prompt.as_deref())
                 } else {
-                    request.system_prompt.as_ref().map(|prompt| prompt.as_str())
+                    request.system_prompt.as_ref().map(|prompt| prompt.as_ref())
                 };
                 let merged_system_prompt = merge_system_prompt_with_history_directives(
                     base_system_prompt,
@@ -362,10 +362,10 @@ impl GeminiProvider {
             request
                 .system_prompt
                 .as_ref()
-                .map(|prompt| prompt.as_str())
+                .map(|prompt| prompt.as_ref())
                 .or(owned_prompt.as_deref())
         } else {
-            request.system_prompt.as_ref().map(|prompt| prompt.as_str())
+            request.system_prompt.as_ref().map(|prompt| prompt.as_ref())
         };
         let merged_system_prompt = merge_system_prompt_with_history_directives(
             base_system_prompt,
@@ -1143,12 +1143,17 @@ fn build_interaction_tool_choice(
 }
 
 fn build_interaction_input(request: &LLMRequest) -> Result<InteractionInput, LLMError> {
-    let relevant_messages = if request.previous_response_id.is_some() {
-        interaction_delta_messages(&request.messages)
+    // Only materialize an owned message vector when a continuation requires the
+    // delta slice. In the common (non-continuation) case, borrow the original
+    // `Arc<Vec<Message>>` slice directly and skip the deep copy.
+    let delta_messages: Vec<Message>;
+    let relevant_messages: &[Message] = if request.previous_response_id.is_some() {
+        delta_messages = interaction_delta_messages(&request.messages);
+        &delta_messages
     } else {
-        request.messages.as_ref().clone()
+        request.messages.as_ref().as_slice()
     };
-    let mut turns = build_interaction_turns(&relevant_messages, &request.messages)?;
+    let mut turns = build_interaction_turns(relevant_messages, &request.messages)?;
 
     // Latest Gemini models reject prefilled model turns (last turn with role "model")
     if GeminiProvider::uses_latest_gemini_api(&request.model) && turns.last().is_some_and(|t| t.role == "model") {

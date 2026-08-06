@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
@@ -273,9 +275,9 @@ pub struct ImageSource {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CacheControl {
     #[serde(rename = "type")]
-    pub(crate) control_type: String, // "ephemeral"
+    pub(crate) control_type: Cow<'static, str>, // "ephemeral"
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) ttl: Option<String>, // "5m" or "1h"
+    pub(crate) ttl: Option<Cow<'static, str>>, // "5m" or "1h"
 }
 
 /// Anthropic tool definition

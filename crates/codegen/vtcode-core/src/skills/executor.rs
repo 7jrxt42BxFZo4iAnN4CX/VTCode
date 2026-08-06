@@ -595,7 +595,7 @@ pub async fn execute_skill_with_sub_llm(
     // Create LLM request with skill instructions as system prompt
     let mut request = LLMRequest {
         messages: Arc::new(messages.clone()),
-        system_prompt: Some(Arc::new(skill.instructions.clone())),
+        system_prompt: Some(Arc::from(skill.instructions.clone())),
         tools: tool_definitions.clone(),
         model: model.clone(),
         max_tokens: Some(4096),

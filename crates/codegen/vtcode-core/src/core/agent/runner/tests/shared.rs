@@ -183,7 +183,7 @@ pub enum HarnessRole {
 }
 
 pub fn harness_role_of(request: &LLMRequest) -> HarnessRole {
-    let sys = request.system_prompt.as_ref().map(|s| s.as_str()).unwrap_or("");
+    let sys = request.system_prompt.as_ref().map(|s| s.as_ref()).unwrap_or("");
     if sys.contains("harness replanner") {
         HarnessRole::Replanner
     } else if sys.contains("harness evaluator") {

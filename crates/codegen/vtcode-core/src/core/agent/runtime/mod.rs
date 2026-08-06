@@ -879,8 +879,8 @@ impl AgentRuntime {
             FinishReason::Error(message) => message,
             _ => "unknown".to_string(),
         };
-        let final_usage = response.usage.clone().unwrap_or_default();
-        let mut aggregated_tool_calls = response.tool_calls.clone();
+        let final_usage = response.usage.take().unwrap_or_default();
+        let mut aggregated_tool_calls = response.tool_calls.take();
 
         self.finalize_assistant_lifecycle(&full_text);
         self.finalize_reasoning_lifecycle(&full_reasoning);
@@ -891,7 +891,7 @@ impl AgentRuntime {
         self.state.record_turn(&start_time, &mut turn_recorded);
 
         if final_usage.prompt_tokens > 0 || final_usage.completion_tokens > 0 {
-            self.state.stats.merge_usage(final_usage.clone());
+            self.state.stats.merge_usage(&final_usage);
         }
 
         aggregated_tool_calls = aggregated_tool_calls.filter(|calls| !calls.is_empty());
@@ -900,8 +900,8 @@ impl AgentRuntime {
         if !full_reasoning.is_empty() {
             assistant_message = assistant_message.with_reasoning(Some(full_reasoning.clone()));
         }
-        if let Some(details) = &response.reasoning_details {
-            let values: Vec<serde_json::Value> = details.iter().map(|s| serde_json::Value::String(s.clone())).collect();
+        if let Some(details) = response.reasoning_details.take() {
+            let values: Vec<serde_json::Value> = details.into_iter().map(serde_json::Value::String).collect();
             assistant_message = assistant_message.with_reasoning_details(Some(values));
         }
 
@@ -934,8 +934,8 @@ impl AgentRuntime {
         } else {
             Some(full_reasoning.clone())
         };
-        response.tool_calls = aggregated_tool_calls.clone();
-        response.usage = Some(final_usage.clone());
+        response.tool_calls = aggregated_tool_calls;
+        response.usage = Some(final_usage);
         response.finish_reason = if finish_reason == "tool_calls" {
             FinishReason::ToolCalls
         } else if finish_reason == "Cancelled" || finish_reason == "cancelled" {

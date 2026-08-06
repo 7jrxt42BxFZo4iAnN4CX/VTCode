@@ -370,8 +370,8 @@ async fn llm_prompt_suggestions_from_provider(
         messages: Arc::new(vec![uni::Message::user(format!(
             "Generate 3 short follow-up prompts for this VT Code session. Return one prompt per line.\n\nRecent session context:\n{context}"
         ))]),
-        system_prompt: Some(Arc::new(
-            "You write concise follow-up prompts for a coding assistant UI. Return plain text only, one prompt per line, no bullets or numbering.".to_string(),
+        system_prompt: Some(Arc::from(
+            "You write concise follow-up prompts for a coding assistant UI. Return plain text only, one prompt per line, no bullets or numbering.",
         )),
         model: model.to_string(),
         max_tokens: Some(180),
@@ -443,9 +443,8 @@ fn build_inline_prompt_suggestion_request(
 
     uni::LLMRequest {
         messages: Arc::new(vec![uni::Message::user(user_prompt)]),
-        system_prompt: Some(Arc::new(
-            "Predict the user's next chat prompt for VT Code. Match the user's phrasing, keep it concise, and return plain text only. Do not add bullets, numbering, quotes, explanations, or assistant voice. If a draft is provided, the response must begin with the exact draft text."
-                .to_string(),
+        system_prompt: Some(Arc::from(
+            "Predict the user's next chat prompt for VT Code. Match the user's phrasing, keep it concise, and return plain text only. Do not add bullets, numbering, quotes, explanations, or assistant voice. If a draft is provided, the response must begin with the exact draft text.",
         )),
         model: model.to_string(),
         max_tokens: Some(48),

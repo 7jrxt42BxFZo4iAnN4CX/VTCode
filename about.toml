@@ -1,0 +1,50 @@
+# cargo-about configuration for VT Code.
+#
+# Regenerate THIRD-PARTY-NOTICES with:
+#   cargo about generate scripts/templates/third-party-notices.hbs > /tmp/tpn-body.txt
+#   scripts/generate-notices.sh
+#
+# See https://embarkstudios.github.io/cargo-about/ for full documentation.
+
+# All SPDX license identifiers that VT Code accepts in its dependency tree.
+#
+# Policy notes (audited 2026-08):
+# - Most entries are permissive (MIT/Apache/BSD/ISC/Zlib/0BSD/CC0/Unlicense/BSL).
+# - `LGPL-2.1-or-later` only appears as one branch of `MIT OR Apache-2.0 OR
+#   LGPL-2.1-or-later` (r-efi). Because it is an OR expression, VT Code complies
+#   via MIT/Apache, so the LGPL obligations never attach. cargo-about requires
+#   every branch of an OR to be accepted, hence the entry.
+# - `Apache-2.0 WITH LLVM-exception` is permissive (Apache-2.0 plus a patent/
+#   exception grant); also appears only in OR expressions with MIT/Apache-2.0.
+# - `MPL-2.0` covers nucleo-matcher and option-ext. MPL-2.0 is weak, file-level
+#   copyleft: unmodified dependency use is fine and imposes no obligations on
+#   VT Code's own source. Accepted intentionally for the fuzzy-matching stack.
+# - `WTFPL` is a permissive, public-domain-style license; no current crate uses
+#   it, but it is accepted for forward compatibility.
+# - `Unicode-DFS-2016` / `Unicode-3.0` cover the Unicode data tables used by
+#   ICU/unicode-ident-style crates.
+# - `NCSA` appears only as part of `(MIT OR Apache-2.0) AND NCSA` (libfuzzer-sys,
+#   a dev/fuzz-only dependency); both branches must be accepted.
+# - `CDLA-Permissive-2.0` is a permissive data-license (not copyleft).
+accepted = [
+    "Apache-2.0",
+    "MIT",
+    "MIT-0",
+    "ISC",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSD-1-Clause",
+    "BSL-1.0",
+    "0BSD",
+    "CC0-1.0",
+    "Zlib",
+    "Unlicense",
+    "MPL-2.0",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "LGPL-2.1-or-later",
+    "CDLA-Permissive-2.0",
+    "NCSA",
+    "WTFPL",
+]

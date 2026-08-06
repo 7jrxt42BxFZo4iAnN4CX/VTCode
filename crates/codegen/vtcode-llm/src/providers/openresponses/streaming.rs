@@ -116,8 +116,11 @@ struct StreamEventWire {
 }
 
 impl StreamEventWire {
-    fn into_event(self) -> Result<(String, u32, StreamEventData), String> {
-        let event_type = required_field(self.event_type.clone(), "type", "stream event")?;
+    fn into_event(mut self) -> Result<(String, u32, StreamEventData), String> {
+        // `take()` moves the event type out without cloning, leaving `self`
+        // whole so `into_data` can still consume it. This runs per streamed
+        // event.
+        let event_type = required_field(self.event_type.take(), "type", "stream event")?;
         let sequence_number = self.sequence_number;
         let data = self.into_data(&event_type)?;
         Ok((event_type, sequence_number, data))

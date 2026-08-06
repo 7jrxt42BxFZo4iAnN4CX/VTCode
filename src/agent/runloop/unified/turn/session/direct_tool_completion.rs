@@ -86,13 +86,12 @@ fn append_next_steps(base: &str, next_steps: &[String]) -> String {
     out
 }
 
-static SUGGESTION_SYSTEM_PROMPT: LazyLock<Arc<String>> = LazyLock::new(|| {
-    Arc::new(
+static SUGGESTION_SYSTEM_PROMPT: LazyLock<Arc<str>> = LazyLock::new(|| {
+    Arc::from(
         "You are a concise coding assistant. Given information about a tool execution result, \
          suggest 2-4 short, actionable next steps the user should take. \
          Each step should be one sentence. Use backticks for commands. \
-         Return ONLY the bullet points, one per line, no numbering, no dashes, no extra text."
-            .to_string(),
+         Return ONLY the bullet points, one per line, no numbering, no dashes, no extra text.",
     )
 });
 

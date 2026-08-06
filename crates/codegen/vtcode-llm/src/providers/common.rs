@@ -974,7 +974,7 @@ where
 
     Some(LLMRequest {
         messages: std::sync::Arc::new(messages),
-        system_prompt: system_prompt.map(std::sync::Arc::new),
+        system_prompt: system_prompt.map(std::sync::Arc::from),
         model: value.get("model").and_then(|m| m.as_str()).unwrap_or(default_model).to_string(),
         max_tokens: value.get("max_tokens").and_then(|m| m.as_u64()).map(|m| m as u32),
         temperature: value.get("temperature").and_then(|t| t.as_f64()).map(|t| t as f32),

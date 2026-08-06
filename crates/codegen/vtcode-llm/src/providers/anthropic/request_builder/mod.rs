@@ -66,8 +66,8 @@ pub(crate) fn convert_to_anthropic_format(
 
     let tools_cache_control = if ctx.prompt_cache_enabled && ctx.prompt_cache_settings.cache_tool_definitions {
         Some(CacheControl {
-            control_type: "ephemeral".to_string(),
-            ttl: Some(tools_ttl.to_string()),
+            control_type: "ephemeral".into(),
+            ttl: Some(tools_ttl.into()),
         })
     } else {
         None
@@ -75,8 +75,8 @@ pub(crate) fn convert_to_anthropic_format(
 
     let system_cache_control = if ctx.prompt_cache_enabled && ctx.prompt_cache_settings.cache_system_messages {
         Some(CacheControl {
-            control_type: "ephemeral".to_string(),
-            ttl: Some(tools_ttl.to_string()),
+            control_type: "ephemeral".into(),
+            ttl: Some(tools_ttl.into()),
         })
     } else {
         None
@@ -149,26 +149,35 @@ pub(crate) fn convert_to_anthropic_format(
 
     let messages_cache_control = if ctx.prompt_cache_enabled && ctx.prompt_cache_settings.cache_user_messages {
         Some(CacheControl {
-            control_type: "ephemeral".to_string(),
-            ttl: Some(messages_ttl.to_string()),
+            control_type: "ephemeral".into(),
+            ttl: Some(messages_ttl.into()),
         })
     } else {
         None
     };
 
-    let mut messages_to_process = request.messages.as_ref().clone();
+    let needs_hoisting = request
+        .coding_agent_settings
+        .as_ref()
+        .is_some_and(|s| s.long_context_optimization)
+        && request.messages.len() > 1;
 
-    if let Some(settings) = &request.coding_agent_settings
-        && settings.long_context_optimization
-        && messages_to_process.len() > 1
-    {
-        hoist_largest_user_message(&mut messages_to_process);
-    }
+    // Only clone the message vector when hoisting will actually mutate it.
+    // In the common case (no long-context optimization or single message),
+    // borrow the original slice and skip the deep copy.
+    let mut hoisted_messages: Vec<crate::provider::Message>;
+    let messages_to_process: &[crate::provider::Message] = if needs_hoisting {
+        hoisted_messages = request.messages.as_ref().clone();
+        hoist_largest_user_message(&mut hoisted_messages);
+        &hoisted_messages
+    } else {
+        request.messages.as_ref().as_slice()
+    };
 
     let messages_breakpoints_before = breakpoints_remaining;
     let messages = build_messages(
         request,
-        &messages_to_process,
+        messages_to_process,
         &messages_cache_control,
         ctx.prompt_cache_settings,
         &mut breakpoints_remaining,
@@ -258,8 +267,8 @@ pub(crate) fn convert_to_anthropic_format(
             };
 
             Some(CacheControl {
-                control_type: "ephemeral".to_string(),
-                ttl: Some(ttl.to_string()),
+                control_type: "ephemeral".into(),
+                ttl: Some(ttl.into()),
             })
         } else {
             None

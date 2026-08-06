@@ -327,10 +327,21 @@ cargo audit fix
 ### License Compliance
 
 ```bash
-# Check licenses
+# Check licenses (quick overview)
 cargo install cargo-license
 cargo license --workspace
+
+# Regenerate THIRD-PARTY-NOTICES from Cargo.lock (full automation)
+cargo install --locked --features cli cargo-about
+scripts/generate-notices.sh          # regenerate the file
+scripts/generate-notices.sh --check  # CI mode: exit 1 if out of date
 ```
+
+The `license-notices` CI job runs `scripts/generate-notices.sh --check` on
+every PR to catch stale license notices before merge. The file has a manual
+header (`scripts/templates/third-party-header.txt` for in-tree source ports)
+and an auto-generated dependency listing (`scripts/templates/third-party-notices.hbs`
+via cargo-about).
 
 ## References
 

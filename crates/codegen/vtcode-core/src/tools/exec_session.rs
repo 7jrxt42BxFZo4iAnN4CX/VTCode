@@ -59,15 +59,17 @@ impl PipeOutputBuffer {
             }
         }
 
-        let mut tail = pending.tail.clone();
-        tail.push_str(chunk);
-        if tail.len() > PIPE_OUTPUT_TAIL_BYTES {
-            let start = tail.ceil_char_boundary(tail.len() - PIPE_OUTPUT_TAIL_BYTES);
-            tail.drain(..start);
+        // Operate on `pending.tail` in place. The previous code cloned the tail,
+        // mutated the clone, then assigned it back — an O(tail) copy on every
+        // output chunk. Since `pending` is already a &mut MutexGuard, in-place
+        // mutation is equivalent and avoids the per-chunk allocation.
+        pending.tail.push_str(chunk);
+        if pending.tail.len() > PIPE_OUTPUT_TAIL_BYTES {
+            let start = pending.tail.ceil_char_boundary(pending.tail.len() - PIPE_OUTPUT_TAIL_BYTES);
+            pending.tail.drain(..start);
             pending.truncated = true;
             self.truncated.store(true, Ordering::Relaxed);
         }
-        pending.tail = tail;
     }
 
     async fn peek_pending(&self) -> Option<String> {
@@ -249,7 +251,11 @@ impl PipeSessionManager {
             loop {
                 match tokio::time::timeout(tokio::time::Duration::from_millis(15), output_rx.recv()).await {
                     Ok(Some(chunk)) => {
-                        let text = String::from_utf8_lossy(&chunk).into_owned();
+                        // Keep the decoded text as a `Cow<str>` so that the
+                        // common case (valid UTF-8) borrows `chunk` with zero
+                        // allocation. `.into_owned()` would force a String copy
+                        // on every chunk even when the bytes are already valid.
+                        let text = String::from_utf8_lossy(&chunk);
                         if let Some(file) = spool_file.as_mut() {
                             let sanitized = spool_redactor.push(&text);
                             if !sanitized.is_empty() && file.write_all(sanitized.as_bytes()).await.is_err() {

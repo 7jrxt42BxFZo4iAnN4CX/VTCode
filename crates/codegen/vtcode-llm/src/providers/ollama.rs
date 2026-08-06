@@ -171,7 +171,7 @@ impl OllamaProvider {
         const HISTORY_DIRECTIVES_SECTION_HEADER: &str = "[History Directives]";
         let directives = collect_history_system_directives(request);
         merge_system_prompt_with_history_directives(
-            request.system_prompt.as_ref().map(|prompt| prompt.as_str()),
+            request.system_prompt.as_ref().map(|prompt| prompt.as_ref()),
             &directives,
             HISTORY_DIRECTIVES_SECTION_HEADER,
         )
@@ -348,7 +348,7 @@ impl OllamaProvider {
 
         Some(LLMRequest {
             messages: std::sync::Arc::new(messages),
-            system_prompt: system_prompt.map(std::sync::Arc::new),
+            system_prompt: system_prompt.map(std::sync::Arc::from),
             tools: tools.map(std::sync::Arc::new),
             model: value
                 .get("model")
@@ -1303,8 +1303,8 @@ mod tests {
         let provider = test_provider();
         let request = LLMRequest {
             model: models::ollama::MINIMAX_M27_CLOUD.to_string(),
-            system_prompt: Some(std::sync::Arc::new(
-                "stable system instructions".to_string(),
+            system_prompt: Some(std::sync::Arc::from(
+                "stable system instructions",
             )),
             messages: vec![
                 Message::user("explore architecture".to_string()),

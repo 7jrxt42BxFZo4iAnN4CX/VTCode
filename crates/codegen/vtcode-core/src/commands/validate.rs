@@ -64,7 +64,7 @@ async fn check_api_connectivity(config: &AgentConfig) -> Result<()> {
     let provider = create_provider_for_model(&config.model, config.api_key.clone(), None, None)?;
     let request = LLMRequest {
         messages: Arc::new(vec![Message::user("Hello".to_string())]),
-        system_prompt: Some(Arc::new(lightweight_instruction_text())),
+        system_prompt: Some(Arc::from(lightweight_instruction_text())),
         model: config.model.to_string(),
         max_tokens: Some(10),
         temperature: Some(0.1),

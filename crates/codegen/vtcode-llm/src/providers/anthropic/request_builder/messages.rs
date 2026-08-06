@@ -441,8 +441,8 @@ mod tests {
             Message::user("cccc".to_string()),
         ];
         let cache_control = Some(CacheControl {
-            control_type: "ephemeral".to_string(),
-            ttl: Some("5m".to_string()),
+            control_type: "ephemeral".into(),
+            ttl: Some("5m".into()),
         });
         (request, messages, cache_control)
     }
@@ -507,8 +507,8 @@ mod tests {
             Message::user("b".repeat(300)),
         ];
         let cache_control = Some(CacheControl {
-            control_type: "ephemeral".to_string(),
-            ttl: Some("5m".to_string()),
+            control_type: "ephemeral".into(),
+            ttl: Some("5m".into()),
         });
         let settings = AnthropicPromptCacheSettings::default();
         let mut breakpoints_remaining = 4usize;

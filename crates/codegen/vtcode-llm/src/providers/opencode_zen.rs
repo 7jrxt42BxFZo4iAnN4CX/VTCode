@@ -224,17 +224,24 @@ impl LLMProvider for OpenCodeZenProvider {
     }
 
     fn validate_request(&self, request: &LLMRequest) -> Result<(), LLMError> {
-        let mut normalized = request.clone();
-        if !normalized.model.trim().is_empty() {
-            normalized.model = self.requested_model(&normalized.model).to_string();
-        }
-
         let supported_models = models::opencode_zen::SUPPORTED_MODELS
             .iter()
             .map(|model| model.to_string())
             .collect::<Vec<_>>();
 
-        super::common::validate_request_common(&normalized, PROVIDER_NAME, PROVIDER_KEY, Some(&supported_models))
+        // The caller (generate/stream) already normalizes the model. Avoid
+        // cloning the entire request when the model is already normalized or
+        // empty — the common case.
+        let needs_normalization =
+            !request.model.trim().is_empty() && self.requested_model(&request.model) != request.model.as_str();
+
+        if !needs_normalization {
+            super::common::validate_request_common(request, PROVIDER_NAME, PROVIDER_KEY, Some(&supported_models))
+        } else {
+            let mut normalized = request.clone();
+            normalized.model = self.requested_model(&normalized.model).to_string();
+            super::common::validate_request_common(&normalized, PROVIDER_NAME, PROVIDER_KEY, Some(&supported_models))
+        }
     }
 }
 

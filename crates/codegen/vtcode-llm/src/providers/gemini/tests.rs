@@ -35,7 +35,7 @@ fn convert_to_gemini_request_maps_history_and_system_prompt() {
 
     let request = LLMRequest {
         messages: vec![Message::user("hello".to_string()), assistant_message, tool_response].into(),
-        system_prompt: Some(Arc::new("System prompt".to_string())),
+        system_prompt: Some(Arc::from("System prompt")),
         tools: Some(Arc::new(vec![tool_def])),
         model: models::google::GEMINI_3_FLASH_PREVIEW.to_string(),
         max_tokens: Some(256),
@@ -86,7 +86,7 @@ fn convert_to_gemini_request_hoists_history_system_directives_into_system_instru
             Message::user("explore architecture".to_string()),
         ]
         .into(),
-        system_prompt: Some(Arc::new("Stable system instructions".to_string())),
+        system_prompt: Some(Arc::from("Stable system instructions")),
         model: models::google::GEMINI_3_FLASH_PREVIEW.to_string(),
         ..Default::default()
     };

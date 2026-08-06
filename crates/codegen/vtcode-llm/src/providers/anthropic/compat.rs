@@ -269,7 +269,7 @@ pub(crate) fn convert_anthropic_to_llm_request(request: AnthropicMessagesRequest
         .system
         .map(extract_system_prompt_text)
         .filter(|value| !value.is_empty())
-        .map(Arc::new);
+        .map(Arc::from);
 
     let mut messages = Vec::new();
     for anthropic_msg in request.messages {

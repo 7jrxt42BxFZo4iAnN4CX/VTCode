@@ -12,6 +12,7 @@ use crate::providers::error_handling::{is_rate_limit_error, parse_api_error};
 use crate::providers::shared::parse_compacted_output_messages;
 use futures::StreamExt;
 use serde_json::{Value, json};
+use std::borrow::Cow;
 
 const MANUAL_COMPACTION_INSTRUCTIONS_LABEL: &str = "[Manual Compaction Instructions]";
 
@@ -110,16 +111,18 @@ impl OpenAIProvider {
     }
 
     /// Strip `service_tier` from the payload if it was previously rejected
-    /// for this model. Returns the (possibly modified) payload.
-    fn maybe_strip_flex_service_tier(&self, model: &str, payload: &Value) -> Value {
+    /// for this model. Returns a borrowed reference when no modification is
+    /// needed (the common case), avoiding a deep clone of the full request
+    /// payload.
+    fn maybe_strip_flex_service_tier<'a>(&self, model: &str, payload: &'a Value) -> Cow<'a, Value> {
         if self.is_flex_unsupported_for_model(model) && payload_uses_flex_service_tier(payload) {
             tracing::debug!(
                 model = %model,
                 "skipping service_tier=flex (previously unsupported)"
             );
-            payload_without_service_tier(payload)
+            Cow::Owned(payload_without_service_tier(payload))
         } else {
-            payload.clone()
+            Cow::Borrowed(payload)
         }
     }
 

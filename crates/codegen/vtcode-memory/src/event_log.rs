@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use vtcode_exec_events::{ThreadEvent, VersionedThreadEvent};
+use vtcode_exec_events::{EVENT_SCHEMA_VERSION, ThreadEvent, VersionedThreadEvent};
 
 use crate::error::SessionStoreError;
 use crate::manifest::ManifestStore;
@@ -41,6 +41,54 @@ struct EventKind<'a> {
     kind: &'a str,
 }
 
+/// Zero-clone serialization envelope for `ThreadEvent`.
+///
+/// Produces JSON byte-identical to `VersionedThreadEvent` but borrows the
+/// event by reference instead of cloning it. `append` is called for every
+/// runtime event, and `ThreadEvent` can carry large tool outputs / thread
+/// items — cloning just to feed `serde_json::to_string` was pure waste.
+#[derive(Serialize)]
+struct BorrowedVersionedEvent<'a> {
+    schema_version: &'a str,
+    event: &'a ThreadEvent,
+}
+
+/// Turn-lifecycle discriminator extracted from either a `ThreadEvent` (at
+/// append time) or a raw `&str` kind (during scan).  This is the single
+/// representation that both code paths feed into
+/// [`LogState::apply_lifecycle_event`], eliminating a duplicated state machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LifecycleKind {
+    TurnStarted,
+    TurnCompleted,
+    TurnFailed,
+    Other,
+}
+
+impl LifecycleKind {
+    /// Discriminate from a runtime `ThreadEvent` at append time.
+    #[inline]
+    fn from_event(event: &ThreadEvent) -> Self {
+        match event {
+            ThreadEvent::TurnStarted(_) => Self::TurnStarted,
+            ThreadEvent::TurnCompleted(_) => Self::TurnCompleted,
+            ThreadEvent::TurnFailed(_) => Self::TurnFailed,
+            _ => Self::Other,
+        }
+    }
+
+    /// Discriminate from a raw event-type string at scan time.
+    #[inline]
+    fn from_kind(kind: &str) -> Self {
+        match kind {
+            "turn.started" => Self::TurnStarted,
+            "turn.completed" => Self::TurnCompleted,
+            "turn.failed" => Self::TurnFailed,
+            _ => Self::Other,
+        }
+    }
+}
+
 /// In-memory state protected by a mutex (cheap; appends are infrequent relative
 /// to model inference).
 struct LogState {
@@ -67,6 +115,113 @@ impl LogState {
             in_turn: false,
             next_offset: 0,
             write_buf: Vec::with_capacity(65536),
+        }
+    }
+
+    /// Serialize `event` directly into the reusable write buffer with rollback
+    /// on failure.
+    ///
+    /// This encapsulates the invariant that `write_buf` never contains a
+    /// partial JSON document: if `serde_json::to_writer` fails mid-write the
+    /// buffer is truncated back to its pre-serialization boundary.  Returns
+    /// the `(start, end)` byte offsets of the serialized event so the caller
+    /// can feed them to [`Self::apply_lifecycle_event`].
+    fn serialize_event(&mut self, event: &ThreadEvent) -> Result<(u64, u64), SessionStoreError> {
+        let start = self.next_offset;
+        let buf_len_before = self.write_buf.len();
+        if let Err(err) = serde_json::to_writer(
+            &mut self.write_buf,
+            &BorrowedVersionedEvent { schema_version: EVENT_SCHEMA_VERSION, event },
+        ) {
+            self.write_buf.truncate(buf_len_before);
+            return Err(err.into());
+        }
+        self.write_buf.push(b'\n');
+        let written = self.write_buf.len() - buf_len_before;
+        let end = start + written as u64;
+        self.next_offset = end;
+        Ok((start, end))
+    }
+
+    /// Update the in-memory turn index and manifest counters for a single
+    /// event.
+    ///
+    /// This is the single implementation of the turn-lifecycle state machine;
+    /// both the append path (via [`LifecycleKind::from_event`]) and the scan
+    /// path (via [`LifecycleKind::from_kind`]) route through here, eliminating
+    /// a previously duplicated match block.
+    ///
+    /// Returns `true` when the event closes a turn boundary
+    /// (`TurnCompleted` / `TurnFailed`) so the caller can persist metadata
+    /// at the appropriate time (append persists immediately; scan persists
+    /// once after the full scan).
+    fn apply_lifecycle_event(&mut self, kind: LifecycleKind, start: u64, end: u64) -> bool {
+        match kind {
+            LifecycleKind::TurnStarted => {
+                self.in_turn = true;
+                let n = self.manifest.turn_count + 1;
+                self.index.entries.push_back(TurnIndexEntry {
+                    turn_number: n,
+                    start_offset: start,
+                    end_offset: end,
+                    event_count: 1,
+                    ts: now_rfc3339(),
+                });
+                false
+            }
+            LifecycleKind::TurnCompleted | LifecycleKind::TurnFailed => {
+                if self.in_turn {
+                    if let Some(entry) = self.index.entries.back_mut() {
+                        entry.end_offset = end;
+                        entry.event_count += 1;
+                    }
+                    self.in_turn = false;
+                    self.manifest.turn_count = self.index.entries.len() as u64;
+                }
+                self.manifest.status = if kind == LifecycleKind::TurnCompleted {
+                    "completed"
+                } else {
+                    "failed"
+                }
+                .to_string();
+                true
+            }
+            LifecycleKind::Other => {
+                if self.in_turn
+                    && let Some(entry) = self.index.entries.back_mut()
+                {
+                    entry.end_offset = end;
+                    entry.event_count += 1;
+                }
+                false
+            }
+        }
+    }
+
+    /// Plan a cap-enforcement eviction: pop the oldest completed turns from
+    /// the index until `event_count` is within `max_events`.
+    ///
+    /// Returns the byte offset at which the file should be truncated and the
+    /// number of events removed, so the caller can perform the I/O and adjust
+    /// `next_offset` / `event_count` in one place.  Returns `None` when no
+    /// eviction is needed.
+    fn plan_cap_eviction(&mut self, max_events: usize) -> Option<(u64, u64)> {
+        if max_events == 0 || self.manifest.event_count <= max_events as u64 {
+            return None;
+        }
+        let mut evicted_event_count = 0u64;
+        let mut truncate_offset = 0u64;
+        while self.manifest.event_count - evicted_event_count > max_events as u64
+            && let Some(oldest) = self.index.entries.front()
+        {
+            truncate_offset = oldest.end_offset;
+            evicted_event_count += oldest.event_count;
+            self.index.entries.pop_front();
+        }
+        if truncate_offset == 0 {
+            None
+        } else {
+            Some((truncate_offset, evicted_event_count))
         }
     }
 }
@@ -133,61 +288,24 @@ impl SessionEventLog {
 
     /// Append an event to the log and update the in-memory index/manifest.
     pub fn append(&self, event: &ThreadEvent) -> Result<(), SessionStoreError> {
-        let line = serde_json::to_string(&VersionedThreadEvent::new(event.clone()))?;
-        let written = line.len() + 1;
         let mut st = self.state.lock().map_err(poison)?;
-        let start = st.next_offset;
-        writeln!(&mut st.write_buf, "{line}").map_err(|e| SessionStoreError::io(&self.events_path, e))?;
-        let end = start + written as u64;
-        st.next_offset = end;
+
+        // Serialize into the write buffer with rollback on failure — the
+        // invariant that `write_buf` never contains partial JSON is
+        // encapsulated in `serialize_event`.
+        let (start, end) = st.serialize_event(event)?;
 
         st.manifest.event_count += 1;
         st.manifest.updated_at = now_rfc3339();
-        match event {
-            ThreadEvent::TurnStarted(_) => {
-                st.in_turn = true;
-                let n = st.manifest.turn_count + 1;
-                st.index.entries.push_back(TurnIndexEntry {
-                    turn_number: n,
-                    start_offset: start,
-                    end_offset: end,
-                    event_count: 1,
-                    ts: now_rfc3339(),
-                });
-            }
-            ThreadEvent::TurnCompleted(_) => {
-                if st.in_turn {
-                    if let Some(entry) = st.index.entries.back_mut() {
-                        entry.end_offset = end;
-                        entry.event_count += 1;
-                    }
-                    st.in_turn = false;
-                    st.manifest.turn_count = st.index.entries.len() as u64;
-                }
-                st.manifest.status = "completed".to_string();
-                self.persist_meta_locked(&mut st)?;
-            }
-            ThreadEvent::TurnFailed(_) => {
-                if st.in_turn {
-                    if let Some(entry) = st.index.entries.back_mut() {
-                        entry.end_offset = end;
-                        entry.event_count += 1;
-                    }
-                    st.in_turn = false;
-                    st.manifest.turn_count = st.index.entries.len() as u64;
-                }
-                st.manifest.status = "failed".to_string();
-                self.persist_meta_locked(&mut st)?;
-            }
-            _ => {
-                if st.in_turn
-                    && let Some(entry) = st.index.entries.back_mut()
-                {
-                    entry.end_offset = end;
-                    entry.event_count += 1;
-                }
-            }
+
+        // Route through the single turn-lifecycle state machine.  When the
+        // event closes a turn, persist metadata immediately so a reopen
+        // after a mid-turn crash sees a consistent index.
+        let is_turn_boundary = st.apply_lifecycle_event(LifecycleKind::from_event(event), start, end);
+        if is_turn_boundary {
+            self.persist_meta_locked(&mut st)?;
         }
+
         if st.write_buf.len() >= MAX_WRITE_BUFFER_BYTES {
             // Persist metadata with the bounded byte flush so a reopen after
             // a mid-turn crash does not trust an index that predates these
@@ -202,34 +320,18 @@ impl SessionEventLog {
     /// turns when the log exceeds [`Self::max_events`]. Returns `Ok(())` even
     /// when no truncation is needed or the cap is disabled (`max_events == 0`).
     fn enforce_event_cap(&self) -> Result<(), SessionStoreError> {
-        if self.max_events == 0 {
-            return Ok(());
-        }
         let mut st = self.state.lock().map_err(poison)?;
-        if st.manifest.event_count <= self.max_events as u64 {
+
+        // `plan_cap_eviction` encapsulates the index arithmetic and returns
+        // `None` when the cap is disabled or not yet exceeded.
+        let Some((truncate_offset, evicted_event_count)) = st.plan_cap_eviction(self.max_events) else {
             return Ok(());
-        }
+        };
 
         // Keep ordinary appends in memory until a turn boundary or an
         // explicit read. Cap enforcement is the one append-time path that
         // needs the complete on-disk file before rewriting it.
         self.flush_write_buf_locked(&mut st)?;
-
-        let _excess = st.manifest.event_count as i64 - self.max_events as i64;
-        let mut evicted_event_count = 0u64;
-        let mut truncate_offset = 0u64;
-
-        while st.manifest.event_count > self.max_events as u64
-            && let Some(oldest) = st.index.entries.front()
-        {
-            truncate_offset = oldest.end_offset;
-            evicted_event_count += oldest.event_count;
-            st.index.entries.pop_front();
-        }
-
-        if truncate_offset == 0 {
-            return Ok(());
-        }
 
         {
             let mut file = self.file.lock().map_err(poison)?;
@@ -361,7 +463,6 @@ impl SessionEventLog {
         let mut buf = Vec::new();
         let mut pos = 0u64;
         let mut first_ts: Option<String> = None;
-        let mut in_turn = false;
         loop {
             buf.clear();
             let n = reader
@@ -383,52 +484,22 @@ impl SessionEventLog {
                     continue;
                 }
                 st.manifest.event_count += 1;
-                match kind {
-                    "thread.started" => {
-                        if first_ts.is_none() {
-                            first_ts = Some(now_rfc3339());
-                        }
-                    }
-                    "turn.started" => {
-                        in_turn = true;
-                        let n = st.manifest.turn_count + 1;
-                        st.index.entries.push_back(TurnIndexEntry {
-                            turn_number: n,
-                            start_offset: pos,
-                            end_offset: line_end,
-                            event_count: 1,
-                            ts: now_rfc3339(),
-                        });
-                    }
-                    "turn.completed" | "turn.failed" => {
-                        if in_turn {
-                            if let Some(entry) = st.index.entries.back_mut() {
-                                entry.end_offset = line_end;
-                                entry.event_count += 1;
-                            }
-                            in_turn = false;
-                            st.manifest.turn_count = st.index.entries.len() as u64;
-                        }
-                        match kind {
-                            "turn.completed" => {
-                                st.manifest.status = "completed".to_string();
-                            }
-                            "turn.failed" => {
-                                st.manifest.status = "failed".to_string();
-                            }
-                            _ => {}
-                        }
-                    }
-                    _ => {
-                        if in_turn && let Some(entry) = st.index.entries.back_mut() {
-                            entry.end_offset = line_end;
-                            entry.event_count += 1;
-                        }
-                    }
+                // `thread.started` is not part of the turn lifecycle — it
+                // only seeds `created_at` on the first occurrence.
+                if kind == "thread.started" && first_ts.is_none() {
+                    first_ts = Some(now_rfc3339());
                 }
+                // Route turn-lifecycle events through the same state machine
+                // as `append`, eliminating a previously duplicated match block.
+                st.apply_lifecycle_event(LifecycleKind::from_kind(kind), pos, line_end);
             }
             pos = line_end;
         }
+        // The scan uses `LogState.in_turn` via `apply_lifecycle_event`; reset
+        // it so a reopen that ends mid-turn does not leave the state machine
+        // in the "inside a turn" position (the fast path also starts with
+        // `in_turn = false`).
+        st.in_turn = false;
         if let Some(ts) = first_ts
             && st.manifest.created_at.is_empty()
         {
@@ -555,5 +626,224 @@ impl TurnIndex {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod borrowed_envelope_tests {
+    use super::{BorrowedVersionedEvent, EVENT_SCHEMA_VERSION};
+    use vtcode_exec_events::{
+        ThreadEvent, ThreadStartedEvent, TurnCompletedEvent, TurnStartedEvent, Usage, VersionedThreadEvent,
+    };
+
+    /// The borrowed envelope must produce JSON byte-identical to
+    /// `VersionedThreadEvent::new(event.clone())`. This guards against drift if
+    /// either the envelope or the canonical wrapper is modified.
+    #[test]
+    fn borrowed_envelope_matches_versioned_envelope() {
+        for event in [
+            ThreadEvent::ThreadStarted(ThreadStartedEvent { thread_id: "thread".to_string() }),
+            ThreadEvent::TurnStarted(TurnStartedEvent::default()),
+            ThreadEvent::TurnCompleted(TurnCompletedEvent { usage: Usage::default() }),
+        ] {
+            let canonical =
+                serde_json::to_string(&VersionedThreadEvent::new(event.clone())).expect("canonical serialize");
+            let borrowed = serde_json::to_string(&BorrowedVersionedEvent {
+                schema_version: EVENT_SCHEMA_VERSION,
+                event: &event,
+            })
+            .expect("borrowed serialize");
+            assert_eq!(canonical, borrowed, "JSON differs for {event:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_state_machine_tests {
+    use super::{LifecycleKind, LogState};
+    use vtcode_exec_events::{
+        ThreadEvent, ThreadStartedEvent, TurnCompletedEvent, TurnFailedEvent, TurnStartedEvent, Usage,
+    };
+
+    fn fresh_state() -> LogState {
+        LogState::new("test-session")
+    }
+
+    #[test]
+    fn lifecycle_kind_from_event_covers_all_variants() {
+        assert_eq!(
+            LifecycleKind::from_event(&ThreadEvent::TurnStarted(TurnStartedEvent::default())),
+            LifecycleKind::TurnStarted
+        );
+        assert_eq!(
+            LifecycleKind::from_event(&ThreadEvent::TurnCompleted(TurnCompletedEvent { usage: Usage::default() })),
+            LifecycleKind::TurnCompleted
+        );
+        assert_eq!(
+            LifecycleKind::from_event(&ThreadEvent::TurnFailed(TurnFailedEvent {
+                message: "err".to_string(),
+                usage: None,
+            })),
+            LifecycleKind::TurnFailed
+        );
+        // Any non-lifecycle event maps to Other.
+        assert_eq!(
+            LifecycleKind::from_event(&ThreadEvent::ThreadStarted(ThreadStartedEvent { thread_id: "x".to_string() })),
+            LifecycleKind::Other
+        );
+    }
+
+    #[test]
+    fn lifecycle_kind_from_str_matches_event_discriminator() {
+        assert_eq!(LifecycleKind::from_kind("turn.started"), LifecycleKind::TurnStarted);
+        assert_eq!(LifecycleKind::from_kind("turn.completed"), LifecycleKind::TurnCompleted);
+        assert_eq!(LifecycleKind::from_kind("turn.failed"), LifecycleKind::TurnFailed);
+        assert_eq!(LifecycleKind::from_kind("tool.called"), LifecycleKind::Other);
+        assert_eq!(LifecycleKind::from_kind("thread.started"), LifecycleKind::Other);
+    }
+
+    #[test]
+    fn turn_started_pushes_index_entry_and_sets_in_turn() {
+        let mut st = fresh_state();
+        let is_boundary = st.apply_lifecycle_event(LifecycleKind::TurnStarted, 0, 100);
+        assert!(!is_boundary, "TurnStarted is not a turn boundary");
+        assert!(st.in_turn);
+        assert_eq!(st.index.entries.len(), 1);
+        let entry = &st.index.entries[0];
+        assert_eq!(entry.turn_number, 1);
+        assert_eq!(entry.start_offset, 0);
+        assert_eq!(entry.end_offset, 100);
+        assert_eq!(entry.event_count, 1);
+    }
+
+    #[test]
+    fn intermediate_events_extend_current_turn() {
+        let mut st = fresh_state();
+        st.apply_lifecycle_event(LifecycleKind::TurnStarted, 0, 100);
+        // Simulate two intermediate events.
+        let is_b1 = st.apply_lifecycle_event(LifecycleKind::Other, 100, 200);
+        let is_b2 = st.apply_lifecycle_event(LifecycleKind::Other, 200, 300);
+        assert!(!is_b1 && !is_b2);
+        assert!(st.in_turn);
+        assert_eq!(st.index.entries.len(), 1);
+        let entry = &st.index.entries[0];
+        assert_eq!(entry.end_offset, 300);
+        assert_eq!(entry.event_count, 3);
+    }
+
+    #[test]
+    fn turn_completed_closes_turn_and_returns_boundary() {
+        let mut st = fresh_state();
+        st.apply_lifecycle_event(LifecycleKind::TurnStarted, 0, 100);
+        st.apply_lifecycle_event(LifecycleKind::Other, 100, 200);
+        let is_boundary = st.apply_lifecycle_event(LifecycleKind::TurnCompleted, 200, 300);
+        assert!(is_boundary);
+        assert!(!st.in_turn);
+        assert_eq!(st.manifest.turn_count, 1);
+        assert_eq!(st.manifest.status, "completed");
+        let entry = &st.index.entries[0];
+        assert_eq!(entry.end_offset, 300);
+        assert_eq!(entry.event_count, 3);
+    }
+
+    #[test]
+    fn turn_failed_closes_turn_and_sets_status() {
+        let mut st = fresh_state();
+        st.apply_lifecycle_event(LifecycleKind::TurnStarted, 0, 100);
+        let is_boundary = st.apply_lifecycle_event(LifecycleKind::TurnFailed, 100, 200);
+        assert!(is_boundary);
+        assert!(!st.in_turn);
+        assert_eq!(st.manifest.turn_count, 1);
+        assert_eq!(st.manifest.status, "failed");
+    }
+
+    #[test]
+    fn turn_completed_without_turn_started_is_idempotent() {
+        let mut st = fresh_state();
+        // Receiving TurnCompleted without a preceding TurnStarted should not
+        // panic or corrupt the index; it only updates the manifest status.
+        let is_boundary = st.apply_lifecycle_event(LifecycleKind::TurnCompleted, 0, 100);
+        assert!(is_boundary);
+        assert!(!st.in_turn);
+        assert_eq!(st.manifest.turn_count, 0, "no turn was started");
+        assert_eq!(st.manifest.status, "completed");
+        assert!(st.index.entries.is_empty());
+    }
+
+    #[test]
+    fn multiple_turns_get_incrementing_ordinals() {
+        let mut st = fresh_state();
+        for n in 1..=3 {
+            st.apply_lifecycle_event(LifecycleKind::TurnStarted, n * 100, n * 100 + 50);
+            st.apply_lifecycle_event(LifecycleKind::TurnCompleted, n * 100 + 50, n * 100 + 100);
+        }
+        assert_eq!(st.index.entries.len(), 3);
+        for (i, entry) in st.index.entries.iter().enumerate() {
+            assert_eq!(entry.turn_number, (i + 1) as u64);
+        }
+        assert_eq!(st.manifest.turn_count, 3);
+    }
+}
+
+#[cfg(test)]
+mod cap_eviction_tests {
+    use super::{LogState, TurnIndexEntry};
+
+    /// Build a `LogState` with `turns` fake turns, each having `events_per_turn`
+    /// events, starting at byte offset 0.
+    fn state_with_turns(turns: usize, events_per_turn: u64) -> LogState {
+        let mut st = LogState::new("cap-test");
+        st.manifest.event_count = (turns as u64) * events_per_turn;
+        let mut offset = 0u64;
+        for n in 1..=turns {
+            st.index.entries.push_back(TurnIndexEntry {
+                turn_number: n as u64,
+                start_offset: offset,
+                end_offset: offset + events_per_turn * 10,
+                event_count: events_per_turn,
+                ts: "2026-01-01T00:00:00Z".to_string(),
+            });
+            offset += events_per_turn * 10;
+        }
+        st
+    }
+
+    #[test]
+    fn no_eviction_when_under_cap() {
+        let mut st = state_with_turns(3, 2); // 6 events
+        assert!(st.plan_cap_eviction(10).is_none());
+        assert_eq!(st.index.entries.len(), 3, "no turns should be evicted");
+    }
+
+    #[test]
+    fn no_eviction_when_cap_disabled() {
+        let mut st = state_with_turns(5, 2); // 10 events
+        assert!(st.plan_cap_eviction(0).is_none());
+        assert_eq!(st.index.entries.len(), 5);
+    }
+
+    #[test]
+    fn evicts_oldest_turns_to_meet_cap() {
+        // 5 turns × 2 events = 10 events; cap = 6 → need to evict 2 turns (4 events).
+        let mut st = state_with_turns(5, 2);
+        let (truncate_offset, evicted) = st.plan_cap_eviction(6).expect("eviction planned");
+        assert_eq!(evicted, 4, "should evict 4 events (2 turns)");
+        assert_eq!(st.index.entries.len(), 3, "should keep 3 turns");
+        // Truncate offset is the end of the last evicted turn.
+        assert_eq!(truncate_offset, 40); // 2 turns × 20 bytes each
+        // Remaining turns should be turns 3, 4, 5.
+        assert_eq!(st.index.entries[0].turn_number, 3);
+        assert_eq!(st.index.entries[2].turn_number, 5);
+    }
+
+    #[test]
+    fn evicts_all_turns_when_cap_smaller_than_one_turn() {
+        // 3 turns × 5 events = 15 events; cap = 3 → evict turns until ≤ 3 remain.
+        // Each turn has 5 events, so evicting 2 turns leaves 5 (>3), evicting
+        // 3 turns leaves 0.
+        let mut st = state_with_turns(3, 5);
+        let (_truncate_offset, evicted) = st.plan_cap_eviction(3).expect("eviction planned");
+        assert_eq!(evicted, 15, "all events evicted");
+        assert_eq!(st.index.entries.len(), 0);
     }
 }

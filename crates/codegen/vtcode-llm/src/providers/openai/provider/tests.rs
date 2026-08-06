@@ -1313,7 +1313,7 @@ fn chat_completions_payload_uses_function_wrapper() {
 fn chat_completions_applies_gpt_5_5_addendum_only_for_gpt_5_5() {
     let provider = native_openai_provider(models::openai::GPT_5_5);
     let mut request = sample_request(models::openai::GPT_5_5);
-    request.system_prompt = Some(Arc::new("You are a helpful assistant.".to_owned()));
+    request.system_prompt = Some(Arc::from("You are a helpful assistant."));
     let payload = provider.convert_to_openai_format(&request).expect("conversion should succeed");
     let messages = payload
         .get("messages")
@@ -1329,7 +1329,7 @@ fn chat_completions_applies_gpt_5_5_addendum_only_for_gpt_5_5() {
 
     let provider = native_openai_provider(models::openai::GPT_5_4);
     let mut request = sample_request(models::openai::GPT_5_4);
-    request.system_prompt = Some(Arc::new("You are a helpful assistant.".to_owned()));
+    request.system_prompt = Some(Arc::from("You are a helpful assistant."));
     let payload = provider.convert_to_openai_format(&request).expect("conversion should succeed");
     let messages = payload
         .get("messages")
@@ -1614,7 +1614,7 @@ fn responses_payload_passes_context_management() {
 fn responses_payload_sets_instructions_from_system_prompt() {
     let provider = native_openai_provider(models::openai::GPT_5);
     let mut request = sample_request(models::openai::GPT_5);
-    request.system_prompt = Some(Arc::new("You are a helpful assistant.".to_owned()));
+    request.system_prompt = Some(Arc::from("You are a helpful assistant."));
     let payload = provider
         .convert_to_openai_responses_format(&request)
         .expect("conversion should succeed");
@@ -1627,7 +1627,7 @@ fn responses_payload_sets_instructions_from_system_prompt() {
 fn responses_payload_applies_gpt_5_5_addendum_only_for_gpt_5_5() {
     let provider = native_openai_provider(models::openai::GPT_5_5);
     let mut request = sample_request(models::openai::GPT_5_5);
-    request.system_prompt = Some(Arc::new("You are a helpful assistant.".to_owned()));
+    request.system_prompt = Some(Arc::from("You are a helpful assistant."));
     let payload = provider
         .convert_to_openai_responses_format(&request)
         .expect("conversion should succeed");
@@ -1640,7 +1640,7 @@ fn responses_payload_applies_gpt_5_5_addendum_only_for_gpt_5_5() {
 
     let provider = native_openai_provider(models::openai::GPT_5_4);
     let mut request = sample_request(models::openai::GPT_5_4);
-    request.system_prompt = Some(Arc::new("You are a helpful assistant.".to_owned()));
+    request.system_prompt = Some(Arc::from("You are a helpful assistant."));
     let payload = provider
         .convert_to_openai_responses_format(&request)
         .expect("conversion should succeed");
@@ -1667,7 +1667,7 @@ fn responses_payload_treats_gpt_5_5_dated_alias_like_gpt_5_5() {
         None,
     );
     let mut request = sample_request(models::openai::GPT_5_5_DATED);
-    request.system_prompt = Some(Arc::new("You are a helpful assistant.".to_owned()));
+    request.system_prompt = Some(Arc::from("You are a helpful assistant."));
     let payload = provider
         .convert_to_openai_responses_format(&request)
         .expect("conversion should succeed");

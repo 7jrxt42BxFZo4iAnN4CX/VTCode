@@ -411,7 +411,7 @@ mod tests {
         let mut request = LLMRequest {
             model: "evolink/gpt-5.2".to_string(),
             messages: vec![Message::user("hello".to_string())].into(),
-            system_prompt: Some(Arc::new("system guidance".to_string())),
+            system_prompt: Some(Arc::from("system guidance")),
             max_tokens: Some(512),
             temperature: Some(0.5),
             top_p: Some(0.25),
@@ -445,7 +445,7 @@ mod tests {
             .convert_to_anthropic_format(&LLMRequest {
                 model: "evolink/claude-x".to_string(),
                 messages: vec![Message::user("hello".to_string())].into(),
-                system_prompt: Some(Arc::new("system guidance".to_string())),
+                system_prompt: Some(Arc::from("system guidance")),
                 temperature: Some(0.5),
                 stream: false,
                 ..Default::default()

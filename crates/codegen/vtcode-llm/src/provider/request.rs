@@ -99,7 +99,10 @@ pub struct LLMRequest {
     /// and continuation bookkeeping are O(1) instead of deep-copying the
     /// entire history (which grows unbounded over a session).
     pub messages: Arc<Vec<Message>>,
-    pub system_prompt: Option<Arc<String>>,
+    /// Shared via `Arc<str>` (single allocation) so per-turn request
+    /// construction can reuse the prompt envelope's `Arc<str>` via a cheap
+    /// refcount bump instead of cloning the full system prompt string.
+    pub system_prompt: Option<Arc<str>>,
     pub tools: Option<Arc<Vec<ToolDefinition>>>,
     pub model: String,
     pub max_tokens: Option<u32>,

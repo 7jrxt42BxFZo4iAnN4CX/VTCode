@@ -85,7 +85,7 @@ mod tests {
     fn base_request(model: &str) -> LLMRequest {
         LLMRequest {
             messages: vec![Message::user("hello".to_string())].into(),
-            system_prompt: Some(Arc::new("system guidance".to_string())),
+            system_prompt: Some(Arc::from("system guidance")),
             model: model.to_string(),
             max_tokens: Some(512),
             temperature: Some(0.5),

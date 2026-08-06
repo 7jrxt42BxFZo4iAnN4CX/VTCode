@@ -1,10 +1,16 @@
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use crate::utils::unicode_monitor::UnicodeValidationContext;
 
 pub(super) struct PtyScrollback {
-    lines: VecDeque<String>,
-    pending_lines: VecDeque<String>,
+    // Complete lines are shared between the snapshot buffer (`lines`) and the
+    // delta buffer (`pending_lines`) via `Arc<str>`. This avoids cloning the
+    // full line string into `pending_lines` on every completed line — instead
+    // only a refcount bump is needed, halving per-line allocations on the hot
+    // PTY output path.
+    lines: VecDeque<Arc<str>>,
+    pending_lines: VecDeque<Arc<str>>,
     partial: String,
     pending_partial: String,
     capacity_lines: usize,
@@ -74,8 +80,10 @@ impl PtyScrollback {
             );
             // Add warning to both buffers
             self.current_bytes += warning.len();
-            // Use String::clone_from pattern - push to pending first, then move to lines
-            self.pending_lines.push_back(warning.clone());
+            // Share the warning via Arc<str> so both buffers reference one
+            // allocation instead of cloning the string.
+            let warning = Arc::<str>::from(warning);
+            self.pending_lines.push_back(Arc::clone(&warning));
             self.lines.push_back(warning);
             self.trim_lines_to_limits();
         }
@@ -89,9 +97,10 @@ impl PtyScrollback {
                     [TIP] Full output can be retrieved with output spooling enabled\n",
                     self.max_bytes / 1_000_000
                 );
-                // Add warning to both buffers - push clone first, then move original
+                // Add warning to both buffers via shared Arc<str>.
                 self.current_bytes += warning.len();
-                self.pending_lines.push_back(warning.clone());
+                let warning = Arc::<str>::from(warning);
+                self.pending_lines.push_back(Arc::clone(&warning));
                 self.lines.push_back(warning);
                 self.trim_lines_to_limits();
             }
@@ -103,19 +112,29 @@ impl PtyScrollback {
             return; // DROP further output to prevent hang
         }
 
-        // Unicode-aware line splitting with optimization for ASCII-only text
-        if crate::utils::ansi_parser::contains_unicode(&cleaned_text) {
+        // Unicode-aware line splitting with optimization for ASCII-only text.
+        // `has_unicode` (computed above on the raw `text`) is still valid here:
+        // ANSI stripping only removes ASCII escape sequences, so it cannot
+        // introduce or remove unicode characters. Re-scanning `cleaned_text`
+        // would be a redundant O(n) pass on every output chunk.
+        if has_unicode {
             // Text contains unicode, use standard line splitting
             for part in cleaned_text.split_inclusive('\n') {
                 self.partial.push_str(part);
                 self.pending_partial.push_str(part);
                 if part.ends_with('\n') {
                     let complete = std::mem::take(&mut self.partial);
-                    let _ = std::mem::take(&mut self.pending_partial);
+                    // `clear()` preserves the allocated capacity for the next
+                    // partial line; `mem::take` would replace it with a
+                    // 0-capacity String and force a reallocation on the next
+                    // `push_str`.
+                    self.pending_partial.clear();
 
                     self.current_bytes += complete.len();
-                    // Push clone to pending_lines first, then move original to lines
-                    self.pending_lines.push_back(complete.clone());
+                    // Share the completed line between both buffers via Arc<str>
+                    // (refcount bump instead of a full string clone).
+                    let complete = Arc::<str>::from(complete);
+                    self.pending_lines.push_back(Arc::clone(&complete));
                     self.lines.push_back(complete);
 
                     self.trim_lines_to_limits();
@@ -133,10 +152,11 @@ impl PtyScrollback {
                     self.pending_partial.push_str(line);
 
                     let complete = std::mem::take(&mut self.partial);
-                    let _ = std::mem::take(&mut self.pending_partial);
+                    self.pending_partial.clear();
 
                     self.current_bytes += complete.len();
-                    self.pending_lines.push_back(complete.clone());
+                    let complete = Arc::<str>::from(complete);
+                    self.pending_lines.push_back(Arc::clone(&complete));
                     self.lines.push_back(complete);
 
                     self.trim_lines_to_limits();

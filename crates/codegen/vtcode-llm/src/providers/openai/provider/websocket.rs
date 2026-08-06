@@ -167,7 +167,7 @@ impl OpenAIProvider {
             let session = self.ensure_websocket_session(&mut session_guard, request).await?;
 
             if needs_warmup {
-                let warmup_prepared = prepare_websocket_event(payload.clone(), None, true)?;
+                let warmup_prepared = prepare_websocket_event(&payload, None, true)?;
                 match send_websocket_event(session, &warmup_prepared.event).await {
                     Ok(response_json) => {
                         self.update_websocket_continuation(&response_json, request, &warmup_prepared, &self.model);
@@ -185,7 +185,7 @@ impl OpenAIProvider {
             }
 
             let continuation = self.websocket_continuation_snapshot();
-            let prepared = prepare_websocket_event(payload.clone(), continuation.as_ref(), false)?;
+            let prepared = prepare_websocket_event(&payload, continuation.as_ref(), false)?;
 
             match send_websocket_event(session, &prepared.event).await {
                 Ok(response_json) => {
@@ -336,7 +336,7 @@ fn apply_generate_mode(request_obj: &mut Map<String, Value>, warmup: bool) {
 }
 
 fn prepare_websocket_event(
-    payload: Value,
+    payload: &Value,
     continuation: Option<&OpenAIResponsesWebSocketContinuationCache>,
     warmup: bool,
 ) -> Result<PreparedWebSocketEvent, LLMError> {
@@ -613,7 +613,7 @@ mod tests {
             "background": false,
         });
 
-        let prepared = prepare_websocket_event(payload, None, false).expect("event should prepare");
+        let prepared = prepare_websocket_event(&payload, None, false).expect("event should prepare");
 
         assert_eq!(
             prepared.event.get("previous_response_id"),
@@ -643,7 +643,7 @@ mod tests {
             "input": full_input,
         });
 
-        let prepared = prepare_websocket_event(payload, Some(&continuation), false).expect("event");
+        let prepared = prepare_websocket_event(&payload, Some(&continuation), false).expect("event");
 
         assert_eq!(prepared.event.get("previous_response_id").and_then(Value::as_str), Some("resp_prev"));
         assert_eq!(
@@ -668,7 +668,7 @@ mod tests {
             "previous_response_id": "resp_prev",
         });
 
-        let prepared = prepare_websocket_event(payload, Some(&continuation), false).expect("event");
+        let prepared = prepare_websocket_event(&payload, Some(&continuation), false).expect("event");
 
         assert!(prepared.event.get("previous_response_id").is_none());
         assert_eq!(prepared.event.get("input").and_then(Value::as_array), Some(&prepared.full_input));

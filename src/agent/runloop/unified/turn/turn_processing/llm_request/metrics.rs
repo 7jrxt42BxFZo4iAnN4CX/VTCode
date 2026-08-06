@@ -160,9 +160,16 @@ pub(super) fn emit_llm_retry_metrics(
 /// receives. Serializes each `ToolDefinition` to its wire JSON so the estimate
 /// reflects the real payload, including provider-native tool configs.
 pub(super) fn estimate_tool_schema_tokens(tools: &[ToolDefinition]) -> usize {
+    // Reuse a single buffer across all tools instead of allocating a fresh
+    // `String` per definition. The buffer grows once to the largest serialized
+    // tool and stays there for the rest of the call.
+    let mut buf = Vec::new();
     tools
         .iter()
-        .map(|tool| serde_json::to_string(tool).map(|s| s.len() / 4).unwrap_or(0))
+        .map(|tool| {
+            buf.clear();
+            serde_json::to_writer(&mut buf, tool).map(|_| buf.len() / 4).unwrap_or(0)
+        })
         .sum()
 }
 

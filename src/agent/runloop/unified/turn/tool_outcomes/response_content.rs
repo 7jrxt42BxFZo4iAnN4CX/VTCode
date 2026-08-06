@@ -413,7 +413,7 @@ async fn summarize_tool_output_with_provider(
     );
     let request = LLMRequest {
         messages: Arc::new(vec![LlmMessage::user(prompt)]),
-        system_prompt: Some(Arc::new(TOOL_OUTPUT_SUMMARY_SYSTEM_PROMPT.to_string())),
+        system_prompt: Some(Arc::from(TOOL_OUTPUT_SUMMARY_SYSTEM_PROMPT)),
         model: model.to_string(),
         max_tokens: Some(TOOL_OUTPUT_SUMMARY_MAX_OUTPUT_TOKENS),
         temperature: Some(0.0),

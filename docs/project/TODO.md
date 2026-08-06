@@ -32,6 +32,27 @@ https://www.greyblake.com/blog/branchless-rust/
 
 lession learn, check feedback https://news.ycombinator.com/item?id=49176038
 
+✅ Applied 2026-08-06: Audited VT Code against the Pi-minimalism HN feedback.
+Findings:
+
+- Compaction keeps last ~20k tokens: ALREADY implemented
+  (`DEFAULT_RETAINED_USER_MESSAGE_TOKENS = 20_000` in compaction/mod.rs).
+- Turn-boundary compaction: ALREADY implemented (`force_compaction` is set only
+  by the runloop boundary, never by a tool loop — compaction/auto.rs).
+- Post-compaction steer re-injection: ALREADY implemented (steering intents are
+  snapshotted into the session memory envelope at compaction time).
+- Long-running command polling burns tokens (codex $20/h "yep still running"):
+  FIXED. The default run path yielded every 10s with a poll-oriented
+  `next_continue_args`, pushing the model into a token-burning poll loop. Added
+  `next_wait_args` (pre-filled `write_stdin action:"wait"`, 600s deadline) +
+  `next_action_hint` to every still-running exec response, steering the model to
+  the no-burn `wait` action (blocks in-harness up to the
+  `long_running_command_ceiling_seconds`, no model round-trips while waiting).
+  See exec_support.rs `attach_long_command_wait_steering` + guidelines.rs.
+- Smaller system prompt / fewer tools (Pi's advantage): NOT actionable as a
+  surgical change — architectural; VT Code's progressive tool documentation mode
+  already defers tool descriptions to limit prompt size.
+
 ===
 
 the compaction does not compact whole context, but keeps last ~20k tokens as is, I believe this helps a lot to model to not get confused what it is doing right now.

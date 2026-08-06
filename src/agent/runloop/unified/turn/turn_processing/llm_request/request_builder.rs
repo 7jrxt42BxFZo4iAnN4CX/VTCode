@@ -126,7 +126,7 @@ pub(super) async fn build_turn_request(
         &turn_snapshot.provider_name,
         &envelope_mode,
         prompt_output.system_prompt,
-        selected_tools.as_deref().map_or_else(Vec::new, |tools| tools.clone()),
+        selected_tools.map_or_else(Vec::new, Arc::unwrap_or_clone),
         assembled_prefix_hash,
     );
     let ordered_wire_tools = request_envelope.ordered_tools();
@@ -188,7 +188,7 @@ pub(super) async fn build_turn_request(
     }
     let request_plan = build_harness_request_plan(HarnessRequestPlanInput {
         messages: Arc::new(request_messages),
-        system_prompt: request_envelope.system_prompt().to_string(),
+        system_prompt: request_envelope.system_prompt(),
         tools: (!request_envelope.ordered_tools().is_empty()).then(|| request_envelope.ordered_tools()),
         model: turn_snapshot.active_model.clone(),
         max_tokens: max_tokens_opt,
@@ -316,7 +316,7 @@ mod tests {
     }
 
     fn system_prompt_text(request: &uni::LLMRequest) -> &str {
-        request.system_prompt.as_ref().expect("system prompt").as_str()
+        request.system_prompt.as_ref().expect("system prompt").as_ref()
     }
 
     #[tokio::test]
@@ -380,7 +380,7 @@ mod tests {
         assert!(matches!(built.request.tool_choice, Some(uni::ToolChoice::None)));
         assert_eq!(built.request.max_tokens, Some(320));
 
-        let system_prompt = built.request.system_prompt.as_ref().expect("system prompt").as_str();
+        let system_prompt = built.request.system_prompt.as_ref().expect("system prompt").as_ref();
         assert!(system_prompt.contains("[Recovery Mode]"));
         assert!(system_prompt.contains("do_not_request_more_tools: true"));
         assert!(system_prompt.contains("recovery_reason: loop detector"));
@@ -434,7 +434,7 @@ mod tests {
         assert!(built.request.tools.is_none());
         assert!(built.request.tool_choice.is_none());
 
-        let system_prompt = built.request.system_prompt.as_ref().expect("system prompt").as_str();
+        let system_prompt = built.request.system_prompt.as_ref().expect("system prompt").as_ref();
         assert!(!system_prompt.contains("[Runtime Tool Catalog]"));
     }
 
@@ -486,7 +486,7 @@ mod tests {
         assert!(built.request.tool_choice.is_none());
         assert_eq!(built.runtime_tools.as_ref().map(|tools| tools.len()), Some(1));
 
-        let system_prompt = built.request.system_prompt.as_ref().expect("system prompt").as_str();
+        let system_prompt = built.request.system_prompt.as_ref().expect("system prompt").as_ref();
         assert!(system_prompt.contains("[GitHub Copilot Client Tools]"));
         assert!(system_prompt.contains("emit the actual client tool call"));
     }
@@ -683,7 +683,7 @@ mod tests {
             .await
             .expect("request should build");
 
-        let system_prompt = built.request.system_prompt.as_ref().expect("system prompt").as_str();
+        let system_prompt = built.request.system_prompt.as_ref().expect("system prompt").as_ref();
         assert!(!system_prompt.contains("## Active Editor Context"));
         let non_runtime_messages = non_runtime_request_messages(&built.request);
         assert_eq!(non_runtime_messages.len(), 2);
@@ -743,7 +743,7 @@ mod tests {
 
         assert_eq!(built.request.messages.len(), 1);
         assert_eq!(built.request.messages[0], uni::Message::user("hello".to_string()));
-        let runtime_context = built.request.system_prompt.as_ref().expect("system prompt").as_str();
+        let runtime_context = built.request.system_prompt.as_ref().expect("system prompt").as_ref();
         assert!(runtime_context.contains("## Active Primary Agent Runtime State"));
         assert!(runtime_context.contains("- Active agent: planner"));
         assert!(runtime_context.contains("- Effective request tools: code_search"));

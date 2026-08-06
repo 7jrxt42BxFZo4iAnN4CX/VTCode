@@ -564,7 +564,7 @@ mod tests {
     fn transcript_flattens_system_user_and_assistant_messages() {
         let provider = provider();
         let request = LLMRequest {
-            system_prompt: Some(Arc::new("Follow repository conventions.".to_string())),
+            system_prompt: Some(Arc::from("Follow repository conventions.")),
             messages: Arc::new(vec![
                 Message::user("Inspect the diff.".to_string()),
                 Message::assistant("The diff looks safe.".to_string()),

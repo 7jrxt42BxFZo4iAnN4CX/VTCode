@@ -1,3 +1,5 @@
+#![allow(unsafe_code)]
+
 //! Native Plugin System for VT Code Skills
 //!
 //! This module provides support for loading native code plugins as skills using libloading.
@@ -13,21 +15,23 @@
 //! - VT Code serializes plugin FFI calls for ABI v1
 //! - All plugin operations go through VT Code's tool system
 //!
+//! The `unsafe` blocks in this module are necessary for FFI:
+//! - Loading dynamic libraries (`Library::new`)
+//! - Calling plugin functions (`version_fn`, `metadata_fn`, `execute_fn`,
+//!   `free_string_fn`)
+//! - Converting C strings (`CStr::from_ptr`)
+//!
+//! Symbol resolution is centralized in the safe `get_plugin_symbol` wrapper;
+//! the remaining raw calls cannot be made safe without losing the ability to
+//! load arbitrary plugin code. Each call site carries its own `// SAFETY:`
+//! comment documenting the specific invariant that justifies the unsafe
+//! operation.
+//!
 //! # Plugin Structure
 //!
 //! A native plugin skill consists of:
 //! - `plugin.json` - Metadata (name, description, version, author)
 //! - `lib<name>.dylib` (macOS) or `lib<name>.so` (Linux) or `<name>.dll` (Windows)
-
-// SAFETY: This module contains FFI calls to load and execute native plugins.
-// All unsafe blocks are necessary for:
-// - Loading dynamic libraries (Library::new)
-// - Calling FFI functions (version_fn, metadata_fn, execute_fn, free_string_fn)
-// - Converting C strings (CStr::from_ptr)
-// Symbol resolution is centralized in the safe `get_plugin_symbol` wrapper; the
-// remaining raw calls cannot be made safe without losing the ability to load
-// arbitrary plugin code.
-#![allow(unsafe_code)]
 //! - Optional: `README.md`, `scripts/`, `templates/`
 //!
 //! # Plugin ABI

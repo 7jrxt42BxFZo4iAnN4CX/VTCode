@@ -213,7 +213,15 @@ pub fn strip_ansi(text: &str) -> String {
         }
     }
 
-    String::from_utf8_lossy(&output).into_owned()
+    // The output is always valid UTF-8: `push_visible_byte` only filters ASCII
+    // control bytes (< 32 except \n/\r/\t, and DEL=127), which cannot be part of
+    // a multi-byte UTF-8 sequence (those bytes are all >= 0x80). `from_utf8`
+    // reuses the Vec allocation directly; `from_utf8_lossy().into_owned()` would
+    // copy even on the valid-UTF-8 fast path.
+    String::from_utf8(output).unwrap_or_else(|e| {
+        // Defensive fallback — should not happen given the invariant above.
+        String::from_utf8_lossy(&e.into_bytes()).into_owned()
+    })
 }
 
 /// Strip ANSI escape codes from arbitrary bytes, preserving non-control bytes.

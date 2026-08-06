@@ -185,20 +185,24 @@ impl HistoryFileManager {
             written_at: Utc::now(),
         };
 
-        // Build file content as JSONL
-        let mut content = String::new();
+        // Build file content as JSONL — serialize directly into a byte
+        // buffer to avoid one intermediate `String` allocation per message.
+        let mut content: Vec<u8> = Vec::new();
 
         // Write metadata as first line
-        content.push_str(&serde_json::to_string(&serde_json::json!({
-            "_type": "metadata",
-            "_metadata": metadata
-        }))?);
-        content.push('\n');
+        serde_json::to_writer(
+            &mut content,
+            &serde_json::json!({
+                "_type": "metadata",
+                "_metadata": metadata
+            }),
+        )?;
+        content.push(b'\n');
 
         // Write each message as a line
         for msg in messages {
-            content.push_str(&serde_json::to_string(msg)?);
-            content.push('\n');
+            serde_json::to_writer(&mut content, msg)?;
+            content.push(b'\n');
         }
 
         // Write file
@@ -263,20 +267,24 @@ impl HistoryFileManager {
             written_at: Utc::now(),
         };
 
-        // Build file content as JSONL
-        let mut content = String::new();
+        // Build file content as JSONL — serialize directly into a byte
+        // buffer to avoid one intermediate `String` allocation per message.
+        let mut content: Vec<u8> = Vec::new();
 
         // Write metadata as first line
-        content.push_str(&serde_json::to_string(&serde_json::json!({
-            "_type": "metadata",
-            "_metadata": metadata
-        }))?);
-        content.push('\n');
+        serde_json::to_writer(
+            &mut content,
+            &serde_json::json!({
+                "_type": "metadata",
+                "_metadata": metadata
+            }),
+        )?;
+        content.push(b'\n');
 
         // Write each message as a line
         for msg in messages {
-            content.push_str(&serde_json::to_string(msg)?);
-            content.push('\n');
+            serde_json::to_writer(&mut content, msg)?;
+            content.push(b'\n');
         }
 
         // Write file

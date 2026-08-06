@@ -949,6 +949,57 @@ mod pty_context_tests {
         assert_eq!(response["exit_code"], 0);
         assert!(response.get("next_continue_args").is_none());
     }
+
+    #[test]
+    fn build_exec_response_steers_still_running_to_wait_action() {
+        let session = VTCodeExecSession {
+            id: "run-abc".to_string().into(),
+            backend: "pipe".to_string(),
+            command: "cargo".to_string(),
+            args: vec!["build".to_string()],
+            working_dir: Some(".".to_string()),
+            rows: None,
+            cols: None,
+            child_pid: None,
+            started_at: None,
+            lifecycle_state: None,
+            exit_code: None,
+        };
+        let capture = PtyEphemeralCapture {
+            output: "   Compiling vtcode-core\n".to_string(),
+            exit_code: None,
+            duration: std::time::Duration::from_secs(10),
+        };
+
+        let response = build_exec_response(
+            &session,
+            "cargo build",
+            &capture,
+            ExecOutputPreview {
+                raw_output: "   Compiling vtcode-core\n".to_string(),
+                output: "   Compiling vtcode-core\n".to_string(),
+                truncated: false,
+            },
+            None,
+            false,
+            Some("run-abc"),
+        );
+
+        // The poll-oriented continuation is still attached for incremental peeks.
+        assert_eq!(response["next_continue_args"], json!({ "session_id": "run-abc" }));
+        // The no-burn wait action is pre-filled and ready to reuse.
+        assert_eq!(response["next_wait_args"]["session_id"], "run-abc");
+        assert_eq!(response["next_wait_args"]["action"], "wait");
+        assert_eq!(response["next_wait_args"]["wait_timeout_seconds"], 600);
+        // The hint ranks wait ahead of polling and names the tool to call.
+        let hint = response["next_action_hint"].as_str().expect("hint present");
+        assert!(hint.contains("write_stdin"));
+        assert!(hint.contains("next_wait_args"));
+        assert!(hint.contains("no model round-trips"));
+        assert!(hint.contains("next_continue_args"));
+        assert_eq!(response["is_exited"], false);
+        assert_eq!(response["process_id"], "run-abc");
+    }
 }
 
 #[cfg(test)]

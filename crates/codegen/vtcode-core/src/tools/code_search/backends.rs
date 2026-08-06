@@ -31,7 +31,6 @@ pub fn process_declaration_file(
         inventories.insert(canonical, DeclarationInventory::default());
         return;
     };
-    source_cache.insert(canonical.clone(), source.clone());
     let language = AstGrepLanguage::from_path(&canonical).unwrap_or(file.language);
     let tree = parse_source(language, &source).ok();
     let mut inventory = DeclarationInventory {
@@ -66,7 +65,11 @@ pub fn process_declaration_file(
             });
         }
     }
-    inventories.insert(canonical, inventory);
+    // Move the source into the shared cache instead of cloning it upfront.
+    // The literal-classification phase reads from this cache; moving avoids a
+    // full file-content copy per indexed declaration file.
+    inventories.insert(canonical.clone(), inventory);
+    source_cache.insert(canonical, source);
 }
 
 pub fn classify_literal_candidates(

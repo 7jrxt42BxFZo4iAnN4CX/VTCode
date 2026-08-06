@@ -297,6 +297,13 @@ pub(crate) fn create_chat_stream(response: reqwest::Response, model: String) -> 
                         }
                 }
             }
+
+            // Drain the consumed prefix so `buf` stays bounded to the
+            // unprocessed tail rather than growing for the entire stream.
+            if offset > 0 {
+                buf.drain(..offset);
+                offset = 0;
+            }
         }
 
         let response = aggregator.finalize();
@@ -516,6 +523,13 @@ pub(crate) fn create_responses_stream(
                 if done {
                     break;
                 }
+            }
+
+            // Drain the consumed prefix so `buf` stays bounded to the
+            // unprocessed tail rather than growing for the entire stream.
+            if offset > 0 {
+                buf.drain(..offset);
+                offset = 0;
             }
 
             if done {

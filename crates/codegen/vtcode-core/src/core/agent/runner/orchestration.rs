@@ -303,7 +303,7 @@ impl AgentRunner {
             .provider_client
             .generate(LLMRequest {
                 messages: std::sync::Arc::new(vec![Message::user(user_prompt)]),
-                system_prompt: Some(std::sync::Arc::new(system_prompt.to_string())),
+                system_prompt: Some(std::sync::Arc::from(system_prompt)),
                 tools: Some(std::sync::Arc::new(Vec::<ToolDefinition>::new())),
                 model,
                 stream: false,
@@ -497,7 +497,7 @@ impl AgentRunner {
 
         let base_request = LLMRequest {
             messages: std::sync::Arc::new(vec![Message::user(user_prompt)]),
-            system_prompt: Some(std::sync::Arc::new(SYSTEM_PROMPT.to_string())),
+            system_prompt: Some(std::sync::Arc::from(SYSTEM_PROMPT)),
             tools: Some(std::sync::Arc::new(Vec::<ToolDefinition>::new())),
             model: String::new(),
             stream: false,

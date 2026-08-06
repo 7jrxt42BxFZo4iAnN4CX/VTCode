@@ -619,7 +619,7 @@ impl AgentRunner {
                 };
                 let request = build_harness_request_plan(HarnessRequestPlanInput {
                     messages: request_messages,
-                    system_prompt: prompt_bundle.request_envelope.system_prompt().to_string(),
+                    system_prompt: prompt_bundle.request_envelope.system_prompt(),
                     tools: (!prompt_bundle.request_envelope.ordered_tools().is_empty())
                         .then(|| prompt_bundle.request_envelope.ordered_tools()),
                     model: turn_model.clone(),

@@ -1,0 +1,28 @@
+THIRD-PARTY NOTICES
+================================================================================
+
+This file contains notices for third-party code used in this project.
+
+In-tree source ports and inspired-by components:
+--------------------------------------------------------------------------------
+
+OpenAI Codex
+  Source: https://github.com/openai/codex
+  License: Apache License, Version 2.0
+
+  Components used as architectural reference or adapted patterns:
+  - OAuth / login flow (vtcode-auth/src/openai_chatgpt_oauth.rs)
+  - PTY process handling (vtcode-bash-runner/src/process.rs)
+  - MCP client building blocks (vtcode-mcp/src/lib.rs)
+  - Ollama provider integration (vtcode-llm/src/providers/ollama/)
+  - LM Studio provider integration (vtcode-llm/src/providers/lmstudio/)
+  - Tool handler patterns (vtcode-core/src/tools/handlers/)
+
+  vtcode's implementations are original works that follow Codex
+  architectural patterns; they are not direct copies of Codex source.
+
+Kepano (MIT-licensed network allowlist)
+  Source: https://github.com/kepano
+  License: MIT
+  Component: vtcode-config/data/network_allowlist.toml
+
