@@ -35,7 +35,7 @@ Replaced local preview logic in:
 - `src/agent/runloop/tool_output/streams.rs`
 - `src/agent/runloop/unified/tool_pipeline/pty_stream/state.rs`
 - `crates/codegen/vtcode-core/src/tools/output_spooler.rs`
-- `crates/codegen/vtcode-core/src/tools/registry/executors.rs`
+- `crates/codegen/vtcode-core/src/tools/registry/executors/`
 
 Benefits:
 

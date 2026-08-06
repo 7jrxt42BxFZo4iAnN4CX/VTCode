@@ -1045,41 +1045,45 @@ fn coherence_tool_call_pairs(history: &[Message], selected: &[(usize, Message)])
         }
     }
 
-    selected
-        .iter()
-        .filter(|(idx, msg)| {
-            if msg.role == MessageRole::Tool {
-                // Walk backward through this contiguous result run to decide
-                // coherence against the calling assistant turn.
-                let mut cursor = *idx;
-                loop {
-                    match history.get(cursor) {
-                        Some(m) if m.role == MessageRole::Tool => {
-                            cursor = match cursor.checked_sub(1) {
-                                Some(c) => c,
-                                None => break,
-                            };
-                        }
-                        Some(m)
-                            if m.role == MessageRole::Assistant
-                                && m.tool_calls.as_ref().is_some_and(|c| !c.is_empty()) =>
-                        {
-                            // Reached the calling assistant: coherent only if it
-                            // was retained.
-                            return keep.contains(&cursor);
-                        }
-                        _ => {
-                            // Plain assistant or boundary: ordinary output.
-                            return keep.contains(idx);
-                        }
+    // Emit every index in `keep` in original history order, dropping orphaned
+    // Tool results whose calling Assistant turn was not retained.
+    let mut indices: Vec<usize> = keep.iter().copied().collect();
+    indices.sort_unstable();
+
+    indices
+        .into_iter()
+        .filter(|idx| {
+            let msg = &history[*idx];
+            if msg.role != MessageRole::Tool {
+                return true;
+            }
+            // Walk backward through this contiguous result run to decide
+            // coherence against the calling assistant turn.
+            let mut cursor = *idx;
+            loop {
+                match history.get(cursor) {
+                    Some(m) if m.role == MessageRole::Tool => {
+                        cursor = match cursor.checked_sub(1) {
+                            Some(c) => c,
+                            None => break,
+                        };
+                    }
+                    Some(m)
+                        if m.role == MessageRole::Assistant && m.tool_calls.as_ref().is_some_and(|c| !c.is_empty()) =>
+                    {
+                        // Reached the calling assistant: coherent only if it
+                        // was retained.
+                        return keep.contains(&cursor);
+                    }
+                    _ => {
+                        // Plain assistant or boundary: ordinary output.
+                        return true;
                     }
                 }
-                keep.contains(idx)
-            } else {
-                keep.contains(idx)
             }
+            true
         })
-        .cloned()
+        .map(|idx| (idx, history[idx].clone()))
         .collect()
 }
 
@@ -2056,5 +2060,81 @@ mod tests {
              it would bloat every compaction pass with ephemeral chain-of-thought"
         );
         assert!(prompt.contains("Summarize the conversation."), "instructions must appear in the summary prompt");
+    }
+
+    #[test]
+    fn coherence_force_keeps_tool_results_not_in_selection() {
+        // Regression: `coherence_tool_call_pairs` force-keeps the Tool results
+        // that follow a retained Assistant-with-tool_calls, but the previous
+        // implementation derived its output from `selected` only, so those
+        // force-kept messages silently vanished. A compacted history can then
+        // carry an Assistant tool-call with no result, which providers reject.
+        use super::coherence_tool_call_pairs;
+
+        let history = vec![
+            Message::user("check the code".to_string()),
+            Message::assistant("Looking...".to_string()).with_tool_calls(vec![ToolCall {
+                id: "call_1".to_string(),
+                call_type: "function".to_string(),
+                function: Some(crate::llm::provider::FunctionCall {
+                    namespace: None,
+                    name: "read_file".to_string(),
+                    arguments: "{}".to_string(),
+                }),
+                text: None,
+                thought_signature: None,
+            }]),
+            Message::tool_response("call_1".to_string(), "tool result that must survive".to_string()),
+            Message::assistant("Done.".to_string()),
+        ];
+
+        // Selection keeps only the assistant-with-tool-calls turn, dropping the
+        // following Tool result from the budget-driven selection.
+        let selected = vec![(1, history[1].clone())];
+        let result = coherence_tool_call_pairs(&history, &selected);
+
+        let tool_results = result
+            .iter()
+            .filter(|(_, m)| m.role == MessageRole::Tool)
+            .map(|(idx, m)| (*idx, m.content.as_text().to_string()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            tool_results,
+            vec![(2usize, "tool result that must survive".to_string())],
+            "force-kept tool result must survive compaction even when not selected"
+        );
+        // History order must be preserved with the assistant preceding its result.
+        let indices = result.iter().map(|(idx, _)| *idx).collect::<Vec<_>>();
+        assert_eq!(indices, vec![1, 2]);
+    }
+
+    #[test]
+    fn coherence_drops_orphaned_tool_results_of_unretained_assistant() {
+        use super::coherence_tool_call_pairs;
+
+        let history = vec![
+            Message::user("check".to_string()),
+            Message::assistant("Looking...".to_string()).with_tool_calls(vec![ToolCall {
+                id: "call_1".to_string(),
+                call_type: "function".to_string(),
+                function: Some(crate::llm::provider::FunctionCall {
+                    namespace: None,
+                    name: "read_file".to_string(),
+                    arguments: "{}".to_string(),
+                }),
+                text: None,
+                thought_signature: None,
+            }]),
+            Message::tool_response("call_1".to_string(), "orphan result".to_string()),
+        ];
+
+        // The calling assistant was NOT retained; its orphaned Tool result must
+        // be dropped so we never emit a result the model never saw a call for.
+        let selected = vec![(0, history[0].clone())];
+        let result = coherence_tool_call_pairs(&history, &selected);
+
+        assert_eq!(result.len(), 1, "orphaned tool result must be dropped");
+        assert_eq!(result[0].0, 0);
     }
 }

@@ -1360,4 +1360,46 @@ mod read_tests {
         assert!(result.get("has_more").is_none());
         assert!(result.get("next_read_args").is_none());
     }
+
+    #[tokio::test]
+    async fn bounded_line_read_truncates_oversized_lines_and_stays_aligned() {
+        use tokio::io::BufReader;
+
+        // A physical line longer than MAX_LINE_READ_BYTES must be truncated for
+        // display while the reader stays aligned at the next newline.
+        let long_line = "x".repeat(crate::tools::file_ops::MAX_LINE_READ_BYTES + 10_000);
+        let body = format!("{long_line}\nsecond\nthird\n");
+        let cursor = std::io::Cursor::new(body.into_bytes());
+        let mut reader = BufReader::new(cursor);
+        let mut buffer = Vec::new();
+
+        let first = crate::tools::file_ops::read_bounded_line(&mut reader, &mut buffer)
+            .await
+            .unwrap()
+            .expect("first line present");
+        assert!(first, "oversized line must report truncation");
+        assert!(buffer.len() <= crate::tools::file_ops::MAX_LINE_READ_BYTES);
+
+        let second = crate::tools::file_ops::read_bounded_line(&mut reader, &mut buffer)
+            .await
+            .unwrap()
+            .expect("second line present");
+        assert!(!second, "normal line must not report truncation");
+        assert_eq!(buffer, b"second\n");
+
+        let third = crate::tools::file_ops::read_bounded_line(&mut reader, &mut buffer)
+            .await
+            .unwrap()
+            .expect("third line present");
+        assert!(!third);
+        assert_eq!(buffer, b"third\n");
+
+        assert!(
+            crate::tools::file_ops::read_bounded_line(&mut reader, &mut buffer)
+                .await
+                .unwrap()
+                .is_none(),
+            "stream must be exhausted after the third line"
+        );
+    }
 }

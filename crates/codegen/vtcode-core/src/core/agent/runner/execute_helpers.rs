@@ -5,19 +5,20 @@
 
 use crate::core::agent::events::ExecEventRecorder;
 use crate::core::agent::task::TaskOutcome;
-use crate::exec::events::{ThreadEvent, TurnCompletedEvent, TurnFailedEvent};
 use crate::llm::provider::{FinishReason, Message, ResponsesContinuationState};
 use vtcode_exec_events::Usage;
 
 /// Record the terminal turn event (TurnCompleted or TurnFailed) based on outcome.
+///
+/// Routes through `turn_completed`/`turn_failed` (not a raw `record_thread_event`)
+/// so the recorder's turn lifecycle — in particular `finish_turn()` clearing the
+/// in-flight-turn flag — is always driven to completion. Skipping this left the
+/// thread's `turn_in_flight` stuck true, breaking `begin_turn` on every retry.
 pub(super) fn record_terminal_turn_event(event_recorder: &mut ExecEventRecorder, outcome: &TaskOutcome, usage: Usage) {
     if outcome.is_success() {
-        event_recorder.record_thread_event(ThreadEvent::TurnCompleted(TurnCompletedEvent { usage }));
+        event_recorder.turn_completed(usage);
     } else {
-        event_recorder.record_thread_event(ThreadEvent::TurnFailed(TurnFailedEvent {
-            message: outcome.description(),
-            usage: Some(usage),
-        }));
+        event_recorder.turn_failed(&outcome.description(), Some(usage));
     }
 }
 

@@ -714,6 +714,19 @@ impl ToolExecutionHistory {
         });
     }
 
+    /// Conservatively drop every cached read-only result.
+    ///
+    /// Used when a mutating shell command produces no identifiable target path
+    /// (e.g. `sed -i`), so we cannot know which files may now be stale. A
+    /// pathless mutation could have touched anything, so no read record can be
+    /// trusted afterward.
+    pub fn invalidate_all_reads(&self) {
+        let Ok(mut records) = self.records.write() else {
+            return;
+        };
+        records.retain(|record| !(record.tool_name == tools::READ_FILE || record.tool_name == tools::UNIFIED_FILE));
+    }
+
     /// Check whether the cached record's read shape covers the new query's shape.
     ///
     /// Returns `true` when both calls target the same offset and the cached
@@ -1202,6 +1215,42 @@ mod tests {
         history.clear();
         assert_eq!(history.len(), 0);
         assert!(history.is_empty());
+    }
+
+    #[test]
+    fn invalidate_all_reads_drops_read_records_only() {
+        let history = ToolExecutionHistory::new(10);
+        history.add_record(ToolExecutionRecord::success(
+            "read_file".to_string(),
+            "read_file".to_string(),
+            false,
+            None,
+            json!({"path": "src/main.rs"}),
+            json!({"success": true}),
+            make_snapshot(),
+            None,
+            None,
+            None,
+            None,
+            false,
+        ));
+        history.add_record(ToolExecutionRecord::success(
+            "code_search".to_string(),
+            "code_search".to_string(),
+            false,
+            None,
+            json!({"query": "fn main"}),
+            json!({"success": true}),
+            make_snapshot(),
+            None,
+            None,
+            None,
+            None,
+            false,
+        ));
+
+        history.invalidate_all_reads();
+        assert_eq!(history.len(), 1, "code_search record must survive");
     }
 
     #[test]

@@ -1058,13 +1058,21 @@ fn build_terminal_exit_status_json(status: CopilotTerminalExitStatus) -> Value {
 // ---------------------------------------------------------------------------
 
 fn send_prompt_update(inner: &Arc<CopilotAcpClientInner>, update: PromptUpdate) -> Result<()> {
-    if let Some(active_prompt) = inner
+    // Clone the sender under the lock, then drop the guard before sending or
+    // clearing. `clear_active_prompt_state` re-locks the same `std::sync::Mutex`,
+    // and the let-chain guard stays alive through the whole block — calling
+    // into it while the guard is held self-deadlocks on a `StdMutex`.
+    let sender = inner
         .active_prompt
         .lock()
         .map_err(|_e| anyhow!("copilot acp active prompt mutex poisoned"))?
         .as_ref()
-        && active_prompt.updates.send(update).is_err()
-    {
+        .map(|active_prompt| active_prompt.updates.clone());
+    let Some(sender) = sender else {
+        return Ok(());
+    };
+
+    if sender.send(update).is_err() {
         clear_active_prompt_state(inner);
     }
     Ok(())

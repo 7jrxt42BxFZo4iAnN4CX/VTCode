@@ -2,7 +2,7 @@ use hashbrown::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    Arc,
+    Arc, Weak,
     atomic::{AtomicBool, AtomicU64, Ordering},
     mpsc,
 };
@@ -30,26 +30,29 @@ use super::scrollback::PtyScrollback;
 use super::session::PtySessionHandle;
 use super::types::{PtyCommandRequest, PtyCommandResult};
 
-use hashbrown::hash_map::Entry;
 use once_cell::sync::Lazy;
 
 /// Per-workspace command locks to serialize long-running toolchain commands.
 /// Keyed by canonicalized workspace path to prevent lockfile contention.
 /// This is more granular than a global lock - different workspaces can run concurrently.
-static WORKSPACE_COMMAND_LOCKS: Lazy<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> =
+///
+/// Entries are held weakly: once the last `Arc` returned by `get_command_lock` is
+/// dropped (the command that held it completes), the entry is collected on the
+/// next lookup, so the map stays bounded by the number of concurrently-held
+/// locks rather than the number of workspaces ever seen.
+static WORKSPACE_COMMAND_LOCKS: Lazy<Mutex<HashMap<PathBuf, Weak<tokio::sync::Mutex<()>>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Get or create a command lock for the given workspace root
 fn get_command_lock(workspace_root: &Path) -> Arc<tokio::sync::Mutex<()>> {
     let mut locks = WORKSPACE_COMMAND_LOCKS.lock();
-    match locks.entry(workspace_root.to_path_buf()) {
-        Entry::Occupied(entry) => entry.get().clone(),
-        Entry::Vacant(entry) => {
-            let lock = Arc::new(tokio::sync::Mutex::new(()));
-            entry.insert(lock.clone());
-            lock
-        }
+    let key = workspace_root.to_path_buf();
+    if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+        return lock;
     }
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    locks.insert(key, Arc::downgrade(&lock));
+    lock
 }
 
 /// Grace period to wait for threads to exit after killing the process (ms)

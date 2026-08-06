@@ -322,6 +322,9 @@ pub struct AtifTrajectoryBuilder {
     total_output_tokens: u64,
     total_cached_tokens: u64,
     num_turns: usize,
+    /// Whether any per-turn `TurnCompleted`/`TurnFailed` usage was observed.
+    /// Guards the `ThreadCompleted` aggregate from double-counting usage.
+    saw_per_turn_usage: bool,
     /// Pending tool invocations awaiting matching ToolOutput.
     pending_tool_calls: Vec<PendingToolCall>,
 }
@@ -346,6 +349,7 @@ impl AtifTrajectoryBuilder {
             total_output_tokens: 0,
             total_cached_tokens: 0,
             num_turns: 0,
+            saw_per_turn_usage: false,
             pending_tool_calls: Vec::new(),
         }
     }
@@ -374,13 +378,20 @@ impl AtifTrajectoryBuilder {
                 if self.session_id.is_none() {
                     self.session_id = Some(e.session_id.clone());
                 }
-                // Accumulate aggregate usage
-                self.total_input_tokens = self.total_input_tokens.saturating_add(e.usage.input_tokens);
-                self.total_output_tokens = self.total_output_tokens.saturating_add(e.usage.output_tokens);
-                self.total_cached_tokens = self.total_cached_tokens.saturating_add(e.usage.cached_input_tokens);
                 self.num_turns = e.num_turns;
+                // `ThreadCompleted` carries the *aggregate* usage, which equals
+                // the sum of per-turn usage already accumulated by the
+                // `TurnCompleted`/`TurnFailed` arms. Only fall back to it when
+                // no per-turn usage was observed (e.g. a harness that emits
+                // only the thread aggregate), otherwise totals double-count.
+                if !self.saw_per_turn_usage {
+                    self.total_input_tokens = self.total_input_tokens.saturating_add(e.usage.input_tokens);
+                    self.total_output_tokens = self.total_output_tokens.saturating_add(e.usage.output_tokens);
+                    self.total_cached_tokens = self.total_cached_tokens.saturating_add(e.usage.cached_input_tokens);
+                }
             }
             ThreadEvent::TurnCompleted(e) => {
+                self.saw_per_turn_usage = true;
                 self.total_input_tokens = self.total_input_tokens.saturating_add(e.usage.input_tokens);
                 self.total_output_tokens = self.total_output_tokens.saturating_add(e.usage.output_tokens);
                 self.total_cached_tokens = self.total_cached_tokens.saturating_add(e.usage.cached_input_tokens);
@@ -393,8 +404,10 @@ impl AtifTrajectoryBuilder {
             }
             ThreadEvent::TurnFailed(e) => {
                 if let Some(usage) = &e.usage {
+                    self.saw_per_turn_usage = true;
                     self.total_input_tokens = self.total_input_tokens.saturating_add(usage.input_tokens);
                     self.total_output_tokens = self.total_output_tokens.saturating_add(usage.output_tokens);
+                    self.total_cached_tokens = self.total_cached_tokens.saturating_add(usage.cached_input_tokens);
                 }
                 let mut step = Step::system(self.next_step_id, &e.message);
                 step.timestamp = Some(ts_str);

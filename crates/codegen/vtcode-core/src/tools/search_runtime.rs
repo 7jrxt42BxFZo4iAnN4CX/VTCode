@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use tracing::warn;
@@ -72,15 +71,23 @@ pub(crate) struct SearchRuntimeSnapshot {
     pub(crate) bash_tree_sitter_ready: bool,
 }
 
-static SEARCH_RUNTIME_CACHE: OnceLock<Mutex<HashMap<PathBuf, SearchRuntimeSnapshot>>> = OnceLock::new();
+/// Bounded per-workspace search-runtime snapshot cache. Snapshots are cheap to
+/// recompute relative to the value of caching (detect/prewarm only happens on
+/// miss), and keying by workspace path means an unbounded map would leak one
+/// entry per distinct workspace ever seen in a long-lived process. A small LRU
+/// cap bounds memory while keeping the hot workspace cached.
+const SEARCH_RUNTIME_CACHE_CAP: usize = 16;
+
+static SEARCH_RUNTIME_CACHE: OnceLock<Mutex<lru::LruCache<PathBuf, SearchRuntimeSnapshot>>> = OnceLock::new();
 
 pub(crate) fn snapshot_for_workspace(workspace_root: &Path) -> SearchRuntimeSnapshot {
     let workspace_root = workspace_root.to_path_buf();
-    let cache = SEARCH_RUNTIME_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let cache = SEARCH_RUNTIME_CACHE
+        .get_or_init(|| Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(SEARCH_RUNTIME_CACHE_CAP).unwrap())));
 
     // Check cache first; recover from poison by clearing and returning None to recompute
     {
-        let cache_guard = cache.lock().unwrap_or_else(|poisoned| {
+        let mut cache_guard = cache.lock().unwrap_or_else(|poisoned| {
             warn!("search runtime cache mutex poisoned; recovering");
             poisoned.into_inner()
         });
@@ -107,7 +114,7 @@ pub(crate) fn snapshot_for_workspace(workspace_root: &Path) -> SearchRuntimeSnap
         warn!("search runtime cache mutex poisoned; recovering");
         poisoned.into_inner()
     });
-    guard.entry(workspace_root).or_insert_with(|| snapshot.clone()).clone()
+    guard.get_or_insert(workspace_root, || snapshot.clone()).clone()
 }
 
 pub fn dominant_workspace_language(workspace_root: &Path) -> Option<String> {

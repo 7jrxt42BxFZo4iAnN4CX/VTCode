@@ -156,12 +156,13 @@ tools/
  types.rs            # Common types & structures
  cache.rs            # Enhanced caching system
  grep_file.rs        # Ripgrep-backed search manager (internal)
+ grep_backend.rs     # Ripgrep execution backend & streaming literal search (internal)
  file_ops.rs         # File operations (internal)
  command.rs          # Command execution (internal)
  outline_search.rs   # Internal bounded declaration discovery used by code_search
  registry/
    builtins.rs       # Tool registration and declarations
-   executors.rs      # Built-in executors for exec_command, write_stdin, apply_patch, and code_search
+   executors/        # Built-in executors for exec_command, write_stdin, apply_patch, and code_search
    tool_intent.rs    # Argument normalization and action inference
 ```
 

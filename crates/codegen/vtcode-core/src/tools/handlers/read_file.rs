@@ -6,9 +6,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Value, json};
 use tokio::fs::File;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::BufReader;
 use vtcode_commons::diff_paths::looks_like_diff_content;
 
+use crate::tools::file_ops::read_bounded_line;
 use crate::tools::file_ops::read_byte_range;
 
 use crate::tools::error_helpers::deserialize_tool_args;
@@ -602,11 +603,9 @@ mod slice {
         Ok(SliceReadRanges { results, error: scan_error })
     }
     async fn read_formatted_line(reader: &mut BufReader<File>, buffer: &mut Vec<u8>) -> Result<Option<String>> {
-        buffer.clear();
-        let bytes_read = reader.read_until(b'\n', buffer).await.context("failed to read file")?;
-        if bytes_read == 0 {
+        let Some(_truncated) = read_bounded_line(reader, buffer).await.context("failed to read file")? else {
             return Ok(None);
-        }
+        };
 
         if buffer.last() == Some(&b'\n') {
             buffer.pop();
@@ -647,7 +646,13 @@ mod indentation {
         let guard_limit = options.max_lines.unwrap_or(limit);
         anyhow::ensure!(guard_limit > 0, "max_lines must be greater than zero");
 
-        let collected = collect_file_lines(path).await?;
+        // Bound the collection to the window the block expansion can ever use:
+        // the anchor plus the downward guard limit. The algorithm expands at
+        // most `final_limit` lines down from the anchor and needs the full
+        // prefix above it, so `anchor + guard_limit` is always sufficient and
+        // prevents an unbounded full-file read of gigantic files.
+        let collect_cap = anchor_line.saturating_add(guard_limit);
+        let collected = collect_file_lines(path, collect_cap).await?;
         anyhow::ensure!(!collected.is_empty() && anchor_line <= collected.len(), "anchor_line exceeds file length");
 
         let anchor_index = anchor_line - 1;
@@ -749,7 +754,7 @@ mod indentation {
             .collect())
     }
 
-    async fn collect_file_lines(path: &Path) -> Result<Vec<LineRecord>> {
+    async fn collect_file_lines(path: &Path, max_lines: usize) -> Result<Vec<LineRecord>> {
         let file = File::open(path)
             .await
             .context(format!("failed to open file: {}", path.display()))?;
@@ -759,13 +764,13 @@ mod indentation {
         let mut lines = Vec::new();
         let mut number = 0usize;
 
-        loop {
-            buffer.clear();
-            let bytes_read = reader.read_until(b'\n', &mut buffer).await.context("failed to read file")?;
-
-            if bytes_read == 0 {
+        while lines.len() < max_lines {
+            let Some(_truncated) = read_bounded_line(&mut reader, &mut buffer)
+                .await
+                .context("failed to read file")?
+            else {
                 break;
-            }
+            };
 
             if buffer.last() == Some(&b'\n') {
                 buffer.pop();

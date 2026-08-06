@@ -14,47 +14,21 @@
 use super::file_search_bridge::{self, FileSearchConfig};
 use super::grep_cache::GrepSearchCache;
 use crate::cache::estimate_json_size;
-use anyhow::{Context, Result};
-use serde_json::{self, Value};
-use std::num::NonZeroUsize;
-use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use anyhow::Result;
+use serde_json::Value;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
-use tokio::process::Command as TokioCommand;
 use tokio::task::spawn_blocking;
 use tracing::warn;
 
-/// Maximum number of search results to return - AGENTS.md requires max 5 results
-const MAX_SEARCH_RESULTS: NonZeroUsize = NonZeroUsize::new(5).expect("5 is non-zero");
-
-/// Optimal number of threads for searching, calculated based on CPU count
-static OPTIMAL_SEARCH_THREADS: OnceLock<NonZeroUsize> = OnceLock::new();
-
-/// Calculate optimal number of search threads based on available CPU cores
-/// Uses 75% of cores, clamped between 2 and 8 threads
-fn optimal_search_threads() -> NonZeroUsize {
-    *OPTIMAL_SEARCH_THREADS.get_or_init(|| {
-        let cpu_count = num_cpus::get();
-        // Use 75% of cores for better parallelism, min 2, max 8
-        let threads = (cpu_count * 3 / 4).clamp(2, 8);
-        NonZeroUsize::new(threads).unwrap_or(NonZeroUsize::new(2).expect("2 is non-zero"))
-    })
-}
-
-/// Maximum bytes to keep in a single grep response before truncation.
-const DEFAULT_MAX_RESULT_BYTES: usize = 32 * 1024;
-
-/// Default timeout for blocking grep invocations.
-const DEFAULT_SEARCH_TIMEOUT: Duration = Duration::from_secs(5);
-
-use vtcode_commons::exclusions::DEFAULT_IGNORE_GLOBS;
+// Backend items (input/result types, streaming helpers) are re-exported here
+// so existing `crate::tools::grep_file::*` paths keep resolving.
+pub(crate) use super::grep_backend::*;
 
 /// How long to wait after a keystroke before firing the first search when none
 /// is currently running. Keeps early queries more meaningful.
@@ -62,373 +36,6 @@ const SEARCH_DEBOUNCE: Duration = Duration::from_millis(150);
 
 /// Poll interval when waiting for an active search to complete
 const ACTIVE_SEARCH_COMPLETE_POLL_INTERVAL: Duration = Duration::from_millis(20);
-
-use serde::{Deserialize, Serialize};
-
-use crate::tools::ast_grep_language::AstGrepLanguage;
-
-const CODE_SEARCH_STREAM_BYTE_CAP: usize = 1024 * 1024;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct LiteralSearchCandidate {
-    pub path: PathBuf,
-    pub line: usize,
-    pub column: usize,
-    pub byte_start: usize,
-    pub byte_end: usize,
-    pub matched_text: String,
-    pub snippet: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct LiteralSearchOutcome {
-    pub candidates: Vec<LiteralSearchCandidate>,
-    pub truncated: bool,
-}
-
-async fn kill_and_reap_literal_child(child: &mut tokio::process::Child) {
-    let _ = child.start_kill();
-    let _ = child.wait().await;
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BoundedRecordRead {
-    Record,
-    Eof,
-    Exhausted,
-}
-
-async fn read_bounded_record<R: AsyncBufRead + Unpin>(
-    reader: &mut R,
-    record: &mut Vec<u8>,
-    bytes_read: &mut usize,
-    byte_cap: usize,
-) -> std::io::Result<BoundedRecordRead> {
-    loop {
-        let available = reader.fill_buf().await?;
-        if available.is_empty() {
-            return Ok(if record.is_empty() {
-                BoundedRecordRead::Eof
-            } else {
-                BoundedRecordRead::Record
-            });
-        }
-        if *bytes_read >= byte_cap {
-            return Ok(BoundedRecordRead::Exhausted);
-        }
-
-        let remaining = byte_cap - *bytes_read;
-        let bounded = &available[..available.len().min(remaining)];
-        let consumed = bounded
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .map_or(bounded.len(), |index| index + 1);
-        let record_complete = bounded.get(consumed.saturating_sub(1)) == Some(&b'\n');
-        record.extend_from_slice(&bounded[..consumed]);
-        reader.consume(consumed);
-        *bytes_read += consumed;
-        if record_complete {
-            return Ok(BoundedRecordRead::Record);
-        }
-    }
-}
-
-/// Run a fixed-string smart-case ripgrep stream with request-scoped bounds.
-/// Split a `code_search` query on `|` into trimmed, non-empty literal terms.
-///
-/// Returns an empty vec for an empty/whitespace query, a single-element vec
-/// when there is no alternation, and one entry per term otherwise. Terms that
-/// are empty after trimming (e.g. `a||b`, `|foo`, `bar|`) are dropped so the
-/// alternation is well-formed.
-fn split_alternation(query: &str) -> Vec<String> {
-    let trimmed = query.trim();
-    if trimmed.is_empty() {
-        return Vec::new();
-    }
-    if !trimmed.contains('|') {
-        return vec![trimmed.to_string()];
-    }
-    let terms: Vec<String> = trimmed
-        .split('|')
-        .map(str::trim)
-        .filter(|term| !term.is_empty())
-        .map(str::to_string)
-        .collect();
-    terms
-}
-
-pub(crate) async fn search_literal_bounded(
-    query: &str,
-    search_path: &Path,
-    languages: &[AstGrepLanguage],
-    candidate_cap: usize,
-) -> Result<LiteralSearchOutcome> {
-    // Support `|`-separated alternation (e.g. "tokio|async-std|runtime"), the
-    // most common plan-mode exploration pattern. Without this, alternation
-    // queries silently return 0 results because `--fixed-strings` treats the
-    // whole query as one literal substring. Single-term queries keep
-    // `--fixed-strings` so literal metacharacters stay non-magic; multi-term
-    // queries join `regex::escape`-ed terms with `|` as a regex alternation.
-    let alternation_terms = split_alternation(query);
-    let alternation_regex = (alternation_terms.len() >= 2).then(|| {
-        alternation_terms
-            .iter()
-            .map(|term| regex::escape(term))
-            .collect::<Vec<_>>()
-            .join("|")
-    });
-    let (pattern_arg, use_fixed_strings) = match alternation_regex {
-        Some(regex_pattern) => (regex_pattern, false),
-        None => match alternation_terms.as_slice() {
-            [single] => (single.clone(), true),
-            // Empty query (or only empty terms): fall back to the trimmed
-            // original so ripgrep surfaces a clear "no matches" result.
-            _ => (query.trim().to_string(), true),
-        },
-    };
-
-    let mut command = TokioCommand::new("rg");
-    command
-        .arg("--json")
-        .arg("--smart-case")
-        .arg("--sort=path")
-        .arg("--hidden")
-        .arg("--no-messages")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    if use_fixed_strings {
-        command.arg("--fixed-strings");
-    }
-    for pattern in DEFAULT_IGNORE_GLOBS {
-        command.arg("--glob").arg(format!("!{pattern}"));
-    }
-    for language in languages {
-        for glob in language.path_globs() {
-            command.arg("--iglob").arg(glob);
-        }
-    }
-    command.arg(&pattern_arg).arg(search_path);
-
-    let mut child = command
-        .spawn()
-        .with_context(|| format!("failed to execute ripgrep for literal query '{query}'"))?;
-    let Some(stdout) = child.stdout.take() else {
-        kill_and_reap_literal_child(&mut child).await;
-        anyhow::bail!("failed to capture ripgrep output");
-    };
-    let mut reader = BufReader::new(stdout);
-    let mut candidates = Vec::with_capacity(candidate_cap);
-    let mut bytes_read = 0usize;
-    let mut truncated = false;
-    let mut line_buf = Vec::with_capacity(CODE_SEARCH_STREAM_BYTE_CAP);
-
-    loop {
-        line_buf.clear();
-        let read =
-            match read_bounded_record(&mut reader, &mut line_buf, &mut bytes_read, CODE_SEARCH_STREAM_BYTE_CAP).await {
-                Ok(read) => read,
-                Err(error) => {
-                    drop(reader);
-                    kill_and_reap_literal_child(&mut child).await;
-                    return Err(error).context("failed to read ripgrep JSON stream");
-                }
-            };
-        match read {
-            BoundedRecordRead::Record => {}
-            BoundedRecordRead::Eof => break,
-            BoundedRecordRead::Exhausted => {
-                truncated = true;
-                break;
-            }
-        }
-        let event = match serde_json::from_slice::<Value>(&line_buf) {
-            Ok(event) => event,
-            Err(error) => {
-                drop(reader);
-                kill_and_reap_literal_child(&mut child).await;
-                return Err(error).context("failed to parse ripgrep JSON stream record");
-            }
-        };
-        if event.get("type").and_then(Value::as_str) != Some("match") {
-            continue;
-        }
-        let Some(data) = event.get("data") else {
-            continue;
-        };
-        let Some(path) = data.get("path").and_then(|path| path.get("text")).and_then(Value::as_str) else {
-            continue;
-        };
-        let Some(snippet) = data.get("lines").and_then(|lines| lines.get("text")).and_then(Value::as_str) else {
-            continue;
-        };
-        let line = data
-            .get("line_number")
-            .and_then(Value::as_u64)
-            .and_then(|line| usize::try_from(line).ok())
-            .unwrap_or(1);
-        let absolute_offset = data
-            .get("absolute_offset")
-            .and_then(Value::as_u64)
-            .and_then(|offset| usize::try_from(offset).ok())
-            .unwrap_or(0);
-        let Some(submatches) = data.get("submatches").and_then(Value::as_array) else {
-            continue;
-        };
-        for submatch in submatches {
-            let Some(start) = submatch
-                .get("start")
-                .and_then(Value::as_u64)
-                .and_then(|offset| usize::try_from(offset).ok())
-            else {
-                continue;
-            };
-            let Some(end) = submatch
-                .get("end")
-                .and_then(Value::as_u64)
-                .and_then(|offset| usize::try_from(offset).ok())
-            else {
-                continue;
-            };
-            let Some(matched_text) = submatch
-                .get("match")
-                .and_then(|value| value.get("text"))
-                .and_then(Value::as_str)
-            else {
-                continue;
-            };
-            candidates.push(LiteralSearchCandidate {
-                path: PathBuf::from(path),
-                line,
-                column: start.saturating_add(1),
-                byte_start: absolute_offset.saturating_add(start),
-                byte_end: absolute_offset.saturating_add(end),
-                matched_text: matched_text.to_string(),
-                snippet: snippet.to_string(),
-            });
-            if candidates.len() >= candidate_cap {
-                truncated = true;
-                break;
-            }
-        }
-        if truncated {
-            break;
-        }
-    }
-
-    drop(reader);
-    if truncated {
-        let _ = child.start_kill();
-    }
-    let status = child.wait().await.context("failed to reap ripgrep process")?;
-    if !truncated && !matches!(status.code(), Some(0) | Some(1)) {
-        anyhow::bail!("ripgrep literal search failed");
-    }
-
-    Ok(LiteralSearchOutcome { candidates, truncated })
-}
-
-/// Input parameters for ripgrep search
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct GrepSearchInput {
-    pub pattern: String,
-    pub path: String,
-    pub case_sensitive: Option<bool>,
-    pub literal: Option<bool>,
-    pub glob_pattern: Option<String>,
-    pub context_lines: Option<usize>,
-    pub include_hidden: Option<bool>,
-    pub max_results: Option<usize>,
-    pub respect_ignore_files: Option<bool>, // Whether to respect .gitignore, .ignore files
-    pub max_file_size: Option<usize>,       // Maximum file size to search (in bytes)
-    pub search_hidden: Option<bool>,        // Whether to search hidden files/directories
-    pub search_binary: Option<bool>,        // Whether to search binary files
-    pub files_with_matches: Option<bool>,   // Only print filenames with matches
-    pub type_pattern: Option<String>,       // Search files of a specific type (e.g., "rust", "python")
-    pub invert_match: Option<bool>,         // Invert the matching
-    pub word_boundaries: Option<bool>,      // Match only word boundaries (regexp \b)
-    pub line_number: Option<bool>,          // Show line numbers
-    pub column: Option<bool>,               // Show column numbers
-    pub only_matching: Option<bool>,        // Show only matching parts
-    pub trim: Option<bool>,                 // Trim whitespace from matches
-    pub max_result_bytes: Option<usize>,    // Optional truncation threshold (bytes)
-    pub timeout: Option<Duration>,          // Optional timeout for blocking grep
-    pub extra_ignore_globs: Option<Vec<String>>, // Additional ignore globs
-}
-
-impl GrepSearchInput {
-    /// Create a new search input with pattern and path, using sensible defaults
-    #[inline]
-    pub fn new(pattern: String, path: String) -> Self {
-        Self {
-            pattern,
-            path,
-            case_sensitive: None,
-            literal: None,
-            glob_pattern: None,
-            context_lines: None,
-            include_hidden: None,
-            max_results: None,
-            respect_ignore_files: None,
-            max_file_size: None,
-            search_hidden: None,
-            search_binary: None,
-            files_with_matches: None,
-            type_pattern: None,
-            invert_match: None,
-            word_boundaries: None,
-            line_number: None,
-            column: None,
-            only_matching: None,
-            trim: None,
-            max_result_bytes: None,
-            timeout: None,
-            extra_ignore_globs: None,
-        }
-    }
-
-    /// Create a search input with common defaults for internal grep searches
-    #[inline]
-    pub fn with_defaults(pattern: String, path: String) -> Self {
-        Self {
-            pattern,
-            path,
-            case_sensitive: Some(true),
-            literal: Some(false),
-            glob_pattern: None,
-            context_lines: None,
-            include_hidden: Some(false),
-            max_results: Some(MAX_SEARCH_RESULTS.get()),
-            respect_ignore_files: Some(true),
-            max_file_size: None,
-            search_hidden: Some(false),
-            search_binary: Some(false),
-            files_with_matches: Some(false),
-            type_pattern: None,
-            invert_match: Some(false),
-            word_boundaries: Some(false),
-            line_number: Some(true),
-            column: Some(false),
-            only_matching: Some(false),
-            trim: Some(false),
-            max_result_bytes: Some(DEFAULT_MAX_RESULT_BYTES),
-            timeout: Some(DEFAULT_SEARCH_TIMEOUT),
-            extra_ignore_globs: None,
-        }
-    }
-}
-
-/// Result of a ripgrep search
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GrepSearchResult {
-    pub query: String,
-    pub matches: Vec<Value>,
-    pub truncated: bool,
-    /// Total number of "match" type entries found before truncation.
-    /// When `truncated` is true, this tells the agent how many matches exist
-    /// vs how many are returned in `matches`.
-    #[serde(default)]
-    pub total_matches: Option<usize>,
-}
 
 /// State machine for grep_file orchestration.
 pub struct GrepSearchManager {
@@ -559,7 +166,10 @@ impl GrepSearchManager {
                 query
             };
 
-            GrepSearchManager::spawn_grep_file(query, search_dir, cancellation_token, state, Some(cache));
+            // Spawn the search on the async runtime so it can be killed on
+            // timeout or cancellation. The debounce loop above already ensured
+            // no active search is running.
+            tokio::spawn(GrepSearchManager::spawn_grep_file(query, search_dir, cancellation_token, state, Some(cache)));
         });
     }
 
@@ -574,140 +184,11 @@ impl GrepSearchManager {
         }
     }
 
-    fn execute_with_backends(input: &GrepSearchInput) -> Result<(Vec<Value>, bool, usize)> {
-        Self::run_ripgrep_backend(input)
-    }
-
-    fn run_ripgrep_backend(input: &GrepSearchInput) -> Result<(Vec<Value>, bool, usize)> {
-        use std::process::Command;
-
-        let mut cmd = Command::new("rg");
-        cmd.arg("-j").arg(optimal_search_threads().get().to_string());
-
-        // Add support for respecting ignore files (default is to respect them)
-        if !input.respect_ignore_files.unwrap_or(true) {
-            cmd.arg("--no-ignore");
-        }
-
-        // Add support for searching hidden files (default is not to search hidden)
-        if input.search_hidden.unwrap_or(false) {
-            cmd.arg("--hidden");
-        }
-
-        // Add support for searching binary files
-        if input.search_binary.unwrap_or(false) {
-            cmd.arg("--binary");
-        }
-
-        // Add support for files with matches only
-        if input.files_with_matches.unwrap_or(false) {
-            cmd.arg("--files-with-matches");
-        }
-
-        // Add support for file type filtering
-        if let Some(type_pattern) = &input.type_pattern {
-            cmd.arg("--type").arg(type_pattern);
-        }
-
-        // Add support for max file size
-        if let Some(max_file_size) = input.max_file_size {
-            cmd.arg("--max-filesize").arg(format!("{max_file_size}B"));
-        }
-
-        // Case sensitivity: pick exactly one flag from a single match so
-        // ripgrep never sees conflicting `--ignore-case` + `--smart-case`.
-        // Previously the cascade could append both when `case_sensitive`
-        // defaulted to None but a higher-level wrapper set it to false.
-        match input.case_sensitive {
-            Some(true) => {
-                cmd.arg("--case-sensitive");
-            }
-            Some(false) => {
-                cmd.arg("--ignore-case");
-            }
-            None => {
-                // Default to smart case when the caller didn't specify.
-                cmd.arg("--smart-case");
-            }
-        }
-
-        // Invert match
-        if input.invert_match.unwrap_or(false) {
-            cmd.arg("--invert-match");
-        }
-
-        // Word boundaries
-        if input.word_boundaries.unwrap_or(false) {
-            cmd.arg("--word-regexp");
-        }
-
-        // Line numbers
-        if input.line_number.unwrap_or(true) {
-            // Default to true to maintain context
-            cmd.arg("--line-number");
-        } else {
-            cmd.arg("--no-line-number");
-        }
-
-        // Column numbers
-        if input.column.unwrap_or(false) {
-            cmd.arg("--column");
-        }
-
-        // Only matching parts
-        if input.only_matching.unwrap_or(false) {
-            cmd.arg("--only-matching");
-        }
-
-        // Trim whitespace (handled by not adding the --no-unicode flag, which is default)
-        if input.trim.unwrap_or(false) {
-            // This is handled in post-processing, not as a flag
-        }
-
-        if let Some(literal) = input.literal
-            && literal
-        {
-            cmd.arg("--fixed-strings");
-        }
-
-        if let Some(glob_pattern) = &input.glob_pattern {
-            cmd.arg("--glob").arg(glob_pattern);
-        }
-
-        if input.respect_ignore_files.unwrap_or(true) {
-            for pattern in DEFAULT_IGNORE_GLOBS {
-                cmd.arg("--glob").arg(format!("!{pattern}"));
-            }
-            if let Some(extra) = &input.extra_ignore_globs {
-                for pattern in extra {
-                    cmd.arg("--glob").arg(format!("!{pattern}"));
-                }
-            }
-        }
-
-        if let Some(context_lines) = input.context_lines {
-            cmd.arg("--context").arg(context_lines.to_string());
-        }
-
-        let max_results = input.max_results.unwrap_or(MAX_SEARCH_RESULTS.get());
-        cmd.arg("--max-count").arg(max_results.to_string());
-
-        // Use JSON output format for structured results
-        cmd.arg("--json");
-
-        cmd.arg(&input.pattern);
-        cmd.arg(&input.path);
-
-        let output = cmd
-            .output()
-            .with_context(|| format!("failed to execute ripgrep for pattern '{}'", input.pattern))?;
-
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        let matches: Vec<Value> = output_str
-            .lines()
-            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-            .collect();
-
+    async fn execute_with_backends(
+        input: &GrepSearchInput,
+        cancel_flag: Option<&AtomicBool>,
+    ) -> Result<(Vec<Value>, bool, usize)> {
+        let matches = run_ripgrep_backend_async(input, cancel_flag).await?;
         Ok(Self::finalize_matches(matches, input))
     }
 
@@ -779,89 +260,21 @@ impl GrepSearchManager {
         (matches, truncated, total_match_count)
     }
 
-    fn spawn_grep_file(
+    async fn spawn_grep_file(
         query: String,
         search_dir: PathBuf,
         cancellation_token: Arc<AtomicBool>,
         search_state: Arc<Mutex<SearchState>>,
         cache: Option<Arc<GrepSearchCache>>,
     ) {
-        // Spawn grep worker on a blocking thread — searching and ripgrep are blocking.
-        spawn_blocking(move || {
-            // Check if cancelled before starting
-            if cancellation_token.load(Ordering::Relaxed) {
-                // Reset the active search state
-                {
-                    let mut st = match search_state.lock() {
-                        Ok(state) => state,
-                        Err(err) => {
-                            warn!("grep search state lock poisoned while cancelling search: {err}");
-                            return;
-                        }
-                    };
-                    if let Some(active_search) = &st.active_search
-                        && Arc::ptr_eq(&active_search.cancellation_token, &cancellation_token)
-                    {
-                        st.active_search = None;
-                    }
-                }
-                return;
-            }
-
-            let input = GrepSearchInput::with_defaults(query.clone(), search_dir.to_string_lossy().into_owned());
-
-            // Check cache first if available
-            if let Some(ref cache) = cache
-                && let Some(cached_result) = Self::cached_result(cache, &input)
-            {
-                let mut st = match search_state.lock() {
-                    Ok(state) => state,
-                    Err(err) => {
-                        warn!("grep search state lock poisoned while loading cached result: {err}");
-                        return;
-                    }
-                };
-                st.last_result = Some(cached_result);
-                return;
-            }
-
-            let search_result = GrepSearchManager::execute_with_backends(&input);
-
-            let is_cancelled = cancellation_token.load(Ordering::Relaxed);
-            if !is_cancelled
-                && let Ok((matches, truncated, total_match_count)) = search_result
-                && !matches.is_empty()
-            {
-                let result = GrepSearchResult {
-                    query,
-                    matches,
-                    truncated,
-                    total_matches: if truncated { Some(total_match_count) } else { None },
-                };
-
-                // Cache the result if cache is available
-                if let Some(ref cache) = cache
-                    && GrepSearchCache::should_cache(&result)
-                {
-                    cache.put(&input, result.clone());
-                }
-
-                let mut st = match search_state.lock() {
-                    Ok(state) => state,
-                    Err(err) => {
-                        warn!("grep search state lock poisoned while storing search result: {err}");
-                        return;
-                    }
-                };
-                st.last_result = Some(result);
-            }
-
+        // Check if cancelled before starting
+        if cancellation_token.load(Ordering::Relaxed) {
             // Reset the active search state
             {
                 let mut st = match search_state.lock() {
                     Ok(state) => state,
                     Err(err) => {
-                        warn!("grep search state lock poisoned while clearing active search: {err}");
+                        warn!("grep search state lock poisoned while cancelling search: {err}");
                         return;
                     }
                 };
@@ -871,7 +284,84 @@ impl GrepSearchManager {
                     st.active_search = None;
                 }
             }
-        });
+            return;
+        }
+
+        let input = GrepSearchInput::with_defaults(query.clone(), search_dir.to_string_lossy().into_owned());
+
+        // Check cache first if available
+        if let Some(ref cache) = cache
+            && let Some(cached_result) = Self::cached_result(cache, &input)
+        {
+            let mut st = match search_state.lock() {
+                Ok(state) => state,
+                Err(err) => {
+                    warn!("grep search state lock poisoned while loading cached result: {err}");
+                    return;
+                }
+            };
+            st.last_result = Some(cached_result);
+            return;
+        }
+
+        // Run with a hard deadline so a runaway rg on a huge tree cannot burn
+        // CPU forever. The async backend owns the child with `kill_on_drop`, so
+        // both the timeout and mid-search cancellation kill ripgrep.
+        let timeout = input.timeout.unwrap_or(DEFAULT_SEARCH_TIMEOUT);
+        let search_result = match tokio::time::timeout(
+            timeout,
+            GrepSearchManager::execute_with_backends(&input, Some(&cancellation_token)),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_elapsed) => Err(anyhow::anyhow!("ripgrep search timed out after {}s", timeout.as_secs())),
+        };
+
+        let is_cancelled = cancellation_token.load(Ordering::Relaxed);
+        if !is_cancelled
+            && let Ok((matches, truncated, total_match_count)) = search_result
+            && !matches.is_empty()
+        {
+            let result = GrepSearchResult {
+                query,
+                matches,
+                truncated,
+                total_matches: if truncated { Some(total_match_count) } else { None },
+            };
+
+            // Cache the result if cache is available
+            if let Some(ref cache) = cache
+                && GrepSearchCache::should_cache(&result)
+            {
+                cache.put(&input, result.clone());
+            }
+
+            let mut st = match search_state.lock() {
+                Ok(state) => state,
+                Err(err) => {
+                    warn!("grep search state lock poisoned while storing search result: {err}");
+                    return;
+                }
+            };
+            st.last_result = Some(result);
+        }
+
+        // Reset the active search state
+        {
+            let mut st = match search_state.lock() {
+                Ok(state) => state,
+                Err(err) => {
+                    warn!("grep search state lock poisoned while clearing active search: {err}");
+                    return;
+                }
+            };
+            if let Some(active_search) = &st.active_search
+                && Arc::ptr_eq(&active_search.cancellation_token, &cancellation_token)
+            {
+                st.active_search = None;
+            }
+        }
     }
 
     /// Perform an actual ripgrep search with the given input parameters
@@ -885,28 +375,20 @@ impl GrepSearchManager {
         let input_clone = input.clone();
 
         let timeout = input.timeout.unwrap_or(DEFAULT_SEARCH_TIMEOUT);
-        // Spawn the blocking search on its own handle so we can cancel it
-        // on timeout. The previous implementation used `tokio::time::timeout`
-        // which returns `Err(Elapsed)` but leaves the blocking task running
-        // — repeated timeouts would leak threads holding the state lock.
-        let mut join = spawn_blocking(move || GrepSearchManager::execute_with_backends(&input_clone));
-        let outcome = tokio::time::timeout(timeout, &mut join).await;
+        // Run ripgrep as an async child owned by the future. On timeout the
+        // future is dropped and `kill_on_drop` kills the child — the old
+        // `spawn_blocking` + `join.abort()` could not preempt the blocking
+        // `Command::output()`, so timed-out searches leaked an rg process that
+        // kept burning CPU.
+        let outcome = tokio::time::timeout(timeout, Self::execute_with_backends(&input_clone, None)).await;
         let (matches, truncated, total_match_count) = match outcome {
-            Ok(Ok(Ok(result))) => result,
-            Ok(Ok(Err(worker_err))) => {
+            Ok(Ok(result)) => result,
+            Ok(Err(worker_err)) => {
                 return Err(worker_err.context("ripgrep search worker failed"));
             }
-            Ok(Err(join_err)) => {
-                return Err(anyhow::Error::new(join_err).context("ripgrep search worker panicked"));
-            }
             Err(_elapsed) => {
-                // Abort the blocking task so it doesn't keep running after
-                // we time out. The runtime cancels the spawn_blocking task
-                // and frees its slot in the blocking pool.
-                join.abort();
-                let _ = join.await;
                 return Err(anyhow::anyhow!(
-                    "ripgrep search timed out after {}s; the worker has been cancelled",
+                    "ripgrep search timed out after {}s; ripgrep was killed",
                     timeout.as_secs()
                 ));
             }
@@ -997,8 +479,10 @@ impl GrepSearchManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::ast_grep_language::AstGrepLanguage;
     use serde_json::json;
     use tempfile::TempDir;
+    use tokio::io::BufReader;
 
     #[tokio::test]
     async fn code_search_literal_stream_reaps_at_candidate_cap() {

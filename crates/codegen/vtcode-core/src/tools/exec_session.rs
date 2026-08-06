@@ -173,11 +173,13 @@ impl PipeSessionManager {
         let working_dir = canonicalize_workspace(&working_dir);
         self.ensure_within_workspace(&working_dir)?;
 
-        {
-            let sessions = self.sessions.read().await;
-            if sessions.contains_key(session_id.as_str()) {
-                return Err(anyhow!("exec session '{}' already exists", session_id.as_str()));
-            }
+        // Hold the write lock across check → spawn → insert so two concurrent
+        // creates with the same session_id cannot both pass the existence check
+        // and spawn; the second insert would silently overwrite the first and
+        // leak its spawned process and background tasks.
+        let mut sessions = self.sessions.write().await;
+        if sessions.contains_key(session_id.as_str()) {
+            return Err(anyhow!("exec session '{}' already exists", session_id.as_str()));
         }
 
         let mut command_parts = command;
@@ -304,7 +306,6 @@ impl PipeSessionManager {
             },
         ));
 
-        let mut sessions = self.sessions.write().await;
         sessions.insert(session_id, record);
 
         Ok(metadata)
@@ -795,6 +796,37 @@ mod tests {
         assert!(output.contains("hello"));
 
         manager.close_session("run-1").await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn concurrent_pipe_session_create_with_same_id_creates_exactly_one() -> anyhow::Result<()> {
+        let temp_dir = tempdir()?;
+        let workspace_root = canonicalize_workspace(temp_dir.path());
+        let pty_sessions = PtySessionManager::new(workspace_root.clone(), PtyConfig::default());
+        let manager = ExecSessionManager::new(workspace_root.clone(), pty_sessions);
+
+        let (a, b) = tokio::join!(
+            manager.create_pipe_session(
+                "same-id".to_string().into(),
+                vec!["/bin/sh".to_string(), "-c".to_string(), "sleep 5".to_string()],
+                workspace_root.clone(),
+                HashMap::new(),
+            ),
+            manager.create_pipe_session(
+                "same-id".to_string().into(),
+                vec!["/bin/sh".to_string(), "-c".to_string(), "sleep 5".to_string()],
+                workspace_root.clone(),
+                HashMap::new(),
+            ),
+        );
+
+        assert_eq!(a.is_ok() as u8 + b.is_ok() as u8, 1, "exactly one concurrent create must win: {a:?} {b:?}");
+        let loser = a.err().or_else(|| b.err()).expect("the loser should error");
+        assert!(loser.to_string().contains("already exists"), "loser error should report duplicate: {loser}");
+
+        manager.close_session("same-id").await?;
         Ok(())
     }
 

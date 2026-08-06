@@ -11,7 +11,6 @@ use hashbrown::HashMap;
 use serde_json::{Value, json};
 use std::future::Future;
 use std::time::{Duration, Instant};
-use tokio::fs;
 
 struct ResolvedExecSession {
     metadata: VTCodeExecSession,
@@ -283,28 +282,26 @@ impl ToolRegistry {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
 
-        let content = if let Some(spool_path) = source_spool_path.as_deref() {
-            let resolved = resolve_workspace_scoped_path(self.inventory.workspace_root(), spool_path)?;
-            fs::read_to_string(&resolved)
-                .await
-                .with_context(|| format!("Failed to read inspect spool path: {}", resolved.display()))?
+        let (content, spool_truncated) = if let Some(spool_path) = source_spool_path.as_deref() {
+            let resolved = resolve_workspace_scoped_path_resolved(self.inventory.workspace_root(), spool_path).await?;
+            read_bounded_spool_file(&resolved, EXEC_INSPECT_SPOOL_MAX_BYTES).await?
         } else if let Some(session_id) = source_session_id.as_deref() {
             let session_id = validate_exec_session_id(session_id, "inspect")?;
             let yield_time_ms = clamp_peek_yield_ms(payload.get("yield_time_ms").and_then(Value::as_u64));
             let capture = self
                 .wait_for_exec_yield(session_id, Duration::from_millis(yield_time_ms), None, false)
                 .await;
-            filter_pty_output(&strip_ansi(&capture.output))
+            (filter_pty_output(&strip_ansi(&capture.output)), false)
         } else {
             return Err(anyhow!("inspect requires either `session_id` or `spool_path`"));
         };
 
         let (output, matched_count, truncated) = if let Some(query) = query {
             let (filtered, count, is_truncated) = filter_lines(&content, query, literal, max_matches)?;
-            (filtered, count, is_truncated)
+            (filtered, count, is_truncated || spool_truncated)
         } else {
             let (preview, is_truncated) = build_head_tail_preview(&content, head_lines, tail_lines);
-            (preview, 0, is_truncated)
+            (preview, 0, is_truncated || spool_truncated)
         };
 
         let mut response = json!({

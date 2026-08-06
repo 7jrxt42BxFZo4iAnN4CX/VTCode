@@ -16,51 +16,63 @@ pub(crate) async fn read_line_with_limit<R: AsyncBufRead + Unpin>(
     max_len: usize,
 ) -> io::Result<ReadLineResult> {
     buf.clear();
-    let mut total_read = 0;
 
     loop {
         let available = reader.fill_buf().await?;
         if available.is_empty() {
-            return Ok(ReadLineResult::Eof);
+            // EOF with a partial line left in the buffer: report it as a
+            // (truncated, if it overran) line rather than silently dropping
+            // the data we already read.
+            return Ok(if buf.is_empty() {
+                ReadLineResult::Eof
+            } else if buf.len() <= max_len {
+                ReadLineResult::Line(std::mem::take(buf))
+            } else {
+                ReadLineResult::Truncated(std::mem::take(buf))
+            });
         }
 
-        if let Some(pos) = available.iter().position(|&b| b == b'\n') {
+        if let Some(pos) = memchr::memchr(b'\n', available) {
             // Found a newline within the available buffer
             let to_read = pos + 1;
-            let would_be_total = total_read + to_read;
+            let would_be_total = buf.len() + to_read;
 
             if would_be_total <= max_len {
                 // Line fits within the limit
                 buf.extend_from_slice(&available[..to_read]);
                 reader.consume(to_read);
-                return Ok(ReadLineResult::Line(buf.clone()));
+                return Ok(ReadLineResult::Line(std::mem::take(buf)));
             } else {
-                // Line would exceed the limit, so we truncate
-                let remaining_space = max_len.saturating_sub(total_read);
+                // Line would exceed the limit: fill the remaining space, then
+                // report truncation. Consume the whole line from the reader so
+                // the next read starts at a fresh line.
+                let remaining_space = max_len.saturating_sub(buf.len());
                 if remaining_space > 0 {
                     buf.extend_from_slice(&available[..remaining_space]);
                 }
-                reader.consume(to_read); // Still consume the whole line from the reader
-                return Ok(ReadLineResult::Truncated(buf.clone()));
+                reader.consume(to_read);
+                return Ok(ReadLineResult::Truncated(std::mem::take(buf)));
             }
         }
 
         // No newline found in current buffer, add what we can
         let len = available.len();
-        let would_be_total = total_read + len;
+        let would_be_total = buf.len() + len;
 
         if would_be_total <= max_len {
             // Buffer content fits within the limit
             buf.extend_from_slice(available);
-            total_read = would_be_total;
             reader.consume(len);
         } else {
-            // Would exceed the limit, add only what fits
-            let remaining_space = max_len.saturating_sub(total_read);
+            // Would exceed the limit, add only what fits and report truncation
+            // immediately: continuing would either grow the buffer past
+            // `max_len` or block forever on a stream that never sends `\n`.
+            let remaining_space = max_len.saturating_sub(buf.len());
             if remaining_space > 0 {
                 buf.extend_from_slice(&available[..remaining_space]);
             }
             reader.consume(len);
+            return Ok(ReadLineResult::Truncated(std::mem::take(buf)));
         }
     }
 }
@@ -82,6 +94,42 @@ mod tests {
                 assert!(!bytes.is_empty());
             }
             other => panic!("expected truncation, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn read_line_with_limit_no_newline_stream_returns_truncated() -> std::io::Result<()> {
+        // A stream with no '\n' must terminate with Truncated once the limit is
+        // reached instead of growing the buffer or blocking forever.
+        let data = vec![b'a'; 10_000];
+        let mut reader = BufReader::new(data.as_slice());
+        let mut buf = Vec::new();
+
+        let result = read_line_with_limit(&mut reader, &mut buf, 100).await?;
+        match result {
+            ReadLineResult::Truncated(bytes) => {
+                assert_eq!(bytes.len(), 100, "buffer must not exceed the limit");
+            }
+            other => panic!("expected truncation, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn read_line_with_limit_reports_partial_line_at_eof() -> std::io::Result<()> {
+        // Data without a trailing newline must be surfaced as a line rather
+        // than silently dropped.
+        let data = "no newline at end";
+        let mut reader = BufReader::new(data.as_bytes());
+        let mut buf = Vec::new();
+
+        let result = read_line_with_limit(&mut reader, &mut buf, 100).await?;
+        match result {
+            ReadLineResult::Line(bytes) => {
+                assert_eq!(bytes, b"no newline at end");
+            }
+            other => panic!("expected line, got {other:?}"),
         }
         Ok(())
     }

@@ -156,7 +156,12 @@ impl StdioTransport {
 
         timeout(self.rpc_timeout, rx)
             .await
-            .map_err(|_e| AcpError::Timeout(format!("{method} timed out")))?
+            .map_err(|_e| {
+                // The peer never replied; drop the pending entry so the table
+                // does not grow unboundedly across repeated timeouts.
+                self.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+                AcpError::Timeout(format!("{method} timed out"))
+            })?
             .map_err(|_e| AcpError::Internal(format!("{method} response channel closed")))
             .and_then(|r| r)
     }
@@ -457,5 +462,21 @@ mod tests {
         assert_eq!(payload["id"], 9);
         assert_eq!(payload["error"]["code"], -32601);
         assert_eq!(payload["error"]["message"], "method not found");
+    }
+
+    #[tokio::test]
+    async fn timed_out_call_clears_pending_entry() {
+        // Regression: a `call` that times out (no peer reply) must remove its
+        // pending-table entry. Previously the entry leaked, so every timed-out
+        // RPC grew the table unboundedly.
+        let (tx, _rx) = mpsc::channel(WRITE_CHANNEL_CAPACITY);
+        let transport = StdioTransport::new_for_testing(tx, Duration::from_millis(20));
+
+        // No reader task is spawned, so no response ever arrives -> timeout.
+        let result = transport.call("session/start", serde_json::json!({})).await;
+        assert!(matches!(result, Err(AcpError::Timeout(_))));
+
+        let pending_len = transport.pending.lock().unwrap().len();
+        assert_eq!(pending_len, 0, "timed-out call must not leave a pending entry");
     }
 }

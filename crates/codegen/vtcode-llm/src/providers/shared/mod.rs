@@ -1326,10 +1326,10 @@ mod tests {
         let full = "data: {\"hello\":\"world\"}\n\n".as_bytes();
         let mut dec_str = Utf8StreamDecoder::new();
         let mut dec_bytes = Utf8StreamDecoder::new();
-        for i in 0..full.len() {
+        for (i, &byte) in full.iter().enumerate() {
             let mut out = Vec::new();
-            dec_bytes.push_bytes(std::slice::from_ref(&full[i]), &mut out);
-            let s = dec_str.push(std::slice::from_ref(&full[i]));
+            dec_bytes.push_bytes(std::slice::from_ref(&byte), &mut out);
+            let s = dec_str.push(std::slice::from_ref(&byte));
             assert_eq!(out, s.into_bytes(), "byte {i}: push_bytes must match push");
         }
         // Both decoders should have empty pending buffers after complete input.

@@ -321,20 +321,28 @@ impl ExecEventRecorder {
         if let Some(handle) = &self.thread_handle {
             match handle.begin_turn() {
                 Ok(submission_id) => self.active_submission_id = Some(submission_id),
-                Err(_) => self.active_submission_id = None,
+                Err(err) => {
+                    // A failed begin_turn means a previous turn was never
+                    // finished (or a concurrent turn is in flight). Surface
+                    // it instead of silently dropping the submission id:
+                    // without it, every event of this turn loses its
+                    // submission context on retried attempts.
+                    tracing::warn!(error = %err, "failed to begin turn; submission id unavailable");
+                    self.active_submission_id = None;
+                }
             }
             self.active_turn_id = Some(format!("turn-{}", Uuid::new_v4()));
         }
         self.record(ThreadEvent::TurnStarted(TurnStartedEvent::default()));
     }
 
-    pub fn turn_completed(&mut self) {
-        self.record(ThreadEvent::TurnCompleted(TurnCompletedEvent { usage: Usage::default() }));
+    pub fn turn_completed(&mut self, usage: Usage) {
+        self.record(ThreadEvent::TurnCompleted(TurnCompletedEvent { usage }));
         self.finish_turn();
     }
 
-    pub fn turn_failed(&mut self, message: &str) {
-        self.record(ThreadEvent::TurnFailed(TurnFailedEvent { message: message.to_string(), usage: None }));
+    pub fn turn_failed(&mut self, message: &str, usage: Option<Usage>) {
+        self.record(ThreadEvent::TurnFailed(TurnFailedEvent { message: message.to_string(), usage }));
         self.finish_turn();
     }
 
@@ -834,7 +842,7 @@ mod tests {
 
         recorder.turn_started();
         recorder.agent_message("hello");
-        recorder.turn_completed();
+        recorder.turn_completed(Usage::default());
 
         let records = handle.replay_recent();
         let submission_ids: std::collections::BTreeSet<String> = records
@@ -864,7 +872,7 @@ mod tests {
         recorder.turn_started();
         recorder.agent_message("first");
         recorder.agent_message("second");
-        recorder.turn_completed();
+        recorder.turn_completed(Usage::default());
 
         let full_events = recorder.into_events();
         let buffered_events = handle.recent_events();

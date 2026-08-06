@@ -10,6 +10,7 @@ use super::traits::Tool;
 use crate::config::constants::tools;
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
+use futures::stream::StreamExt;
 use hashbrown::HashSet;
 use reqwest::header::{ACCEPT, HeaderMap, HeaderValue, USER_AGENT};
 use serde::Deserialize;
@@ -81,15 +82,16 @@ fn fetched_content_from_bytes(bytes: &[u8], max_bytes: usize) -> Result<FetchedW
         });
     }
 
-    let mut end = max_bytes;
+    // Truncate to `max_bytes`, then back off to the nearest valid UTF-8
+    // boundary in a single O(n) pass via `valid_up_to`. The previous per-byte
+    // `end -= 1` loop was O(n^2) on adversarial bodies (e.g. a multi-MB
+    // document whose first max_bytes bytes are not UTF-8-aligned).
+    let valid_end = match std::str::from_utf8(&bytes[..max_bytes]) {
+        Ok(_) => max_bytes,
+        Err(err) => err.valid_up_to(),
+    };
 
-    while end > 0 && std::str::from_utf8(&bytes[..end]).is_err() {
-        end -= 1;
-    }
-
-    let content = std::str::from_utf8(&bytes[..end])
-        .context("Response body is not valid UTF-8")?
-        .to_string();
+    let content = String::from_utf8(bytes[..valid_end].to_vec()).context("Response body is not valid UTF-8")?;
     Ok(FetchedWebContent { content, truncated_by_max_bytes, source_size_bytes })
 }
 
@@ -310,8 +312,43 @@ impl WebFetchTool {
         // Limit response body to max_bytes while still returning useful partial
         // text. Oversized documentation pages are common, and a truncated fetch
         // gives the agent more signal than an error-only result.
-        let bytes = response.bytes().await?;
-        fetched_content_from_bytes(&bytes, max_bytes)
+        //
+        // Reject up-front when Content-Length already exceeds the cap, and
+        // stream `chunk()`s capped at max_bytes instead of buffering the entire
+        // body with `response.bytes()`. This bounds peak memory even for
+        // hostile servers that lie about or omit Content-Length.
+        if let Some(content_length) = response.content_length()
+            && content_length > max_bytes as u64
+        {
+            return Err(anyhow!(
+                "Response Content-Length {} exceeds max_bytes {}; refusing to buffer the full body",
+                content_length,
+                max_bytes
+            ));
+        }
+
+        let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
+        let mut stream = response.bytes_stream();
+        let mut max_reached = false;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.context("Failed to read response body")?;
+            if bytes.len() >= max_bytes {
+                max_reached = true;
+                break;
+            }
+            let take = chunk.len().min(max_bytes - bytes.len());
+            bytes.extend_from_slice(&chunk[..take]);
+        }
+
+        let mut fetched = fetched_content_from_bytes(&bytes, max_bytes)?;
+        // The stream stopped exactly at the cap, so the true body is at least
+        // max_bytes. `fetched_content_from_bytes` compares against `bytes.len()`
+        // and would report "not truncated" for a body that ends precisely at the
+        // cap — override so callers still see the truncation metadata.
+        if max_reached || bytes.len() >= max_bytes {
+            fetched.truncated_by_max_bytes = true;
+        }
+        Ok(fetched)
     }
 
     fn validate_url(&self, url: &str) -> Result<()> {
@@ -1351,6 +1388,39 @@ mod tests {
         assert_eq!(fetched.content, "α");
         assert!(fetched.truncated_by_max_bytes);
         assert_eq!(fetched.source_size_bytes, "αβγ".len());
+    }
+
+    #[test]
+    fn truncation_backs_off_to_utf8_boundary_in_one_pass() {
+        // Regression: the old implementation decremented `end` byte-by-byte,
+        // which is O(n^2) on bodies whose prefix ends mid-multibyte-char. A 1MB
+        // body of multibyte chars must truncate via `valid_up_to()` without
+        // producing invalid UTF-8.
+        let body = "界".repeat(500_000); // 3 bytes per char, 1.5MB total
+        let max_bytes = 1_000_000; // cuts mid-char (not multiple of 3)
+        let fetched = fetched_content_from_bytes(body.as_bytes(), max_bytes).expect("valid utf-8 prefix");
+        assert!(fetched.truncated_by_max_bytes);
+        assert!(fetched.content.len() <= max_bytes);
+        assert!(
+            fetched.content.len().is_multiple_of(3),
+            "must end on a char boundary, got {}",
+            fetched.content.len()
+        );
+    }
+
+    #[test]
+    fn body_ending_exactly_at_cap_is_still_truncated() {
+        // A body that is exactly `max_bytes` long is NOT truncated; one that
+        // ends precisely at the cap after streaming must not be reported as
+        // untruncated by the stream path. `fetched_content_from_bytes` alone
+        // sees bytes.len() == max_bytes, so callers override the flag.
+        let exact = fetched_content_from_bytes("abcde".as_bytes(), 5).expect("utf-8");
+        assert!(!exact.truncated_by_max_bytes);
+
+        // Multi-char exact fit that lands on a boundary is also not truncated.
+        let fit = fetched_content_from_bytes("αβγ".as_bytes(), 6).expect("utf-8");
+        assert!(!fit.truncated_by_max_bytes);
+        assert_eq!(fit.content, "αβγ");
     }
 
     #[test]

@@ -93,9 +93,11 @@ pub(crate) fn resolve_provider_label(config: &CoreAgentConfig, vt_cfg: Option<&V
     if config.provider.eq_ignore_ascii_case("mimo") {
         if let Some(vt_cfg) = vt_cfg
             && let Some(method) = vt_cfg.provider.mimo_auth_method
-            && method != MiMoAuthMethod::Unknown
         {
-            return format!("{} ({})", "Xiaomi MiMo", method.label());
+            if method != MiMoAuthMethod::Unknown {
+                return format!("{} ({})", "Xiaomi MiMo", method.label());
+            }
+            warn!("Unrecognized MiMo auth method in config; falling back to API-key detection");
         }
         if !config.api_key.is_empty() {
             let method = detect_mimo_auth_method(&config.api_key, None);

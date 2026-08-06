@@ -41,14 +41,15 @@ fn push_text(&mut self, text: &str) {
 
 ### 3. Return-Path Stripping
 
-Multiple locations in `crates/codegen/vtcode-core/src/tools/registry/executors.rs`:
+Multiple locations under `crates/codegen/vtcode-core/src/tools/registry/executors/`:
 
-| Function                     | Lines      | Output Field                    |
-| ---------------------------- | ---------- | ------------------------------- |
-| `execute_run_pty_command()`  | 3371       | `output`                        |
-| `execute_read_pty_session()` | 2120       | `output`                        |
-| `execute_send_pty_input()`   | 2022       | `output`                        |
-| `snapshot_to_map()`          | 2911, 2920 | `screen_contents`, `scrollback` |
+| Function                          | Location                  | Output Field |
+| --------------------------------- | ------------------------- | ------------ |
+| `build_exec_filtered_response`    | `exec_output.rs:111`      | `output`     |
+| `build_exec_passthrough_response` | `exec_output.rs:152`      | `output`     |
+| `execute_command_session_inspect` | `exec_sessions.rs:294`    | `output`     |
+
+PTY snapshots (`screen_contents`, `scrollback`) are produced in `crates/codegen/vtcode-core/src/tools/pty/session.rs`.
 
 Example:
 
@@ -107,7 +108,7 @@ Raw PTY Output (with potential ANSI codes)
     ↓
 [3] Session storage (clean text)
     ↓
-[4] Tool returns output via executors.rs
+[4] Tool returns output via the executors/ module
     ↓
 [5] Return-path strip_ansi() (belt-and-suspenders)
     ↓
@@ -155,7 +156,7 @@ Both commands should produce **zero matches** after these changes.
 
 -   `crates/codegen/vtcode-core/src/tools/pty.rs` - PTY management and ANSI prevention
 -   `crates/codegen/vtcode-core/src/utils/ansi_parser.rs` - Core stripping logic
--   `crates/codegen/vtcode-core/src/tools/registry/executors.rs` - Return-path stripping
+-   `crates/codegen/vtcode-core/src/tools/registry/executors/` - Return-path stripping
 -   `src/agent/runloop/tool_output/streams.rs` - Render-time stripping
 -   `src/acp/zed.rs` - ACP integration with stripping
 

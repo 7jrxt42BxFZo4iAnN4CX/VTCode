@@ -384,7 +384,7 @@ fn parse_ansi_sequence(text: &str) -> Option<usize> {
 
 ## Step 5: Update ANSI Stripping
 
-**File: `crates/codegen/vtcode-core/src/tools/registry/executors.rs`**
+**File: `crates/codegen/vtcode-core/src/tools/registry/executors/exec_output.rs`**
 
 Replace `strip_ansi` function with:
 
@@ -477,7 +477,7 @@ pub fn truncate_with_ansi(text: &str, width: usize) -> String {
 - [ ] Add module export to `crates/codegen/vtcode-core/src/utils/mod.rs`
 - [ ] Run `cargo check` - verifies compilation
 - [ ] Run `cargo test` - all tests pass
-- [ ] Replace `strip_ansi` in `executors.rs`
+- [ ] Replace `strip_ansi` in `executors/exec_output.rs`
 - [ ] Update `pty.rs` to use new parser if needed
 - [ ] Performance benchmark comparison
 - [ ] Document in CHANGELOG.md

@@ -25,6 +25,8 @@ use cargo_failure_diagnostics::{
 };
 
 mod cargo_failure_diagnostics;
+mod exec_command;
+mod exec_output;
 mod exec_sessions;
 mod exec_support;
 mod patch_pipeline;
@@ -1144,12 +1146,11 @@ mod unified_action_error_tests {
 
     #[test]
     fn exec_output_preview_truncates_on_utf8_boundaries() {
-        let preview = build_exec_output_preview("a🙂b".to_string(), 1);
+        let (preview, truncated) = build_exec_output_preview("a🙂b", 1);
 
-        assert!(preview.truncated);
-        assert_eq!(preview.raw_output, "a🙂b");
-        assert_eq!(preview.output, "a\n[Output truncated]");
-        std::str::from_utf8(preview.output.as_bytes()).unwrap();
+        assert!(truncated);
+        assert_eq!(preview, "a\n[Output truncated]");
+        std::str::from_utf8(preview.as_bytes()).unwrap();
     }
 
     #[test]

@@ -101,7 +101,7 @@ Updated `src/agent/runloop/unified/tool_pipeline/execution_runtime.rs`:
 
 ### 5) Async runtime safety for PTY session close path
 
-Updated `crates/codegen/vtcode-core/src/tools/registry/executors.rs`:
+Updated `crates/codegen/vtcode-core/src/tools/registry/executors/`:
 
 - `execute_close_pty_session` now executes `PtyManager::close_session` in `tokio::task::spawn_blocking`
 - prevents synchronous PTY shutdown/wait logic from running on async runtime worker threads

@@ -134,7 +134,7 @@ impl<S: OpenAiCompatSpec> LLMProvider for OpenCodeCompatibleProvider<S> {
         // Timeout for the entire streaming task (5 minutes).
         // Prevents indefinite hangs when upstream server stops responding.
         let stream_timeout = std::time::Duration::from_secs(300);
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let mut aggregator = crate::providers::shared::StreamAggregator::new(model_clone.clone());
 
             let result = tokio::time::timeout(
@@ -185,6 +185,7 @@ impl<S: OpenAiCompatSpec> LLMProvider for OpenCodeCompatibleProvider<S> {
 
         let stream = async_stream::try_stream! {
             let mut receiver = event_rx;
+            let _abort_guard = super::common::TaskAbortGuard(handle);
             while let Some(event) = receiver.recv().await {
                 yield event?;
             }

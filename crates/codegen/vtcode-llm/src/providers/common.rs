@@ -425,6 +425,21 @@ pub(crate) async fn send_chat_completions(
         .map_err(|error| super::error_handling::format_network_error(provider_name, &error))
 }
 
+/// Aborts the spawned streaming task when the consumer stream is dropped.
+///
+/// Without this, a client disconnect (receiver dropped) would leave the task
+/// streaming for the full 5-minute timeout, wasting network and memory. The
+/// guard is moved into the returned stream, so it is dropped when the consumer
+/// drops the stream (aborting the task) or when the stream completes normally
+/// (aborting an already-finished task, which is a no-op).
+pub(crate) struct TaskAbortGuard(pub(crate) tokio::task::JoinHandle<()>);
+
+impl Drop for TaskAbortGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// Spawns an OpenAI-compatible streaming response handler.
 /// Returns an `LLMStream` backed by a tokio task that processes chunks via
 /// `process_openai_stream` with the `handle_openai_compatible_chunk` handler.
@@ -448,7 +463,7 @@ pub(crate) fn spawn_openai_compatible_stream(
     // Timeout for the entire streaming task (5 minutes).
     // Prevents indefinite hangs when upstream server stops responding.
     let stream_timeout = std::time::Duration::from_secs(300);
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         let aggregator_model = model.clone();
         let mut aggregator = crate::providers::shared::StreamAggregator::new(aggregator_model);
 
@@ -487,6 +502,7 @@ pub(crate) fn spawn_openai_compatible_stream(
 
     let stream = try_stream! {
         let mut receiver = event_rx;
+        let _abort_guard = TaskAbortGuard(handle);
         while let Some(event) = receiver.recv().await {
             yield event?;
         }

@@ -54,7 +54,7 @@ below shows the original sites and their current status:
 | Location | Function | Style | Status |
 |---|---|---|---|
 | `src/.../error_handling.rs:65` | `truncate_text_for_model` | head+tail with marker | **Migrated** → `head_tail_truncate` |
-| `vtcode-core/.../exec_support.rs:490` | `build_head_tail_preview` | line-based head+tail | Left as-is (line-based, not char-based) |
+| `vtcode-core/.../executors/exec_output.rs` | `build_head_tail_preview` | line-based head+tail | Left as-is (line-based, not char-based) |
 | `vtcode-core/.../harness_kernel.rs:567` | `truncate_lines` | line-based | Left as-is (line counting, different op) |
 | `vtcode-core/.../orchestration.rs:834` | `truncate_chars` | char prefix | **Migrated** → `truncate_within` |
 | `vtcode-core/.../summarizers/mod.rs:27` | `truncate_line` | byte prefix, `Cow` | Left as-is (zero-alloc `Cow`, byte-based) |

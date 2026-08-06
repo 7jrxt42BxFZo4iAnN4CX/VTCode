@@ -18,7 +18,7 @@ pub fn strip_ansi_bytes(input: &[u8]) -> Vec<u8>
 **Used in**:
 
 -   PTY output cleaning (`crates/codegen/vtcode-core/src/tools/pty.rs:208`)
--   Tool output formatting (`crates/codegen/vtcode-core/src/tools/registry/executors.rs`)
+-   Tool output formatting (`crates/codegen/vtcode-core/src/tools/registry/executors/exec_output.rs`)
 -   TUI session rendering (`crates/codegen/vtcode-ui/src/tui/core_tui/session/text_utils.rs`)
 
 **Patterns Handled**:

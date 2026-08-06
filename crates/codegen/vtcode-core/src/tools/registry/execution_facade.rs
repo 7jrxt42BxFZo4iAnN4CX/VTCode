@@ -50,55 +50,23 @@ const REENTRANCY_PER_TOOL_LIMIT: usize = 1;
 /// Extract the file paths a non-readonly tool call is about to mutate.
 ///
 /// Returns an empty Vec for tool calls that aren't path-mutating (in which
-/// case no cache invalidation is needed). For commands that take a `path` or
-/// `file_path` argument we return that path verbatim; for tools that accept
-/// an `items` array we collect every string-valued entry.
+/// case no cache invalidation is needed). Delegates to the canonical
+/// `apply_patch::mutation_target_paths`, which covers singular `path`
+/// fields, `destination`/`destination_path` (move/copy targets), and
+/// `items`/`paths`/`files` arrays.
 fn mutated_target_paths(tool_name: &str, args: &Value) -> Vec<String> {
-    let obj = match args.as_object() {
-        Some(obj) => obj,
-        None => return Vec::new(),
-    };
-    let mut paths = Vec::new();
-    let singular_keys = ["path", "file_path", "filepath", "target_path", "file"];
-    let array_keys = ["items", "paths", "files"];
+    crate::tools::apply_patch::mutation_target_paths(tool_name, args)
+        .into_iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect()
+}
 
-    // Most write-style tools carry the target path in a singular field.
-    for key in singular_keys {
-        if let Some(value) = obj.get(key).and_then(Value::as_str) {
-            let trimmed = value.trim();
-            if !trimmed.is_empty() {
-                paths.push(trimmed.to_string());
-            }
-        }
-    }
-
-    // Batch tools (e.g., batch edits) accept an `items` array of `{path, ...}`.
-    for key in array_keys {
-        if let Some(items) = obj.get(key).and_then(Value::as_array) {
-            for item in items {
-                if let Some(item_obj) = item.as_object() {
-                    for path_key in singular_keys {
-                        if let Some(value) = item_obj.get(path_key).and_then(Value::as_str) {
-                            let trimmed = value.trim();
-                            if !trimmed.is_empty() {
-                                paths.push(trimmed.to_string());
-                            }
-                        }
-                    }
-                } else if let Some(value) = item.as_str() {
-                    let trimmed = value.trim();
-                    if !trimmed.is_empty() {
-                        paths.push(trimmed.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    // Path is informational only — callers should treat the result as the
-    // set of files whose cached read content may now be stale.
-    let _ = tool_name;
-    paths
+/// Returns `true` for shell/command tools that can mutate files without
+/// exposing a target path in their arguments (e.g. `sed -i`, `cargo build`,
+/// `make`). When such a command is classified as mutating we cannot know which
+/// files changed, so cached reads must be invalidated conservatively.
+fn is_pathless_mutating_command(tool_name: &str) -> bool {
+    matches!(tool_name, tools::UNIFIED_EXEC | tools::EXEC_COMMAND | tools::EXEC_PTY_CMD | tools::WRITE_STDIN)
 }
 
 fn structured_tool_output_error(value: &Value) -> Option<String> {
@@ -1760,8 +1728,17 @@ impl ToolRegistry {
                     // tool call would discard unrelated read-only cache hits,
                     // forcing the model to re-read files whose contents hadn't
                     // changed at all.
-                    for target in mutated_target_paths(&tool_name_owned, &args_for_recording) {
-                        self.execution_history.invalidate_for_path(&target);
+                    let targets = mutated_target_paths(&tool_name_owned, &args_for_recording);
+                    if targets.is_empty() && is_pathless_mutating_command(&tool_name_owned) {
+                        // A mutating shell command with no identifiable target
+                        // (e.g. `sed -i`, `cargo build`) could have touched any
+                        // file. Conservatively drop every cached read so no
+                        // record serves stale content.
+                        self.execution_history.invalidate_all_reads();
+                    } else {
+                        for target in targets {
+                            self.execution_history.invalidate_for_path(&target);
+                        }
                     }
                 }
 

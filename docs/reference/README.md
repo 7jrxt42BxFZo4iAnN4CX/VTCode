@@ -153,7 +153,7 @@ All ANSI-related code has comprehensive tests:
 
 -   **Parser tests**: `crates/codegen/vtcode-core/src/utils/ansi_parser.rs`
 -   **Style conversion tests**: `crates/codegen/vtcode-core/src/utils/anstyle_utils.rs`
--   **Integration tests**: `crates/codegen/vtcode-core/src/tools/registry/executors.rs`
+-   **Integration tests**: `crates/codegen/vtcode-core/src/tools/registry/executors/`
 
 Run tests:
 

@@ -12,12 +12,64 @@ mod write;
 
 use anyhow::{Context, Result};
 use std::path::Path;
-use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, BufReader};
 use vtcode_commons::async_utils::read_exact_uninit;
 
 pub use diff_preview::{build_diff_preview, diff_preview_error_skip, diff_preview_size_skip, diff_preview_suppressed};
 pub use tool::FileOpsTool;
 pub use vtcode_commons::fs::is_image_path;
+
+/// Hard cap on the byte size of a single logical line read by any file tool.
+///
+/// `read_until(b'\n')` grows the caller's buffer unboundedly when a file
+/// contains a huge line without a newline (e.g. minified bundles). A line
+/// longer than this cap is truncated at the cap for display purposes; the rest
+/// of the line is drained so the stream stays aligned at the next newline.
+pub(crate) const MAX_LINE_READ_BYTES: usize = 64 * 1024;
+
+/// Read the next line into `buffer`, bounded at `MAX_LINE_READ_BYTES`.
+///
+/// Returns `Ok(None)` at EOF, otherwise `Ok(Some(true))` when the line was
+/// truncated at the cap (the remainder of the physical line was drained), or
+/// `Ok(Some(false))` for a fully-read line. The trailing `\n`/`\r\n` is kept in
+/// `buffer` for callers that already strip it.
+pub(crate) async fn read_bounded_line<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    buffer: &mut Vec<u8>,
+) -> Result<Option<bool>> {
+    buffer.clear();
+    let mut limited = reader.take(MAX_LINE_READ_BYTES as u64 + 1);
+    let n = limited.read_until(b'\n', buffer).await.context("failed to read line")?;
+    if n == 0 {
+        return Ok(None);
+    }
+
+    let truncated = buffer.last() != Some(&b'\n') && buffer.len() > MAX_LINE_READ_BYTES;
+    if truncated {
+        // Drain the remainder of the oversized physical line so subsequent
+        // reads start at the next newline. Read in bounded chunks through a
+        // `Take` so the drain never allocates the full remainder AND never
+        // over-consumes past the newline (a plain `read` would swallow the
+        // next line that BufReader prefetched into the same chunk).
+        let mut drain_buf = Vec::with_capacity(4096);
+        loop {
+            drain_buf.clear();
+            let mut chunk = reader.take(4096);
+            let n = chunk
+                .read_until(b'\n', &mut drain_buf)
+                .await
+                .context("failed to drain oversized line")?;
+            if n == 0 {
+                break;
+            }
+            if drain_buf.last() == Some(&b'\n') {
+                break;
+            }
+        }
+        buffer.truncate(MAX_LINE_READ_BYTES);
+    }
+    Ok(Some(truncated))
+}
 
 /// Result of a byte-range read operation.
 pub(crate) struct ByteRangeReadResult {
@@ -100,7 +152,7 @@ pub(crate) async fn read_byte_range(
             .await
             .context("failed to seek for boundary check")?;
         let mut prev_byte = [0u8; 1];
-        tokio::io::AsyncReadExt::read_exact(&mut pre, &mut prev_byte)
+        AsyncReadExt::read_exact(&mut pre, &mut prev_byte)
             .await
             .context("failed to read boundary byte")?;
         prev_byte[0] == b'\n'
@@ -152,14 +204,13 @@ async fn count_lines_before(file_path: &Path, offset_bytes: u64) -> Result<usize
     let mut buffer = Vec::new();
 
     while bytes_read < offset_bytes {
-        buffer.clear();
-        let n = reader.read_until(b'\n', &mut buffer).await.context("failed to count lines")?;
+        let n = read_bounded_line(&mut reader, &mut buffer)
+            .await
+            .context("failed to count lines")?;
 
-        if n == 0 {
-            break;
-        }
+        let Some(_) = n else { break };
 
-        bytes_read += n as u64;
+        bytes_read += buffer.len() as u64;
         if bytes_read <= offset_bytes {
             line_count += 1;
         }

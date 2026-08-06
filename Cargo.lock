@@ -7627,6 +7627,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "libc",
  "lru",
+ "memchr",
  "nix 0.31.3",
  "parking_lot",
  "path-clean",
