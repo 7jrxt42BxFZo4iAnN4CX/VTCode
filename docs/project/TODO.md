@@ -1,10 +1,28 @@
-https://github.com/EmbarkStudios/crash-handling
+~~https://github.com/EmbarkStudios/crash-handling~~
+✅ Evaluated 2026-08-06: NOT adopted — existing panic handling (human_panic +
+better_panic + color-eyre) is sufficient for a CLI/TUI tool. The crash-handling
+crate's IPC-based minidump pipeline is designed for server architectures, not
+CLI tools. VT Code's unsafe surface is <10 blocks, all FFI, all miri-audited.
+See decisions.md 2026-08-06 for full rationale and revisit criteria.
 
-https://github.com/EmbarkStudios/cargo-about
+~~https://github.com/EmbarkStudios/cargo-about~~
+✅ Adopted 2026-08-06: Automated THIRD-PARTY-NOTICES generation. Added
+about.toml (accepted licenses), scripts/templates/third-party-notices.hbs
+(Handlebars template), scripts/generate-notices.sh (generation + --check for
+CI), and license-notices CI job in ci.yml.
 
 ---
 
-https://ohadravid.github.io/posts/2026-08-unsafe-water/
+~~https://ohadravid.github.io/posts/2026-08-unsafe-water/~~
+✅ Applied 2026-08-06: "Non-buoyant water" SAFETY comment audit — fixed broken
+SAFETY comment in pipe.rs (IO-critical spawn path), restructured native_plugin.rs
+module doc. See gotchas.md 2026-08-06.
+
+---
+
+integrate NVIDIA API
+
+https://build.nvidia.com/explore/discover
 
 --
 
