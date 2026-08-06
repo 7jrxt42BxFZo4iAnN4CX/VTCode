@@ -411,7 +411,12 @@ strip = true
 [profile.release]
 codegen-units = 1 # Allows compiler to perform better optimization.
 lto = true        # Enables Link-time Optimization for better performance and size reduction.
-opt-level = 3     # Optimize for performance on M4 (was "s" for size)
+# Optimize for binary size: cold launch is dominated by dyld loading the Mach-O.
+# Measured: opt-level=3 → 61 MB / __text 45.9 MB (~1.16 s cold start);
+#           opt-level="z" → 34 MB / __text 17.2 MB (~0.7 s cold start).
+# The agent loop is network-I/O-bound (LLM API calls), so the CPU throughput
+# tradeoff from size-optimized codegen is imperceptible in practice.
+opt-level = "z"
 strip = true      # Ensures debug symbols are removed.
 panic = "abort"   # Reduce size of panic paths.
 # Keep asserts active in shipped binaries: a violated invariant must crash loud,

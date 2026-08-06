@@ -146,6 +146,14 @@ configure_target_env() {
         fi
 
         TARGET_ENV_ASSIGNMENTS+=("MACOSX_DEPLOYMENT_TARGET=11.0")
+
+        # -Wl,-dead_strip removes unreachable functions that survive LTO,
+        # shrinking __TEXT and reducing cold-start page-faults.  Set via
+        # CARGO_TARGET_*_RUSTFLAGS so it is self-contained in this script
+        # and does not depend on a gitignored .cargo/config.toml.
+        local upper_target
+        upper_target=$(echo "$target" | tr 'a-z-' 'A-Z_')
+        TARGET_ENV_ASSIGNMENTS+=("CARGO_TARGET_${upper_target}_RUSTFLAGS=-C link-arg=-Wl,-dead_strip")
     elif [[ "$target" == *"-linux-"* ]]; then
         :
     fi
@@ -163,7 +171,9 @@ build_with_tool() {
         return 0
     fi
 
-    local cmd=("$BUILD_TOOL" build --release --target "$target")
+    # --locked ensures Cargo.lock matches Cargo.toml so the size-optimized
+    # release profile (opt-level="z") is actually used.
+    local cmd=("$BUILD_TOOL" build --locked --release --target "$target")
 
     if [[ ${#TARGET_ENV_ASSIGNMENTS[@]} -gt 0 ]]; then
         env CARGO_BUILD_RUSTC_WRAPPER= RUSTC_WRAPPER= "${TARGET_ENV_ASSIGNMENTS[@]}" "${cmd[@]}"
@@ -207,10 +217,10 @@ build_binaries() {
     if command -v zig &>/dev/null; then
         build_linux=true
         print_info "Phase 2: Building Linux x86_64 via zigbuild..."
-        ( env CARGO_BUILD_RUSTC_WRAPPER= RUSTC_WRAPPER= cargo zigbuild --release --target x86_64-unknown-linux-gnu || print_warning "Linux x86_64 build failed" )
+        ( env CARGO_BUILD_RUSTC_WRAPPER= RUSTC_WRAPPER= cargo zigbuild --locked --release --target x86_64-unknown-linux-gnu || print_warning "Linux x86_64 build failed" )
 
         print_info "Phase 2: Building Linux aarch64 via zigbuild..."
-        ( env CARGO_BUILD_RUSTC_WRAPPER= RUSTC_WRAPPER= cargo zigbuild --release --target aarch64-unknown-linux-gnu || print_warning "Linux aarch64 build failed" )
+        ( env CARGO_BUILD_RUSTC_WRAPPER= RUSTC_WRAPPER= cargo zigbuild --locked --release --target aarch64-unknown-linux-gnu || print_warning "Linux aarch64 build failed" )
 
         # Windows builds via zigbuild only if Rust targets are installed
         local win_targets=("x86_64-pc-windows-msvc" "aarch64-pc-windows-msvc")
@@ -220,7 +230,7 @@ build_binaries() {
             if echo "$installed_targets" | grep -q "$wt"; then
                 build_windows=true
                 print_info "Phase 3: Building $wt via zigbuild..."
-                ( env CARGO_BUILD_RUSTC_WRAPPER= RUSTC_WRAPPER= cargo zigbuild --release --target "$wt" || print_warning "Windows $wt build failed" )
+                ( env CARGO_BUILD_RUSTC_WRAPPER= RUSTC_WRAPPER= cargo zigbuild --locked --release --target "$wt" || print_warning "Windows $wt build failed" )
             else
                 print_info "Skipping Windows $wt (target not installed, will use CI)"
             fi

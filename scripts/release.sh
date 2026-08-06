@@ -1224,10 +1224,20 @@ main() {
 		# Build macOS binaries in parallel
 		print_info "Building macOS binaries in parallel..."
 
-		# Build both architectures in parallel on multi-core machines
-		cargo build --profile release --target x86_64-apple-darwin --jobs 4 &>/dev/null &
+		# Binary size directly impacts cold-start time (dyld page-faults on the
+		# Mach-O).  [profile.release] uses opt-level="z" + LTO + codegen-units=1
+		# to minimize size.  -Wl,-dead_strip removes unreachable functions that
+		# survive LTO (trait objects, callback registrations), further shrinking
+		# __TEXT.  The flag is set via CARGO_TARGET_*_RUSTFLAGS so it is
+		# self-contained in this script and does not depend on a gitignored
+		# .cargo/config.toml being present on the build machine.
+		# --locked ensures the Cargo.lock matches Cargo.toml so the size-optimized
+		# release profile is actually used.
+		env CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-Wl,-dead_strip" \
+			cargo build --locked --profile release --target x86_64-apple-darwin --jobs 4 &>/dev/null &
 		local pid_x86=$!
-		cargo build --profile release --target aarch64-apple-darwin --jobs 4 &>/dev/null &
+		env CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-Wl,-dead_strip" \
+			cargo build --locked --profile release --target aarch64-apple-darwin --jobs 4 &>/dev/null &
 		local pid_arm=$!
 
 		# Wait for x86_64
@@ -1237,7 +1247,10 @@ main() {
 				"vtcode" \
 				"$binaries_dir/vtcode-$released_version-x86_64-apple-darwin.tar.gz"
 			shasum -a 256 "$binaries_dir/vtcode-$released_version-x86_64-apple-darwin.tar.gz" >"$binaries_dir/vtcode-$released_version-x86_64-apple-darwin.sha256"
-			print_success "Built macOS x86_64"
+			local x86_bin="target/x86_64-apple-darwin/release/vtcode"
+			local x86_size_h
+			x86_size_h=$(du -h "$x86_bin" 2>/dev/null | awk '{print $1}')
+			print_success "Built macOS x86_64 (binary: ${x86_size_h:-unknown})"
 		else
 			print_warning "Failed to build macOS x86_64"
 		fi
@@ -1249,7 +1262,29 @@ main() {
 				"vtcode" \
 				"$binaries_dir/vtcode-$released_version-aarch64-apple-darwin.tar.gz"
 			shasum -a 256 "$binaries_dir/vtcode-$released_version-aarch64-apple-darwin.tar.gz" >"$binaries_dir/vtcode-$released_version-aarch64-apple-darwin.sha256"
-			print_success "Built macOS aarch64 (Apple Silicon)"
+			local arm_bin="target/aarch64-apple-darwin/release/vtcode"
+			local arm_size_h
+			arm_size_h=$(du -h "$arm_bin" 2>/dev/null | awk '{print $1}')
+			print_success "Built macOS aarch64 (Apple Silicon) (binary: ${arm_size_h:-unknown})"
+
+			# Cold-start spot check: verify sub-1s launch on the primary platform.
+			# A fresh /tmp copy forces a cold dyld load (new inode → page faults).
+			# This catches regressions in binary size or startup-path work that
+			# would otherwise ship unnoticed.
+			local cold_bin="/tmp/vtcode-cold-check-$$"
+			cp "$arm_bin" "$cold_bin" 2>/dev/null
+			if [[ -x "$cold_bin" ]]; then
+				local cold_ms
+				cold_ms=$(/usr/bin/time -p "$cold_bin" --version 2>&1 | awk '/^real/{print int($2 * 1000)}')
+				rm -f "$cold_bin"
+				if [[ -n "$cold_ms" ]]; then
+					if [[ "$cold_ms" -lt 1000 ]]; then
+						print_success "Cold-start check: ${cold_ms}ms (sub-1s ✓)"
+					else
+						print_warning "Cold-start check: ${cold_ms}ms (above 1s — investigate binary size)"
+					fi
+				fi
+			fi
 		else
 			print_warning "Failed to build macOS aarch64"
 		fi

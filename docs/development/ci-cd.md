@@ -69,6 +69,23 @@ cannot extract. The release fails if any required target archive (including
 Windows by default) is missing. Set `RELEASE_REQUIRE_WINDOWS=false` only for an
 emergency macOS/Linux rescue when Windows CI is flaky.
 
+**Binary size & cold-start optimization:**
+
+All release profiles inherit `[profile.release]` which uses `opt-level = "z"` (size
+optimization) + full LTO + `codegen-units = 1`. Binary size directly impacts cold-start
+time — dyld page-faults loading the Mach-O dominate the first-launch latency.
+
+| Build path | Profile | Extra size flags |
+| --- | --- | --- |
+| macOS local (`release.sh`) | `release` | `-Wl,-dead_strip` via `CARGO_TARGET_*_RUSTFLAGS` |
+| Linux CI | `release-fast` (thin LTO, 4 codegen units) | `-Wl,--gc-sections` via `RUSTFLAGS` |
+| Windows CI | `release-fast-windows` (no LTO, 16 codegen units) | MSVC `/OPT:REF` (default) |
+
+`release.sh` also runs a cold-start spot check (fresh `/tmp` copy → `--version` timing)
+after the macOS aarch64 build to catch sub-1s regressions before shipping. All build
+commands use `--locked` to ensure the Cargo.lock matches Cargo.toml so the size-optimized
+profiles are actually applied.
+
 ### 4. Coverage (`coverage.yml`)
 
 **Triggers:**
