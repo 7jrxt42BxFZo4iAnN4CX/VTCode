@@ -4,7 +4,7 @@
 ## Module map
 
 - `core/agent/`: runtime, event recording, runner, progress, harness artifacts; `request_envelope` freezes each segment's prompt and ordered catalog.
-- `tools/`: handlers, registry, policy, execution; `read_file/batch.rs` owns batch admission, bounded fan-out, and ordered assembly while `read_file.rs` owns single-file semantics.
+- `tools/`: handlers, registry, policy, execution; `read_file/batch.rs` owns batch admission, bounded fan-out, and ordered assembly while `read_file.rs` owns single-file semantics. `registry/executors/` is a directory of focused modules (`exec_command.rs`, `exec_output.rs`, `exec_sessions.rs`, `exec_support.rs`) — the monolithic `executors.rs` is gone; `grep_file.rs` (orchestration) delegates ripgrep execution to sibling `grep_backend.rs`.
 - `llm/`: re-export facade; providers live in `vtcode-llm`. `exec/events.rs` re-exports canonical `vtcode-exec-events::ThreadEvent`; `prompts/` owns cached static profiles, compiled runtime guidance, and bounded resource caches.
 
 ## Rules

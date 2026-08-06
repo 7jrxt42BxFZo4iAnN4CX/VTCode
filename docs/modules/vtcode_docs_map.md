@@ -688,6 +688,11 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Overview, Binary Size Summary, Release-fast Binary Analysis (32 MiB), Debug Binary Analysis (84 MiB), Recommendations
   - **User Questions**: "What can you tell me about Bloaty Analysis Report for vtcode?", "How does Overview work?", "How does Binary Size Summary work?"
 
+- **File**: `docs/audits/code-review-2026-08-07.md`
+  - **Content**: Code Review + Fixes — 2026-08-07
+  - **Topics**: Completed fixes, Decomposition: `core/loop_detector.rs` → `core/loop_detector/mod.rs` + `normalization.rs`, Intentionally not changed, Verification summary, Status
+  - **User Questions**: "What can you tell me about Code Review + Fixes — 2026-08-07?", "How does Completed fixes work?", "How does Decomposition: `core/loop_detector.rs` → `core/loop_detector/mod.rs` + `normalization.rs` work?"
+
 - **File**: `docs/project/code-review-action-plan.md`
   - **Content**: Code Review Action Plan
   - **Topics**: MEDIUM SEVERITY, LOW SEVERITY, STYLE / QUALITY (bulk fixes), PRIORITY ORDER
