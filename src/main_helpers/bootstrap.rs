@@ -59,7 +59,16 @@ pub(crate) fn build_augmented_cli_command() -> clap::Command {
         cmd = cmd.color(choice);
     }
     cmd = cmd.styles(clap_help_styles());
-    cmd = cmd.before_help(build_quick_start_help());
+    // Only build the config-aware quick-start help text when --help/-h is
+    // actually requested.  The before_help string is only displayed on
+    // --help, so for all other invocations we use a static placeholder and
+    // skip the two TOML file reads + parses that build_quick_start_help()
+    // performs to decide which help variant to show.
+    if args_request_help() {
+        cmd = cmd.before_help(build_quick_start_help());
+    } else {
+        cmd = cmd.before_help(QUICK_START_HELP_CONFIGURED);
+    }
 
     let version_info = vtcode_core::cli::args::long_version();
     let version_leak: &'static str = Box::leak(version_info.into_boxed_str());
@@ -107,10 +116,35 @@ fn requested_help_color_choice() -> Option<CliColorChoice> {
 
 fn build_quick_start_help() -> String {
     if has_provider_or_model_configuration() {
-        "Quick start:\n  1. Start interactive chat: vtcode chat\n  2. Run one prompt directly: vtcode --print \"summarize this repository\"\n\nUse `vtcode <command> --help` for command-specific details.".to_string()
+        QUICK_START_HELP_CONFIGURED.to_string()
     } else {
-        "Quick start:\n  1. Export your provider API key (examples: OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY)\n  2. Start chat with a provider/model: vtcode chat --provider openai --model gpt-5\n  3. Run one prompt directly: vtcode --provider anthropic --model claude-sonnet-4-6 --print \"summarize this repository\"\n\nUse `vtcode <command> --help` for command-specific details.".to_string()
+        QUICK_START_HELP_UNCONFIGURED.to_string()
     }
+}
+
+/// Quick-start help shown when the user already has a provider/model configured.
+/// Used as the default `before_help` for non-`--help` invocations (where it is
+/// never displayed) and when config reads confirm a provider/model is set.
+const QUICK_START_HELP_CONFIGURED: &str = "\
+Quick start:\n\
+  1. Start interactive chat: vtcode chat\n\
+  2. Run one prompt directly: vtcode --print \"summarize this repository\"\n\n\
+Use `vtcode <command> --help` for command-specific details.";
+
+/// Quick-start help shown when no provider/model is configured yet.
+const QUICK_START_HELP_UNCONFIGURED: &str = "\
+Quick start:\n\
+  1. Export your provider API key (examples: OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY)\n\
+  2. Start chat with a provider/model: vtcode chat --provider openai --model gpt-5\n\
+  3. Run one prompt directly: vtcode --provider anthropic --model claude-sonnet-4-6 --print \"summarize this repository\"\n\n\
+Use `vtcode <command> --help` for command-specific details.";
+
+/// Check whether the user passed `--help`, `-h`, or the `help` subcommand.
+/// Scans raw argv so we can decide before clap parses.
+fn args_request_help() -> bool {
+    std::env::args()
+        .skip(1)
+        .any(|arg| arg == "--help" || arg == "-h" || arg == "help")
 }
 
 fn has_provider_or_model_configuration() -> bool {

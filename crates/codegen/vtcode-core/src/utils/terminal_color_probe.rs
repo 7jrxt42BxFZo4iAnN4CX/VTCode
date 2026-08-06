@@ -34,7 +34,7 @@ use vtcode_commons::color256_theme::set_harmonious_runtime_hint;
 #[cfg(unix)]
 const DA1_RESPONSE_PREFIX: [u8; 3] = [ESC_BYTE, b'[', b'?'];
 #[cfg(unix)]
-const RESPONSE_SETTLE_WINDOW: Duration = Duration::from_millis(40);
+const RESPONSE_SETTLE_WINDOW: Duration = Duration::from_millis(15);
 
 /// Run OSC probe once at startup and cache results in shared runtime hints.
 pub fn probe_and_cache_terminal_palette_harmony() {
@@ -44,7 +44,7 @@ pub fn probe_and_cache_terminal_palette_harmony() {
             return;
         }
 
-        let timeout = Duration::from_millis(500);
+        let timeout = Duration::from_millis(200);
         match probe_terminal_colors(timeout) {
             Ok(result) => {
                 let scheme = if result.is_term_light_theme {

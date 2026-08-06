@@ -11,7 +11,6 @@ use vtcode_core::core::threads::{
 use vtcode_core::llm::provider::Message as ProviderMessage;
 use vtcode_core::utils::session_archive::SessionArchiveMetadata;
 use vtcode_core::utils::session_archive::{SessionContinuationMetadata, SessionListing, SessionSnapshot};
-use vtcode_core::utils::terminal_color_probe::probe_and_cache_terminal_palette_harmony;
 
 #[derive(Clone, Debug)]
 pub(crate) struct SessionContinuation {
@@ -132,9 +131,12 @@ pub(crate) async fn run_single_agent_loop(
     planning_entry_source: PlanningEntrySource,
     resume: Option<SessionContinuation>,
 ) -> Result<()> {
-    // Probe terminal palette only for real interactive sessions so one-shot CLI
-    // commands never emit OSC queries back into the user's shell.
-    probe_and_cache_terminal_palette_harmony();
+    // The terminal palette probe was started during bootstrap to overlap
+    // with startup-context resolution.  Await it here so the probe's
+    // RawModeGuard restore completes before crossterm sets up the terminal
+    // (avoids a termios race).  In the common case the probe is already
+    // done and this returns immediately.
+    crate::agent::probe::await_terminal_palette_probe().await;
 
     let mut runtime_cfg = config.clone();
     if let Some(resume_session) = resume.as_ref() {

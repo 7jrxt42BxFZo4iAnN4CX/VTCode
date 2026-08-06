@@ -551,6 +551,29 @@ fn command_launches_tui(command: Option<&Commands>) -> bool {
     )
 }
 
+/// Whether the command will reach the interactive agent run loop
+/// ([`run_single_agent_loop`]) and therefore needs the terminal palette
+/// probe pre-started for overlap.
+///
+/// This is narrower than [`command_launches_tui`]: one-shot commands like
+/// `ask`, `exec`, `review`, `schema`, and `--print` mode never enter the
+/// agent loop, so starting the probe for them would only add ~200 ms to
+/// their exit (the runtime drop waits for the blocking task to finish).
+///
+/// `None` (no subcommand) is included because the default action resolves
+/// to `Chat`, `Resume`, or `FullAuto` — all of which either enter the agent
+/// loop or run long enough that the probe completes in the background
+/// before exit.
+///
+/// [`run_single_agent_loop`]: crate::agent::agents::run_single_agent_loop
+pub(crate) fn command_runs_interactive_session(command: Option<&Commands>, has_print: bool) -> bool {
+    if has_print {
+        // `--print` mode resolves to a one-shot `Ask`, not the agent loop.
+        return false;
+    }
+    matches!(command, None | Some(Commands::Chat | Commands::ChatVerbose | Commands::Continue))
+}
+
 fn command_skips_provider_auth(command: Option<&Commands>) -> bool {
     matches!(
         command,
@@ -1130,5 +1153,39 @@ mod validation_tests {
         assert!(message.contains("`$PATH`"));
         assert!(message.contains("[agent.codex_app_server].command"));
         assert!(message.contains("No authenticated fallback provider is available"));
+    }
+
+    #[test]
+    fn interactive_session_predicate_includes_chat_and_continue() {
+        assert!(command_runs_interactive_session(None, false));
+        let chat = Cli::parse_from(["vtcode", "chat"]).command.unwrap();
+        let chat_verbose = Cli::parse_from(["vtcode", "chat-verbose"]).command.unwrap();
+        let continue_cmd = Cli::parse_from(["vtcode", "continue"]).command.unwrap();
+        assert!(command_runs_interactive_session(Some(&chat), false));
+        assert!(command_runs_interactive_session(Some(&chat_verbose), false));
+        assert!(command_runs_interactive_session(Some(&continue_cmd), false));
+    }
+
+    #[test]
+    fn interactive_session_predicate_excludes_one_shot_commands() {
+        // One-shot commands that never enter the agent run loop — starting
+        // the probe for them would add ~200 ms at exit (runtime drop waits
+        // for the unused blocking task).
+        let ask = Cli::parse_from(["vtcode", "ask", "hello"]).command.unwrap();
+        let exec = Cli::parse_from(["vtcode", "exec", "hello"]).command.unwrap();
+        let schema = Cli::parse_from(["vtcode", "schema", "tools"]).command.unwrap();
+        let review = Cli::parse_from(["vtcode", "review"]).command.unwrap();
+        for cmd in [&ask, &exec, &schema, &review] {
+            assert!(
+                !command_runs_interactive_session(Some(cmd), false),
+                "one-shot command should not start the probe: {cmd:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn print_mode_excluded_from_interactive_session_predicate() {
+        // `--print` with no subcommand resolves to a one-shot Ask.
+        assert!(!command_runs_interactive_session(None, true));
     }
 }

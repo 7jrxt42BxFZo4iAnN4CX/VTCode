@@ -209,6 +209,21 @@ fn bootstrap_main() -> Result<BootstrapOutcome> {
     #[cfg(feature = "profiling")]
     hotpath::tokio_runtime!(runtime.handle());
 
+    // Start the terminal palette probe early for interactive sessions.
+    // It runs on a blocking thread and overlaps with startup-context
+    // resolution (config loading, auth probing, theme determination), so
+    // its 15–200 ms cost is hidden from the user-visible critical path.
+    // The agent loop awaits the result before crossterm sets up the
+    // terminal to avoid a termios race.
+    //
+    // Only pre-start for commands that actually enter the agent run loop;
+    // one-shot commands (`ask`, `exec`, `schema`, `--print`, …) would
+    // otherwise pay ~200 ms at exit while the runtime drop waits for the
+    // unused blocking task to finish.
+    if startup::command_runs_interactive_session(args.command.as_ref(), args.print.is_some()) {
+        agent::probe::start_terminal_palette_probe(runtime.handle());
+    }
+
     let startup = runtime.block_on(resolve_startup_context(&args))?;
 
     Ok(BootstrapOutcome::Ready(Box::new(BootstrapReady {
