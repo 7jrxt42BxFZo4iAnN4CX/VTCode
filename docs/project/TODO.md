@@ -24,6 +24,10 @@ integrate NVIDIA API
 
 https://build.nvidia.com/explore/discover
 
+---
+
+https://www.greyblake.com/blog/branchless-rust/
+
 --
 
 lession learn, check feedback https://news.ycombinator.com/item?id=49176038
