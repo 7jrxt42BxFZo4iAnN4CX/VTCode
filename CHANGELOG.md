@@ -2,6 +2,23 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.141.13 - 2026-08-06
+
+### Highlights
+#### Features
+
+- Add validator-owned repair feedback with canonical step format (d76d213c) (@vinhnx)
+- Add lossless output stream to vtcode-bash-runner pipes (aac68a51) 
+### Other Changes
+#### CI
+
+- Verify THIRD-PARTY-NOTICES are up to date (f1646862) 
+#### Other
+
+- Update wiki (c7e26e8e) (@vinhnx)
+- Update TODO (2ae1252b) 
+- Update TODO (d70441be) 
+- Update TODO (a6b2e8cd) 
 ## 0.141.12 - 2026-08-05
 
 ### Highlights
