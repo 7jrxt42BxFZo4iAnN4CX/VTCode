@@ -2,6 +2,24 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.141.14 - 2026-08-07
+
+### Highlights
+#### Bug Fixes
+
+- Use memchr for line reading and handle EOF/truncation (ba5c2a14) 
+#### Features
+
+- Decompose loop_detector.rs into facade + normalization submodule (984b9352) 
+- Add vtcode-agent-plugins crate for agent plugin manifest handling (82d02f98) 
+### Other Changes
+#### Performance
+
+- Overlap terminal palette probe and reduce startup latency (cfb968fa) 
+- Optimize release binary size for faster cold start (8118d988) 
+#### Refactors
+
+- Extract memory reader functions into dedicated module (d771bfd7) 
 ## 0.141.13 - 2026-08-06
 
 ### Highlights
