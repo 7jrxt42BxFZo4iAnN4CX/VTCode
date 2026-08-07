@@ -572,4 +572,61 @@ mod tests {
         manager.set_approval_policy(AskForApproval::Never);
         assert_eq!(manager.approval_policy(), AskForApproval::Never);
     }
+
+    #[test]
+    fn plugin_providers_surface_through_manager_config() {
+        use std::fs;
+        use tempfile::tempdir;
+        use vtcode_core::mcp::plugin_providers::discover_plugin_mcp_providers;
+
+        let workspace = tempdir().expect("workspace");
+        fs::create_dir(workspace.path().join(".git")).expect("create .git");
+
+        let plugin_root = workspace.path().join(".agents/plugins/test-plugin");
+        fs::create_dir_all(plugin_root.join("bin")).expect("create bin dir");
+
+        fs::write(
+            plugin_root.join("plugin.json"),
+            r#"{
+                "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+                "name": "test-plugin"
+            }"#,
+        )
+        .expect("write plugin.json");
+
+        fs::write(
+            plugin_root.join("mcp.json"),
+            r#"{
+                "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+                "mcpServers": {
+                    "plugin-server": {
+                        "type": "stdio",
+                        "command": "./bin/server",
+                        "args": ["--port", "8080"]
+                    }
+                }
+            }"#,
+        )
+        .expect("write mcp.json");
+
+        fs::write(plugin_root.join("bin/server"), "#!/bin/sh\necho ok").expect("write server");
+
+        let providers = discover_plugin_mcp_providers(workspace.path());
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].name, "test-plugin.plugin-server");
+
+        let mut config = McpClientConfig { enabled: true, ..McpClientConfig::default() };
+        config.providers.extend(providers);
+
+        let event_callback: Arc<dyn Fn(McpEvent) + Send + Sync> = Arc::new(|_event| {});
+        let manager = AsyncMcpManager::new(config, true, AskForApproval::OnRequest, event_callback);
+        let stored_config = manager.config();
+
+        let names: Vec<_> = stored_config.providers.iter().map(|p| p.name.as_str()).collect();
+        assert!(
+            names.contains(&"test-plugin.plugin-server"),
+            "plugin provider should be in manager config, got: {:?}",
+            names
+        );
+    }
 }

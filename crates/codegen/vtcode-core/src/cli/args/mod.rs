@@ -14,6 +14,7 @@ mod config;
 mod dependencies;
 mod exec;
 mod models;
+mod plugins;
 mod pods;
 mod review;
 mod schedule;
@@ -31,6 +32,7 @@ pub use config::{ConfigFile, ContextConfig, LoggingConfig, PerformanceConfig, Se
 pub use dependencies::{DependenciesSubcommand, ManagedDependency};
 pub use exec::{ExecEvalArgs, ExecResumeArgs, ExecSubcommand};
 pub use models::ModelCommands;
+pub use plugins::PluginsSubcommand;
 pub use pods::PodsCommands;
 pub use review::ReviewArgs;
 pub use schedule::{ScheduleCreateArgs, ScheduleSubcommand};
@@ -707,6 +709,20 @@ pub enum Commands {
     ///   vtcode skills validate ./path/to/skill
     #[command(subcommand)]
     Skills(SkillsSubcommand),
+
+    /// Manage Agent Plugins
+    ///
+    /// Agent Plugins are portable packages that bundle Agent Skills and MCP servers
+    /// under a root plugin.json manifest, following the Agent Plugins 1.0.0 spec.
+    ///
+    /// Examples:
+    ///   vtcode plugins list
+    ///   vtcode plugins info my-plugin
+    ///   vtcode plugins validate ./path/to/plugin
+    ///   vtcode plugins add https://github.com/example/plugin
+    ///   vtcode plugins remove my-plugin
+    #[command(subcommand)]
+    Plugins(PluginsSubcommand),
 
     /// List available skills (alias for `vtcode skills list`)
     #[command(name = "list-skills", hide = true)]

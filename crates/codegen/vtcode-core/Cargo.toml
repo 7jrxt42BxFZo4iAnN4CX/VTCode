@@ -127,6 +127,7 @@ vtcode-a2a = { workspace = true }
 vtcode-mcp = { workspace = true }
 vtcode-llm = { workspace = true, features = ["copilot"] }
 vtcode-skills = { workspace = true }
+vtcode-agent-plugins = { workspace = true }
 
 # Schema generation
 schemars = { workspace = true, optional = true }

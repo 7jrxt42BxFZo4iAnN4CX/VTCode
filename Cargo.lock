@@ -7527,6 +7527,7 @@ dependencies = [
  "unicode-width 0.2.2",
  "url",
  "vtcode-acp",
+ "vtcode-agent-plugins",
  "vtcode-auth",
  "vtcode-commons",
  "vtcode-config",
@@ -7585,6 +7586,20 @@ dependencies = [
  "vtcode-commons",
  "vtcode-config",
  "vtcode-core",
+]
+
+[[package]]
+name = "vtcode-agent-plugins"
+version = "0.141.13"
+dependencies = [
+ "dirs",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "thiserror 2.0.19",
+ "tracing",
+ "vtcode-commons",
+ "vtcode-skills",
 ]
 
 [[package]]
@@ -7799,6 +7814,7 @@ dependencies = [
  "url",
  "uuid",
  "vtcode-a2a",
+ "vtcode-agent-plugins",
  "vtcode-auth",
  "vtcode-bash-runner",
  "vtcode-commons",

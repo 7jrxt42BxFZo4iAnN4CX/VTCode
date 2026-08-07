@@ -283,6 +283,32 @@ vtcode check ast-grep
 - `vtcode check ast-grep` runs `ast-grep test --config sgconfig.yml` and then `ast-grep scan --config sgconfig.yml`
 - The command expects `sgconfig.yml` in the workspace root and points you to `vtcode init` when the scaffold has not been materialized yet
 
+## plugins
+
+Manage [Agent Plugins](agent-plugins.md) — portable packages that bundle Agent Skills and MCP servers under a `plugin.json` manifest.
+
+```bash
+# Install a plugin from a git URL or local directory into ~/.agents/plugins
+vtcode plugins add https://github.com/example/my-plugin
+
+# List installed plugins with skill and MCP server counts
+vtcode plugins list
+
+# Show plugin details
+vtcode plugins info my-plugin
+
+# Validate a plugin directory without installing it
+vtcode plugins validate ./my-plugin
+
+# Uninstall a plugin
+vtcode plugins remove my-plugin
+```
+
+### Notes
+
+- `plugins add` clones git URLs with `git clone --depth=1` and requires local directories to contain a valid `plugin.json`
+- Plugin MCP servers are exposed as `<plugin>.<server>` providers and connect at session startup
+
 ## pods
 
 Manage remote GPU-backed model pods over SSH. See the full feature guide in

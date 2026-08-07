@@ -71,7 +71,7 @@ impl PromptTemplates {
 
     /// Get skills available prompt (inspired by OpenAI Codex)
     pub fn skills_available_prompt() -> &'static str {
-        "## Skills\nSpecialized capabilities from .agents/skills/. Use list_skills to discover skills by name and description, load_skill to activate, and load_skill_resource for deeper assets. For deterministic workflows, explicitly say `Use the <skill> skill`."
+        "## Skills\nSpecialized capabilities from .agents/skills/ and Agent Plugins in .agents/plugins/. Use list_skills to discover skills by name and description, load_skill to activate, and load_skill_resource for deeper assets. For deterministic workflows, explicitly say `Use the <skill> skill`."
     }
 }
 

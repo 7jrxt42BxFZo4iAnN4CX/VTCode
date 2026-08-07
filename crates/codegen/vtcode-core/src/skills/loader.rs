@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 use std::time::{Duration, SystemTime};
 use tracing::{error, warn};
+use vtcode_agent_plugins::LoadedPlugin;
 
 // Config for loader
 #[derive(Debug, Clone)]
@@ -430,8 +431,16 @@ fn discover_skills_under_root(root: &SkillRoot, outcome: &mut SkillLoadOutcome) 
                     && let Ok(Some(plugin_meta)) = try_load_plugin_from_dir(&path, root.scope)
                 {
                     outcome.skills.push(plugin_meta);
+                    continue;
                 }
-                continue;
+
+                // If this is a plugin root, try loading as a portable Agent Plugin.
+                // Only skip BFS traversal if we loaded a valid plugin; otherwise
+                // fall through so the generic walk can still discover traditional
+                // skills under this directory.
+                if try_ingest_plugin_skills(&path, root, outcome) {
+                    continue;
+                }
             }
 
             // Check for traditional skill
@@ -508,7 +517,14 @@ fn discover_metadata_under_root(root: &SkillRoot, outcome: &mut SkillLoadOutcome
                 {
                     outcome.skills.push(tool_meta);
                 }
-                continue;
+
+                // Portable Agent Plugin discovery (immediate children of plugin root only).
+                // Only skip BFS traversal if we loaded a valid plugin; otherwise
+                // fall through so the generic walk can still discover traditional
+                // skills under this directory.
+                if try_ingest_plugin_skills(&path, root, outcome) {
+                    continue;
+                }
             }
 
             if file_name == "SKILL.md" {
@@ -561,6 +577,28 @@ fn try_load_tool_from_dir(path: &Path, scope: SkillScope) -> Result<Option<Skill
     };
 
     tool_config_to_metadata(&tool_bridge.config, scope).map(Some)
+}
+
+/// Try to load a portable Agent Plugin from `path`. Returns `true` if a valid
+/// plugin was loaded and its skills were ingested into `outcome`.
+fn try_ingest_plugin_skills(path: &Path, root: &SkillRoot, outcome: &mut SkillLoadOutcome) -> bool {
+    if !root.is_plugin_root {
+        return false;
+    }
+    let Ok(loaded) = LoadedPlugin::load_from_dir(path) else {
+        return false;
+    };
+    for skill in &loaded.skills {
+        outcome.skills.push(SkillMetadata {
+            name: skill.name.clone(),
+            description: skill.manifest.description.clone(),
+            short_description: None,
+            path: skill.skill_md_path.clone(),
+            scope: root.scope,
+            manifest: Some(Box::new(skill.manifest.clone())),
+        });
+    }
+    true
 }
 
 fn tool_config_to_metadata(config: &CliToolConfig, scope: SkillScope) -> Result<SkillMetadata> {
@@ -1367,5 +1405,138 @@ mod tests {
             outcome.skills.iter().all(|skill| skill.name != "path-disabled"),
             "expected path-disabled to remain filtered by legacy path config"
         );
+    }
+
+    #[test]
+    fn discovers_agent_plugin_skills_from_plugin_root() {
+        let workspace = tempdir().expect("workspace");
+        fs::create_dir(workspace.path().join(".git")).expect("create .git");
+        let home = tempdir().expect("home");
+        let codex_home = tempdir().expect("codex home");
+
+        let plugin_root = workspace.path().join(".agents/plugins/my-plugin");
+        fs::create_dir_all(plugin_root.join("skills/migrate-agent-plugin/references")).expect("create skill dirs");
+
+        fs::write(
+            plugin_root.join("plugin.json"),
+            r#"{
+                "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+                "name": "my-plugin",
+                "version": "1.0.0",
+                "description": "Test plugin"
+            }"#,
+        )
+        .expect("write plugin.json");
+
+        fs::write(
+            plugin_root.join("skills/migrate-agent-plugin/SKILL.md"),
+            r#"---
+name: migrate-agent-plugin
+description: Migrate an existing agent plugin to Agent Plugins v1.
+license: MIT
+---
+
+# Migrate an Agent Plugin
+
+Steps here.
+"#,
+        )
+        .expect("write skill");
+
+        let outcome =
+            load_skills_with_home_dir(&skill_loader_config_for(workspace.path(), codex_home.path()), Some(home.path()));
+
+        assert!(
+            outcome.skills.iter().any(|s| s.name == "migrate-agent-plugin"),
+            "expected migrate-agent-plugin skill to be discovered from agent plugin, got: {:?}",
+            outcome.skills.iter().map(|s| &s.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn does_not_descent_into_agent_plugin_subdirs() {
+        let workspace = tempdir().expect("workspace");
+        fs::create_dir(workspace.path().join(".git")).expect("create .git");
+        let home = tempdir().expect("home");
+        let codex_home = tempdir().expect("codex home");
+
+        let plugin_root = workspace.path().join(".agents/plugins/my-plugin");
+        fs::create_dir_all(plugin_root.join("skills/nested/deep")).expect("create nested dirs");
+
+        fs::write(
+            plugin_root.join("plugin.json"),
+            r#"{
+                "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+                "name": "my-plugin"
+            }"#,
+        )
+        .expect("write plugin.json");
+
+        fs::write(
+            plugin_root.join("skills/nested/deep/SKILL.md"),
+            r#"---
+name: deep-nested
+description: Should not be discovered because it is not an immediate child of skills/.
+---
+
+# Deep Nested
+"#,
+        )
+        .expect("write deeply nested skill");
+
+        let outcome =
+            load_skills_with_home_dir(&skill_loader_config_for(workspace.path(), codex_home.path()), Some(home.path()));
+
+        assert!(
+            outcome.skills.iter().all(|s| s.name != "deep-nested"),
+            "expected deeply nested skill outside skills/* to be ignored, got: {:?}",
+            outcome.skills.iter().map(|s| &s.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn discovers_plugin_mcp_providers() {
+        let workspace = tempdir().expect("workspace");
+        fs::create_dir(workspace.path().join(".git")).expect("create .git");
+
+        let plugin_root = workspace.path().join(".agents/plugins/mcp-plugin");
+        fs::create_dir_all(plugin_root.join("bin")).expect("create bin dir");
+
+        fs::write(
+            plugin_root.join("plugin.json"),
+            r#"{
+                "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+                "name": "mcp-plugin"
+            }"#,
+        )
+        .expect("write plugin.json");
+
+        fs::write(
+            plugin_root.join("mcp.json"),
+            r#"{
+                "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+                "mcpServers": {
+                    "local": {
+                        "type": "stdio",
+                        "command": "./bin/server",
+                        "args": ["--data", "${PLUGIN_DATA}/db"]
+                    },
+                    "remote": {
+                        "type": "streamable-http",
+                        "url": "https://example.com/mcp"
+                    }
+                }
+            }"#,
+        )
+        .expect("write mcp.json");
+
+        fs::write(plugin_root.join("bin/server"), "#!/bin/sh\necho hello").expect("write server script");
+
+        let providers = crate::mcp::plugin_providers::discover_plugin_mcp_providers(workspace.path());
+
+        let names: Vec<_> = providers.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"mcp-plugin.local"), "expected mcp-plugin.local, got: {:?}", names);
+        assert!(names.contains(&"mcp-plugin.remote"), "expected mcp-plugin.remote, got: {:?}", names);
+        assert_eq!(providers.len(), 2);
     }
 }

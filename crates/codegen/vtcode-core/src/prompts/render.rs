@@ -23,7 +23,10 @@ pub fn render_environment_addenda(
         }
 
         if cfg.mcp.enabled {
-            lines.push("- Sources: prefer MCP before external fetches when available.".to_string());
+            lines.push(
+                "- Sources: prefer MCP (including Agent Plugin servers) before external fetches when available."
+                    .to_string(),
+            );
         }
 
         // The system-prompt cache freezes this value at segment/session start.

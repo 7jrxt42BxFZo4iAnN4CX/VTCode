@@ -33,6 +33,7 @@ pub mod bench_allocator;
 pub mod benchmark;
 pub mod dependencies;
 pub mod exec;
+pub mod plugins;
 pub mod review;
 pub mod schema;
 pub mod secret;

@@ -4,6 +4,7 @@
 //! The `cli` module remains local as it depends on `crate::cli::input_hardening`.
 
 pub mod cli;
+pub mod plugin_providers;
 
 // Re-export everything from vtcode-mcp
 pub use vtcode_mcp::*;

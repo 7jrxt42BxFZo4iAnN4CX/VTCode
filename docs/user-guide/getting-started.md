@@ -485,6 +485,7 @@ Now that you have VT Code running, explore:
 1. **[Security Guide](../guides/security.md)** - Understand security features
 1. **[Lifecycle Hooks Guide](../guides/lifecycle-hooks.md)** - Execute shell commands in response to agent events for context enrichment, policy enforcement, and automation
 1. **[Configuration Guide](../config/CONFIGURATION_PRECEDENCE.md)** - Advanced configuration options and precedence rules
+1. **[Agent Plugins](agent-plugins.md)** - Install portable plugins that bundle Agent Skills and MCP servers
 1. **[Architecture Guide](../ARCHITECTURE.md)** - System design and components
 1. **[Provider Guides](../providers/PROVIDER_GUIDES.md)** - LLM provider integration
    - [OpenRouter Integration](../providers/openrouter.md)

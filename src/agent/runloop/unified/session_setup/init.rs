@@ -15,7 +15,7 @@ use crate::agent::runloop::unified::tool_catalog::ToolCatalogState;
 use crate::agent::runloop::welcome::prepare_session_bootstrap;
 use anyhow::{Context, Result};
 use hashbrown::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -29,6 +29,7 @@ use vtcode_core::core::agent::state::recover_history_from_crash;
 use vtcode_core::core::decision_tracker::DecisionTracker;
 use vtcode_core::llm::factory::{ProviderConfig, create_provider_with_config, infer_provider};
 use vtcode_core::llm::provider as uni;
+use vtcode_core::mcp::plugin_providers::discover_plugin_mcp_providers;
 
 use vtcode_core::models::ModelId;
 use vtcode_core::subagents::{SubagentController, SubagentControllerConfig};
@@ -134,7 +135,7 @@ pub(crate) async fn initialize_session(
     }
 
     let tool_documentation_mode = vt_cfg.map(|cfg| cfg.agent.tool_documentation_mode).unwrap_or_default();
-    let async_mcp_manager = create_async_mcp_manager(vt_cfg, None);
+    let async_mcp_manager = create_async_mcp_manager(vt_cfg, None, &config.workspace);
     let mcp_error = determine_mcp_bootstrap_error(async_mcp_manager.as_ref()).await;
 
     let mut session_bootstrap = prepare_session_bootstrap(config, vt_cfg, mcp_error).await;
@@ -464,15 +465,22 @@ async fn load_release_highlights_for_startup() -> Option<(semver::Version, Vec<S
 fn create_async_mcp_manager(
     vt_cfg: Option<&VTCodeConfig>,
     active_primary_agent: Option<&ActivePrimaryAgent>,
+    workspace_root: &Path,
 ) -> Option<Arc<AsyncMcpManager>> {
     let cfg = vt_cfg?;
     if !cfg.mcp.enabled {
         debug!("MCP is disabled in configuration");
         return None;
     }
-    let mcp_config = active_primary_agent
+    let mut mcp_config = active_primary_agent
         .map(|agent| primary_agent_mcp_config(cfg, agent))
         .unwrap_or_else(|| cfg.mcp.clone());
+
+    let plugin_providers = discover_plugin_mcp_providers(workspace_root);
+    if !plugin_providers.is_empty() {
+        mcp_config.providers.extend(plugin_providers);
+        info!("Added {} plugin-provided MCP providers", mcp_config.providers.len());
+    }
 
     info!("Setting up async MCP client with {} providers", mcp_config.providers.len());
     let approval_policy = approval_policy_from_human_in_the_loop(cfg.security.human_in_the_loop);
@@ -818,7 +826,8 @@ mod tests {
         ]))];
         let active = ActivePrimaryAgent::from_spec(&spec);
 
-        let manager = create_async_mcp_manager(Some(&cfg), Some(&active)).expect("manager should exist");
+        let manager =
+            create_async_mcp_manager(Some(&cfg), Some(&active), Path::new("/tmp")).expect("manager should exist");
         let manager_config = manager.config();
         let provider_names = manager_config
             .providers

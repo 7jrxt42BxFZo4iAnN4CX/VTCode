@@ -108,6 +108,7 @@ CRATES=(
 	vtcode-a2a
 	vtcode-llm
 	vtcode-skills
+	vtcode-agent-plugins
 	vtcode-ui
 	vtcode-mcp
 	vtcode-core

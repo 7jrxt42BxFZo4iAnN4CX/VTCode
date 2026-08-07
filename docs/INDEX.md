@@ -28,6 +28,7 @@ Last reviewed: 2026-06-28
 - [Security Model](security/SECURITY_MODEL.md) - Security architecture.
 - [Process Hardening](development/PROCESS_HARDENING.md) - Runtime hardening controls.
 - [MCP Integration Guide](mcp/MCP_INTEGRATION_GUIDE.md) - MCP integration onboarding.
+- [Agent Plugins](guides/agent-plugins.md) - Portable skill + MCP packages, `vtcode plugins` CLI.
 - [Testing Guide](development/testing.md) - Test strategy and commands.
 
 ## Engineering References
@@ -55,6 +56,7 @@ Last reviewed: 2026-06-28
 - [vtcode-commons](modules/vtcode_commons_reference.md) - Shared utilities.
 - [vtcode-exec-events](modules/vtcode_exec_events.md) - ThreadEvent contract and ATIF export.
 - [vtcode-indexer](modules/vtcode_indexer.md) - Code indexing and search.
+- [vtcode-agent-plugins](modules/vtcode_agent_plugins.md) - Agent Plugins 1.0.0 manifest parsing, validation, and discovery.
 
 ## Historical and Archive Paths
 

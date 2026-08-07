@@ -49,6 +49,7 @@ All VT Code crates require Rust 1.88 or later due to dependencies (ratatui 0.30,
 | vtcode-mcp | 0.133.21 | 1.88 | 2024 | No | Internal (publish=false) |
 | vtcode-llm | 0.133.21 | 1.88 | 2024 | No | Internal (publish=false) |
 | vtcode-skills | 0.133.21 | 1.88 | 2024 | No | Internal (publish=false) |
+| vtcode-agent-plugins | 0.133.21 | 1.88 | 2024 | No | Agent Plugins 1.0.0 loader |
 | xtask | 0.133.21 | 1.88 | 2024 | No | Internal build tasks |
 
 ---

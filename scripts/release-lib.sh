@@ -408,7 +408,7 @@ trigger_docs_rs_rebuild() {
 	local crates=(
 		vtcode-commons vtcode-auth vtcode-exec-events vtcode-memory vtcode-macros
 		vtcode-config vtcode-indexer vtcode-bash-runner vtcode-utility-tool-specs vtcode-eval
-		vtcode-safety vtcode-a2a vtcode-llm vtcode-skills vtcode-ui vtcode-mcp
+		vtcode-safety vtcode-a2a vtcode-llm vtcode-skills vtcode-agent-plugins vtcode-ui vtcode-mcp
 		vtcode-core vtcode-acp vtcode
 	)
 	for crate in "${crates[@]}"; do

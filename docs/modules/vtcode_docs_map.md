@@ -220,6 +220,11 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 ### Getting Started & Overview
 
+- **File**: `docs/user-guide/agent-plugins.md`
+  - **Content**: Agent Plugins
+  - **Topics**: What a plugin gives you, Install a plugin, Manage plugins, Use plugin skills and MCP, Configure plugin behavior
+  - **User Questions**: "What can you tell me about Agent Plugins?", "How does What a plugin gives you work?", "How does Install a plugin work?"
+
 - **File**: `docs/concurrency-improvements-report.md`
   - **Content**: Concurrency Improvements Report
   - **Topics**: Executive Summary, Changes Made, Bug Summary Table, False Positives Eliminated, Test Results
@@ -296,6 +301,11 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Content**: Agent Loop Contract
   - **Topics**: Message and Event Mapping, Terminal Thread Result, Compaction Boundary, Fresh Plan Execution Context, Budget and Limits
   - **User Questions**: "What can you tell me about Agent Loop Contract?", "How does Message and Event Mapping work?", "How does Terminal Thread Result work?"
+
+- **File**: `docs/guides/agent-plugins.md`
+  - **Content**: Agent Plugins
+  - **Topics**: Directory layout, Manifest, Discovery roots, Skills, MCP servers
+  - **User Questions**: "What can you tell me about Agent Plugins?", "How does Directory layout work?", "How does Manifest work?"
 
 - **File**: `docs/guides/cargo-unmaintained.md`
   - **Content**: Cargo-Unmaintained
@@ -555,6 +565,11 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Content**: vtcode-a2a
   - **Topics**: Overview, Module Groups, Key Concepts, Feature Flags, Rules
   - **User Questions**: "What can you tell me about vtcode-a2a?", "How does Overview work?", "How does Module Groups work?"
+
+- **File**: `docs/modules/vtcode_agent_plugins.md`
+  - **Content**: vtcode-agent-plugins
+  - **Topics**: Overview, Module Groups, Key Components, Runtime Integration, See Also
+  - **User Questions**: "What can you tell me about vtcode-agent-plugins?", "How does Overview work?", "How does Module Groups work?"
 
 - **File**: `docs/modules/vtcode_llm.md`
   - **Content**: vtcode-llm
