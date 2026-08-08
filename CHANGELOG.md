@@ -2,6 +2,19 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.141.15 - 2026-08-08
+
+### Highlights
+#### Bug Fixes
+
+- Reject --path flag and validate release argument (1c4d4270) (@vinhnx)
+#### Documentation
+
+- Revert empty changelog commit from failed --path release (22263cb0) (@vinhnx)
+#### Features
+
+- Implement Agent Plugins feature with security hardening (b91d8460) (@vinhnx)
+### Other Changes
 ## 0.141.14 - 2026-08-07
 
 ### Highlights
