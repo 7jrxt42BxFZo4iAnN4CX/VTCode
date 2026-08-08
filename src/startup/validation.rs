@@ -142,10 +142,28 @@ pub(super) async fn validate_startup_configuration(config: &VTCodeConfig, worksp
     // purely informational logging — not worth the 50-200ms cost.
 
     let validator = ConfigValidator::generated();
-    if let Err(e) = validator.validate(config)
-        && !quiet
-    {
-        tracing::warn!("could not validate configured model catalog: {e}");
+    match validator.validate(config) {
+        Ok(result) if !result.errors.is_empty() => {
+            if !quiet {
+                // Tracing is not yet initialized at this point in startup, so
+                // use eprintln to ensure the user sees deprecation advice.
+                // Wording is "warning" (not "error") because startup remains
+                // non-fatal — the runtime provider validator catches truly
+                // invalid models when a request is actually made.
+                for error in &result.errors {
+                    eprintln!("Configuration warning: {error}");
+                }
+            }
+            // Non-fatal: log but don't abort startup for config validation errors.
+            // The model-exists check is advisory — the user may have a custom
+            // setup. The runtime validation in the LLM provider will catch
+            // truly invalid models when a request is made.
+        }
+        Ok(_) => {}
+        Err(e) if !quiet => {
+            eprintln!("could not validate configured model catalog: {e}");
+        }
+        Err(_) => {}
     }
 
     if !quiet {

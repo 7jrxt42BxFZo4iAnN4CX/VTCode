@@ -111,6 +111,7 @@ fn remove_runtime_env_var(key: &str) {
 }
 
 fn bootstrap_main() -> Result<BootstrapOutcome> {
+    let bootstrap_start = std::time::Instant::now();
     let launch_argv = std::env::args_os().collect::<Vec<_>>();
     let launch_cwd = std::env::current_dir().context("failed to resolve current directory")?;
     configure_runtime_relaunch_context(launch_argv, launch_cwd);
@@ -161,6 +162,7 @@ fn bootstrap_main() -> Result<BootstrapOutcome> {
         return Ok(BootstrapOutcome::ExitEarly);
     }
 
+    let cli_start = std::time::Instant::now();
     let matches = match build_augmented_cli_command().try_get_matches() {
         Ok(m) => m,
         Err(err) => {
@@ -172,6 +174,7 @@ fn bootstrap_main() -> Result<BootstrapOutcome> {
             err.exit();
         }
     };
+    tracing::debug!(target = "vtcode.startup", elapsed_ms = cli_start.elapsed().as_millis() as u64, "cli parsed");
     let args = Cli::from_arg_matches(&matches)?;
     panic_hook::set_debug_mode(args.debug);
     let color_eyre_enabled = debug_runtime_flag_enabled(args.debug, "VTCODE_COLOR_EYRE");
@@ -205,6 +208,7 @@ fn bootstrap_main() -> Result<BootstrapOutcome> {
         .enable_all()
         .build()
         .context("failed to build Tokio runtime")?;
+    tracing::debug!(target = "vtcode.startup", elapsed_ms = bootstrap_start.elapsed().as_millis() as u64, "runtime ready");
 
     #[cfg(feature = "profiling")]
     hotpath::tokio_runtime!(runtime.handle());
@@ -225,6 +229,7 @@ fn bootstrap_main() -> Result<BootstrapOutcome> {
     }
 
     let startup = runtime.block_on(resolve_startup_context(&args))?;
+    tracing::debug!(target = "vtcode.startup", elapsed_ms = bootstrap_start.elapsed().as_millis() as u64, "bootstrap ready");
 
     Ok(BootstrapOutcome::Ready(Box::new(BootstrapReady {
         prepared: PreparedRun { args, startup, print_mode },

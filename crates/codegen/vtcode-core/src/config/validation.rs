@@ -68,6 +68,13 @@ pub fn validate_model_exists(provider: &str, model: &str) -> Result<()> {
 
     if let Some(models) = supported_models_for_provider(provider) {
         if !models.contains(&model) {
+            // Check for known deprecated OpenAI models and suggest replacements.
+            if provider.eq_ignore_ascii_case("openai")
+                && let Some((replacement, reason)) =
+                    vtcode_config::constants::models::openai::deprecated_model_replacement(model)
+            {
+                bail!("{reason}. Update your config to use '{replacement}' or run /model to pick a current model.");
+            }
             bail!("Model '{}' not found for provider '{}'. Available models: {}", model, provider, models.join(", "));
         }
         Ok(())
@@ -364,7 +371,7 @@ mod tests {
     fn whitelist_allows_configured_provider() {
         let mut config = VTCodeConfig::default();
         config.agent.provider = "openai".to_string();
-        config.agent.default_model = "gpt-5".to_string();
+        config.agent.default_model = "gpt-5.5".to_string();
         config.providers_whitelist = vec!["openai".to_string()];
 
         let result = validate_config(&config, Path::new(".")).expect("validation should run");
@@ -375,7 +382,7 @@ mod tests {
     fn whitelist_blocks_non_whitelisted_provider() {
         let mut config = VTCodeConfig::default();
         config.agent.provider = "openai".to_string();
-        config.agent.default_model = "gpt-5".to_string();
+        config.agent.default_model = "gpt-5.5".to_string();
         config.providers_whitelist = vec!["anthropic".to_string()];
 
         let result = validate_config(&config, Path::new(".")).expect("validation should run");
@@ -390,10 +397,49 @@ mod tests {
     fn empty_whitelist_allows_all_providers() {
         let mut config = VTCodeConfig::default();
         config.agent.provider = "openai".to_string();
-        config.agent.default_model = "gpt-5".to_string();
+        config.agent.default_model = "gpt-5.5".to_string();
         config.providers_whitelist.clear();
 
         let result = validate_config(&config, Path::new(".")).expect("validation should run");
         assert!(result.errors.is_empty(), "empty whitelist should allow all: {:?}", result.errors);
+    }
+
+    #[test]
+    fn deprecated_openai_model_produces_actionable_error() {
+        let mut config = VTCodeConfig::default();
+        config.agent.provider = "openai".to_string();
+        config.agent.default_model = "gpt-5".to_string();
+        config.providers_whitelist.clear();
+
+        let result = validate_config(&config, Path::new(".")).expect("validation should run");
+        assert!(
+            result.errors.iter().any(|e| e.contains("gpt-5.6-sol")),
+            "expected actionable deprecation replacement, got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn non_openai_provider_with_deprecated_id_gets_generic_error() {
+        // A non-OpenAI provider using a deprecated OpenAI ID should NOT get
+        // OpenAI-specific migration advice.
+        let mut config = VTCodeConfig::default();
+        config.agent.provider = "custom-provider".to_string();
+        config.agent.default_model = "gpt-5".to_string();
+        config.providers_whitelist.clear();
+        // Make the custom provider advertise this model so it passes the
+        // model-exists check for custom providers and reaches validation.
+        config.custom_providers.push(CustomProviderConfig {
+            name: "custom-provider".to_string(),
+            models: vec!["gpt-5".to_string()],
+            ..Default::default()
+        });
+
+        let result = validate_config(&config, Path::new(".")).expect("validation should run");
+        assert!(
+            !result.errors.iter().any(|e| e.contains("gpt-5.6-sol")),
+            "non-OpenAI provider should not get OpenAI migration advice: {:?}",
+            result.errors
+        );
     }
 }

@@ -601,6 +601,7 @@ pub enum Commands {
     ///
     /// Examples:
     ///   vtcode login openai
+    ///   vtcode login openai --from-codex
     ///   vtcode login openrouter
     ///   vtcode login codex
     ///   vtcode login codex --device-code
@@ -615,6 +616,16 @@ pub enum Commands {
             long_help = "Use the device-code OAuth flow.\nCurrently supported only for the `codex` provider.\nOpens a browser URL and asks you to enter a code."
         )]
         device_code: bool,
+        /// Import ChatGPT credentials from Codex's `~/.codex/auth.json` instead
+        /// of running the browser OAuth flow (currently `openai` only)
+        #[arg(
+            long,
+            default_value_t = false,
+            long_help = "Import ChatGPT OAuth tokens from Codex's auth.json.\n\
+                         Requires that you have already run `codex login`.\n\
+                         Currently supported only for the `openai` provider."
+        )]
+        from_codex: bool,
     },
 
     /// Clear stored authentication credentials for a provider
@@ -1164,7 +1175,8 @@ mod tests {
             cli.command,
             Some(Commands::Login {
                 ref provider,
-                device_code: true
+                device_code: true,
+                from_codex: false
             }) if provider == "codex"
         ));
     }

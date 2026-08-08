@@ -118,6 +118,10 @@ impl ConfigValidator {
         let custom_provider = config.custom_provider(&config.agent.provider);
         let is_custom_provider = custom_provider.is_some();
         let is_codex_provider = config.agent.provider.eq_ignore_ascii_case("codex");
+        // Built-in OpenAI supports multi-source auth (ChatGPT OAuth, Codex
+        // fallback, API key). The static API-key check below is only meaningful
+        // for providers that require an API key as their sole credential.
+        let is_openai_provider = config.agent.provider.eq_ignore_ascii_case("openai");
 
         // Check if configured model exists
         if let Some(custom) = custom_provider {
@@ -135,15 +139,28 @@ impl ConfigValidator {
             && !is_managed_auth_model(managed_auth_provider, &config.agent.default_model)
             && !self.models_db.model_exists(&config.agent.provider, &config.agent.default_model)
         {
-            result.errors.push(format!(
-                "Model '{}' not found for provider '{}'. Check docs/models.json.",
-                config.agent.default_model, config.agent.provider
-            ));
+            // Check for known deprecated OpenAI models and suggest replacements.
+            if config.agent.provider.eq_ignore_ascii_case("openai")
+                && let Some((replacement, reason)) =
+                    vtcode_config::constants::models::openai::deprecated_model_replacement(&config.agent.default_model)
+            {
+                result.errors.push(format!(
+                    "{reason}. Update your config to use '{replacement}' or run /model to pick a current model."
+                ));
+            } else {
+                result.errors.push(format!(
+                    "Model '{}' not found for provider '{}'. Check docs/models.json.",
+                    config.agent.default_model, config.agent.provider
+                ));
+            }
         }
 
-        // Check if API key is available
+        // Check if API key is available — skip for built-in OpenAI which
+        // supports ChatGPT OAuth and Codex fallback in addition to API keys.
+        // The runtime auth resolver validates OpenAI's multi-source credentials.
         if !is_custom_provider
             && !is_codex_provider
+            && !is_openai_provider
             && managed_auth_provider.is_none()
             && let Err(e) = get_api_key_with_mode(
                 &config.agent.provider,
@@ -204,6 +221,7 @@ impl ConfigValidator {
         let custom_provider = config.custom_provider(&config.agent.provider);
         let is_custom_provider = custom_provider.is_some();
         let is_codex_provider = config.agent.provider.eq_ignore_ascii_case("codex");
+        let is_openai_provider = config.agent.provider.eq_ignore_ascii_case("openai");
 
         // Check model exists
         let model_is_valid = custom_provider.is_some_and(|custom| {
@@ -223,8 +241,8 @@ impl ConfigValidator {
             );
         }
 
-        // Check API key
-        if !is_custom_provider && !is_codex_provider && managed_auth_provider.is_none() {
+        // Check API key — skip for built-in OpenAI (multi-source auth).
+        if !is_custom_provider && !is_codex_provider && !is_openai_provider && managed_auth_provider.is_none() {
             get_api_key_with_mode(
                 &config.agent.provider,
                 &ApiKeySources::default(),
@@ -332,6 +350,7 @@ pub fn check_openai_hosted_shell_compat(config: &VTCodeConfig, model: &str, prov
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::fs;
     use tempfile::TempDir;
 
@@ -630,6 +649,101 @@ mod tests {
                 .warnings
                 .iter()
                 .any(|warning| { warning.contains("provider.openai.hosted_shell.skills[0].skill_id") })
+        );
+    }
+
+    // ── OpenAI multi-source auth: static validation skip ──
+
+    #[test]
+    fn openai_without_api_key_does_not_emit_static_warning() {
+        // Built-in OpenAI supports ChatGPT OAuth + Codex fallback + API key.
+        // The static API-key check must be skipped so users with only a
+        // ChatGPT subscription don't see a false "API key not found" error.
+        let dir = create_test_models_db();
+        let validator = ConfigValidator::new(&dir.path().join("models.json")).unwrap();
+        let mut config = VTCodeConfig::default();
+        config.agent.provider = "openai".to_owned();
+        config.agent.default_model = "gpt-5".to_owned();
+
+        let result = validator.validate(&config).unwrap();
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| e.contains("API key not found for provider 'openai'")),
+            "OpenAI should not emit a static API-key warning: errors={:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn openai_quick_validate_without_api_key_does_not_fail() {
+        // Same check for quick_validate — OpenAI should not bail on missing API key.
+        let dir = create_test_models_db();
+        let validator = ConfigValidator::new(&dir.path().join("models.json")).unwrap();
+        let mut config = VTCodeConfig::default();
+        config.agent.provider = "openai".to_owned();
+        config.agent.default_model = "gpt-5".to_owned();
+
+        // Should succeed (no API key error) even without OPENAI_API_KEY set.
+        let result = validator.quick_validate(&config);
+        assert!(result.is_ok(), "quick_validate should not fail for OpenAI without API key: {result:?}");
+    }
+
+    #[test]
+    #[serial]
+    fn non_openai_provider_still_requires_api_key() {
+        // A non-OpenAI, non-Codex provider without an API key must still
+        // produce a static API-key error. Use a fictional provider that is
+        // very unlikely to have an env var set on the developer's machine.
+        let dir = TempDir::new().unwrap();
+        let models_json = r#"{
+          "ztestprov": {
+            "id": "ztestprov",
+            "default_model": "zmodel",
+            "models": { "zmodel": { "context": 128000 } }
+          }
+        }"#;
+        fs::write(dir.path().join("models.json"), models_json).unwrap();
+        let validator = ConfigValidator::new(&dir.path().join("models.json")).unwrap();
+        let mut config = VTCodeConfig::default();
+        config.agent.provider = "ztestprov".to_owned();
+        config.agent.default_model = "zmodel".to_owned();
+        // Ensure no env var is set for this fictional provider.
+        let prev = std::env::var("ZTESTPROV_API_KEY").ok();
+        vtcode_commons::env_lock::set_var("ZTESTPROV_API_KEY", "");
+
+        let result = validator.validate(&config).unwrap();
+        vtcode_commons::env_lock::lock().restore_var("ZTESTPROV_API_KEY", prev.as_deref());
+
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("API key not found for provider 'ztestprov'")),
+            "non-OpenAI provider should still require an API key: errors={:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn deprecated_openai_model_diagnostic_is_present() {
+        // A deprecated OpenAI model that is not in the model DB should produce
+        // the deprecation diagnostic with a replacement suggestion.
+        let dir = create_test_models_db();
+        let validator = ConfigValidator::new(&dir.path().join("models.json")).unwrap();
+        let mut config = VTCodeConfig::default();
+        config.agent.provider = "openai".to_owned();
+        config.agent.default_model = "o3".to_owned(); // deprecated → gpt-5.6-sol
+
+        let result = validator.validate(&config).unwrap();
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("gpt-5.6-sol") || e.contains("deprecated") || e.contains("Update your config")),
+            "deprecated OpenAI model should produce a replacement diagnostic: errors={:?}",
+            result.errors
         );
     }
 }

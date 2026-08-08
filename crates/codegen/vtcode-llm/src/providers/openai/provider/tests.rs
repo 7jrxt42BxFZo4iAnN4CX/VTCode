@@ -2742,10 +2742,17 @@ fn manual_openai_compaction_unavailable_message_mentions_backend() {
 // ─── Supported Models & Harmony ──────────────────────────────────────────────
 
 #[test]
-fn supported_models_include_o_series_reasoning_models() {
+fn supported_models_include_current_reasoning_models() {
     let supported = OpenAIProvider::new("key".to_owned()).supported_models();
-    assert!(supported.contains(&models::openai::O3.to_string()));
-    assert!(supported.contains(&models::openai::O4_MINI.to_string()));
+    // Current reasoning models must be in the supported list.
+    assert!(supported.contains(&"gpt-5.4".to_string()));
+    assert!(supported.contains(&models::openai::GPT_5_3_CODEX.to_string()));
+    // Deprecated o-series models are removed from the picker but retained in
+    // REASONING_MODELS for backward-compat routing.
+    assert!(!supported.contains(&models::openai::O3.to_string()));
+    assert!(!supported.contains(&models::openai::O4_MINI.to_string()));
+    assert!(models::openai::REASONING_MODELS.contains(&models::openai::O3));
+    assert!(models::openai::REASONING_MODELS.contains(&models::openai::O4_MINI));
 }
 
 #[test]
@@ -3229,4 +3236,33 @@ async fn manual_compaction_payload_includes_selected_fields_and_appends_instruct
             && instr.contains("[Manual Compaction Instructions]")
             && instr.contains("Terse.")
     );
+}
+
+// ─── Debug redaction for OpenAIRequestAuth ───────────────────────────────────
+
+#[test]
+fn openai_request_auth_debug_redacts_bearer_token() {
+    use super::super::backend_setup::OpenAIRequestAuth;
+
+    let auth = OpenAIRequestAuth::bearer_token("sk-secret-bearer-token".to_string());
+    let debug_str = format!("{auth:?}");
+    assert!(!debug_str.contains("sk-secret-bearer-token"), "bearer token leaked in Debug: {debug_str}");
+}
+
+#[test]
+fn openai_request_auth_debug_redacts_rig_chatgpt_auth() {
+    use super::super::backend_setup::OpenAIRequestAuth;
+
+    let auth = OpenAIRequestAuth {
+        bearer_token: "rig-secret-access".to_string(),
+        chatgpt_account_id: Some("acc_123".to_string()),
+        rig_chatgpt_auth: Some(RigChatGptAuth::AccessToken {
+            access_token: "rig-secret-access".to_string(),
+            account_id: Some("acc_123".to_string()),
+        }),
+    };
+    let debug_str = format!("{auth:?}");
+    assert!(!debug_str.contains("rig-secret-access"), "rig access token leaked in Debug: {debug_str}");
+    // Non-secret metadata should still be visible.
+    assert!(debug_str.contains("acc_123"), "account_id should be visible: {debug_str}");
 }

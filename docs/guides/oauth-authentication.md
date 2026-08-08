@@ -127,38 +127,100 @@ vtcode auth status copilot
 
 ### OpenAI ChatGPT OAuth
 
-Authenticate with your OpenAI account to use ChatGPT models.
+Authenticate with your OpenAI account to use ChatGPT models. VT Code implements an
+OAuth 2.0 PKCE authorization-code flow for ChatGPT subscription auth — **the Codex
+CLI executable is NOT required** at runtime.
+
+#### OAuth Client Identity (Unofficial Compatibility Flow)
+
+By default, VT Code reuses the **Codex CLI's public-client identifier**
+(client ID `app_EMoamEEZ73f0CkXaXp7hrann`, originator `codex_cli_rs`). This is
+a public OAuth client with no client secret — the ID is not a secret by OAuth 2.1
+design. This is an **unofficial compatibility mechanism**: OpenAI has not
+documented or guaranteed that third-party tools may reuse this client identifier,
+and it may stop working if OpenAI's client policy changes. Users should verify
+applicable OpenAI terms of service.
+
+If your organization has its own OpenAI-issued OAuth client, override both values:
+
+```bash
+export VTCODE_OPENAI_OAUTH_CLIENT_ID="your-client-id"
+export VTCODE_OPENAI_OAUTH_ORIGINATOR="your-originator"
+```
+
+> **Note**: The custom client must accept the hard-coded localhost redirect URI,
+> scopes, and Codex-specific authorization parameters VT Code sends. These
+> variables do not make the flow a generic OAuth client implementation.
+> The override must remain configured for the session lifetime — VT Code rereads
+> the environment at refresh time.
 
 #### Setup
 
 ```bash
-# Launch VT Code
+# Option 1: In-process PKCE OAuth (full auto-refresh, no Codex CLI required)
 vtcode
+# Then use /login openai in the TUI, or:
+vtcode login openai
 
-# Use the OAuth flow within the TUI
-# VT Code will open your browser for OpenAI authentication
+# Option 2: Validate/reuse Codex CLI auth.json fallback (if you already ran `codex login`)
+vtcode login openai --from-codex
 ```
 
 **Authentication Methods**:
-- OAuth (recommended): Automatic browser-based login
-- API Key: Direct API key entry
-- Manual Callback: Paste authorization code manually
+- In-process PKCE OAuth: VT Code's browser-based login with full auto-refresh (no Codex CLI required)
+- Codex auth.json fallback: Automatically detected at runtime if `~/.codex/auth.json` exists
+- API Key: Direct API key entry via `vtcode secret add openai`
+- Manual Callback: Paste authorization code manually if browser auto-open fails
+
+#### How ChatGPT Auth Works Without Codex CLI
+
+VT Code implements an OAuth 2.0 PKCE authorization-code flow for OpenAI ChatGPT,
+using the Codex CLI's **public-client identifier** by default. You do **not** need the
+Codex CLI or app installed. When you run `/login openai` or `vtcode login openai`,
+VT Code:
+
+1. Generates a PKCE challenge
+2. Opens your browser to OpenAI's authorization page
+3. Runs a local callback server to receive the authorization code
+4. Exchanges the code for tokens
+5. Stores them securely (keyring or encrypted file)
+6. Refreshes them automatically when they expire
+
+> **⚠️ Unofficial compatibility mechanism:** By default, VT Code reuses the Codex
+> CLI's public PKCE client ID (`app_EMoamEEZ73f0CkXaXp7hrann`) and originator
+> (`codex_cli_rs`). The client ID is **not a secret** (PKCE public clients have
+> no client secret by OAuth 2.1 design), but reusing it is an **unofficial,
+> unguaranteed** compatibility approach — it is not a VTCode-owned OAuth
+> registration. OpenAI has not documented or guaranteed third-party reuse of
+> this client identity, and a public identifier is **not authorization** to
+> reuse another tool's OAuth registration. OpenAI may change or revoke it at
+> any time. Organizations with their own OpenAI-issued client pair should set
+> `VTCODE_OPENAI_OAUTH_CLIENT_ID` and `VTCODE_OPENAI_OAUTH_ORIGINATOR` (both must
+> be set together; one-sided overrides are rejected as a configuration error).
+
+If you happen to have the Codex CLI installed and authenticated (`codex login`),
+VT Code automatically detects `~/.codex/auth.json` and uses it as a fallback when
+no VT Code-managed session is stored. This means:
+
+- **Without Codex CLI**: VT Code's in-process PKCE flow handles everything — no
+  dependency on the Codex executable.
+- **With Codex CLI**: VT Code additionally reads Codex's auth.json as a fallback, so you
+  don't need to authenticate twice. VT Code does **not** rotate Codex-owned refresh
+  tokens; it rereads Codex's auth.json file to stay in sync with Codex's own refresh
+  cycle. Run `codex logout` to clear the fallback.
 
 #### Configuration
 
 In `vtcode.toml`:
 
 ```toml
-[llm.openai]
-# OAuth settings
-preferred_auth_method = "oauth"  # "oauth", "api_key", or "manual_callback"
-
-# Optional: Specify callback port for manual OAuth flow
-auth_callback_port = 8080
-
 [auth.openai]
 # Control where tokens are stored
 credentials_store_mode = "keyring"  # "keyring" or "file"
+# Preferred auth method: "chatgpt" (OAuth), "api_key", or "auto"
+preferred_method = "auto"
+# Auto-refresh tokens when they expire (default: true)
+auto_refresh = true
 ```
 
 #### Token Storage
@@ -172,6 +234,32 @@ credentials_store_mode = "keyring"  # "keyring" or "file"
 - Location: `~/.vtcode/auth/openai_chatgpt.json`
 - Encryption: AES-256-GCM with machine-derived key
 - Automatic migration from file-based to keyring storage
+
+#### Codex auth.json Fallback
+
+When VT Code has no stored ChatGPT session of its own, it automatically checks for
+Codex's `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`). If valid tokens are found,
+VT Code uses them at runtime with a special `CodexAuthJsonRefresher` that re-reads
+the file when tokens need refreshing. VT Code does not rotate Codex-owned refresh
+tokens itself — this avoids racing Codex's own refresh cycle or invalidating its
+stored credentials. Instead, it rereads `auth.json` to pick up tokens Codex has
+refreshed.
+
+```bash
+# Validate Codex credentials are available (does not persist a VT Code session)
+vtcode login openai --from-codex
+
+# Check auth status (shows Codex fallback if active)
+vtcode auth status openai
+
+# Logout — clears VT Code session; Codex fallback remains until `codex logout`
+vtcode logout openai
+```
+
+**Key difference from VT Code-managed OAuth**: Codex-sourced tokens are managed by
+the Codex CLI. When they expire, run `codex login` to refresh them. A VT Code-managed
+session (`vtcode login openai`) refreshes tokens in-process without requiring the
+Codex executable at runtime.
 
 #### Troubleshooting
 
@@ -187,8 +275,11 @@ credentials_store_mode = "file"
 
 **Clear OAuth Session**:
 ```bash
-# Remove stored tokens (interactive prompt will request fresh auth)
-vtcode auth clear openai
+# Remove stored VT Code tokens
+vtcode logout openai
+
+# Also remove Codex fallback if present
+codex logout
 ```
 
 ### OpenRouter OAuth
@@ -265,7 +356,7 @@ User Request
 
 **Machine-Derived Encryption Key** (file storage fallback):
 - Based on: hostname + user ID + static salt
-- Algorithm: PBKDF2 (SHA-256)
+- Algorithm: SHA-256 (unkeyed hash of machine identity material)
 - Cipher: AES-256-GCM (AEAD)
 
 **No Plain Text**:
@@ -277,7 +368,7 @@ User Request
 
 Implements [RFC 7636](https://tools.ietf.org/html/rfc7636) requirements:
 
-- **Code Challenge**: SHA-256 hash of 128-byte random verifier
+- **Code Challenge**: SHA-256 hash of 64-character random verifier
 - **No Client Secret**: Suitable for public/native clients
 - **Protected from CSRF**: State parameter included in flow
 
@@ -313,7 +404,7 @@ vtcode auth refresh <provider>
 ### Acquisition
 
 1. User selects OAuth provider
-2. PKCE challenge generated (128-byte random verifier)
+2. PKCE challenge generated (64-character random verifier)
 3. Browser opens to provider authorization page
 4. User grants permission
 5. Code exchanged for token
@@ -328,9 +419,10 @@ vtcode auth refresh <provider>
 
 ### Expiration
 
-- OpenAI: 30-day expiration
+- OpenAI: Token expiry follows the `expires_in` value from the token endpoint
+  or the `exp` claim in the JWT. VT Code refreshes proactively every 8 minutes
+  and treats tokens as expired 60 seconds before their actual expiry.
 - OpenRouter: Provider-dependent
-- Grace period: 5 minutes (token considered expired 5 min before actual expiration)
 
 ## Troubleshooting
 
@@ -371,9 +463,11 @@ credentials_store_mode = "file"
 Control OAuth behavior via env vars:
 
 ```bash
-# OpenAI OAuth
-export OPENAI_OAUTH_CLIENT_ID="your-client-id"
-export OPENAI_OAUTH_REDIRECT_URI="http://localhost:8080/auth/callback"
+# OpenAI OAuth client identity (override the default Codex CLI public client)
+export VTCODE_OPENAI_OAUTH_CLIENT_ID="your-client-id"
+export VTCODE_OPENAI_OAUTH_ORIGINATOR="your-originator"
+
+# OpenAI auth preference
 export OPENAI_PREFERRED_AUTH_METHOD="oauth"
 
 # OpenRouter OAuth

@@ -1,6 +1,9 @@
 use anstyle::{AnsiColor, Color, Effects, Style as AnsiStyle};
 use anyhow::Result;
-use vtcode_auth::{AuthCredentialsStoreMode, AuthStatus, OpenAIChatGptAuthStatus, OpenAIResolvedAuthSource};
+use vtcode_auth::{
+    AuthCredentialsStoreMode, AuthStatus, OpenAIChatGptAuthStatus, OpenAIChatGptSessionProvenance,
+    OpenAIResolvedAuthSource,
+};
 use vtcode_core::config::api_keys::ApiKeySources;
 use vtcode_core::copilot::{
     COPILOT_AUTH_DOC_PATH, CopilotAuthEvent, CopilotAuthStatus, CopilotAuthStatusKind, login_with_events,
@@ -25,7 +28,7 @@ use crate::cli::auth::{
     complete_openai_login_with_manual_future, complete_openrouter_login_with_tui_cancel, is_oauth_flow_cancelled,
     oauth_flow_cancelled_error, openai_auth_status, openai_manual_placeholder, openrouter_auth_status,
     prepare_openai_login, prepare_openrouter_login, refresh_openai_login, should_prompt_manual_openai_input,
-    supports_auth_provider,
+    summarize_current_openai_credentials, supports_auth_provider,
 };
 
 const OAUTH_PROVIDER_PREFIX: &str = "oauth-provider:";
@@ -132,6 +135,20 @@ pub(crate) async fn handle_oauth_login(
                 .line(MessageStyle::Output, &format!("Key preview: {}...", &api_key[..api_key.len().min(8)]))?;
         }
         OPENAI_PROVIDER => {
+            // Check if Codex's auth.json is available as a fallback before
+            // starting the full OAuth flow. This lets users know they already
+            // have credentials they can use without a new browser flow.
+            if matches!(openai_auth_status(vt_cfg)?, OpenAIChatGptAuthStatus::NotAuthenticated) {
+                let overview = summarize_current_openai_credentials(vt_cfg)?;
+                if overview.codex_fallback_available {
+                    ctx.renderer.line(
+                        MessageStyle::Info,
+                        "Tip: Codex's auth.json was detected. VT Code can use it automatically at runtime.\n\
+                         Continue below for a VT Code session with full auto-refresh, or cancel and\n\
+                         run `vtcode login openai --from-codex` to validate the Codex credentials.",
+                    )?;
+                }
+            }
             ctx.renderer
                 .line(MessageStyle::Info, "Starting OpenAI ChatGPT authentication...")?;
             let prepared = prepare_openai_login(vt_cfg)?;
@@ -245,6 +262,7 @@ pub(crate) async fn handle_oauth_logout(
                 .line(MessageStyle::Info, "OpenRouter OAuth token cleared successfully.")?;
         }
         OPENAI_PROVIDER => {
+            let overview = summarize_current_openai_credentials(vt_cfg)?;
             if matches!(openai_auth_status(vt_cfg)?, OpenAIChatGptAuthStatus::NotAuthenticated) {
                 if vtcode_core::config::api_keys::get_api_key_with_mode(
                     OPENAI_PROVIDER,
@@ -255,6 +273,17 @@ pub(crate) async fn handle_oauth_logout(
                 {
                     ctx.renderer
                         .line(MessageStyle::Info, "OpenAI ChatGPT session already cleared; using OPENAI_API_KEY.")?;
+                } else if overview.codex_fallback_available {
+                    ctx.renderer.line(
+                        MessageStyle::Info,
+                        "OpenAI ChatGPT session not stored; Codex auth.json fallback is active.",
+                    )?;
+                    ctx.renderer
+                        .line(MessageStyle::Output, "Run `codex logout` to remove the Codex credentials entirely.")?;
+                    ctx.renderer.line(
+                        MessageStyle::Output,
+                        "For a VT Code session with full auto-refresh, run /login openai.",
+                    )?;
                 } else {
                     ctx.renderer
                         .line(MessageStyle::Info, "No stored OpenAI ChatGPT session to clear.")?;
@@ -265,6 +294,14 @@ pub(crate) async fn handle_oauth_logout(
             sync_openai_runtime_if_active(&mut ctx).await?;
             ctx.renderer
                 .line(MessageStyle::Info, "OpenAI ChatGPT session cleared successfully.")?;
+            // Inform the user if Codex's auth.json fallback is still active.
+            if overview.codex_fallback_available {
+                ctx.renderer.line(
+                    MessageStyle::Output,
+                    "Note: Codex's auth.json was detected. VT Code will continue to use it as a\n\
+                     fallback at runtime. Run `codex logout` to remove those credentials entirely.",
+                )?;
+            }
             if ctx.config.provider.eq_ignore_ascii_case(OPENAI_PROVIDER) {
                 if ctx.config.api_key.trim().is_empty() {
                     ctx.renderer
@@ -354,7 +391,8 @@ pub(crate) async fn handle_show_auth_status(
     }
 
     if provider.is_none() || provider.as_deref() == Some(OPENAI_PROVIDER) {
-        render_openai_auth_status(ctx.renderer, openai_auth_status(vt_cfg)?, storage_mode)?;
+        let overview = summarize_current_openai_credentials(vt_cfg)?;
+        render_openai_auth_status(ctx.renderer, openai_auth_status(vt_cfg)?, storage_mode, &overview)?;
         render_openai_credential_overview(
             ctx.renderer,
             vt_cfg,
@@ -518,7 +556,7 @@ async fn show_oauth_provider_modal(ctx: &mut SlashCommandContext<'_>, action: OA
         },
         InlineListItem {
             title: "OpenAI ChatGPT".to_string(),
-            subtitle: Some(openai_modal_subtitle(action, &openai_status)),
+            subtitle: Some(openai_modal_subtitle(action, &openai_status, &openai_overview)),
             badge: Some(openai_modal_badge(action, &openai_status, &openai_overview)),
             indent: 0,
             selection: Some(InlineListSelection::ConfigAction(format!("{OAUTH_PROVIDER_PREFIX}{OPENAI_PROVIDER}"))),
@@ -571,6 +609,7 @@ fn oauth_modal_lines(action: OAuthProviderAction) -> Vec<String> {
         OAuthProviderAction::Login => vec![
             "Choose a provider to connect.".to_string(),
             "VT Code stores OpenAI/OpenRouter credentials securely and uses the official `copilot` CLI for GitHub Copilot.".to_string(),
+            "If you have Codex CLI installed, VT Code automatically uses its auth.json as a fallback for ChatGPT.".to_string(),
         ],
         OAuthProviderAction::Logout => vec![
             "Choose a provider to disconnect.".to_string(),
@@ -714,14 +753,25 @@ fn copilot_modal_badge(action: OAuthProviderAction, status: &CopilotAuthStatus) 
     }
 }
 
-fn openai_modal_subtitle(action: OAuthProviderAction, status: &OpenAIChatGptAuthStatus) -> String {
+fn openai_modal_subtitle(
+    action: OAuthProviderAction,
+    status: &OpenAIChatGptAuthStatus,
+    overview: &vtcode_config::auth::OpenAICredentialOverview,
+) -> String {
     match action {
         OAuthProviderAction::Login => match status {
             OpenAIChatGptAuthStatus::Authenticated { label, .. } => format!(
                 "Connected{}; re-authenticate to replace the stored ChatGPT session.",
                 label.as_deref().map(|value| format!(" as {value}")).unwrap_or_default()
             ),
-            OpenAIChatGptAuthStatus::NotAuthenticated => "Sign in with your ChatGPT subscription.".to_string(),
+            OpenAIChatGptAuthStatus::NotAuthenticated => {
+                if overview.codex_fallback_available {
+                    "Sign in with your ChatGPT subscription. Codex auth.json detected — VT Code can use it as a fallback."
+                        .to_string()
+                } else {
+                    "Sign in with your ChatGPT subscription.".to_string()
+                }
+            }
         },
         OAuthProviderAction::Logout => match status {
             OpenAIChatGptAuthStatus::Authenticated { label, .. } => format!(
@@ -827,33 +877,65 @@ fn render_openrouter_auth_status(
 fn render_openai_auth_status(
     renderer: &mut AnsiRenderer,
     status: OpenAIChatGptAuthStatus,
-    storage_mode: AuthCredentialsStoreMode,
+    _storage_mode: AuthCredentialsStoreMode,
+    overview: &vtcode_config::auth::OpenAICredentialOverview,
 ) -> Result<()> {
-    match status {
-        OpenAIChatGptAuthStatus::Authenticated { label, age_seconds, expires_in } => {
-            renderer.line(MessageStyle::Info, "OpenAI: authenticated (ChatGPT)")?;
-            if let Some(label) = label {
-                renderer.line(MessageStyle::Output, &format!("  Label: {label}"))?;
+    use vtcode_config::auth::OpenAIResolvedAuthSource;
+    // Drive the headline from overview.active_source — the same field runtime
+    // resolution uses — so TUI status never disagrees with actual auth.
+    match overview.active_source {
+        Some(OpenAIResolvedAuthSource::ChatGpt) => match status {
+            OpenAIChatGptAuthStatus::Authenticated { label, age_seconds, expires_in } => {
+                renderer.line(MessageStyle::Info, "OpenAI: authenticated (ChatGPT)")?;
+                if let Some(label) = label {
+                    renderer.line(MessageStyle::Output, &format!("  Label: {label}"))?;
+                }
+                renderer.line(
+                    MessageStyle::Output,
+                    &format!("  Session obtained: {}", format_auth_duration(age_seconds)),
+                )?;
+                if let Some(expires_in) = expires_in {
+                    renderer
+                        .line(MessageStyle::Output, &format!("  Expires in: {}", format_auth_duration(expires_in)))?;
+                }
+                if overview.chatgpt_session_provenance == Some(OpenAIChatGptSessionProvenance::CodexFallback) {
+                    renderer.line(
+                        MessageStyle::Output,
+                        "  Source: Codex auth.json fallback (run /login openai for a VT Code session with auto-refresh)",
+                    )?;
+                }
             }
+            OpenAIChatGptAuthStatus::NotAuthenticated => {
+                // active_source says ChatGpt but native status is NotAuthenticated
+                // → this is a Codex fallback session.
+                renderer.line(MessageStyle::Info, "OpenAI: using Codex auth.json fallback")?;
+                if let Some(email) = overview.chatgpt_email.as_deref() {
+                    renderer.line(MessageStyle::Output, &format!("  Account: {email}"))?;
+                }
+                if let Some(plan) = overview.chatgpt_plan.as_deref() {
+                    renderer.line(MessageStyle::Output, &format!("  Plan: {plan}"))?;
+                }
+                renderer.line(
+                    MessageStyle::Output,
+                    "  Run /login openai for a VT Code session with full auto-refresh support.",
+                )?;
+            }
+        },
+        Some(OpenAIResolvedAuthSource::ApiKey) => {
+            renderer.line(MessageStyle::Info, "OpenAI: using configured API key")?;
+        }
+        None => {
+            renderer.line(MessageStyle::Info, "OpenAI: not authenticated")?;
             renderer
-                .line(MessageStyle::Output, &format!("  Session obtained: {}", format_auth_duration(age_seconds)))?;
-            if let Some(expires_in) = expires_in {
-                renderer.line(MessageStyle::Output, &format!("  Expires in: {}", format_auth_duration(expires_in)))?;
-            }
+                .line(MessageStyle::Output, "  Run /login openai to authenticate with your ChatGPT subscription.")?;
         }
-        OpenAIChatGptAuthStatus::NotAuthenticated => {
-            if vtcode_core::config::api_keys::get_api_key_with_mode(
-                OPENAI_PROVIDER,
-                &ApiKeySources::default(),
-                storage_mode,
-            )
-            .is_ok()
-            {
-                renderer.line(MessageStyle::Info, "OpenAI: using configured API key")?;
-            } else {
-                renderer.line(MessageStyle::Info, "OpenAI: not authenticated")?;
-            }
-        }
+    }
+    // Show dual-credential notice when both sources are available.
+    if let Some(notice) = &overview.notice {
+        renderer.line(MessageStyle::Output, &format!("  Note: {notice}"))?;
+    }
+    if let Some(rec) = &overview.recommendation {
+        renderer.line(MessageStyle::Output, &format!("  {rec}"))?;
     }
     Ok(())
 }
@@ -911,7 +993,7 @@ fn render_openai_credential_overview(
         MessageStyle::Output,
         &format!(
             "  ChatGPT session: {}",
-            if overview.chatgpt_session.is_some() {
+            if overview.chatgpt_session_present {
                 "connected"
             } else {
                 "not connected"
@@ -940,18 +1022,6 @@ fn render_openai_credential_overview(
         renderer.line(MessageStyle::Output, &format!("  Recommendation: {recommendation}"))?;
     }
     Ok(())
-}
-
-fn summarize_current_openai_credentials(
-    vt_cfg: Option<&vtcode_config::VTCodeConfig>,
-) -> Result<vtcode_config::auth::OpenAICredentialOverview> {
-    let default_auth = vtcode_auth::OpenAIAuthConfig::default();
-    let auth_cfg = vt_cfg.map(|cfg| &cfg.auth.openai).unwrap_or(&default_auth);
-    let storage_mode = vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default();
-    let api_key =
-        vtcode_core::config::api_keys::get_api_key_with_mode(OPENAI_PROVIDER, &ApiKeySources::default(), storage_mode)
-            .ok();
-    vtcode_config::auth::summarize_openai_credentials(auth_cfg, storage_mode, api_key)
 }
 
 async fn sync_openai_runtime_if_active(ctx: &mut SlashCommandContext<'_>) -> Result<()> {

@@ -3,6 +3,7 @@
 //! Shared authentication and OAuth flows for VT Code.
 
 mod auth_service;
+pub mod codex_auth_import;
 mod config;
 pub mod credentials;
 pub mod mcp_oauth;
@@ -13,6 +14,10 @@ pub mod pkce;
 mod storage_paths;
 
 pub use auth_service::OpenAIAccountAuthService;
+pub use codex_auth_import::{
+    CodexAuthJsonRefresher, codex_auth_json_exists, codex_auth_json_path, codex_auth_json_refresher, codex_home_dir,
+    try_load_codex_chatgpt_session,
+};
 pub use config::{AuthConfig, CopilotAuthConfig, OpenAIAuthConfig, OpenAIPreferredMethod};
 pub use credentials::{
     AuthCredentialsStoreMode, CredentialIdentity, CredentialStorage, CustomApiKeyStorage, clear_custom_api_keys,
@@ -26,13 +31,13 @@ pub use oauth_server::{
     start_auth_code_callback_server,
 };
 pub use openai_chatgpt_oauth::{
-    OpenAIChatGptAuthHandle, OpenAIChatGptAuthStatus, OpenAIChatGptSession, OpenAIChatGptSessionRefresher,
-    OpenAICredentialOverview, OpenAIResolvedAuth, OpenAIResolvedAuthSource, clear_openai_chatgpt_session,
-    clear_openai_chatgpt_session_with_mode, exchange_openai_chatgpt_code_for_tokens, generate_openai_oauth_state,
-    get_openai_chatgpt_auth_status, get_openai_chatgpt_auth_status_with_mode, get_openai_chatgpt_auth_url,
-    load_openai_chatgpt_session, load_openai_chatgpt_session_with_mode, parse_openai_chatgpt_manual_callback_input,
-    refresh_openai_chatgpt_session_with_mode, resolve_openai_auth, save_openai_chatgpt_session,
-    save_openai_chatgpt_session_with_mode, summarize_openai_credentials,
+    OpenAIChatGptAuthHandle, OpenAIChatGptAuthStatus, OpenAIChatGptSession, OpenAIChatGptSessionProvenance,
+    OpenAIChatGptSessionRefresher, OpenAICredentialOverview, OpenAIResolvedAuth, OpenAIResolvedAuthSource,
+    clear_openai_chatgpt_session, clear_openai_chatgpt_session_with_mode, exchange_openai_chatgpt_code_for_tokens,
+    generate_openai_oauth_state, get_openai_chatgpt_auth_status, get_openai_chatgpt_auth_status_with_mode,
+    get_openai_chatgpt_auth_url, load_openai_chatgpt_session, load_openai_chatgpt_session_with_mode,
+    parse_openai_chatgpt_manual_callback_input, refresh_openai_chatgpt_session_with_mode, resolve_openai_auth,
+    save_openai_chatgpt_session, save_openai_chatgpt_session_with_mode, summarize_openai_credentials,
 };
 pub use openrouter_oauth::{
     AuthStatus, OpenRouterOAuthConfig, OpenRouterToken, clear_oauth_token, clear_oauth_token_with_mode,

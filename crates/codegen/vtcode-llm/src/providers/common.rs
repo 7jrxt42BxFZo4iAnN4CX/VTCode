@@ -893,11 +893,27 @@ pub(crate) fn validate_request_common(
         return Err(LLMError::InvalidRequest { message: formatted, metadata: None });
     }
 
+    // Check for deprecated OpenAI models even when no supported-model allowlist
+    // is supplied (the native OpenAI API passes `None` to allow arbitrary future
+    // IDs). Known deprecated IDs are rejected with an actionable replacement.
+    if !request.model.trim().is_empty()
+        && validation_provider.eq_ignore_ascii_case("openai")
+        && let Some((replacement, reason)) =
+            vtcode_config::constants::models::openai::deprecated_model_replacement(&request.model)
+    {
+        let msg = format!(
+            "Unsupported model: {}. {}. Update your config to use `{}` or run /model to pick a current model.",
+            request.model, reason, replacement
+        );
+        let formatted = error_display::format_llm_error(provider_name, &msg);
+        return Err(LLMError::InvalidRequest { message: formatted, metadata: None });
+    }
+
     if let Some(models) = supported_models
         && !request.model.trim().is_empty()
         && !models.contains(&request.model)
     {
-        let msg = format!("Unsupported model: {}", request.model);
+        let msg = build_unsupported_model_error(validation_provider, &request.model);
         let formatted = error_display::format_llm_error(provider_name, &msg);
         return Err(LLMError::InvalidRequest { message: formatted, metadata: None });
     }
@@ -910,6 +926,22 @@ pub(crate) fn validate_request_common(
     }
 
     Ok(())
+}
+
+/// Builds an actionable error message for an unsupported model, including
+/// deprecation migration guidance when the model is a known deprecated OpenAI ID.
+/// The `validation_provider` scopes the deprecation lookup to avoid suggesting
+/// OpenAI-specific replacements for non-OpenAI providers that happen to share an ID.
+fn build_unsupported_model_error(validation_provider: &str, model: &str) -> String {
+    if validation_provider.eq_ignore_ascii_case("openai")
+        && let Some((replacement, reason)) =
+            vtcode_config::constants::models::openai::deprecated_model_replacement(model)
+    {
+        return format!(
+            "Unsupported model: {model}. {reason}. Update your config to use `{replacement}` or run /model to pick a current model."
+        );
+    }
+    format!("Unsupported model: {model}")
 }
 
 /// Parses chat request from OpenAI-compatible JSON format.

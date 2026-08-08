@@ -68,11 +68,21 @@ See the [Configuration guide](../config/config.md#custom_providers) for full det
 -   **Official docs:**
     -   [API reference index](https://developers.openai.com/api/reference/llms.txt)
     -   [Models catalog](https://developers.openai.com/api/docs/models)
+    -   [Deprecations](https://developers.openai.com/api/docs/deprecations)
 - Follow the [Getting Started guide](../user-guide/getting-started.md#api-requirements) for API key setup.
 -   See [`crates/codegen/vtcode-core/src/config/constants.rs`](../../crates/codegen/vtcode-core/src/config/constants.rs) for the latest supported models.
--   GPT-5.2 reference: See OpenAI documentation for latest models
+-   **Authentication methods (in priority order):**
+    1.  **ChatGPT subscription OAuth** — `vtcode login openai` or `/login openai`. No API key needed. VT Code performs an in-process PKCE browser login with full auto-refresh. The Codex CLI is **not** required. By default, VT Code reuses Codex's public OAuth client identity as an **unofficial compatibility mechanism** (OpenAI has not documented or guaranteed third-party reuse, and a public client ID is not authorization to reuse another tool's registration). Organizations with their own OpenAI-issued client pair can override via `VTCODE_OPENAI_OAUTH_CLIENT_ID` / `VTCODE_OPENAI_OAUTH_ORIGINATOR` (both must be set together).
+    2.  **Codex auth.json fallback** — if you have Codex CLI installed and authenticated (`codex login`), VT Code automatically detects `~/.codex/auth.json` and uses it at runtime when no VT Code-managed session is stored. Validate with `vtcode login openai --from-codex`.
+    3.  **API key** — `vtcode secret add openai` or set `OPENAI_API_KEY`. Use `/secret` to manage stored keys.
+-   **Login/logout commands:**
+    -   CLI: `vtcode login openai`, `vtcode login openai --from-codex`, `vtcode logout openai`
+    -   TUI: `/login openai`, `/logout openai`, `/auth`
+-   **Logout semantics:** `vtcode logout openai` (or `/logout openai`) clears VT Code's managed session only. If Codex's auth.json exists, VT Code will continue using it as a fallback until you run `codex logout`.
+-   See the [OAuth authentication guide](../guides/oauth-authentication.md) for full details.
 -   VT Code's default OpenAI profile is `gpt-5.4` with `reasoning_effort = "none"` and `verbosity = "medium"`; raise reasoning only when the task shape justifies the extra latency.
 -   VT Code applies a compact GPT-5.4 prompt contract rather than a verbatim cookbook prompt: compact outputs, low-risk follow-through, dependency-aware tool use, completeness checks, verification, and conditional grounding/citation rules.
+-   Deprecated models (gpt-5, gpt-5-mini, gpt-5-nano, o3, o4-mini, gpt-5-codex, gpt-5.1-codex, etc.) are removed from the model picker but retained in routing constants for backward compatibility with existing configs.
 -   File inputs are supported for native OpenAI Responses API requests through `input_file` parts.
 -   Supported file input fields in VT Code message parts: `file_id`, `file_data`, `file_url`, `filename`.
 -   `file_url` is Responses API only; VT Code rejects `file_url` when a request uses Chat Completions.

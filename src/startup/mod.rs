@@ -64,13 +64,16 @@ pub(crate) enum SessionResumeMode {
 
 impl StartupContext {
     pub(crate) async fn from_cli_args(args: &Cli) -> Result<Self> {
+        let startup_start = std::time::Instant::now();
         let loaded = load_startup_config(args).await?;
+        tracing::debug!(target = "vtcode.startup", phase = "config", elapsed_ms = startup_start.elapsed().as_millis() as u64, "startup phase complete");
         if args.workspace_path.is_some() {
             validate_path_exists(&loaded.workspace, "Workspace")?;
         }
         if loaded.full_auto_requested {
             validate_full_auto_configuration(&loaded.config, &loaded.workspace)?;
         }
+        tracing::debug!(target = "vtcode.startup", phase = "validation", elapsed_ms = startup_start.elapsed().as_millis() as u64, "startup phase complete");
 
         let mut config = loaded.config;
         apply_codex_experimental_override(&mut config, args.codex_experimental_override());
@@ -186,6 +189,7 @@ impl StartupContext {
         }
 
         let (api_key, openai_chatgpt_auth) = auth_res?;
+        tracing::debug!(target = "vtcode.startup", phase = "auth_and_runtime", elapsed_ms = startup_start.elapsed().as_millis() as u64, "startup phase complete");
 
         let mut agent_config =
             build_runtime_agent_config(args, &config, loaded.workspace.clone(), selection, api_key, theme_selection);
@@ -679,6 +683,7 @@ mod validation_tests {
         assert!(!can_start_without_provider_auth(Some(&Commands::Login {
             provider: "openai".to_string(),
             device_code: false,
+            from_codex: false,
         })));
     }
 
@@ -707,7 +712,11 @@ mod validation_tests {
     #[test]
     fn non_tool_auth_skip_commands_skip_runtime_init() {
         for command in [
-            Commands::Login { provider: "openai".to_string(), device_code: false },
+            Commands::Login {
+                provider: "openai".to_string(),
+                device_code: false,
+                from_codex: false,
+            },
             Commands::Logout { provider: "openai".to_string() },
             Commands::Auth { provider: Some("openai".to_string()) },
             Commands::ToolPolicy {
@@ -1106,6 +1115,11 @@ mod validation_tests {
         let fake_copilot = workspace.join("copilot");
         write_fake_executable(&fake_copilot);
 
+        // Isolate CODEX_HOME so the Codex auth.json fallback doesn't pick up
+        // a real Codex session from the user's machine during this test.
+        let codex_temp = TempDir::new().expect("temp codex home");
+        env_guard.set_var("CODEX_HOME", codex_temp.path());
+
         let mut config = VTCodeConfig::default();
         config.agent.provider = "codex".to_string();
         config.agent.default_model = "gpt-5.3-codex".to_string();
@@ -1133,6 +1147,12 @@ mod validation_tests {
         let env_guard = env_lock::lock();
         let temp = TempDir::new().expect("temp dir");
         let workspace = temp.path().to_path_buf();
+
+        // Isolate CODEX_HOME so the Codex auth.json fallback doesn't pick up
+        // a real Codex session from the user's machine during this test.
+        let codex_temp = TempDir::new().expect("temp codex home");
+        env_guard.set_var("CODEX_HOME", codex_temp.path());
+
         let mut config = VTCodeConfig::default();
         config.agent.provider = "codex".to_string();
         config.agent.default_model = "gpt-5.3-codex".to_string();

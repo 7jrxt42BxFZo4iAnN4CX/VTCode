@@ -148,11 +148,27 @@ impl OAuthCallbackPage {
     }
 }
 
-#[derive(Debug, Clone)]
+/// OAuth callback result from the local HTTP server.
+///
+/// Custom `Debug` redacts the authorization `Code` and `Error` payloads —
+/// the code is a short-lived secret exchangeable for tokens, and error
+/// strings come from untrusted callback query parameters that may contain
+/// tenant identifiers, URLs, or other sensitive values.
+#[derive(Clone)]
 pub enum AuthCallbackOutcome {
     Code(String),
     Cancelled,
     Error(String),
+}
+
+impl fmt::Debug for AuthCallbackOutcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Code(_) => f.debug_tuple("Code").field(&"<redacted>").finish(),
+            Self::Cancelled => f.debug_struct("Cancelled").finish(),
+            Self::Error(_) => f.debug_tuple("Error").field(&"<redacted>").finish(),
+        }
+    }
 }
 
 pub struct AuthCodeCallbackServer {
@@ -238,7 +254,7 @@ impl Drop for AuthCodeCallbackServer {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct AuthCallbackParams {
     code: Option<String>,
     error: Option<String>,

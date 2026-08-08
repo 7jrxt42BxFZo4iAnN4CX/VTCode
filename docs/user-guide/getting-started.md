@@ -37,6 +37,7 @@ Choose one of the supported LLM providers:
 -   **OpenAI**: `export OPENAI_API_KEY=your_key_here`
 
     -   Get from [OpenAI Platform](https://platform.openai.com/api-keys)
+    -   **ChatGPT subscription (no API key needed):** Run `vtcode login openai` or use `/login openai` in the TUI. VT Code performs an in-process PKCE browser login — the Codex CLI is **not** required. By default, VT Code reuses Codex's public OAuth client identity as an **unofficial compatibility mechanism** (OpenAI has not documented or guaranteed third-party reuse; a public client ID is not authorization to reuse another tool's registration). If you have Codex CLI installed, VT Code can also reuse its `~/.codex/auth.json` via `vtcode login openai --from-codex`. See the [OAuth guide](../guides/oauth-authentication.md) for details.
 
 -   **Anthropic**: `export ANTHROPIC_API_KEY=your_key_here`
     -   Get from [Anthropic Console](https://console.anthropic.com/)
@@ -115,6 +116,10 @@ Use VT Code's built-in secret management — keys are stored in your OS keyring,
 # Or from the command line
 vtcode secret add openai
 ```
+
+**ChatGPT subscription users:** No API key needed — run `vtcode login openai` for in-process
+PKCE OAuth (full auto-refresh, no Codex CLI required) or `vtcode login openai --from-codex` to
+reuse Codex CLI's existing login. In the TUI, use `/login openai`.
 
 The first-run wizard auto-discovers any key already in your shell environment (e.g. `~/.zshrc`) or in your OS keyring, and skips re-prompting. It tells you exactly which source it found — e.g. "Found OPENAI_API_KEY in environment" or "Found stored Gemini key in OS keyring."
 

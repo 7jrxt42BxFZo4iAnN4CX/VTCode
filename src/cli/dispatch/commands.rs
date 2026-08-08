@@ -170,8 +170,8 @@ pub(crate) async fn dispatch_command(args: &Cli, startup: &StartupContext, comma
         Commands::Config { output, global } => {
             config::handle_config_command(output.as_deref(), global).await?;
         }
-        Commands::Login { provider, device_code } => {
-            crate::cli::auth::handle_login_command(Some(cfg), &provider, device_code).await?;
+        Commands::Login { provider, device_code, from_codex } => {
+            crate::cli::auth::handle_login_command(Some(cfg), &provider, device_code, from_codex).await?;
         }
         Commands::Logout { provider } => {
             crate::cli::auth::handle_logout_command(Some(cfg), &provider).await?;

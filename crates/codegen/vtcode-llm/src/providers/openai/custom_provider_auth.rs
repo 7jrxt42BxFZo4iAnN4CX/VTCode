@@ -27,10 +27,19 @@ struct CustomProviderAuthState {
     cached_token: Option<CachedToken>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct CachedToken {
     value: String,
     fetched_at: Instant,
+}
+
+impl std::fmt::Debug for CachedToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CachedToken")
+            .field("value", &"<redacted>")
+            .field("fetched_at", &self.fetched_at)
+            .finish()
+    }
 }
 
 impl CustomProviderAuthHandle {

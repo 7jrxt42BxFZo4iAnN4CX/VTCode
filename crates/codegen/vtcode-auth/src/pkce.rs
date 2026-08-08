@@ -7,6 +7,7 @@ use anyhow::Result;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::rand::{SecureRandom, SystemRandom};
 use sha2::{Digest, Sha256};
+use std::fmt;
 
 /// PKCE code verifier length (43-128 characters per RFC 7636)
 const CODE_VERIFIER_LENGTH: usize = 64;
@@ -15,7 +16,11 @@ const CODE_VERIFIER_LENGTH: usize = 64;
 const CODE_VERIFIER_CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
 
 /// PKCE challenge pair containing verifier and challenge strings.
-#[derive(Debug, Clone)]
+///
+/// Custom `Debug` redacts the `code_verifier` — it is a secret that must
+/// never leave the client. The `code_challenge` and method are safe to
+/// display (they are sent to the authorization server in the URL).
+#[derive(Clone)]
 pub struct PkceChallenge {
     /// The code verifier (random string, kept secret by client)
     pub(crate) code_verifier: String,
@@ -23,6 +28,16 @@ pub struct PkceChallenge {
     pub(crate) code_challenge: String,
     /// The challenge method (always "S256" for SHA-256)
     pub(crate) code_challenge_method: String,
+}
+
+impl fmt::Debug for PkceChallenge {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PkceChallenge")
+            .field("code_verifier", &"<redacted>")
+            .field("code_challenge", &self.code_challenge)
+            .field("code_challenge_method", &self.code_challenge_method)
+            .finish()
+    }
 }
 
 impl PkceChallenge {
@@ -47,8 +62,8 @@ impl PkceChallenge {
 /// use vtcode_auth::generate_pkce_challenge;
 ///
 /// let challenge = generate_pkce_challenge().unwrap();
-/// println!("Verifier: {}", challenge.code_verifier);
-/// println!("Challenge: {}", challenge.code_challenge);
+/// // code_verifier is a secret — never print or log it.
+/// assert!(!challenge.code_challenge.is_empty());
 /// ```
 pub fn generate_pkce_challenge() -> Result<PkceChallenge> {
     let code_verifier = generate_code_verifier()?;

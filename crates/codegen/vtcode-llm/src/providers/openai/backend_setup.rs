@@ -89,11 +89,21 @@ pub(crate) struct OpenAIBackendSetup {
     responses_defaults: OpenAIBackendResponsesDefaults,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct OpenAIRequestAuth {
     pub bearer_token: String,
     pub chatgpt_account_id: Option<String>,
     pub rig_chatgpt_auth: Option<RigChatGptAuth>,
+}
+
+impl std::fmt::Debug for OpenAIRequestAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenAIRequestAuth")
+            .field("bearer_token", &"<redacted>")
+            .field("chatgpt_account_id", &self.chatgpt_account_id)
+            .field("rig_chatgpt_auth", &"<redacted>")
+            .finish()
+    }
 }
 
 impl OpenAIRequestAuth {
