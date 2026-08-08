@@ -15,7 +15,7 @@ use std::sync::Mutex as StdMutex;
 use std::sync::atomic::AtomicBool;
 
 use anyhow::{Context, Result};
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -64,14 +64,17 @@ async fn read_output_stream<R>(
 ) where
     R: AsyncRead + Unpin,
 {
-    let mut buf = vec![0u8; 65_536];
+    // Read directly into a BytesMut so each chunk can be frozen without a
+    // separate Vec-to-Bytes copy.
+    let mut buf = BytesMut::with_capacity(65_536);
     loop {
-        match reader.read(&mut buf).await {
+        buf.clear();
+        match reader.read_buf(&mut buf).await {
             Ok(0) => break,
             Ok(n) => {
-                let chunk = Bytes::copy_from_slice(&buf[..n]);
+                let chunk = buf.split_to(n).freeze();
                 let _ = output_tx.send(chunk.clone());
-                if let Some(sender) = reliable_output_tx.as_mut()
+                if let Some(sender) = reliable_output_tx.as_ref().cloned()
                     && sender.send(chunk).await.is_err()
                 {
                     // A lossless consumer is optional. Once it goes away,

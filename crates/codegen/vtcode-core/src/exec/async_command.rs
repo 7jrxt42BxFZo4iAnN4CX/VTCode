@@ -287,6 +287,15 @@ where
     };
 
     let mut output = Vec::new();
+    // Reserve a bounded amount of capacity based on the configured capture
+    // limit. We cap the reservation to DEFAULT_CAPTURE_LIMIT to avoid
+    // reserving an unbounded or attacker-controlled amount while still
+    // improving performance for typical capture sizes.
+    let reserve_cap = config.max_bytes.min(DEFAULT_CAPTURE_LIMIT);
+    if reserve_cap > 0 {
+        output.reserve(reserve_cap);
+    }
+
     let mut buffer = [0u8; 4096];
     loop {
         let read = reader.read(&mut buffer).await?;
