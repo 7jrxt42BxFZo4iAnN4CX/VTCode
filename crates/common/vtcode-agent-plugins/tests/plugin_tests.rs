@@ -78,6 +78,20 @@ fn reject_missing_required_fields() {
 }
 
 #[test]
+fn reject_unsupported_schema() {
+    let content = r#"{"$schema": "https://agent-plugins.org/schemas/9.9.9/plugin.schema.json", "name": "test"}"#;
+    assert!(PluginManifest::parse(content).is_err());
+}
+
+#[test]
+fn reject_wrong_typed_optional_field() {
+    // A wrong-typed optional field must fail loudly rather than be silently dropped.
+    let content =
+        r#"{"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json", "name": "test", "version": 42}"#;
+    assert!(PluginManifest::parse(content).is_err());
+}
+
+#[test]
 fn report_unknown_fields() {
     let content =
         r#"{"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json", "name": "test", "unknown": true}"#;
@@ -173,6 +187,43 @@ fn report_unknown_mcp_top_level_fields() {
 }
 
 #[test]
+fn reject_unsupported_mcp_schema() {
+    let content = r#"{
+        "$schema": "https://agent-plugins.org/schemas/9.9.9/mcp.schema.json",
+        "mcpServers": {}
+    }"#;
+    assert!(McpConfig::parse(content).is_err());
+}
+
+#[test]
+fn reject_wrong_typed_mcp_fields() {
+    // Wrong-typed args/env/cwd must fail loudly, not be silently dropped.
+    let content = r#"{
+        "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+        "mcpServers": {
+            "test": {"type": "stdio", "command": "echo", "args": "not-an-array"}
+        }
+    }"#;
+    assert!(McpConfig::parse(content).is_err());
+
+    let content = r#"{
+        "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+        "mcpServers": {
+            "test": {"type": "stdio", "command": "echo", "args": [1, 2]}
+        }
+    }"#;
+    assert!(McpConfig::parse(content).is_err());
+
+    let content = r#"{
+        "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+        "mcpServers": {
+            "test": {"type": "stdio", "command": "echo", "cwd": 42}
+        }
+    }"#;
+    assert!(McpConfig::parse(content).is_err());
+}
+
+#[test]
 fn load_example_plugin() {
     let plugin = LoadedPlugin::load_from_dir(&fixture("agent-plugins-example")).unwrap();
     assert_eq!(plugin.manifest.name, "agent-plugins-example");
@@ -228,18 +279,124 @@ fn expand_placeholders_multiple() {
 
 #[test]
 fn validate_plugin_relative_accepts_dot_slash() {
-    let root = PathBuf::from("/home/user/.agents/plugins/test");
+    let tmp = tempfile::TempDir::new().unwrap();
+    let root = tmp.path().to_path_buf();
+    std::fs::create_dir_all(root.join("bin")).unwrap();
     assert!(validate_plugin_relative("./bin/server", &root).is_ok());
 }
 
 #[test]
 fn validate_plugin_relative_rejects_bare_path() {
-    let root = PathBuf::from("/home/user/.agents/plugins/test");
+    let tmp = tempfile::TempDir::new().unwrap();
+    let root = tmp.path().to_path_buf();
     assert!(validate_plugin_relative("bin/server", &root).is_err());
 }
 
 #[test]
 fn validate_plugin_relative_rejects_parent_escape() {
-    let root = PathBuf::from("/home/user/.agents/plugins/test");
+    let tmp = tempfile::TempDir::new().unwrap();
+    let root = tmp.path().to_path_buf();
     assert!(validate_plugin_relative("../bin/server", &root).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn validate_plugin_relative_rejects_symlink_escape() {
+    use std::os::unix::fs::symlink;
+    let tmp = tempfile::TempDir::new().unwrap();
+    let root = tmp.path().join("plugin");
+    std::fs::create_dir_all(&root).unwrap();
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    symlink(&outside, root.join("link")).unwrap();
+    assert!(validate_plugin_relative("./link", &root).is_err());
+}
+
+#[test]
+fn validate_plugin_relative_accepts_nonexistent_leaf() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let root = tmp.path().to_path_buf();
+    // A leaf that does not exist yet (e.g. a binary built at runtime) is fine
+    // as long as its existing ancestors stay inside the root.
+    std::fs::create_dir_all(root.join("bin")).unwrap();
+    assert!(validate_plugin_relative("./bin/not-yet-built", &root).is_ok());
+}
+
+#[test]
+fn install_refuses_duplicate_plugin_with_actionable_error() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let fixture_dir = fixture("agent-plugins-example");
+    let installer = FileSystemPluginInstaller::with_base_dir(tmp.path().to_path_buf());
+    let installed = installer
+        .install(fixture_dir.to_str().unwrap(), Some("dup-plugin".into()))
+        .unwrap();
+    assert!(installed.path.join("plugin.json").is_file());
+
+    let err = installer
+        .install(fixture_dir.to_str().unwrap(), Some("dup-plugin".into()))
+        .err()
+        .expect("duplicate install must fail");
+    match err {
+        PluginError::AlreadyInstalled(message) => {
+            assert!(message.contains("dup-plugin"), "message should name the plugin: {message}");
+            assert!(message.contains("plugins remove"), "message should suggest removal: {message}");
+            assert!(message.contains("--name"), "message should suggest --name: {message}");
+        }
+        other => panic!("expected AlreadyInstalled, got: {other}"),
+    }
+
+    installer.remove("dup-plugin").unwrap();
+}
+
+#[test]
+fn remove_reports_unknown_plugin_with_actionable_error() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let installer = FileSystemPluginInstaller::with_base_dir(tmp.path().to_path_buf());
+    let err = installer.remove("never-installed-plugin").expect_err("remove must fail");
+    match err {
+        PluginError::NotInstalled(message) => {
+            assert!(message.contains("never-installed-plugin"), "message should name the plugin: {message}");
+            assert!(message.contains("plugins add"), "message should suggest install: {message}");
+        }
+        other => panic!("expected NotInstalled, got: {other}"),
+    }
+}
+
+#[test]
+fn install_refuses_path_traversal_in_name() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let fixture_dir = fixture("agent-plugins-example");
+    let installer = FileSystemPluginInstaller::with_base_dir(tmp.path().to_path_buf());
+
+    for evil in ["../evil", "../../etc", "..", "foo/../../bar", "/etc/evil"] {
+        match installer.install(fixture_dir.to_str().unwrap(), Some(evil.into())) {
+            Err(PluginError::InvalidName(_)) => {}
+            Ok(_) => panic!("name {evil:?} unexpectedly installed"),
+            Err(e) => panic!("name {evil:?} expected InvalidName, got: {e}"),
+        }
+    }
+
+    // Nothing may have been written outside the plugins root.
+    let plugins_root = tmp.path().join(".agents/plugins");
+    assert!(!plugins_root.exists() || std::fs::read_dir(&plugins_root).unwrap().next().is_none());
+}
+
+#[test]
+fn remove_refuses_path_traversal_in_name() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let installer = FileSystemPluginInstaller::with_base_dir(tmp.path().to_path_buf());
+
+    // A sentinel file that a traversal remove() must not be able to delete.
+    let sentinel = tmp.path().join("sentinel.txt");
+    std::fs::write(&sentinel, "keep me").unwrap();
+
+    for evil in ["../sentinel.txt", "../../sentinel.txt", "..", ".", ""] {
+        match installer.remove(evil) {
+            Err(PluginError::InvalidName(_)) => {}
+            Ok(_) => panic!("name {evil:?} unexpectedly removed"),
+            Err(e) => panic!("name {evil:?} expected InvalidName, got: {e}"),
+        }
+    }
+
+    assert!(sentinel.is_file(), "traversal remove() deleted a file outside the plugins root");
 }

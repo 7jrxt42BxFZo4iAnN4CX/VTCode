@@ -222,7 +222,7 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/user-guide/agent-plugins.md`
   - **Content**: Agent Plugins
-  - **Topics**: What a plugin gives you, Install a plugin, Manage plugins, Use plugin skills and MCP, Configure plugin behavior
+  - **Topics**: What a plugin gives you, Install a plugin, Manage plugins, Use plugin skills and MCP, Example: vtcode-plugins
   - **User Questions**: "What can you tell me about Agent Plugins?", "How does What a plugin gives you work?", "How does Install a plugin work?"
 
 - **File**: `docs/concurrency-improvements-report.md`
@@ -304,7 +304,7 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/guides/agent-plugins.md`
   - **Content**: Agent Plugins
-  - **Topics**: Directory layout, Manifest, Discovery roots, Skills, MCP servers
+  - **Topics**: Directory layout, Manifest, Discovery roots, Example usage, Skills
   - **User Questions**: "What can you tell me about Agent Plugins?", "How does Directory layout work?", "How does Manifest work?"
 
 - **File**: `docs/guides/cargo-unmaintained.md`

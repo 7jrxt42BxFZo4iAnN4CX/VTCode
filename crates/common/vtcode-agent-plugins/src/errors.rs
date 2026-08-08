@@ -17,6 +17,12 @@ pub enum PluginError {
     #[error("path escapes plugin root: {0}")]
     PathEscape(String),
 
+    #[error("plugin already installed: {0}")]
+    AlreadyInstalled(String),
+
+    #[error("plugin not installed: {0}")]
+    NotInstalled(String),
+
     #[error("unsupported plugin schema version: {0}")]
     UnsupportedSchema(String),
 

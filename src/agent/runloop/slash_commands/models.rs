@@ -184,6 +184,9 @@ pub(crate) enum SlashCommandOutcome {
     ManageSkills {
         action: crate::agent::runloop::SkillCommandAction,
     },
+    ManagePlugins {
+        action: crate::agent::runloop::PluginCommandAction,
+    },
     ManageAgents {
         action: AgentManagerAction,
     },

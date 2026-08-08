@@ -28,6 +28,8 @@ mod mcp;
 mod oauth;
 #[path = "planning.rs"]
 mod planning;
+#[path = "plugins.rs"]
+mod plugins;
 #[path = "rewind.rs"]
 mod rewind;
 #[path = "share_log.rs"]
@@ -69,6 +71,7 @@ pub(super) use oauth::{
     handle_start_oauth_provider_picker,
 };
 pub(super) use planning::handle_toggle_planning_workflow;
+pub(super) use plugins::handle_manage_plugins;
 pub(super) use rewind::{handle_rewind_latest, handle_rewind_to_turn};
 pub(super) use share_log::handle_share_log;
 pub(super) use skills::handle_manage_skills;

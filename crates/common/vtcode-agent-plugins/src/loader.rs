@@ -1,8 +1,9 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::discovery::LoadedPlugin;
 use crate::errors::PluginError;
 
+use dirs::home_dir;
 /// Abstraction for loading Agent Plugins from a source.
 ///
 /// This trait isolates the loading mechanism from the rest of the system,
@@ -11,6 +12,16 @@ use crate::errors::PluginError;
 pub trait PluginLoader {
     /// Load a plugin from the given path.
     fn load(&self, path: &Path) -> Result<LoadedPlugin, PluginError>;
+}
+
+/// Ordered plugin discovery roots: the workspace project root first, then the
+/// user home root. Shared by the CLI `plugins` subcommands and the core MCP
+/// discovery so both layers agree on where plugins live.
+pub fn plugin_roots_for(workspace: &Path) -> Vec<PathBuf> {
+    vec![
+        workspace.join(".agents/plugins"),
+        home_dir().map(|h| h.join(".agents/plugins")).unwrap_or_default(),
+    ]
 }
 
 /// Default filesystem-based plugin loader.
@@ -63,7 +74,7 @@ impl PluginValidator for DefaultPluginValidator {
 /// Outcome of a plugin installation.
 pub struct InstalledPlugin {
     pub name: String,
-    pub path: std::path::PathBuf,
+    pub path: PathBuf,
     pub loaded: LoadedPlugin,
 }
 
@@ -81,12 +92,27 @@ pub trait PluginInstaller {
 
 /// Default filesystem-based installer.
 pub struct FileSystemPluginInstaller {
-    _private: (),
+    base_dir: Option<PathBuf>,
 }
 
 impl FileSystemPluginInstaller {
     pub fn new() -> Self {
-        Self { _private: () }
+        Self { base_dir: None }
+    }
+
+    /// Install under a custom base directory instead of the user home.
+    /// Used by tests to keep installs hermetic.
+    pub fn with_base_dir(base_dir: PathBuf) -> Self {
+        Self { base_dir: Some(base_dir) }
+    }
+
+    fn install_root(&self) -> Result<PathBuf, PluginError> {
+        match &self.base_dir {
+            Some(base) => Ok(base.clone()),
+            None => home_dir().ok_or_else(|| {
+                PluginError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "cannot resolve home directory"))
+            }),
+        }
     }
 }
 
@@ -106,15 +132,16 @@ impl PluginInstaller for FileSystemPluginInstaller {
                 .to_string()
         });
 
-        let home = dirs::home_dir().ok_or_else(|| {
-            PluginError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "cannot resolve home directory"))
-        })?;
-        let install_dir = home.join(".agents/plugins").join(&target_name);
+        // Reject names that could escape the plugins root (e.g. "../evil" or
+        // absolute paths). The name is user-supplied via `--name`.
+        crate::manifest::PluginManifest::validate_name(&target_name).map_err(PluginError::InvalidName)?;
+
+        let install_dir = self.install_root()?.join(".agents/plugins").join(&target_name);
 
         if install_dir.exists() {
-            return Err(PluginError::Io(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                format!("plugin already installed at {}", install_dir.display()),
+            return Err(PluginError::AlreadyInstalled(format!(
+                "'{target_name}' already exists at {}. Remove it with 'vtcode plugins remove {target_name}', or install under a different name with '--name <id>'",
+                install_dir.display()
             )));
         }
 
@@ -129,6 +156,7 @@ impl PluginInstaller for FileSystemPluginInstaller {
                 .status()
                 .map_err(PluginError::Io)?;
             if !status.success() {
+                let _ = std::fs::remove_dir_all(&install_dir);
                 return Err(PluginError::Io(std::io::Error::other(format!("git clone failed for {}", source))));
             }
         } else {
@@ -146,19 +174,22 @@ impl PluginInstaller for FileSystemPluginInstaller {
             copy_dir_all(src, &install_dir).map_err(PluginError::Io)?;
         }
 
-        let loaded = LoadedPlugin::load_from_dir(&install_dir)?;
+        let loaded = LoadedPlugin::load_from_dir(&install_dir).inspect_err(|_| {
+            let _ = std::fs::remove_dir_all(&install_dir);
+        })?;
         Ok(InstalledPlugin { name: target_name, path: install_dir, loaded })
     }
 
     fn remove(&self, name: &str) -> Result<(), PluginError> {
-        let home = dirs::home_dir().ok_or_else(|| {
-            PluginError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "cannot resolve home directory"))
-        })?;
-        let install_dir = home.join(".agents/plugins").join(name);
+        // Reject names that could escape the plugins root. Without this,
+        // `remove("../../.config/x")` would delete arbitrary directories.
+        crate::manifest::PluginManifest::validate_name(name).map_err(PluginError::InvalidName)?;
+
+        let install_dir = self.install_root()?.join(".agents/plugins").join(name);
         if !install_dir.exists() {
-            return Err(PluginError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("plugin not installed: {}", name),
+            return Err(PluginError::NotInstalled(format!(
+                "'{name}' is not installed at {}. Install it with 'vtcode plugins add <source>'",
+                install_dir.display()
             )));
         }
         if !install_dir.join("plugin.json").is_file() {
@@ -172,16 +203,54 @@ impl PluginInstaller for FileSystemPluginInstaller {
 }
 
 fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    copy_dir_all_inner(src, dst, &mut Vec::new())
+}
+
+fn copy_dir_all_inner(src: &Path, dst: &Path, ancestors: &mut Vec<PathBuf>) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
+
+    // Guard against symlink cycles: if we are revisiting a directory we are
+    // already an ancestor of, abort instead of recursing forever.
+    let canonical = vtcode_commons::canonicalize(src)?;
+    if ancestors.contains(&canonical) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("symlink cycle detected while copying {}", src.display()),
+        ));
+    }
+    ancestors.push(canonical);
+
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-        if src_path.is_dir() {
-            copy_dir_all(&src_path, &dst_path)?;
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+        let dst_path = dst.join(&file_name);
+
+        // Do not copy the source plugin's own VCS metadata; a local checkout
+        // should install the plugin, not its history. Other dotfiles (e.g.
+        // .npmrc, .env) are preserved because they may be required at runtime.
+        if name == ".git" {
+            continue;
+        }
+
+        let meta = std::fs::symlink_metadata(&src_path)?;
+        if meta.file_type().is_symlink() {
+            // Copy symlinks as their link target, not the linked content, so
+            // plugin-internal symlinks stay relative and absolute symlinks
+            // cannot pull data out of the source into the install tree.
+            let target = std::fs::read_link(&src_path)?;
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(target, &dst_path)?;
+            #[cfg(not(unix))]
+            std::fs::copy(&src_path, &dst_path)?;
+        } else if meta.is_dir() {
+            copy_dir_all_inner(&src_path, &dst_path, ancestors)?;
         } else {
             std::fs::copy(&src_path, &dst_path)?;
         }
     }
+
+    ancestors.pop();
     Ok(())
 }

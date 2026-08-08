@@ -63,22 +63,22 @@ impl PluginManifest {
                         .to_string();
                 }
                 "version" => {
-                    manifest.version = val.as_str().map(String::from);
+                    manifest.version = Some(expect_string(val, "version")?);
                 }
                 "description" => {
-                    manifest.description = val.as_str().map(String::from);
+                    manifest.description = Some(expect_string(val, "description")?);
                 }
                 "author" => {
                     manifest.author = Some(parse_author(val)?);
                 }
                 "homepage" => {
-                    manifest.homepage = val.as_str().map(String::from);
+                    manifest.homepage = Some(expect_string(val, "homepage")?);
                 }
                 "repository" => {
-                    manifest.repository = val.as_str().map(String::from);
+                    manifest.repository = Some(expect_string(val, "repository")?);
                 }
                 "license" => {
-                    manifest.license = val.as_str().map(String::from);
+                    manifest.license = Some(expect_string(val, "license")?);
                 }
                 "keywords" => {
                     manifest.keywords = Some(
@@ -100,6 +100,13 @@ impl PluginManifest {
 
         if manifest.schema.is_empty() {
             return Err(PluginError::InvalidManifest("missing required field: $schema".into()));
+        }
+        if !SUPPORTED_SCHEMAS.contains(&manifest.schema.as_str()) {
+            return Err(PluginError::InvalidManifest(format!(
+                "unsupported $schema '{}' (expected {})",
+                manifest.schema,
+                SUPPORTED_SCHEMAS.join(" or ")
+            )));
         }
         if manifest.name.is_empty() {
             return Err(PluginError::InvalidManifest("missing required field: name".into()));
@@ -130,6 +137,13 @@ impl PluginManifest {
         }
         Ok(())
     }
+}
+
+fn expect_string(value: &serde_json::Value, field: &str) -> Result<String, PluginError> {
+    value
+        .as_str()
+        .map(String::from)
+        .ok_or_else(|| PluginError::InvalidManifest(format!("{field} must be a string")))
 }
 
 fn parse_author(value: &serde_json::Value) -> Result<PluginAuthor, PluginError> {

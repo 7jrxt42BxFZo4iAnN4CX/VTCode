@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use crate::errors::PluginError;
 
+const SUPPORTED_SCHEMAS: &[&str] = &["https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"];
+
 #[derive(Debug, Clone)]
 pub struct McpConfig {
     pub schema: String,
@@ -84,6 +86,13 @@ impl McpConfig {
         if config.schema.is_empty() {
             return Err(PluginError::InvalidMcp("missing required field: $schema".into()));
         }
+        if !SUPPORTED_SCHEMAS.contains(&config.schema.as_str()) {
+            return Err(PluginError::InvalidMcp(format!(
+                "unsupported $schema '{}' (expected {})",
+                config.schema,
+                SUPPORTED_SCHEMAS.join(" or ")
+            )));
+        }
 
         config.unknown_fields = unknown;
         Ok(config)
@@ -110,21 +119,24 @@ fn parse_server_config(name: &str, value: &serde_json::Value) -> Result<ServerCo
 
             let args = obj
                 .get("args")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|v| expect_string_array(v, &format!("server '{name}' args")))
+                .transpose()?
                 .unwrap_or_default();
 
             let env = obj
                 .get("env")
-                .and_then(|v| v.as_object())
-                .map(|m| {
-                    m.iter()
-                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                        .collect()
-                })
+                .map(|v| expect_string_map(v, &format!("server '{name}' env")))
+                .transpose()?
                 .unwrap_or_default();
 
-            let cwd = obj.get("cwd").and_then(|v| v.as_str()).map(String::from);
+            let cwd = obj
+                .get("cwd")
+                .map(|v| {
+                    v.as_str()
+                        .map(String::from)
+                        .ok_or_else(|| PluginError::InvalidMcp(format!("server '{name}' cwd must be a string")))
+                })
+                .transpose()?;
 
             Ok(ServerConfig::Stdio(StdioServerConfig { command, args, env, cwd }))
         }
@@ -137,12 +149,8 @@ fn parse_server_config(name: &str, value: &serde_json::Value) -> Result<ServerCo
 
             let headers = obj
                 .get("headers")
-                .and_then(|v| v.as_object())
-                .map(|m| {
-                    m.iter()
-                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                        .collect()
-                })
+                .map(|v| expect_string_map(v, &format!("server '{name}' headers")))
+                .transpose()?
                 .unwrap_or_default();
 
             Ok(ServerConfig::StreamableHttp(HttpServerConfig { url, headers }))
@@ -156,16 +164,42 @@ fn parse_server_config(name: &str, value: &serde_json::Value) -> Result<ServerCo
 
             let headers = obj
                 .get("headers")
-                .and_then(|v| v.as_object())
-                .map(|m| {
-                    m.iter()
-                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                        .collect()
-                })
+                .map(|v| expect_string_map(v, &format!("server '{name}' headers")))
+                .transpose()?
                 .unwrap_or_default();
 
             Ok(ServerConfig::Sse(SseServerConfig { url, headers }))
         }
         _ => Err(PluginError::InvalidMcp(format!("server '{}' has unsupported type: {}", name, type_val))),
     }
+}
+
+fn expect_string_array(value: &serde_json::Value, context: &str) -> Result<Vec<String>, PluginError> {
+    value
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|v| {
+                    v.as_str()
+                        .map(String::from)
+                        .ok_or_else(|| PluginError::InvalidMcp(format!("{context} must contain only strings")))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .unwrap_or_else(|| Err(PluginError::InvalidMcp(format!("{context} must be an array"))))
+}
+
+fn expect_string_map(value: &serde_json::Value, context: &str) -> Result<HashMap<String, String>, PluginError> {
+    value
+        .as_object()
+        .map(|obj| {
+            obj.iter()
+                .map(|(k, v)| {
+                    v.as_str()
+                        .map(|s| (k.clone(), s.to_string()))
+                        .ok_or_else(|| PluginError::InvalidMcp(format!("{context}.{k} must be a string")))
+                })
+                .collect::<Result<HashMap<_, _>, _>>()
+        })
+        .unwrap_or_else(|| Err(PluginError::InvalidMcp(format!("{context} must be an object"))))
 }

@@ -713,7 +713,7 @@ pub enum Commands {
     /// Manage Agent Plugins
     ///
     /// Agent Plugins are portable packages that bundle Agent Skills and MCP servers
-    /// under a root plugin.json manifest, following the Agent Plugins 1.0.0 spec.
+    /// under a root plugin.json manifest, following the Agent Plugins spec.
     ///
     /// Examples:
     ///   vtcode plugins list

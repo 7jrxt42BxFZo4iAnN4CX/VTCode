@@ -290,6 +290,12 @@ const COMMAND_SKILL_SPECS: &[CommandSkillSpec] = &[
         "integration"
     ),
     built_in_command_spec!(
+        "plugin",
+        "Open interactive Agent Plugins manager (usage: /plugin, /plugin manager)",
+        "/plugin [manager|list|info <name>|add <source> [--name <id>]|remove <name>|validate <path>|refresh|help]",
+        "integration"
+    ),
+    built_in_command_spec!(
         "local",
         "Manage local inference servers: Ollama, LM Studio, llama.cpp (usage: /local [action] [provider])",
         "/local [status|start|stop|configure|troubleshoot] [ollama|lmstudio|llamacpp]",

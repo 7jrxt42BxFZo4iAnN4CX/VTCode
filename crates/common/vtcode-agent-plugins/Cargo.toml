@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version = "1.93.0"
 authors = ["Vinh Nguyen <vinhnguyen2308@gmail.com>"]
-description = "Agent Plugins 1.0.0 loader for VT Code: portable plugin manifests, skill discovery, and MCP configuration."
+description = "Agent Plugins loader for VT Code: portable plugin manifests, skill discovery, and MCP configuration."
 license.workspace = true
 readme = "README.md"
 homepage.workspace = true
@@ -24,6 +24,7 @@ vtcode-commons = { workspace = true }
 
 [dev-dependencies]
 serial_test.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

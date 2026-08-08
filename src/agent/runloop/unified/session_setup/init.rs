@@ -330,9 +330,10 @@ pub(crate) async fn initialize_session(
         )?
     };
     if let (Some(manager), Some(cfg)) = (async_mcp_manager.as_ref(), vt_cfg) {
-        manager
-            .reconfigure(primary_agent_mcp_config(cfg, active_primary_agent.active()))
-            .await?;
+        // Rebuild the full session config (primary-agent MCP merge + plugin
+        // providers) so reconfigure does not drop plugin-provided providers.
+        let mcp_config = session_mcp_config(Some(cfg), Some(active_primary_agent.active()), &config.workspace);
+        manager.reconfigure(mcp_config).await?;
     }
 
     let tool_result_cache = Arc::new(RwLock::new(ToolResultCache::new(128)));
@@ -472,15 +473,7 @@ fn create_async_mcp_manager(
         debug!("MCP is disabled in configuration");
         return None;
     }
-    let mut mcp_config = active_primary_agent
-        .map(|agent| primary_agent_mcp_config(cfg, agent))
-        .unwrap_or_else(|| cfg.mcp.clone());
-
-    let plugin_providers = discover_plugin_mcp_providers(workspace_root);
-    if !plugin_providers.is_empty() {
-        mcp_config.providers.extend(plugin_providers);
-        info!("Added {} plugin-provided MCP providers", mcp_config.providers.len());
-    }
+    let mcp_config = session_mcp_config(vt_cfg, active_primary_agent, workspace_root);
 
     info!("Setting up async MCP client with {} providers", mcp_config.providers.len());
     let approval_policy = approval_policy_from_human_in_the_loop(cfg.security.human_in_the_loop);
@@ -491,6 +484,32 @@ fn create_async_mcp_manager(
         Arc::new(|_event: mcp_events::McpEvent| {}),
     );
     Some(Arc::new(manager))
+}
+
+/// Build the session MCP config: the base config (optionally merged with the
+/// active primary agent's `mcp_servers`) plus any `mcp.json`-declared plugin
+/// providers discovered from `<workspace>/.agents/plugins` and
+/// `~/.agents/plugins`.
+///
+/// Centralized so session bootstrap and live `/plugin refresh` reconfigure
+/// produce identical configurations.
+pub(crate) fn session_mcp_config(
+    vt_cfg: Option<&VTCodeConfig>,
+    active_primary_agent: Option<&ActivePrimaryAgent>,
+    workspace_root: &Path,
+) -> vtcode_core::config::mcp::McpClientConfig {
+    let cfg = vt_cfg.expect("MCP config requires a loaded VTCodeConfig");
+    let mut mcp_config = active_primary_agent
+        .map(|agent| primary_agent_mcp_config(cfg, agent))
+        .unwrap_or_else(|| cfg.mcp.clone());
+
+    let plugin_providers = discover_plugin_mcp_providers(workspace_root);
+    let plugin_provider_count = plugin_providers.len();
+    if !plugin_providers.is_empty() {
+        mcp_config.providers.extend(plugin_providers);
+        info!("Added {} plugin-provided MCP providers", plugin_provider_count);
+    }
+    mcp_config
 }
 
 fn primary_agent_mcp_config(
@@ -806,7 +825,6 @@ mod tests {
             }))
             .expect("global provider"),
         );
-
         let mut spec = test_primary_agent_spec("mcp-primary");
         spec.mcp_servers = vec![SubagentMcpServer::Inline(BTreeMap::from([
             (
@@ -836,6 +854,65 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(provider_names, vec!["global", "local"]);
+    }
+
+    #[test]
+    fn session_mcp_config_includes_plugin_providers() {
+        use std::fs;
+
+        let tmp = TempDir::new().expect("temp dir");
+        let workspace = tmp.path();
+        let mut cfg = VTCodeConfig::default();
+        cfg.mcp.enabled = true;
+        cfg.mcp.providers.push(
+            serde_json::from_value(json!({
+                "name": "global",
+                "command": "global-mcp",
+                "args": []
+            }))
+            .expect("global provider"),
+        );
+
+        // A plugin with an mcp.json stdio server under the workspace plugin root.
+        let plugin_root = workspace.join(".agents/plugins/test-plugin");
+        fs::create_dir_all(plugin_root.join("skills")).expect("create plugin dirs");
+        fs::write(
+            plugin_root.join("plugin.json"),
+            r#"{
+                "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+                "name": "test-plugin",
+                "version": "1.0.0",
+                "description": "Test plugin"
+            }"#,
+        )
+        .expect("write plugin.json");
+        fs::write(
+            plugin_root.join("mcp.json"),
+            r#"{
+                "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+                "mcpServers": {
+                    "search": {
+                        "type": "stdio",
+                        "command": "./bin/search",
+                        "args": []
+                    }
+                }
+            }"#,
+        )
+        .expect("write mcp.json");
+
+        let config = session_mcp_config(Some(&cfg), None, workspace);
+        let provider_names = config
+            .providers
+            .iter()
+            .map(|provider| provider.name.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(
+            provider_names.contains(&"test-plugin.search"),
+            "expected plugin provider in session config, got: {provider_names:?}"
+        );
+        assert!(provider_names.contains(&"global"), "expected configured provider retained, got: {provider_names:?}");
     }
 
     #[test]

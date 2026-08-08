@@ -328,6 +328,12 @@ fn skill_roots_with_home_dir(config: &SkillLoaderConfig, home_dir: Option<&Path>
 
     if let Some(home) = home_dir {
         roots.push(SkillRoot {
+            path: home.join(".agents/plugins"),
+            scope: SkillScope::User,
+            is_tool_root: false,
+            is_plugin_root: true,
+        });
+        roots.push(SkillRoot {
             path: home.join(".agents/skills"),
             scope: SkillScope::User,
             is_tool_root: false,
@@ -386,6 +392,20 @@ fn find_git_root(path: &Path) -> Option<PathBuf> {
 }
 
 fn discover_skills_under_root(root: &SkillRoot, outcome: &mut SkillLoadOutcome) {
+    walk_skills_dir(root, outcome, WalkMode::Full)
+}
+
+fn discover_metadata_under_root(root: &SkillRoot, outcome: &mut SkillLoadOutcome) {
+    walk_skills_dir(root, outcome, WalkMode::Metadata)
+}
+
+#[derive(Clone, Copy)]
+enum WalkMode {
+    Full,
+    Metadata,
+}
+
+fn walk_skills_dir(root: &SkillRoot, outcome: &mut SkillLoadOutcome, mode: WalkMode) {
     let Ok(root_path) = dunce::canonicalize(&root.path) else {
         return;
     };
@@ -399,7 +419,11 @@ fn discover_skills_under_root(root: &SkillRoot, outcome: &mut SkillLoadOutcome) 
         let entries = match fs::read_dir(&dir) {
             Ok(entries) => entries,
             Err(e) => {
-                error!("failed to read skills dir {}: {e:#}", dir.display());
+                if matches!(mode, WalkMode::Full) {
+                    error!("failed to read skills dir {}: {e:#}", dir.display());
+                } else {
+                    tracing::debug!("failed to read skills dir {}: {e:#}", dir.display());
+                }
                 continue;
             }
         };
@@ -418,15 +442,12 @@ fn discover_skills_under_root(root: &SkillRoot, outcome: &mut SkillLoadOutcome) 
             if path.is_dir() {
                 queue.push_back(path.clone());
 
-                // If this is a tool root or we are in a generic scan, check for tool directory structure
-                // Assuming tool dir has tool.json or executable
                 if root.is_tool_root
                     && let Ok(Some(tool_meta)) = try_load_tool_from_dir(&path, root.scope)
                 {
                     outcome.skills.push(tool_meta);
                 }
 
-                // If this is a plugin root, check for native plugin directory structure
                 if root.is_plugin_root
                     && let Ok(Some(plugin_meta)) = try_load_plugin_from_dir(&path, root.scope)
                 {
@@ -434,130 +455,69 @@ fn discover_skills_under_root(root: &SkillRoot, outcome: &mut SkillLoadOutcome) 
                     continue;
                 }
 
-                // If this is a plugin root, try loading as a portable Agent Plugin.
-                // Only skip BFS traversal if we loaded a valid plugin; otherwise
-                // fall through so the generic walk can still discover traditional
-                // skills under this directory.
                 if try_ingest_plugin_skills(&path, root, outcome) {
                     continue;
                 }
             }
 
-            // Check for traditional skill
             if file_name == "SKILL.md" {
-                let Some(skill_dir) = path.parent() else {
-                    continue;
-                };
-                match crate::skills::manifest::parse_skill_file(skill_dir) {
-                    Ok((manifest, _)) => {
-                        outcome.skills.push(SkillMetadata {
-                            name: manifest.name.clone(),
-                            description: manifest.description.clone(),
-                            short_description: None,
-                            path: path.clone(),
-                            scope: root.scope,
-                            manifest: Some(manifest.into()),
-                        });
-                    }
-                    Err(err) => {
-                        if root.scope != SkillScope::System {
-                            outcome
-                                .errors
-                                .push(SkillErrorInfo { path: path.clone(), message: err.to_string() });
-                        }
-                    }
-                }
-            } else if root.is_tool_root && is_executable_file(&path) {
-                // Standalone executable tool?
-                // We typically look for directories, but maybe standalone files too.
-                // For now, let's stick to directory-based tools or tools with README.
+                handle_skill_md(path.clone(), root, outcome, mode);
+            } else if matches!(mode, WalkMode::Full) && root.is_tool_root && is_executable_file(&path) {
+                // Standalone executable tools are recognized in the full walk
+                // but ignored in the lightweight metadata walk.
             }
         }
     }
 }
 
-/// Lightweight metadata discovery that parses only SKILL.md frontmatter.
-/// This preserves routing-critical fields without loading full instructions.
-fn discover_metadata_under_root(root: &SkillRoot, outcome: &mut SkillLoadOutcome) {
-    let Ok(root_path) = dunce::canonicalize(&root.path) else {
-        return;
+fn handle_skill_md(path: PathBuf, root: &SkillRoot, outcome: &mut SkillLoadOutcome, mode: WalkMode) {
+    let skill_dir = match path.parent() {
+        Some(dir) => dir,
+        None => return,
     };
 
-    if !root_path.is_dir() {
-        return;
-    }
-
-    let mut queue: VecDeque<PathBuf> = VecDeque::from([root_path]);
-    while let Some(dir) = queue.pop_front() {
-        let entries = match fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(e) => {
-                tracing::debug!("failed to read skills dir {}: {e:#}", dir.display());
-                continue;
+    match mode {
+        WalkMode::Full => match crate::skills::manifest::parse_skill_file(skill_dir) {
+            Ok((manifest, _)) => {
+                outcome.skills.push(SkillMetadata {
+                    name: manifest.name.clone(),
+                    description: manifest.description.clone(),
+                    short_description: None,
+                    path,
+                    scope: root.scope,
+                    manifest: Some(manifest.into()),
+                });
             }
-        };
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let file_name = match path.file_name().and_then(|f| f.to_str()) {
-                Some(name) => name,
-                None => continue,
-            };
-
-            if file_name.starts_with('.') {
-                continue;
-            }
-
-            if path.is_dir() {
-                queue.push_back(path.clone());
-
-                // For tools, try to extract metadata without full parsing
-                if root.is_tool_root
-                    && let Ok(Some(tool_meta)) = try_load_tool_from_dir(&path, root.scope)
-                {
-                    outcome.skills.push(tool_meta);
-                }
-
-                // Portable Agent Plugin discovery (immediate children of plugin root only).
-                // Only skip BFS traversal if we loaded a valid plugin; otherwise
-                // fall through so the generic walk can still discover traditional
-                // skills under this directory.
-                if try_ingest_plugin_skills(&path, root, outcome) {
-                    continue;
+            Err(err) => {
+                if root.scope != SkillScope::System {
+                    outcome.errors.push(SkillErrorInfo { path, message: err.to_string() });
                 }
             }
-
-            if file_name == "SKILL.md" {
-                match fs::read_to_string(&path).with_context(|| format!("reading {}", path.display())) {
-                    Ok(contents) => match crate::skills::manifest::parse_skill_content(&contents) {
-                        Ok((manifest, _)) => {
-                            outcome.skills.push(SkillMetadata {
-                                name: manifest.name.clone(),
-                                description: manifest.description.clone(),
-                                short_description: None,
-                                path: path.clone(),
-                                scope: root.scope,
-                                manifest: Some(manifest.into()),
-                            });
-                        }
-                        Err(err) => {
-                            if root.scope != SkillScope::System {
-                                outcome
-                                    .errors
-                                    .push(SkillErrorInfo { path: path.clone(), message: err.to_string() });
-                            }
-                        }
-                    },
-                    Err(err) => {
-                        if root.scope != SkillScope::System {
-                            outcome
-                                .errors
-                                .push(SkillErrorInfo { path: path.clone(), message: err.to_string() });
-                        }
+        },
+        WalkMode::Metadata => match fs::read_to_string(&path).with_context(|| format!("reading {}", path.display())) {
+            Ok(contents) => match crate::skills::manifest::parse_skill_content(&contents) {
+                Ok((manifest, _)) => {
+                    outcome.skills.push(SkillMetadata {
+                        name: manifest.name.clone(),
+                        description: manifest.description.clone(),
+                        short_description: None,
+                        path,
+                        scope: root.scope,
+                        manifest: Some(manifest.into()),
+                    });
+                }
+                Err(err) => {
+                    if root.scope != SkillScope::System {
+                        outcome.errors.push(SkillErrorInfo { path, message: err.to_string() });
                     }
                 }
+            },
+            Err(err) => {
+                if root.scope != SkillScope::System {
+                    outcome.errors.push(SkillErrorInfo { path, message: err.to_string() });
+                }
             }
-        }
+        },
     }
 }
 
@@ -990,13 +950,31 @@ fn infer_scope_from_skill_path(path: &Path, workspace_root: &Path) -> SkillScope
     {
         return SkillScope::User;
     }
-    if path.starts_with(workspace_root)
-        || path.to_string_lossy().contains("/.agents/skills/")
-        || path.to_string_lossy().contains("\\.agents\\skills\\")
-    {
+    if path.starts_with(workspace_root) {
         return SkillScope::Repo;
     }
+
+    // Fallback for non-canonicalized paths: walk the components looking for a
+    // `.agents/skills` ancestor. Uses proper component matching rather than
+    // string-contains so a directory named `skills-backup` cannot trigger a
+    // false positive.
+    if has_agents_skills_ancestor(path) {
+        return SkillScope::Repo;
+    }
+
     SkillScope::User
+}
+
+fn has_agents_skills_ancestor(path: &Path) -> bool {
+    let mut ancestors = path.parent().map(Path::new).into_iter().peekable();
+    while let Some(current) = ancestors.next() {
+        let is_skills = current.file_name().and_then(|f| f.to_str()) == Some("skills");
+        let parent_is_agents = ancestors.peek().and_then(|p| p.file_name().and_then(|f| f.to_str())) == Some(".agents");
+        if is_skills && parent_is_agents {
+            return true;
+        }
+    }
+    false
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1404,6 +1382,52 @@ mod tests {
         assert!(
             outcome.skills.iter().all(|skill| skill.name != "path-disabled"),
             "expected path-disabled to remain filtered by legacy path config"
+        );
+    }
+
+    #[test]
+    fn discovers_agent_plugin_skills_from_user_plugin_root() {
+        let workspace = tempdir().expect("workspace");
+        fs::create_dir(workspace.path().join(".git")).expect("create .git");
+        let home = tempdir().expect("home");
+        let codex_home = tempdir().expect("codex home");
+
+        let plugin_root = home.path().join(".agents/plugins/my-plugin");
+        fs::create_dir_all(plugin_root.join("skills/migrate-agent-plugin")).expect("create skill dirs");
+
+        fs::write(
+            plugin_root.join("plugin.json"),
+            r#"{
+                "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+                "name": "my-plugin",
+                "version": "1.0.0",
+                "description": "Test plugin"
+            }"#,
+        )
+        .expect("write plugin.json");
+
+        fs::write(
+            plugin_root.join("skills/migrate-agent-plugin/SKILL.md"),
+            r#"---
+name: migrate-agent-plugin
+description: Migrate an existing agent plugin to Agent Plugins v1.
+license: MIT
+---
+
+# Migrate an Agent Plugin
+
+Steps here.
+"#,
+        )
+        .expect("write skill");
+
+        let outcome =
+            load_skills_with_home_dir(&skill_loader_config_for(workspace.path(), codex_home.path()), Some(home.path()));
+
+        assert!(
+            outcome.skills.iter().any(|s| s.name == "migrate-agent-plugin"),
+            "expected migrate-agent-plugin skill to be discovered from the user agent plugin root, got: {:?}",
+            outcome.skills.iter().map(|s| &s.name).collect::<Vec<_>>()
         );
     }
 

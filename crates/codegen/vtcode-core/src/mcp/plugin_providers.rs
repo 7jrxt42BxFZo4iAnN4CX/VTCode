@@ -1,20 +1,26 @@
-use dirs;
 use hashbrown::HashMap;
 use std::path::Path;
 use tracing::warn;
 
-use vtcode_agent_plugins::LoadedPlugin;
+use vtcode_agent_plugins::{LoadedPlugin, plugin_roots_for};
 use vtcode_config::mcp::McpProviderConfig;
 
 pub fn discover_plugin_mcp_providers(workspace_root: &Path) -> Vec<McpProviderConfig> {
     let mut providers = Vec::new();
 
-    let roots = vec![
-        workspace_root.join(".agents/plugins"),
-        dirs::home_dir().map(|h| h.join(".agents/plugins")).unwrap_or_default(),
-    ];
+    let roots = plugin_roots_for(workspace_root);
 
+    // Deduplicate roots so a workspace under the home directory does not cause
+    // the same plugin root to be scanned twice.
+    let mut seen = std::collections::HashSet::new();
+    let mut unique_roots = Vec::new();
     for root in roots {
+        if seen.insert(root.clone()) {
+            unique_roots.push(root);
+        }
+    }
+
+    for root in unique_roots {
         if !root.is_dir() {
             continue;
         }
@@ -69,10 +75,18 @@ fn map_server_to_provider(
                 tracing::warn!(root = %plugin_root.display(), error = %e, "failed to create plugin data directory");
             }
 
-            if stdio.command.starts_with("./") {
+            // Resolve plugin-relative commands eagerly so the spawn uses the
+            // canonical absolute path. Passing the raw "./bin/server" would let
+            // the OS re-resolve it at spawn time, defeating the containment
+            // check (e.g. a symlink that points outside the plugin root).
+            let command = if stdio.command.starts_with("./") {
                 vtcode_agent_plugins::validate_plugin_relative(&stdio.command, plugin_root)
-                    .map_err(|e| vtcode_agent_plugins::PluginError::PathEscape(e.to_string()))?;
-            }
+                    .map_err(|e| vtcode_agent_plugins::PluginError::PathEscape(e.to_string()))?
+                    .to_string_lossy()
+                    .to_string()
+            } else {
+                stdio.command
+            };
 
             let mut env = stdio
                 .env
@@ -86,18 +100,29 @@ fn map_server_to_provider(
                 .cwd
                 .as_deref()
                 .map(|c| vtcode_agent_plugins::expand_placeholders(c, plugin_root, &plugin_data));
+            let cwd = cwd.unwrap_or_else(|| plugin_root.to_string_lossy().to_string());
+
+            // Validate a relative cwd stays inside the plugin root so relative
+            // resolution at spawn time cannot escape the sandbox.
+            let cwd = if cwd.starts_with("./") {
+                vtcode_agent_plugins::validate_plugin_relative(&cwd, plugin_root)
+                    .map_err(|e| vtcode_agent_plugins::PluginError::PathEscape(e.to_string()))?
+                    .to_string_lossy()
+                    .to_string()
+            } else {
+                cwd
+            };
+
             let args = stdio
                 .args
                 .iter()
                 .map(|a| vtcode_agent_plugins::expand_placeholders(a, plugin_root, &plugin_data))
                 .collect();
 
-            let cwd = cwd.unwrap_or_else(|| plugin_root.to_string_lossy().to_string());
-
             Ok(McpProviderConfig {
                 name: provider_name,
                 transport: vtcode_config::mcp::McpTransportConfig::Stdio(vtcode_config::mcp::McpStdioServerConfig {
-                    command: stdio.command,
+                    command,
                     args,
                     working_directory: Some(cwd),
                 }),

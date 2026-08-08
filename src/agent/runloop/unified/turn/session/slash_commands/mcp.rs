@@ -95,7 +95,7 @@ async fn execute_mcp_action(ctx: &mut SlashCommandContext<'_>, action: McpComman
     Ok(())
 }
 
-async fn apply_manual_mcp_refresh(ctx: &mut SlashCommandContext<'_>, reason: &'static str) {
+pub(super) async fn apply_manual_mcp_refresh(ctx: &mut SlashCommandContext<'_>, reason: &'static str) {
     let tool_documentation_mode = ctx
         .vt_cfg
         .as_ref()

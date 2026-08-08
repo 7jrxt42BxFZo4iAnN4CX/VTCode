@@ -56,7 +56,7 @@ Last reviewed: 2026-06-28
 - [vtcode-commons](modules/vtcode_commons_reference.md) - Shared utilities.
 - [vtcode-exec-events](modules/vtcode_exec_events.md) - ThreadEvent contract and ATIF export.
 - [vtcode-indexer](modules/vtcode_indexer.md) - Code indexing and search.
-- [vtcode-agent-plugins](modules/vtcode_agent_plugins.md) - Agent Plugins 1.0.0 manifest parsing, validation, and discovery.
+- [vtcode-agent-plugins](modules/vtcode_agent_plugins.md) - Agent Plugins manifest parsing, validation, and discovery.
 
 ## Historical and Archive Paths
 

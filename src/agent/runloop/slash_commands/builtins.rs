@@ -18,6 +18,446 @@ use super::models::{
 use super::parsing::{self, parse_compact_command, parse_session_log_export_format};
 use super::rendering::{render_help, render_theme_list};
 
+// ---- Built-in command handlers ----
+// Each command is an independently testable function. The dispatch match in
+// `execute_built_in_command_skill` is the strict interface guard: adding a
+// new command requires a handler and a match-arm registration.
+//
+// Handlers that are only referenced through the dynamic dispatch match are
+// marked `#[allow(dead_code)]` because the compiler cannot prove they are used.
+
+#[allow(dead_code)]
+fn handle_donate_command(renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    renderer.line(
+        MessageStyle::Info,
+        "I build VT Code in my spare time. It supports open-weight models and will stay open source, no matter what. If it has saved you some time, you can buy me a coffee:",
+    )?;
+    Ok(SlashCommandOutcome::OpenDonateLinks)
+}
+
+#[allow(dead_code)]
+fn handle_theme_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    let mut tokens = args.split_whitespace();
+    if let Some(next_theme) = tokens.next() {
+        let desired = next_theme.to_lowercase();
+        match theme::set_active_theme(&desired) {
+            Ok(()) => {
+                let label = theme::active_theme_label();
+                renderer.line(MessageStyle::Info, &format!("Theme switched to {label}"))?;
+                return Ok(SlashCommandOutcome::ThemeChanged(theme::active_theme_id()));
+            }
+            Err(err) => {
+                renderer.line(MessageStyle::Error, &format!("Theme '{next_theme}' not available: {err}"))?;
+            }
+        }
+        return Ok(SlashCommandOutcome::Handled);
+    }
+
+    if renderer.supports_inline_ui() {
+        return Ok(SlashCommandOutcome::StartThemePalette { mode: ThemePaletteMode::Select });
+    }
+
+    renderer.line(MessageStyle::Info, "Provide a theme name to switch themes")?;
+    render_theme_list(renderer)?;
+    Ok(SlashCommandOutcome::Handled)
+}
+
+#[allow(dead_code)]
+fn handle_init_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    let mut force = false;
+    for flag in args.split_whitespace() {
+        match flag {
+            "--force" | "-f" | "force" => force = true,
+            unknown => {
+                renderer.line(MessageStyle::Error, &format!("Unknown flag '{unknown}' for /init"))?;
+                return Ok(SlashCommandOutcome::Handled);
+            }
+        }
+    }
+    Ok(SlashCommandOutcome::InitializeWorkspace { force })
+}
+
+#[allow(dead_code)]
+fn handle_config_command(args: &str) -> Result<SlashCommandOutcome> {
+    if args.is_empty() {
+        Ok(SlashCommandOutcome::ShowSettings)
+    } else {
+        match args.to_ascii_lowercase().as_str() {
+            "memory" | "agent.persistent_memory" => Ok(SlashCommandOutcome::ShowMemoryConfig),
+            "permissions" => Ok(SlashCommandOutcome::ShowPermissions),
+            "model" | "model.main" => Ok(SlashCommandOutcome::ShowSettingsAtPath { path: args.to_string() }),
+            _ => Ok(SlashCommandOutcome::ShowSettingsAtPath { path: args.to_string() }),
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn handle_advisor_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    match args.trim() {
+        "" => Ok(SlashCommandOutcome::ShowSettingsAtPath { path: "provider.anthropic.advisor".to_string() }),
+        "help" | "--help" | "-h" => {
+            renderer.line(
+                MessageStyle::Info,
+                "Claude Advisor — server-side tool pairing a faster executor with a \
+                 higher-intelligence advisor for strategic guidance mid-generation.\n\n\
+                 Usage:\n  /advisor              Open advisor settings\n\
+                 /advisor model         Edit advisor model\n\
+                 /advisor max_uses      Edit max invocations per request\n\
+                 /advisor help          Show this help\n\n\
+                 Only available for Anthropic providers. The executor and advisor \
+                 models must form a valid pair (see provider.anthropic.advisor config).",
+            )?;
+            Ok(SlashCommandOutcome::Handled)
+        }
+        field => Ok(SlashCommandOutcome::ShowSettingsAtPath {
+            path: format!("provider.anthropic.advisor.{field}"),
+        }),
+    }
+}
+
+#[allow(dead_code)]
+fn handle_statusline_command(args: &str) -> Result<SlashCommandOutcome> {
+    Ok(SlashCommandOutcome::StartStatuslineSetup {
+        instructions: (!args.trim().is_empty()).then(|| args.trim().to_string()),
+    })
+}
+
+#[allow(dead_code)]
+fn handle_title_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    if !args.is_empty() {
+        renderer.line(MessageStyle::Error, "Usage: /title")?;
+        return Ok(SlashCommandOutcome::Handled);
+    }
+    Ok(SlashCommandOutcome::StartTerminalTitleSetup)
+}
+
+#[allow(dead_code)]
+fn handle_clear_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    match args {
+        "" => Ok(SlashCommandOutcome::ClearScreen),
+        "new" | "--new" | "fresh" | "--fresh" => Ok(SlashCommandOutcome::ClearConversation),
+        _ => {
+            renderer.line(MessageStyle::Error, "Usage: /clear [new]")?;
+            Ok(SlashCommandOutcome::Handled)
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn handle_compact_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    match parse_compact_command(args) {
+        Ok(command) => Ok(SlashCommandOutcome::CompactConversation { command }),
+        Err(err) => {
+            renderer.line(MessageStyle::Error, &err)?;
+            renderer.line(
+                MessageStyle::Info,
+                "Usage: /compact [--instructions <text>] [--max-output-tokens <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--verbosity <low|medium|high>] [--native-only]",
+            )?;
+            renderer.line(MessageStyle::Info, "       /compact edit-prompt | /compact reset-prompt")?;
+            Ok(SlashCommandOutcome::Handled)
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn handle_log_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    let mut format = LogFormat::Text;
+    let mut scope = LogScope::Thread;
+    let mut save = false;
+    for token in args.split_whitespace() {
+        match token {
+            "--json" => format = LogFormat::Json,
+            "--text" => format = LogFormat::Text,
+            "--thread" => scope = LogScope::Thread,
+            "--all" => scope = LogScope::All,
+            "--save" => save = true,
+            _ => {
+                renderer.line(MessageStyle::Error, "Usage: /log [--json|--text] [--thread|--all] [--save]")?;
+                return Ok(SlashCommandOutcome::Handled);
+            }
+        }
+    }
+    Ok(SlashCommandOutcome::ShowLogViewer { format, scope, save })
+}
+
+#[allow(dead_code)]
+fn handle_notify_command(args: &str) -> Result<SlashCommandOutcome> {
+    Ok(SlashCommandOutcome::Notify {
+        message: if args.is_empty() {
+            "Manual notification from /notify".to_string()
+        } else {
+            args.to_string()
+        },
+    })
+}
+
+#[allow(dead_code)]
+fn handle_checkup_command(
+    args: &str,
+    renderer: &mut AnsiRenderer,
+    supports_inline_ui: bool,
+) -> Result<SlashCommandOutcome> {
+    match parse_checkup_args(args, supports_inline_ui) {
+        Ok(CheckupCommand::Interactive) => Ok(SlashCommandOutcome::StartCheckupInteractive),
+        Ok(CheckupCommand::Run { quick }) => Ok(SlashCommandOutcome::RunCheckup { quick }),
+        Err(message) => {
+            renderer.line(MessageStyle::Error, &message)?;
+            Ok(SlashCommandOutcome::Handled)
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn handle_update_command(args: &str) -> Result<SlashCommandOutcome> {
+    let (check_only, install, force) = parse_update_args(args).map_err(anyhow::Error::msg)?;
+    Ok(SlashCommandOutcome::Update { check_only, install, force })
+}
+
+#[allow(dead_code)]
+fn handle_mode_command(args: &str) -> Result<SlashCommandOutcome> {
+    let trimmed = args.trim();
+    if trimmed.is_empty() {
+        Ok(SlashCommandOutcome::StartModePalette)
+    } else {
+        Ok(SlashCommandOutcome::SelectPrimaryAgent { name: trimmed.to_string() })
+    }
+}
+
+#[allow(dead_code)]
+fn handle_effort_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    match parse_effort_args(args) {
+        Ok((level, persist)) => Ok(SlashCommandOutcome::SetEffort { level, persist }),
+        Err(err) => {
+            renderer.line(MessageStyle::Error, &err)?;
+            renderer.line(MessageStyle::Info, "Usage: /effort [--persist] [none|minimal|low|medium|high|xhigh|max]")?;
+            Ok(SlashCommandOutcome::Handled)
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn handle_files_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    let initial_filter = if args.trim().is_empty() {
+        None
+    } else {
+        Some(args.trim().to_string())
+    };
+
+    if renderer.supports_inline_ui() {
+        return Ok(SlashCommandOutcome::StartFileBrowser { initial_filter });
+    }
+
+    renderer.line(MessageStyle::Error, "File browser requires inline UI mode. Use @ symbol instead.")?;
+    Ok(SlashCommandOutcome::Handled)
+}
+
+#[allow(dead_code)]
+fn handle_share_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    match parse_session_log_export_format(args) {
+        Ok(format) => Ok(SlashCommandOutcome::ShareLog { format }),
+        Err(message) => {
+            renderer.line(MessageStyle::Error, &message)?;
+            Ok(SlashCommandOutcome::Handled)
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn handle_history_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    if !args.is_empty() {
+        renderer.line(MessageStyle::Error, "Usage: /history")?;
+        return Ok(SlashCommandOutcome::Handled);
+    }
+    Ok(SlashCommandOutcome::StartHistoryPicker)
+}
+
+#[allow(dead_code)]
+fn handle_skills_command(input: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    let full_command = format!("/{input}");
+    match crate::agent::runloop::parse_skill_command(&full_command) {
+        Ok(Some(action)) => Ok(SlashCommandOutcome::ManageSkills { action }),
+        Ok(None) => {
+            renderer.line(MessageStyle::Error, "Skills command parse error")?;
+            Ok(SlashCommandOutcome::Handled)
+        }
+        Err(error) => {
+            renderer.line(MessageStyle::Error, &format!("Skills command error: {error}"))?;
+            Ok(SlashCommandOutcome::Handled)
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn handle_plugin_command(input: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    let full_command = format!("/{input}");
+    match crate::agent::runloop::parse_plugin_command(&full_command) {
+        Ok(Some(action)) => Ok(SlashCommandOutcome::ManagePlugins { action }),
+        Ok(None) => {
+            renderer.line(MessageStyle::Error, "Plugin command parse error")?;
+            Ok(SlashCommandOutcome::Handled)
+        }
+        Err(error) => {
+            renderer.line(MessageStyle::Error, &format!("Plugin command error: {error}"))?;
+            Ok(SlashCommandOutcome::Handled)
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn handle_agents_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    match parse_agents_command(args) {
+        Ok(action) => Ok(SlashCommandOutcome::ManageAgents { action }),
+        Err(message) => {
+            renderer.line(MessageStyle::Error, &message)?;
+            Ok(SlashCommandOutcome::Handled)
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn handle_agent_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    match args.trim() {
+        "" => Ok(SlashCommandOutcome::ManageAgents { action: AgentManagerAction::Threads }),
+        args => match parse_agents_command(args) {
+            Ok(action) => Ok(SlashCommandOutcome::ManageAgents { action }),
+            Err(message) => {
+                renderer.line(MessageStyle::Error, &message)?;
+                Ok(SlashCommandOutcome::Handled)
+            }
+        },
+    }
+}
+
+#[allow(dead_code)]
+fn handle_subprocesses_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    match parse_subprocesses_command(args) {
+        Ok(action) => Ok(SlashCommandOutcome::ManageSubprocesses { action }),
+        Err(message) => {
+            renderer.line(MessageStyle::Error, &message)?;
+            Ok(SlashCommandOutcome::Handled)
+        }
+    }
+}
+
+async fn handle_help_command(args: &str, renderer: &mut AnsiRenderer, workspace: &Path) -> Result<SlashCommandOutcome> {
+    let specific_cmd = if args.trim().is_empty() {
+        None
+    } else {
+        Some(args.trim())
+    };
+    render_help(renderer, specific_cmd, workspace).await?;
+    Ok(SlashCommandOutcome::Handled)
+}
+
+#[allow(dead_code)]
+fn handle_status_command() -> Result<SlashCommandOutcome> {
+    Ok(SlashCommandOutcome::ShowStatus)
+}
+
+#[allow(dead_code)]
+fn handle_permissions_command() -> Result<SlashCommandOutcome> {
+    Ok(SlashCommandOutcome::ShowPermissions)
+}
+
+#[allow(dead_code)]
+fn handle_memory_command() -> Result<SlashCommandOutcome> {
+    Ok(SlashCommandOutcome::ShowMemory)
+}
+
+#[allow(dead_code)]
+fn handle_stop_command() -> Result<SlashCommandOutcome> {
+    Ok(SlashCommandOutcome::StopAgent)
+}
+
+#[allow(dead_code)]
+fn handle_pause_command(renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    renderer.line(MessageStyle::Info, "No active run to pause.")?;
+    Ok(SlashCommandOutcome::Handled)
+}
+
+#[allow(dead_code)]
+fn handle_model_command() -> Result<SlashCommandOutcome> {
+    Ok(SlashCommandOutcome::StartModelSelection)
+}
+
+#[allow(dead_code)]
+fn handle_new_command() -> Result<SlashCommandOutcome> {
+    Ok(SlashCommandOutcome::NewSession)
+}
+
+#[allow(dead_code)]
+fn handle_docs_command() -> Result<SlashCommandOutcome> {
+    Ok(SlashCommandOutcome::OpenDocs)
+}
+
+#[allow(dead_code)]
+fn handle_exit_command() -> Result<SlashCommandOutcome> {
+    Ok(SlashCommandOutcome::Exit)
+}
+
+#[allow(dead_code)]
+fn handle_copy_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    if !args.is_empty() {
+        renderer.line(MessageStyle::Error, "Usage: /copy")?;
+        return Ok(SlashCommandOutcome::Handled);
+    }
+    Ok(SlashCommandOutcome::CopyLatestAssistantReply)
+}
+
+#[allow(dead_code)]
+fn handle_suggest_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    if !args.is_empty() {
+        renderer.line(MessageStyle::Error, "Usage: /suggest")?;
+        return Ok(SlashCommandOutcome::Handled);
+    }
+    Ok(SlashCommandOutcome::TriggerPromptSuggestions)
+}
+
+#[allow(dead_code)]
+fn handle_tasks_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    if !args.is_empty() {
+        renderer.line(MessageStyle::Error, "Usage: /tasks")?;
+        return Ok(SlashCommandOutcome::Handled);
+    }
+    Ok(SlashCommandOutcome::ToggleTasksPanel)
+}
+
+#[allow(dead_code)]
+fn handle_jobs_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    if !args.is_empty() {
+        renderer.line(MessageStyle::Error, "Usage: /jobs")?;
+        return Ok(SlashCommandOutcome::Handled);
+    }
+    Ok(SlashCommandOutcome::ShowJobsPanel)
+}
+
+fn handle_ide_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    if !args.is_empty() {
+        renderer.line(MessageStyle::Error, "Usage: /ide")?;
+        return Ok(SlashCommandOutcome::Handled);
+    }
+    Ok(SlashCommandOutcome::ToggleIdeContext)
+}
+
+#[allow(dead_code)]
+fn handle_terminal_setup_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    if !args.is_empty() {
+        renderer.line(MessageStyle::Error, "Usage: /terminal-setup (no arguments supported yet)")?;
+        return Ok(SlashCommandOutcome::Handled);
+    }
+    Ok(SlashCommandOutcome::StartTerminalSetup)
+}
+
+#[allow(dead_code)]
+fn handle_edit_command(args: &str) -> Result<SlashCommandOutcome> {
+    let file = if args.trim().is_empty() {
+        None
+    } else {
+        Some(args.trim().to_string())
+    };
+    Ok(SlashCommandOutcome::LaunchEditor { file })
+}
+
 pub(in crate::agent::runloop::slash_commands) async fn execute_built_in_command_skill(
     spec: &'static CommandSkillSpec,
     args: &str,
@@ -26,350 +466,59 @@ pub(in crate::agent::runloop::slash_commands) async fn execute_built_in_command_
     workspace: &Path,
 ) -> Result<SlashCommandOutcome> {
     match spec.slash_name {
-        "donate" => {
-            renderer.line(
-                MessageStyle::Info,
-                "I build VT Code in my spare time. It supports open-weight models and will stay open source, no matter what. If it has saved you some time, you can buy me a coffee:",
-            )?;
-            Ok(SlashCommandOutcome::OpenDonateLinks)
-        }
-        "theme" => {
-            let mut tokens = args.split_whitespace();
-            if let Some(next_theme) = tokens.next() {
-                let desired = next_theme.to_lowercase();
-                match theme::set_active_theme(&desired) {
-                    Ok(()) => {
-                        let label = theme::active_theme_label();
-                        renderer.line(MessageStyle::Info, &format!("Theme switched to {label}"))?;
-                        return Ok(SlashCommandOutcome::ThemeChanged(theme::active_theme_id()));
-                    }
-                    Err(err) => {
-                        renderer.line(MessageStyle::Error, &format!("Theme '{next_theme}' not available: {err}"))?;
-                    }
-                }
-                return Ok(SlashCommandOutcome::Handled);
-            }
-
-            if renderer.supports_inline_ui() {
-                return Ok(SlashCommandOutcome::StartThemePalette { mode: ThemePaletteMode::Select });
-            }
-
-            renderer.line(MessageStyle::Info, "Provide a theme name to switch themes")?;
-            render_theme_list(renderer)?;
-            Ok(SlashCommandOutcome::Handled)
-        }
-        "init" => {
-            let mut force = false;
-            for flag in args.split_whitespace() {
-                match flag {
-                    "--force" | "-f" | "force" => force = true,
-                    unknown => {
-                        renderer.line(MessageStyle::Error, &format!("Unknown flag '{unknown}' for /init"))?;
-                        return Ok(SlashCommandOutcome::Handled);
-                    }
-                }
-            }
-            Ok(SlashCommandOutcome::InitializeWorkspace { force })
-        }
-        "config" | "settings" | "setttings" => {
-            if args.is_empty() {
-                Ok(SlashCommandOutcome::ShowSettings)
-            } else {
-                match args.to_ascii_lowercase().as_str() {
-                    "memory" | "agent.persistent_memory" => Ok(SlashCommandOutcome::ShowMemoryConfig),
-                    "permissions" => Ok(SlashCommandOutcome::ShowPermissions),
-                    "model" | "model.main" => Ok(SlashCommandOutcome::ShowSettingsAtPath { path: args.to_string() }),
-                    _ => Ok(SlashCommandOutcome::ShowSettingsAtPath { path: args.to_string() }),
-                }
-            }
-        }
+        "donate" => handle_donate_command(renderer),
+        "theme" => handle_theme_command(args, renderer),
+        "init" => handle_init_command(args, renderer),
+        "config" | "settings" | "setttings" => handle_config_command(args),
         "permissions" => Ok(SlashCommandOutcome::ShowPermissions),
         "memory" => Ok(SlashCommandOutcome::ShowMemory),
-        "advisor" => {
-            // Open the Claude Advisor server-side tool settings. With no argument the
-            // command opens the advisor section; an optional path drills into a child
-            // field (e.g. `/advisor model`).
-            match args.trim() {
-                "" => Ok(SlashCommandOutcome::ShowSettingsAtPath { path: "provider.anthropic.advisor".to_string() }),
-                "help" | "--help" | "-h" => {
-                    renderer.line(
-                        MessageStyle::Info,
-                        "Claude Advisor — server-side tool pairing a faster executor with a \
-                         higher-intelligence advisor for strategic guidance mid-generation.\n\n\
-                         Usage:\n  /advisor              Open advisor settings\n\
-                         /advisor model         Edit advisor model\n\
-                         /advisor max_uses      Edit max invocations per request\n\
-                         /advisor help          Show this help\n\n\
-                         Only available for Anthropic providers. The executor and advisor \
-                         models must form a valid pair (see provider.anthropic.advisor config).",
-                    )?;
-                    Ok(SlashCommandOutcome::Handled)
-                }
-                field => Ok(SlashCommandOutcome::ShowSettingsAtPath {
-                    path: format!("provider.anthropic.advisor.{field}"),
-                }),
-            }
-        }
-        "statusline" => Ok(SlashCommandOutcome::StartStatuslineSetup {
-            instructions: (!args.trim().is_empty()).then(|| args.trim().to_string()),
-        }),
-        "title" => {
-            if !args.is_empty() {
-                renderer.line(MessageStyle::Error, "Usage: /title")?;
-                return Ok(SlashCommandOutcome::Handled);
-            }
-            Ok(SlashCommandOutcome::StartTerminalTitleSetup)
-        }
-        "clear" => match args {
-            "" => Ok(SlashCommandOutcome::ClearScreen),
-            "new" | "--new" | "fresh" | "--fresh" => Ok(SlashCommandOutcome::ClearConversation),
-            _ => {
-                renderer.line(MessageStyle::Error, "Usage: /clear [new]")?;
-                Ok(SlashCommandOutcome::Handled)
-            }
-        },
-        "compact" | "context" => match parse_compact_command(args) {
-            Ok(command) => Ok(SlashCommandOutcome::CompactConversation { command }),
-            Err(err) => {
-                renderer.line(MessageStyle::Error, &err)?;
-                renderer.line(
-                    MessageStyle::Info,
-                    "Usage: /compact [--instructions <text>] [--max-output-tokens <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--verbosity <low|medium|high>] [--native-only]",
-                )?;
-                renderer.line(MessageStyle::Info, "       /compact edit-prompt | /compact reset-prompt")?;
-                Ok(SlashCommandOutcome::Handled)
-            }
-        },
-        "copy" => {
-            if !args.is_empty() {
-                renderer.line(MessageStyle::Error, "Usage: /copy")?;
-                return Ok(SlashCommandOutcome::Handled);
-            }
-            Ok(SlashCommandOutcome::CopyLatestAssistantReply)
-        }
-        "suggest" => {
-            if !args.is_empty() {
-                renderer.line(MessageStyle::Error, "Usage: /suggest")?;
-                return Ok(SlashCommandOutcome::Handled);
-            }
-            Ok(SlashCommandOutcome::TriggerPromptSuggestions)
-        }
-        "tasks" => {
-            if !args.is_empty() {
-                renderer.line(MessageStyle::Error, "Usage: /tasks")?;
-                return Ok(SlashCommandOutcome::Handled);
-            }
-            Ok(SlashCommandOutcome::ToggleTasksPanel)
-        }
-        "jobs" => {
-            if !args.is_empty() {
-                renderer.line(MessageStyle::Error, "Usage: /jobs")?;
-                return Ok(SlashCommandOutcome::Handled);
-            }
-            Ok(SlashCommandOutcome::ShowJobsPanel)
-        }
-        "log" => {
-            let mut format = LogFormat::Text;
-            let mut scope = LogScope::Thread;
-            let mut save = false;
-            for token in args.split_whitespace() {
-                match token {
-                    "--json" => format = LogFormat::Json,
-                    "--text" => format = LogFormat::Text,
-                    "--thread" => scope = LogScope::Thread,
-                    "--all" => scope = LogScope::All,
-                    "--save" => save = true,
-                    _ => {
-                        renderer.line(MessageStyle::Error, "Usage: /log [--json|--text] [--thread|--all] [--save]")?;
-                        return Ok(SlashCommandOutcome::Handled);
-                    }
-                }
-            }
-            Ok(SlashCommandOutcome::ShowLogViewer { format, scope, save })
-        }
+        "advisor" => handle_advisor_command(args, renderer),
+        "statusline" => handle_statusline_command(args),
+        "title" => handle_title_command(args, renderer),
+        "clear" => handle_clear_command(args, renderer),
+        "compact" | "context" => handle_compact_command(args, renderer),
+        "copy" => handle_copy_command(args, renderer),
+        "suggest" => handle_suggest_command(args, renderer),
+        "tasks" => handle_tasks_command(args, renderer),
+        "jobs" => handle_jobs_command(args, renderer),
+        "log" => handle_log_command(args, renderer),
         "status" => Ok(SlashCommandOutcome::ShowStatus),
-        "notify" => Ok(SlashCommandOutcome::Notify {
-            message: if args.is_empty() {
-                "Manual notification from /notify".to_string()
-            } else {
-                args.to_string()
-            },
-        }),
-        "stop" => {
-            if !args.is_empty() {
-                renderer.line(MessageStyle::Error, "Usage: /stop")?;
-                return Ok(SlashCommandOutcome::Handled);
-            }
-            Ok(SlashCommandOutcome::StopAgent)
-        }
-        "pause" => {
-            if !args.is_empty() {
-                renderer.line(MessageStyle::Error, "Usage: /pause")?;
-                return Ok(SlashCommandOutcome::Handled);
-            }
-            renderer.line(MessageStyle::Info, "No active run to pause.")?;
-            Ok(SlashCommandOutcome::Handled)
-        }
-        "checkup" => match parse_checkup_args(args, renderer.supports_inline_ui()) {
-            Ok(CheckupCommand::Interactive) => Ok(SlashCommandOutcome::StartCheckupInteractive),
-            Ok(CheckupCommand::Run { quick }) => Ok(SlashCommandOutcome::RunCheckup { quick }),
-            Err(message) => {
-                renderer.line(MessageStyle::Error, &message)?;
-                Ok(SlashCommandOutcome::Handled)
-            }
-        },
-        "update" => match parse_update_args(args) {
-            Ok((check_only, install, force)) => Ok(SlashCommandOutcome::Update { check_only, install, force }),
-            Err(message) => {
-                renderer.line(MessageStyle::Error, &message)?;
-                Ok(SlashCommandOutcome::Handled)
-            }
-        },
+        "notify" => handle_notify_command(args),
+        "stop" => Ok(SlashCommandOutcome::StopAgent),
+        "pause" => handle_pause_command(renderer),
+        "checkup" => handle_checkup_command(args, renderer, renderer.supports_inline_ui()),
+        "update" => handle_update_command(args),
         "mcp" => handle_mcp_command(args, renderer),
         "local" => handle_local_command(args, renderer),
         "model" => Ok(SlashCommandOutcome::StartModelSelection),
-        "mode" => {
-            let trimmed = args.trim();
-            if trimmed.is_empty() {
-                Ok(SlashCommandOutcome::StartModePalette)
-            } else {
-                Ok(SlashCommandOutcome::SelectPrimaryAgent { name: trimmed.to_string() })
-            }
-        }
-        "effort" => match parse_effort_args(args) {
-            Ok((level, persist)) => Ok(SlashCommandOutcome::SetEffort { level, persist }),
-            Err(message) => {
-                renderer.line(MessageStyle::Error, &message)?;
-                renderer
-                    .line(MessageStyle::Info, "Usage: /effort [--persist] [none|minimal|low|medium|high|xhigh|max]")?;
-                Ok(SlashCommandOutcome::Handled)
-            }
-        },
-        "ide" => {
-            if !args.is_empty() {
-                renderer.line(MessageStyle::Error, "Usage: /ide")?;
-                return Ok(SlashCommandOutcome::Handled);
-            }
-            Ok(SlashCommandOutcome::ToggleIdeContext)
-        }
-        "files" => {
-            let initial_filter = if args.trim().is_empty() {
-                None
-            } else {
-                Some(args.trim().to_string())
-            };
-
-            if renderer.supports_inline_ui() {
-                return Ok(SlashCommandOutcome::StartFileBrowser { initial_filter });
-            }
-
-            renderer.line(MessageStyle::Error, "File browser requires inline UI mode. Use @ symbol instead.")?;
-            Ok(SlashCommandOutcome::Handled)
-        }
-        "share" => match parse_session_log_export_format(args) {
-            Ok(format) => Ok(SlashCommandOutcome::ShareLog { format }),
-            Err(message) => {
-                renderer.line(MessageStyle::Error, &message)?;
-                Ok(SlashCommandOutcome::Handled)
-            }
-        },
+        "mode" => handle_mode_command(args),
+        "effort" => handle_effort_command(args, renderer),
+        "ide" => handle_ide_command(args, renderer),
+        "files" => handle_files_command(args, renderer),
+        "share" => handle_share_command(args, renderer),
         "resume" => handle_resume_command(args, renderer, workspace).await,
         "continue" => handle_continue_command(args, renderer),
         "fork" => handle_fork_command(args, renderer, workspace).await,
-        "history" => {
-            if !args.is_empty() {
-                renderer.line(MessageStyle::Error, "Usage: /history")?;
-                return Ok(SlashCommandOutcome::Handled);
-            }
-            Ok(SlashCommandOutcome::StartHistoryPicker)
-        }
-        "new" => {
-            if !args.is_empty() {
-                renderer.line(MessageStyle::Error, "Usage: /new")?;
-                return Ok(SlashCommandOutcome::Handled);
-            }
-            Ok(SlashCommandOutcome::NewSession)
-        }
+        "history" => handle_history_command(args, renderer),
+        "new" => Ok(SlashCommandOutcome::NewSession),
         "rewind" => handle_rewind_command(args, renderer),
-        "docs" => {
-            if !args.is_empty() {
-                renderer.line(MessageStyle::Error, "Usage: /docs")?;
-                return Ok(SlashCommandOutcome::Handled);
-            }
-            Ok(SlashCommandOutcome::OpenDocs)
-        }
-        "edit" => {
-            let file = if args.trim().is_empty() {
-                None
-            } else {
-                Some(args.trim().to_string())
-            };
-            Ok(SlashCommandOutcome::LaunchEditor { file })
-        }
+        "docs" => Ok(SlashCommandOutcome::OpenDocs),
+        "edit" => handle_edit_command(args),
         "exit" => Ok(SlashCommandOutcome::Exit),
-        "skills" => {
-            let full_command = format!("/{input}");
-            match crate::agent::runloop::parse_skill_command(&full_command) {
-                Ok(Some(action)) => Ok(SlashCommandOutcome::ManageSkills { action }),
-                Ok(None) => {
-                    renderer.line(MessageStyle::Error, "Skills command parse error")?;
-                    Ok(SlashCommandOutcome::Handled)
-                }
-                Err(error) => {
-                    renderer.line(MessageStyle::Error, &format!("Skills command error: {error}"))?;
-                    Ok(SlashCommandOutcome::Handled)
-                }
-            }
-        }
-        "agents" => match parse_agents_command(args) {
-            Ok(action) => Ok(SlashCommandOutcome::ManageAgents { action }),
-            Err(message) => {
-                renderer.line(MessageStyle::Error, &message)?;
-                Ok(SlashCommandOutcome::Handled)
-            }
-        },
-        "agent" => match args.trim() {
-            "" => Ok(SlashCommandOutcome::ManageAgents { action: AgentManagerAction::Threads }),
-            args => match parse_agents_command(args) {
-                Ok(action) => Ok(SlashCommandOutcome::ManageAgents { action }),
-                Err(message) => {
-                    renderer.line(MessageStyle::Error, &message)?;
-                    Ok(SlashCommandOutcome::Handled)
-                }
-            },
-        },
-        "subprocesses" | "subprocess" => match parse_subprocesses_command(args) {
-            Ok(action) => Ok(SlashCommandOutcome::ManageSubprocesses { action }),
-            Err(message) => {
-                renderer.line(MessageStyle::Error, &message)?;
-                Ok(SlashCommandOutcome::Handled)
-            }
-        },
+        "skills" => handle_skills_command(input, renderer),
+        "plugin" => handle_plugin_command(input, renderer),
+        "agents" => handle_agents_command(args, renderer),
+        "agent" => handle_agent_command(args, renderer),
+        "subprocesses" | "subprocess" => handle_subprocesses_command(args, renderer),
         "plan" => handle_plan_command(args, renderer),
         "login" => handle_login_command(args, renderer),
         "logout" => handle_logout_command(args, renderer),
         "refresh-oauth" => super::flow::handle_refresh_oauth_command(args, renderer),
         "auth" => Ok(handle_auth_command(args)),
         "secret" => handle_secret_command(args, renderer),
-        "help" => {
-            let specific_cmd = if args.trim().is_empty() {
-                None
-            } else {
-                Some(args.trim())
-            };
-            render_help(renderer, specific_cmd, workspace).await?;
-            Ok(SlashCommandOutcome::Handled)
-        }
-        "terminal-setup" => {
-            if !args.is_empty() {
-                renderer.line(MessageStyle::Error, "Usage: /terminal-setup (no arguments supported yet)")?;
-                return Ok(SlashCommandOutcome::Handled);
-            }
-            Ok(SlashCommandOutcome::StartTerminalSetup)
-        }
-        _ => {
-            anyhow::bail!("unknown built-in command skill: {}", spec.slash_name)
-        }
+        "help" => handle_help_command(args, renderer, workspace).await,
+        "terminal-setup" => handle_terminal_setup_command(args, renderer),
+        _ => anyhow::bail!("unknown built-in command skill: {}", spec.slash_name),
     }
 }
 

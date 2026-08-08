@@ -1,6 +1,6 @@
 # Agent Plugins
 
-VT Code supports the [Agent Plugins 1.0.0](https://agent-plugins.org/specification) portable package format. A plugin is a directory containing a root `plugin.json` manifest, optional `skills/*/SKILL.md` Agent Skills, and optional `mcp.json` MCP server configuration.
+VT Code supports the [Agent Plugins](https://agent-plugins.org/specification) portable package format. A plugin is a directory containing a root `plugin.json` manifest, optional `skills/*/SKILL.md` Agent Skills, and optional `mcp.json` MCP server configuration.
 
 For a task-oriented walkthrough, see the [Agent Plugins User Guide](../user-guide/agent-plugins.md).
 
@@ -23,7 +23,7 @@ my-plugin/
 
 `plugin.json` requires two fields:
 
-- `$schema` — must reference the Agent Plugins 1.0.0 schema (`https://agent-plugins.org/schemas/1.0.0/plugin.schema.json`)
+- `$schema` — must reference the Agent Plugins schema (`https://agent-plugins.org/schemas/1.0.0/plugin.schema.json`)
 - `name` — 1-64 characters of `a-z`, `0-9`, `-`, `.`; must start and end alphanumeric and must not contain `--` or `..`
 
 Other recognized fields (`version`, `description`, `author`, `homepage`, `repository`, `license`, `keywords`, `extensions`) are optional. Unknown top-level fields are non-fatal and reported.
@@ -39,9 +39,32 @@ Each immediate child directory containing a valid root `plugin.json` is treated 
 
 The two roots are used differently:
 
-- **Skills** are discovered from the project plugin root only (`<workspace>/.agents/plugins/`).
+- **Skills** are discovered from both roots: the project root takes precedence over the user root.
 - **MCP servers** are discovered from both roots at session startup.
 - **`plugins list` and `plugins info`** scan both roots.
+
+## Example usage
+
+[`vinhnx/vtcode-plugins`](https://github.com/vinhnx/vtcode-plugins) is a real, open-source plugin that bundles nine general-purpose Agent Skills extracted from VT Code itself (Rust coding rules, codemod migrations, code review, workspace analysis, and more).
+
+```bash
+# Install from GitHub
+vtcode plugins add https://github.com/vinhnx/vtcode-plugins.git
+
+# Confirm the install
+vtcode plugins list
+vtcode plugins info vtcode-plugins
+
+# Use a bundled skill in a session
+# Ask the agent: "Use the rust-skills skill"
+```
+
+After installing, the skills are loaded at the next session start and are available to the agent like any other skill. Installable project-locally instead:
+
+```bash
+mkdir -p .agents/plugins
+git clone https://github.com/vinhnx/vtcode-plugins.git .agents/plugins/vtcode-plugins
+```
 
 ## Skills
 
@@ -64,7 +87,7 @@ For stdio servers, VT Code injects `PLUGIN_ROOT` and `PLUGIN_DATA` environment v
 
 ### Path containment
 
-`./`-prefixed paths in `command` and `cwd` must resolve within the plugin root. Paths that escape the plugin root are rejected.
+`./`-prefixed paths in `command` and `cwd` must resolve within the plugin root; symlink resolution is applied so a symlink that points outside the plugin root is rejected. Resolved paths are canonicalized eagerly before the subprocess is spawned. Names passed to `plugins add --name` and `plugins remove` must satisfy the same rules as manifest names, so a crafted name cannot escape the plugins directory.
 
 ## CLI
 
@@ -95,7 +118,7 @@ auto_reload = true
 
 ## Conformance
 
-VT Code is a conformant Agent Plugins 1.0.0 client for both component types (skills + stdio/streamable-http MCP). See the [Agent Plugins specification](https://agent-plugins.org/specification) for the portable package contract.
+VT Code is a conformant Agent Plugins client for both component types (skills + stdio/streamable-http MCP). See the [Agent Plugins specification](https://agent-plugins.org/specification) for the portable package contract.
 
 ## See also
 

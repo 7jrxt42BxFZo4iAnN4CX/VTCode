@@ -53,6 +53,7 @@ pub(super) async fn route_outcome(
         | SlashCommandOutcome::OpenDonateLinks
         | SlashCommandOutcome::LaunchEditor { .. }
         | SlashCommandOutcome::ManageSkills { .. }
+        | SlashCommandOutcome::ManagePlugins { .. }
         | SlashCommandOutcome::ManageAgents { .. }
         | SlashCommandOutcome::ManageSubprocesses { .. }
         | SlashCommandOutcome::RewindToTurn { .. }
@@ -149,6 +150,7 @@ async fn route_navigation_outcome(
         SlashCommandOutcome::OpenDonateLinks => handlers::handle_open_donate_links(ctx).await,
         SlashCommandOutcome::LaunchEditor { file } => handlers::handle_launch_editor(ctx, file).await,
         SlashCommandOutcome::ManageSkills { action } => handlers::handle_manage_skills(ctx, action).await,
+        SlashCommandOutcome::ManagePlugins { action } => handlers::handle_manage_plugins(ctx, action).await,
         SlashCommandOutcome::ManageAgents { action } => handlers::handle_manage_agents(ctx, action).await,
         SlashCommandOutcome::ManageSubprocesses { action } => handlers::handle_manage_subprocesses(ctx, action).await,
         SlashCommandOutcome::RewindToTurn { turn, scope } => handlers::handle_rewind_to_turn(ctx, turn, scope).await,

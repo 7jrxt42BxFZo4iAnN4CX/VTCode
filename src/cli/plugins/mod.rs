@@ -4,6 +4,8 @@ use vtcode_core::cli::args::PluginsSubcommand;
 
 use crate::startup::StartupContext;
 
+use vtcode_agent_plugins::plugin_roots_for;
+
 pub(super) async fn dispatch_plugins_command(_startup: &StartupContext, cmd: PluginsSubcommand) -> anyhow::Result<()> {
     match cmd {
         PluginsSubcommand::List => list::handle_list().await,
@@ -15,13 +17,7 @@ pub(super) async fn dispatch_plugins_command(_startup: &StartupContext, cmd: Plu
 }
 
 fn plugin_roots() -> Vec<PathBuf> {
-    vec![
-        std::env::current_dir()
-            .ok()
-            .map(|c| c.join(".agents/plugins"))
-            .unwrap_or_default(),
-        dirs::home_dir().map(|h| h.join(".agents/plugins")).unwrap_or_default(),
-    ]
+    plugin_roots_for(&std::env::current_dir().unwrap_or_default())
 }
 
 mod add;
