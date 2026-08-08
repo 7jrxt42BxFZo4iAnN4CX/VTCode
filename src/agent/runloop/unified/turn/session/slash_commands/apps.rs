@@ -14,7 +14,7 @@ use vtcode_ui::tui::app::{
 use vtcode_core::hooks::SessionEndReason;
 
 use super::{SlashCommandContext, SlashCommandControl};
-use crate::agent::runloop::unified::external_editor::run_with_event_loop_suspended;
+use crate::agent::runloop::unified::external_editor::run_blocking_with_event_loop_suspended;
 use crate::agent::runloop::unified::external_url_guard::{
     ExternalUrlGuardContext, ExternalUrlOpenOutcome, request_external_url_open,
 };
@@ -199,10 +199,11 @@ pub(crate) async fn launch_editor_from_context(
 
     let launch_config = launch_config_from_settings(&editor_config, wait_for_editor);
 
-    let launch_result = run_with_event_loop_suspended(ctx.handle, editor_config.suspend_tui && wait_for_editor, || {
-        launcher.launch_editor_target_with_config(file_target, launch_config)
-    })
-    .await;
+    let launch_result =
+        run_blocking_with_event_loop_suspended(ctx.handle, editor_config.suspend_tui && wait_for_editor, move || {
+            launcher.launch_editor_target_with_config(file_target, launch_config)
+        })
+        .await;
 
     if launch_result.is_ok() && is_transient_open {
         ctx.handle.force_redraw();

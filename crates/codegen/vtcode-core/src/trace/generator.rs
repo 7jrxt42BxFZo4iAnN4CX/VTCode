@@ -181,6 +181,12 @@ impl TraceGenerator {
 }
 
 /// Get the current git HEAD revision.
+///
+/// # Blocking
+///
+/// Spawns a `git rev-parse HEAD` subprocess and blocks until it exits.
+/// When called from an `async` context, wrap in
+/// [`tokio::task::spawn_blocking`] to avoid stalling the runtime.
 pub fn get_git_head_revision(workspace_path: &Path) -> Option<String> {
     let output = std::process::Command::new("git")
         .args(["rev-parse", "HEAD"])

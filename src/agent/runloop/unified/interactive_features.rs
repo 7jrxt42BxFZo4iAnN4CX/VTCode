@@ -10,6 +10,7 @@ use vtcode_core::llm::{
 };
 use vtcode_core::tools::ToolRegistry;
 
+use crate::agent::runloop::git::GitStatusSummary;
 use crate::agent::runloop::unified::state::SessionStats;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -78,7 +79,23 @@ pub(crate) async fn generate_prompt_suggestions(
 ) -> Vec<PromptSuggestion> {
     let routes = resolve_prompt_suggestion_routes(config, vt_cfg);
     log_prompt_suggestion_route_warning(&routes);
-    let cache_key = prompt_suggestion_cache_key(&routes.primary, workspace, history, session_stats, tool_registry);
+
+    // Pre-fetch git status off the async executor. Both the cache key and the
+    // deterministic fallback need this, so we fetch once and reuse — avoiding
+    // four blocking subprocess spawns (two per call). The sync
+    // `git_status_summary` spawns two `git` subprocesses; see the `# Blocking`
+    // docs in `git.rs`.
+    let workspace_buf = workspace.to_path_buf();
+    let git_summary =
+        match tokio::task::spawn_blocking(move || crate::agent::runloop::git::git_status_summary(&workspace_buf)).await
+        {
+            Ok(Ok(Some(summary))) => Some(summary),
+            _ => None,
+        };
+    let git_fragment = git_status_fragment(git_summary.as_ref());
+
+    let cache_key =
+        prompt_suggestion_cache_key(&routes.primary, workspace, history, session_stats, tool_registry, &git_fragment);
     if let Some(cached) = PROMPT_SUGGESTION_CACHE
         .lock()
         .ok()
@@ -87,7 +104,7 @@ pub(crate) async fn generate_prompt_suggestions(
         return cached;
     }
 
-    let fallback = deterministic_prompt_suggestions(workspace, history, session_stats, tool_registry);
+    let fallback = deterministic_prompt_suggestions(history, session_stats, tool_registry, git_summary.as_ref());
     let llm_generated = llm_prompt_suggestions(provider, config, vt_cfg, &routes, history).await;
     let resolved = if llm_generated.is_empty() {
         fallback
@@ -126,15 +143,25 @@ pub(crate) async fn generate_inline_prompt_suggestion(
         return Some(InlinePromptSuggestion { prompt, source: PromptSuggestionSource::Llm });
     }
 
-    deterministic_inline_prompt_suggestion(workspace, history, session_stats, tool_registry, draft)
-        .map(|prompt| InlinePromptSuggestion { prompt, source: PromptSuggestionSource::Local })
+    deterministic_inline_prompt_suggestion(history, session_stats, tool_registry, draft, {
+        // Pre-fetch git status off the async executor — `git_status_summary`
+        // spawns two blocking `git` subprocesses; see the `# Blocking` docs in
+        // `git.rs`.
+        let workspace_buf = workspace.to_path_buf();
+        match tokio::task::spawn_blocking(move || crate::agent::runloop::git::git_status_summary(&workspace_buf)).await
+        {
+            Ok(Ok(Some(summary))) => Some(summary),
+            _ => None,
+        }
+    })
+    .map(|prompt| InlinePromptSuggestion { prompt, source: PromptSuggestionSource::Local })
 }
 
 fn deterministic_prompt_suggestions(
-    workspace: &Path,
     history: &[uni::Message],
     session_stats: &SessionStats,
     tool_registry: &ToolRegistry,
+    git_summary: Option<&GitStatusSummary>,
 ) -> Vec<PromptSuggestion> {
     let mut suggestions = Vec::new();
 
@@ -197,7 +224,7 @@ fn deterministic_prompt_suggestions(
         });
     }
 
-    if let Ok(Some(summary)) = crate::agent::runloop::git::git_status_summary(workspace) {
+    if let Some(summary) = git_summary {
         let dirty_label = if summary.dirty { "dirty" } else { "clean" };
         suggestions.push(PromptSuggestion {
             id: "git-state".to_string(),
@@ -223,13 +250,13 @@ fn deterministic_prompt_suggestions(
 }
 
 fn deterministic_inline_prompt_suggestion(
-    workspace: &Path,
     history: &[uni::Message],
     session_stats: &SessionStats,
     tool_registry: &ToolRegistry,
     draft: &str,
+    git_summary: Option<GitStatusSummary>,
 ) -> Option<String> {
-    let suggestions = deterministic_prompt_suggestions(workspace, history, session_stats, tool_registry);
+    let suggestions = deterministic_prompt_suggestions(history, session_stats, tool_registry, git_summary.as_ref());
     if suggestions.is_empty() {
         return None;
     }
@@ -507,6 +534,7 @@ fn prompt_suggestion_cache_key(
     history: &[uni::Message],
     session_stats: &SessionStats,
     tool_registry: &ToolRegistry,
+    git_fragment: &str,
 ) -> String {
     let recent_history = history
         .iter()
@@ -523,7 +551,7 @@ fn prompt_suggestion_cache_key(
         tool_registry.is_planning_active(),
         session_stats.task_panel_visible,
         tool_registry.active_pty_sessions(),
-        git_status_fragment(workspace),
+        git_fragment,
         recent_history
     )
 }
@@ -598,11 +626,9 @@ fn truncate_for_prompt(text: &str, max_chars: usize) -> String {
     truncated
 }
 
-fn git_status_fragment(workspace: &Path) -> String {
-    crate::agent::runloop::git::git_status_summary(workspace)
-        .ok()
-        .flatten()
-        .map(|summary| format!("{}:{}", summary.branch, summary.dirty))
+fn git_status_fragment(summary: Option<&GitStatusSummary>) -> String {
+    summary
+        .map(|s| format!("{}:{}", s.branch, s.dirty))
         .unwrap_or_else(|| "no-git".to_string())
 }
 
@@ -719,8 +745,7 @@ mod tests {
         let tool_registry = runtime.block_on(ToolRegistry::new(PathBuf::from(".")));
 
         let suggestion =
-            deterministic_inline_prompt_suggestion(Path::new("."), &[], &session_stats, &tool_registry, "")
-                .expect("suggestion");
+            deterministic_inline_prompt_suggestion(&[], &session_stats, &tool_registry, "", None).expect("suggestion");
 
         assert!(!suggestion.trim().is_empty());
     }
@@ -732,11 +757,11 @@ mod tests {
         let tool_registry = runtime.block_on(ToolRegistry::new(PathBuf::from(".")));
 
         let suggestion = deterministic_inline_prompt_suggestion(
-            Path::new("."),
             &[],
             &session_stats,
             &tool_registry,
             "Review the current diff, call",
+            None,
         )
         .expect("suggestion");
 
@@ -753,11 +778,11 @@ mod tests {
         let tool_registry = runtime.block_on(ToolRegistry::new(PathBuf::from(".")));
 
         let suggestion = deterministic_inline_prompt_suggestion(
-            Path::new("."),
             &[],
             &session_stats,
             &tool_registry,
             "Review the current diff ",
+            None,
         );
 
         assert!(suggestion.is_none());

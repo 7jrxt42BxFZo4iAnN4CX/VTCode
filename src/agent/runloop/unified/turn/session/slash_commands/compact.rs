@@ -12,7 +12,7 @@ use crate::agent::runloop::unified::palettes::refresh_runtime_config_from_manage
 
 use super::config_toml::{ensure_child_table, load_toml_value, preferred_workspace_config_path, save_toml_value};
 use super::{SlashCommandContext, SlashCommandControl};
-use crate::agent::runloop::unified::external_editor::run_with_event_loop_suspended;
+use crate::agent::runloop::unified::external_editor::run_blocking_with_event_loop_suspended;
 
 pub(crate) async fn handle_compact_conversation(
     mut ctx: SlashCommandContext<'_>,
@@ -67,7 +67,7 @@ async fn edit_default_prompt(ctx: &mut SlashCommandContext<'_>) -> Result<()> {
     };
     let temp_path = temp_file.path().to_path_buf();
 
-    run_with_event_loop_suspended(ctx.handle, editor_config.suspend_tui, || {
+    run_blocking_with_event_loop_suspended(ctx.handle, editor_config.suspend_tui, move || {
         launcher.launch_editor_with_config(Some(temp_path.clone()), launch_config)
     })
     .await

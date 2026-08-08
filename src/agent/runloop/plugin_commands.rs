@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use vtcode_agent_plugins::{FileSystemPluginInstaller, FileSystemPluginLoader, PluginInstaller, PluginLoader};
 
 use super::plugin_commands_parser::parse_plugin_command as parse_plugin_command_impl;
@@ -88,20 +88,41 @@ pub(crate) async fn handle_plugin_command(
     match action {
         PluginCommandAction::Help => Ok(PluginCommandOutcome::Handled { message: plugin_help_text().to_string() }),
         PluginCommandAction::List => {
-            let entries = discover_installed_plugins(&workspace);
+            // `discover_installed_plugins` does recursive `read_dir` + manifest
+            // loads; run it off the async executor. See `# Blocking` docs in
+            // `src/agent/runloop/git.rs`.
+            let entries = tokio::task::spawn_blocking(move || discover_installed_plugins(&workspace))
+                .await
+                .context("plugin discovery task panicked")?;
             Ok(PluginCommandOutcome::Handled { message: render_plugin_list(&entries) })
         }
-        PluginCommandAction::Info { name } => match find_installed_plugin(&workspace, &name) {
-            Some(entry) => Ok(PluginCommandOutcome::Handled { message: render_plugin_info(&entry) }),
-            None => Ok(PluginCommandOutcome::Error {
-                message: format!(
-                    "Plugin '{name}' is not installed. Install it with 'vtcode plugins add <source>' or '/plugin add <source>'."
-                ),
-            }),
-        },
+        PluginCommandAction::Info { name } => {
+            let entry = tokio::task::spawn_blocking({
+                let name = name.clone();
+                move || find_installed_plugin(&workspace, &name)
+            })
+            .await
+            .context("plugin lookup task panicked")?;
+            match entry {
+                Some(entry) => Ok(PluginCommandOutcome::Handled { message: render_plugin_info(&entry) }),
+                None => Ok(PluginCommandOutcome::Error {
+                    message: format!(
+                        "Plugin '{name}' is not installed. Install it with 'vtcode plugins add <source>' or '/plugin add <source>'."
+                    ),
+                }),
+            }
+        }
         PluginCommandAction::Add { source, name } => {
-            let installer = FileSystemPluginInstaller::new();
-            match installer.install(&source, name) {
+            // `install` runs `git clone` (a blocking subprocess) and recursive
+            // filesystem copies; run it off the async executor. See `# Blocking`
+            // docs in `src/agent/runloop/git.rs`.
+            let result = tokio::task::spawn_blocking(move || {
+                let installer = FileSystemPluginInstaller::new();
+                installer.install(&source, name)
+            })
+            .await
+            .context("plugin install task panicked")?;
+            match result {
                 Ok(installed) => {
                     let skill_count = installed.loaded.skills.len();
                     let mcp_count = installed.loaded.mcp.as_ref().map(|m| m.servers.len()).unwrap_or(0);
@@ -119,8 +140,16 @@ pub(crate) async fn handle_plugin_command(
             }
         }
         PluginCommandAction::Remove { name } => {
-            let installer = FileSystemPluginInstaller::new();
-            match installer.remove(&name) {
+            let result = tokio::task::spawn_blocking({
+                let name = name.clone();
+                move || {
+                    let installer = FileSystemPluginInstaller::new();
+                    installer.remove(&name)
+                }
+            })
+            .await
+            .context("plugin remove task panicked")?;
+            match result {
                 Ok(()) => Ok(PluginCommandOutcome::Removed {
                     message: format!("Removed plugin '{name}'."),
                 }),
@@ -128,8 +157,14 @@ pub(crate) async fn handle_plugin_command(
             }
         }
         PluginCommandAction::Validate { path } => {
-            let loader = FileSystemPluginLoader::new();
-            match loader.load(&path) {
+            let path_for_msg = path.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                let loader = FileSystemPluginLoader::new();
+                loader.load(&path)
+            })
+            .await
+            .context("plugin validate task panicked")?;
+            match result {
                 Ok(loaded) => {
                     let skill_count = loaded.skills.len();
                     let mcp_count = loaded.mcp.as_ref().map(|m| m.servers.len()).unwrap_or(0);
@@ -141,7 +176,7 @@ pub(crate) async fn handle_plugin_command(
                     })
                 }
                 Err(e) => Ok(PluginCommandOutcome::Error {
-                    message: format!("Invalid plugin at {}: {e}", path.display()),
+                    message: format!("Invalid plugin at {}: {e}", path_for_msg.display()),
                 }),
             }
         }
@@ -160,12 +195,20 @@ pub(crate) async fn handle_plugin_command(
 }
 
 /// Discover installed plugins across the project and user plugin roots.
+///
+/// # Blocking
+/// Performs recursive `read_dir` and manifest loads. Must not be called on a
+/// Tokio worker thread — wrap in `spawn_blocking`.
 pub(crate) fn discover_installed_plugins(workspace: &Path) -> Vec<InstalledPluginEntry> {
     discover_installed_plugins_from_roots(vtcode_agent_plugins::plugin_roots_for(workspace))
 }
 
 /// Discover installed plugins from an ordered list of roots (project first,
 /// then user).
+///
+/// # Blocking
+/// Performs recursive `read_dir` and manifest loads. Must not be called on a
+/// Tokio worker thread — wrap in `spawn_blocking`.
 pub(crate) fn discover_installed_plugins_from_roots(roots: Vec<PathBuf>) -> Vec<InstalledPluginEntry> {
     let mut entries = Vec::new();
     for (index, root) in roots.into_iter().enumerate() {

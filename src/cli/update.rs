@@ -293,7 +293,14 @@ async fn install_update(updater: &Updater, force: bool) -> Result<()> {
         println!("{} Managed install detected ({}).", "!".yellow(), guidance.source.label());
         println!("{} Running: {}", "→".cyan(), guidance.command().green());
 
-        let status = run_update_command(guidance.action.display_command, guidance.action.execution)
+        // `run_update_command` shells out and blocks until the package
+        // manager exits; run it off the async executor so it cannot stall
+        // Tokio workers. See `# Blocking` docs in `src/agent/runloop/git.rs`.
+        let display_command = guidance.action.display_command.to_string();
+        let execution = guidance.action.execution;
+        let status = tokio::task::spawn_blocking(move || run_update_command(&display_command, execution))
+            .await
+            .context("update command task panicked")?
             .with_context(|| format!("failed to run update command for {}", guidance.source.label()))?;
 
         if status.success() {

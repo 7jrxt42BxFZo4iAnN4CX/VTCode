@@ -60,6 +60,15 @@ fn is_git_repo_at(workspace: &Path) -> bool {
     git_repo_check(Some(workspace))
 }
 
+/// Check whether `workspace` (or the current directory) is inside a git repository.
+///
+/// # Blocking
+///
+/// Spawns a `git rev-parse --git-dir` subprocess and blocks until it exits.
+/// When called from an `async` context, wrap in
+/// [`tokio::task::spawn_blocking`] to avoid stalling the runtime — see
+/// `confirm_changes_with_git_diff` and `status_line::update_input_status_if_changed`
+/// for the established pattern.
 fn git_repo_check(workspace: Option<&Path>) -> bool {
     let mut cmd = std::process::Command::new("git");
     cmd.args(["rev-parse", "--git-dir"]);
@@ -100,6 +109,13 @@ pub(crate) fn workspace_relative_display(workspace: &Path, path: &Path) -> Strin
     path.display().to_string()
 }
 
+/// Collect modified/added/deleted worktree entries (excluding staged renames).
+///
+/// # Blocking
+///
+/// Spawns up to two `git` subprocesses (`git rev-parse`, `git status --porcelain`)
+/// and blocks until they complete. When called from an `async` context, wrap in
+/// [`tokio::task::spawn_blocking`] to avoid stalling the runtime.
 pub(crate) fn git_dirty_worktree_entries(workspace: &Path) -> Result<Option<Vec<DirtyWorktreeEntry>>> {
     if !is_git_repo_at(workspace) {
         return Ok(None);
@@ -155,6 +171,14 @@ pub(crate) fn git_dirty_worktree_entries(workspace: &Path) -> Result<Option<Vec<
     Ok(Some(entries))
 }
 
+/// Snapshot per-file addition/deletion counts against HEAD via `git diff --numstat`.
+///
+/// # Blocking
+///
+/// Spawns up to two `git` subprocesses and blocks until they complete.
+/// When called from an `async` context, wrap in
+/// [`tokio::task::spawn_blocking`] — see `metrics::capture_code_change_snapshot`
+/// for the established pattern.
 pub(crate) fn git_working_tree_numstat_snapshot(workspace: &Path) -> Result<Option<HashMap<PathBuf, FileStat>>> {
     if !is_git_repo_at(workspace) {
         return Ok(None);
@@ -217,6 +241,15 @@ pub(crate) fn compute_session_code_change_delta(
     Some(delta)
 }
 
+/// Summarise the current branch name and dirty flag.
+///
+/// # Blocking
+///
+/// Spawns **two** `git` subprocesses (`git rev-parse --abbrev-ref HEAD` and
+/// `git status --porcelain`) and blocks until both complete. When called from
+/// an `async` context, wrap in [`tokio::task::spawn_blocking`] to avoid
+/// stalling the runtime — see `status_line::update_input_status_if_changed`
+/// for the established pattern.
 pub(crate) fn git_status_summary(workspace: &Path) -> Result<Option<GitStatusSummary>> {
     let branch_output = std::process::Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])

@@ -121,11 +121,16 @@ pub(super) fn build_unrelated_dirty_worktree_note(
     )))
 }
 
+/// Append transient system notes for the upcoming turn.
+///
+/// `unrelated_dirty_note` is pre-fetched by the caller via `spawn_blocking`
+/// (see `orchestration.rs`) because `build_unrelated_dirty_worktree_note`
+/// spawns blocking `git` subprocesses — see the `# Blocking` docs in `git.rs`.
 pub(super) fn append_transient_turn_notes(
     history: &mut Vec<vtcode_core::llm::provider::Message>,
     workspace: &std::path::Path,
     tool_registry: &ToolRegistry,
-    agent_touched_paths: &std::collections::BTreeSet<std::path::PathBuf>,
+    unrelated_dirty_note: Option<String>,
 ) -> Vec<String> {
     let mut transient_system_notes = Vec::with_capacity(2);
 
@@ -137,18 +142,9 @@ pub(super) fn append_transient_turn_notes(
         history.push(vtcode_core::llm::provider::Message::system(note));
     }
 
-    match build_unrelated_dirty_worktree_note(workspace, agent_touched_paths) {
-        Ok(Some(note)) => {
-            transient_system_notes.push(note.clone());
-            history.push(vtcode_core::llm::provider::Message::system(note));
-        }
-        Ok(None) => {}
-        Err(err) => {
-            tracing::warn!(
-                error = %err,
-                "Failed to inspect unrelated dirty worktree entries before turn"
-            );
-        }
+    if let Some(note) = unrelated_dirty_note {
+        transient_system_notes.push(note.clone());
+        history.push(vtcode_core::llm::provider::Message::system(note));
     }
 
     transient_system_notes

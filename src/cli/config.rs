@@ -1,6 +1,4 @@
 use anyhow::Result;
-use std::fs;
-use std::io::Write;
 use std::path::Path;
 use vtcode_core::config::{ConfigReadRequest, ConfigService, VTCodeConfig};
 use vtcode_core::utils::colors::style;
@@ -28,9 +26,8 @@ pub async fn handle_config_command(output: Option<&Path>, use_home_dir: bool) ->
     } else if let Some(output_path) = output {
         println!("Output path: {}", output_path.display());
 
-        // Write to specified file
-        let mut file = fs::File::create(output_path)?;
-        file.write_all(generate_default_config().as_bytes())?;
+        // Write to specified file (non-blocking Tokio filesystem API)
+        tokio::fs::write(output_path, generate_default_config().as_bytes()).await?;
         println!("Configuration written to {}", output_path.display());
     } else {
         // Print to stdout

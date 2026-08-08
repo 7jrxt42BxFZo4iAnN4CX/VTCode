@@ -187,12 +187,27 @@ impl AuditEntry {
 }
 
 /// Immutable audit log for dotfile access.
+///
+/// **Single-instance invariant**: exactly one `AuditLog` should exist per log
+/// file path. The `write_lock` and `last_hash` are in-process `Arc<Mutex>`
+/// fields — two separate instances for the same path would have independent
+/// locks and chain-hash caches, allowing interleaved appends that corrupt the
+/// tamper-evident chain. The sole production caller (`DotfileGuardian::new`)
+/// respects this by constructing one instance and sharing it via `Arc`.
 pub struct AuditLog {
     /// Path to the log file.
     log_path: PathBuf,
-    /// Lock for thread-safe writes.
+    /// Lock for serializing writes and reads. Uses `tokio::sync::Mutex` so an
+    /// `OwnedMutexGuard` can be moved into `spawn_blocking` closures, keeping
+    /// operations serialized even if the calling task is cancelled.
     write_lock: Arc<Mutex<()>>,
-    /// Hash of the last entry (for chaining).
+    /// Hash of the last entry (for chaining). Uses `tokio::sync::Mutex` so an
+    /// `OwnedMutexGuard<String>` can be moved into `spawn_blocking` alongside
+    /// the write-lock guard — both survive task cancellation inside the
+    /// blocking closure, and no `std::sync::Mutex` poisoning can occur.
+    ///
+    /// Lock ordering: always acquire `write_lock` before `last_hash`. No
+    /// method acquires `last_hash` without first holding `write_lock`.
     last_hash: Arc<Mutex<String>>,
 }
 
@@ -208,9 +223,13 @@ impl AuditLog {
                 .with_context(|| format!("Failed to create audit log directory: {parent:?}"))?;
         }
 
-        // Read the last hash from the log if it exists
+        // `read_last_hash` does a blocking file seek+read; run it off the async
+        // executor. See `# Blocking` docs in `src/agent/runloop/git.rs`.
         let last_hash = if log_path.exists() {
-            Self::read_last_hash(&log_path)?
+            let path = log_path.clone();
+            tokio::task::spawn_blocking(move || Self::read_last_hash(&path))
+                .await
+                .context("audit log hash read task panicked")??
         } else {
             // Genesis hash
             "0000000000000000000000000000000000000000000000000000000000000000".to_string()
@@ -266,65 +285,145 @@ impl AuditLog {
     }
 
     /// Log an access attempt.
+    ///
+    /// Both `write_lock` and `last_hash` are acquired as `OwnedMutexGuard`s
+    /// and moved into the `spawn_blocking` closure so that:
+    ///
+    /// 1. Appends stay serialized even if the calling task is cancelled —
+    ///    both guards survive in the blocking closure until the IO finishes.
+    /// 2. `last_hash` is updated only after the full append succeeds (the
+    ///    line is in the OS page cache, visible to subsequent reads) but
+    ///    before `sync_all()`. If `sync_all()` fails, the entry is still
+    ///    readable and the chain is consistent. If `open` or `write_all`
+    ///    fails, `last_hash` is not updated **and** any partial bytes are
+    ///    truncated back to the pre-append length, so the file never has a
+    ///    malformed tail that would break future reads.
     pub async fn log(&self, mut entry: AuditEntry) -> Result<()> {
-        let _guard = self.write_lock.lock().await;
+        let write_guard = self.write_lock.clone().lock_owned().await;
+        let mut hash_guard = self.last_hash.clone().lock_owned().await;
 
-        // Set the previous hash
-        let mut last_hash = self.last_hash.lock().await;
-        entry.previous_hash = last_hash.clone();
-
-        // Finalize the entry with its hash
+        // Build the finalized entry under serialization.
+        entry.previous_hash = hash_guard.clone();
         let entry = entry.finalize();
-
-        // Update the last hash
-        if let Some(ref hash) = entry.entry_hash {
-            *last_hash = hash.clone();
-        }
-
-        // Serialize and append to log
+        let new_hash = entry.entry_hash.clone();
         let json = serde_json::to_string(&entry).with_context(|| "Failed to serialize audit entry")?;
 
+        // File open + write + fsync are blocking; run them off the async
+        // executor. Both owned guards are moved into the closure so operations
+        // stay serialized even if the caller is cancelled. See `# Blocking`
+        // docs in `src/agent/runloop/git.rs`.
+        let log_path = self.log_path.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let _write_guard = write_guard; // held until closure returns
+
+            Self::append_entry_blocking(&log_path, &json)?;
+
+            // The append succeeded — the full line is in the OS page cache and
+            // visible to subsequent reads. Update the in-memory chain hash now,
+            // before fsync. An fsync failure does NOT undo the page-cache
+            // write, so the chain stays consistent with the readable file.
+            if let Some(hash) = new_hash {
+                *hash_guard = hash;
+            }
+
+            // Best-effort durability. A failure here does not roll back the
+            // append; the entry is readable and the chain is consistent.
+            // Reopen for sync_all to avoid keeping the append handle open
+            // longer than necessary.
+            let sync_result = File::open(&log_path).and_then(|f| f.sync_all());
+
+            if let Err(e) = sync_result {
+                // Chain hash already matches the readable entry. Report the
+                // durability error but keep in-memory state consistent.
+                drop(hash_guard);
+                return Err(e).with_context(|| "Failed to sync audit log");
+            }
+
+            drop(hash_guard);
+            Ok(())
+        })
+        .await
+        .context("audit log write task panicked")?
+    }
+
+    /// Append one finalized JSON line to the audit log file.
+    ///
+    /// Records the pre-append file length and truncates back to it on any
+    /// `write_all` failure, ensuring the file never has a partial/malformed
+    /// tail that would break `get_entries()`. The append uses a single
+    /// `write_all` of the pre-built line (including `\n`) to minimize the
+    /// chance of a partial write.
+    ///
+    /// # Blocking
+    /// Performs synchronous file open/write. Must not be called on a Tokio
+    /// worker thread.
+    fn append_entry_blocking(log_path: &Path, json: &str) -> Result<()> {
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&self.log_path)
-            .with_context(|| format!("Failed to open audit log: {:?}", self.log_path))?;
+            .open(log_path)
+            .with_context(|| format!("Failed to open audit log: {log_path:?}"))?;
 
-        writeln!(file, "{json}").with_context(|| "Failed to write audit entry")?;
+        // Record the pre-append length so we can roll back on write failure.
+        let pre_len = file.metadata().with_context(|| "Failed to read audit log metadata")?.len();
 
-        // Ensure data is flushed to disk
-        file.sync_all().with_context(|| "Failed to sync audit log")?;
+        // Build the full line in memory so the append is a single write_all,
+        // minimizing the chance of a partial line on failure.
+        let mut line = json.to_string();
+        line.push('\n');
+
+        if let Err(e) = file.write_all(line.as_bytes()) {
+            // Truncate any partial bytes back to the pre-append length so
+            // the file never has a malformed tail.
+            let _ = file.set_len(pre_len);
+            return Err(e).with_context(|| "Failed to write audit entry");
+        }
 
         Ok(())
     }
 
     /// Get all entries from the log.
+    ///
+    /// Uses `lock_owned()` so the `write_lock` guard is moved into the
+    /// `spawn_blocking` closure — reads stay consistent with in-flight writes
+    /// even if the calling task is cancelled.
     pub async fn get_entries(&self) -> Result<Vec<AuditEntry>> {
-        let _guard = self.write_lock.lock().await;
+        let guard = self.write_lock.clone().lock_owned().await;
 
-        if !self.log_path.exists() {
-            return Ok(Vec::new());
-        }
+        // File open + read_line loop are blocking; run them off the async
+        // executor. The owned `write_lock` guard is moved into the closure so
+        // reads stay serialized even if the caller is cancelled. See `# Blocking`
+        // docs in `src/agent/runloop/git.rs`.
+        let log_path = self.log_path.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<AuditEntry>> {
+            let _guard = guard; // held until closure returns
 
-        let file = File::open(&self.log_path).with_context(|| "Failed to open audit log")?;
-        let mut reader = BufReader::new(file);
-        let mut entries = Vec::new();
-        let mut line = String::new();
-
-        loop {
-            line.clear();
-            if reader.read_line(&mut line).with_context(|| "Failed to read audit log line")? == 0 {
-                break;
+            if !log_path.exists() {
+                return Ok(Vec::new());
             }
-            let raw = line.trim_end_matches(['\n', '\r']);
-            if raw.trim().is_empty() {
-                continue;
-            }
-            let entry: AuditEntry = serde_json::from_str(raw).with_context(|| "Failed to parse audit entry")?;
-            entries.push(entry);
-        }
 
-        Ok(entries)
+            let file = File::open(&log_path).with_context(|| "Failed to open audit log")?;
+            let mut reader = BufReader::new(file);
+            let mut entries = Vec::new();
+            let mut line = String::new();
+
+            loop {
+                line.clear();
+                if reader.read_line(&mut line).with_context(|| "Failed to read audit log line")? == 0 {
+                    break;
+                }
+                let raw = line.trim_end_matches(['\n', '\r']);
+                if raw.trim().is_empty() {
+                    continue;
+                }
+                let entry: AuditEntry = serde_json::from_str(raw).with_context(|| "Failed to parse audit entry")?;
+                entries.push(entry);
+            }
+
+            Ok(entries)
+        })
+        .await
+        .context("audit log read task panicked")?
     }
 
     /// Verify the integrity of the entire audit log.
@@ -435,5 +534,143 @@ mod tests {
                 .finalize();
 
         assert!(entry.verify());
+    }
+
+    /// After a failed write (file is read-only), `last_hash` must remain at
+    /// the old value so the next successful entry chains correctly. This
+    /// verifies the fix for the chain-corruption bug where `last_hash` was
+    /// updated before the durable write.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_failed_write_preserves_chain() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("audit.log");
+
+        let log = AuditLog::new(&log_path).await.unwrap();
+
+        // Write one entry successfully.
+        let entry1 =
+            AuditEntry::new(".gitignore", AccessType::Write, AuditOutcome::Blocked, "write_file", "test-session", "");
+        log.log(entry1).await.unwrap();
+
+        let entries = log.get_entries().await.unwrap();
+        assert_eq!(entries.len(), 1);
+        let good_hash = entries[0].entry_hash.clone().unwrap();
+
+        // Make the log file read-only so append-mode open fails.
+        std::fs::set_permissions(&log_path, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+        // Attempt a write — it must fail.
+        let entry2 =
+            AuditEntry::new(".env", AccessType::Modify, AuditOutcome::Blocked, "write_file", "test-session", "");
+        let result = log.log(entry2).await;
+        assert!(result.is_err(), "write to a read-only log should fail");
+
+        // Restore write permission.
+        std::fs::set_permissions(&log_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        // The next successful entry must chain against the first entry's hash,
+        // not the failed entry's hash.
+        let entry3 =
+            AuditEntry::new(".bashrc", AccessType::Read, AuditOutcome::AllowedWithConfirmation, "read_file", "s2", "");
+        log.log(entry3).await.unwrap();
+
+        let entries = log.get_entries().await.unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[1].previous_hash, good_hash, "chain must link to the last successful entry");
+        assert!(log.verify_integrity().await.unwrap(), "integrity must be intact");
+    }
+
+    /// Concurrent log calls must be serialized — entries must form a valid
+    /// chain with no duplicate or broken `previous_hash` links.
+    #[tokio::test]
+    async fn test_concurrent_writes_form_valid_chain() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("audit.log");
+        let log = Arc::new(AuditLog::new(&log_path).await.unwrap());
+
+        let mut handles = Vec::new();
+        for i in 0..8 {
+            let log = log.clone();
+            handles.push(tokio::spawn(async move {
+                let entry = AuditEntry::new(
+                    format!(".env.{i}"),
+                    AccessType::Modify,
+                    AuditOutcome::Blocked,
+                    "test_tool",
+                    "test-session",
+                    "",
+                );
+                log.log(entry).await
+            }));
+        }
+        for handle in handles {
+            handle.await.unwrap().unwrap();
+        }
+
+        let entries = log.get_entries().await.unwrap();
+        assert_eq!(entries.len(), 8);
+        assert!(log.verify_integrity().await.unwrap(), "all 8 concurrent entries must form a valid chain");
+    }
+
+    /// `append_entry_blocking` must write a valid single JSON line followed
+    /// by `\n`. This verifies the pre-built-line + `write_all` approach.
+    #[test]
+    fn test_append_entry_blocking_writes_valid_line() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("audit.log");
+
+        let entry = AuditEntry::new(".env", AccessType::Write, AuditOutcome::Blocked, "test", "s1", "").finalize();
+        let json = serde_json::to_string(&entry).unwrap();
+
+        AuditLog::append_entry_blocking(&log_path, &json).unwrap();
+
+        let content = std::fs::read_to_string(&log_path).unwrap();
+        assert!(content.ends_with('\n'), "line must be newline-terminated");
+        let line = content.trim_end();
+        let parsed: AuditEntry = serde_json::from_str(line).expect("written line must be valid JSON");
+        assert_eq!(parsed.file_path, ".env");
+    }
+
+    /// `append_entry_blocking` must append to an existing file without
+    /// corrupting prior entries.
+    #[test]
+    fn test_append_entry_blocking_appends_correctly() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("audit.log");
+
+        for i in 0..3 {
+            let entry =
+                AuditEntry::new(format!(".env.{i}"), AccessType::Modify, AuditOutcome::Blocked, "test", "s1", "")
+                    .finalize();
+            let json = serde_json::to_string(&entry).unwrap();
+            AuditLog::append_entry_blocking(&log_path, &json).unwrap();
+        }
+
+        let content = std::fs::read_to_string(&log_path).unwrap();
+        let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines.len(), 3, "must have exactly 3 lines");
+        for (i, line) in lines.iter().enumerate() {
+            let entry: AuditEntry = serde_json::from_str(line).unwrap();
+            assert_eq!(entry.file_path, format!(".env.{i}"));
+        }
+    }
+
+    /// `append_entry_blocking` must not leave a malformed tail when writing
+    /// to a directory that doesn't exist (open fails). The file simply won't
+    /// be created — no partial state.
+    #[test]
+    fn test_append_entry_blocking_missing_dir_is_clean_failure() {
+        let dir = tempdir().unwrap();
+        let nonexistent = dir.path().join("nonexistent_dir").join("audit.log");
+
+        let entry = AuditEntry::new(".env", AccessType::Write, AuditOutcome::Blocked, "test", "s1", "").finalize();
+        let json = serde_json::to_string(&entry).unwrap();
+
+        let result = AuditLog::append_entry_blocking(&nonexistent, &json);
+        assert!(result.is_err(), "writing to a missing directory must fail");
+        assert!(!nonexistent.exists(), "no file should be created on failure");
     }
 }

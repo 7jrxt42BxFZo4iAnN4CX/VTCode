@@ -1134,17 +1134,24 @@ pub async fn list_recent_sessions(limit: usize) -> Result<Vec<SessionListing>> {
         return Ok(Vec::new());
     }
 
-    // Collect all session file paths first
-    let mut session_paths = Vec::new();
-    for entry in fs::read_dir(&sessions_dir)
-        .with_context(|| format!("failed to read session directory: {}", sessions_dir.display()))?
-    {
-        let entry = entry.with_context(|| format!("failed to read session entry in {}", sessions_dir.display()))?;
-        let path = entry.path();
-        if is_session_file(&path) {
-            session_paths.push(path);
+    // `std::fs::read_dir` is a blocking directory scan; run it off the async
+    // executor and collect paths before spawning parallel read tasks. See `# Blocking`
+    // docs in `src/agent/runloop/git.rs`.
+    let session_paths: Vec<PathBuf> = tokio::task::spawn_blocking(move || -> Result<Vec<PathBuf>> {
+        let mut paths = Vec::new();
+        for entry in fs::read_dir(&sessions_dir)
+            .with_context(|| format!("failed to read session directory: {}", sessions_dir.display()))?
+        {
+            let entry = entry.with_context(|| format!("failed to read session entry in {}", sessions_dir.display()))?;
+            let path = entry.path();
+            if is_session_file(&path) {
+                paths.push(path);
+            }
         }
-    }
+        Ok(paths)
+    })
+    .await
+    .context("session directory scan task panicked")??;
 
     // Process session files in parallel for better performance with large archives
     // Batch processing to avoid overwhelming the system with too many concurrent tasks

@@ -2,7 +2,6 @@ use crate::code::code_quality::config::{LintConfig, LintSeverity};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-// use anyhow::Result;
 
 /// Shared utilities for lint output parsing
 mod parser_utils {
@@ -103,23 +102,26 @@ impl LintingOrchestrator {
     }
 
     async fn run_linter(&self, config: &LintConfig, path: &Path) -> Option<LintResult> {
-        // Execute the actual linting tool
-        let mut cmd = Command::new(&config.command[0]);
-
-        // Add arguments
-        for arg in &config.args {
-            cmd.arg(arg);
-        }
-
-        // Add the path as the last argument
-        cmd.arg(path);
-
-        match cmd.output() {
-            Ok(output) => {
+        // Execute the linting tool off the async executor —
+        // `Command::output()` blocks until the subprocess exits. See the
+        // `# Blocking` docs in `src/agent/runloop/git.rs` for the pattern.
+        let config = config.clone();
+        let config_for_parse = config.clone();
+        let path_for_cmd = path.to_path_buf();
+        match tokio::task::spawn_blocking(move || {
+            let mut cmd = Command::new(&config.command[0]);
+            for arg in &config.args {
+                cmd.arg(arg);
+            }
+            cmd.arg(&path_for_cmd);
+            cmd.output()
+        })
+        .await
+        {
+            Ok(Ok(output)) => {
                 if output.status.success() {
                     // Parse the lint output based on the tool
-                    let findings = self.parse_lint_output(config, &output.stdout, path);
-
+                    let findings = self.parse_lint_output(&config_for_parse, &output.stdout, path);
                     Some(LintResult {
                         success: true,
                         findings,
@@ -136,10 +138,16 @@ impl LintingOrchestrator {
                     })
                 }
             }
-            Err(e) => Some(LintResult {
+            Ok(Err(e)) => Some(LintResult {
                 success: false,
                 findings: Vec::new(),
                 error_message: Some(format!("Failed to execute {}: {}", config.tool_name, e)),
+                tool_used: config.tool_name.clone(),
+            }),
+            Err(e) => Some(LintResult {
+                success: false,
+                findings: Vec::new(),
+                error_message: Some(format!("Linter task failed: {e}")),
                 tool_used: config.tool_name.clone(),
             }),
         }

@@ -25,7 +25,7 @@ use vtcode_ui::tui::app::{ContentPart as UiContentPart, SubmittedInput};
 
 use crate::agent::runloop::prompt::refine_and_enrich_prompt;
 use crate::agent::runloop::unified::async_mcp_manager::{AsyncMcpManager, approval_policy_from_human_in_the_loop};
-use crate::agent::runloop::unified::external_editor::run_with_event_loop_suspended;
+use crate::agent::runloop::unified::external_editor::run_blocking_with_event_loop_suspended;
 use crate::agent::runloop::unified::inline_events::InlineLoopAction;
 use crate::agent::runloop::unified::interactive_features::{PromptSuggestionSource, generate_inline_prompt_suggestion};
 use crate::agent::runloop::unified::session_setup::apply_ide_context_snapshot;
@@ -160,13 +160,14 @@ async fn open_transcript_review_in_editor(ctx: &mut InteractionLoopContext<'_>, 
     temp.write_all(text.as_bytes())?;
     temp.flush()?;
     let (_, path) = temp.keep()?;
+    let path_for_cleanup = path.clone();
     let launcher = TerminalAppLauncher::new(ctx.config.workspace.clone());
     let launch_config = review_editor_launch_config(&editor_config);
-    let result = run_with_event_loop_suspended(ctx.handle, editor_config.suspend_tui, || {
+    let result = run_blocking_with_event_loop_suspended(ctx.handle, editor_config.suspend_tui, move || {
         launcher.launch_editor_with_config(Some(path.clone()), launch_config)
     })
     .await;
-    let cleanup = fs::remove_file(&path);
+    let cleanup = fs::remove_file(&path_for_cleanup);
     ctx.handle.force_redraw();
 
     match result {
@@ -180,7 +181,7 @@ async fn open_transcript_review_in_editor(ctx: &mut InteractionLoopContext<'_>, 
     }
 
     if let Err(err) = cleanup {
-        tracing::debug!(%err, path = %path.display(), "failed to remove transcript review temp file");
+        tracing::debug!(%err, path = %path_for_cleanup.display(), "failed to remove transcript review temp file");
     }
 
     Ok(())
@@ -202,25 +203,26 @@ async fn launch_input_editor_with_draft(ctx: &mut InteractionLoopContext<'_>, dr
     temp.write_all(draft.as_bytes())?;
     temp.flush()?;
     let (_, path) = temp.keep()?;
+    let path_for_cleanup = path.clone();
     let launcher = TerminalAppLauncher::new(ctx.config.workspace.clone());
     let launch_config = review_editor_launch_config(&editor_config);
-    let result = run_with_event_loop_suspended(ctx.handle, editor_config.suspend_tui, || {
+    let result = run_blocking_with_event_loop_suspended(ctx.handle, editor_config.suspend_tui, move || {
         launcher.launch_editor_with_config(Some(path.clone()), launch_config)
     })
     .await;
 
     let (message_style, message) = match result {
         Ok(_) => {
-            let content = fs::read_to_string(&path)
-                .with_context(|| format!("failed to read edited content from {}", path.display()))?;
+            let content = fs::read_to_string(&path_for_cleanup)
+                .with_context(|| format!("failed to read edited content from {}", path_for_cleanup.display()))?;
             ctx.handle.set_input(content);
             (MessageStyle::Info, "Editor closed. Input updated with edited content.".to_owned())
         }
         Err(err) => (MessageStyle::Error, format!("Failed to launch editor: {err}")),
     };
 
-    if let Err(err) = fs::remove_file(&path) {
-        tracing::debug!(%err, path = %path.display(), "failed to remove input editor temp file");
+    if let Err(err) = fs::remove_file(&path_for_cleanup) {
+        tracing::debug!(%err, path = %path_for_cleanup.display(), "failed to remove input editor temp file");
     }
 
     ctx.handle.force_redraw();
@@ -281,9 +283,10 @@ async fn open_transcript_review_scrollback(ctx: &mut InteractionLoopContext<'_>,
         .as_ref()
         .map(|config| config.ui.fullscreen.mouse_capture)
         .unwrap_or(true);
-    let result =
-        run_with_event_loop_suspended(ctx.handle, true, || show_transcript_review_in_scrollback(&text, mouse_capture))
-            .await;
+    let result = run_blocking_with_event_loop_suspended(ctx.handle, true, move || {
+        show_transcript_review_in_scrollback(&text, mouse_capture)
+    })
+    .await;
     ctx.handle.force_redraw();
     if let Err(err) = result {
         ctx.renderer

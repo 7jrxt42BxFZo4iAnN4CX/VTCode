@@ -201,9 +201,19 @@ fn summarize_trajectory<R: BufRead>(reader: R) -> Result<TrajectorySummary> {
 pub async fn handle_trajectory_command(_cfg: &CoreAgentConfig, file: Option<PathBuf>, top: usize) -> Result<()> {
     let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let log_path = file.unwrap_or_else(|| workspace.join(".vtcode/logs/trajectory.jsonl"));
-    let f = File::open(&log_path).with_context(|| format!("Failed to open {}", log_path.display()))?;
-    let reader = BufReader::new(f);
-    let mut summary = summarize_trajectory(reader)?;
+
+    // `File::open` + `summarize_trajectory` do blocking synchronous reads;
+    // run them off the async executor. See `# Blocking` docs in
+    // `src/agent/runloop/git.rs`.
+    let log_path_for_io = log_path.clone();
+    let mut summary = tokio::task::spawn_blocking(move || -> Result<TrajectorySummary> {
+        let f =
+            File::open(&log_path_for_io).with_context(|| format!("Failed to open {}", log_path_for_io.display()))?;
+        let reader = BufReader::new(f);
+        summarize_trajectory(reader)
+    })
+    .await
+    .context("trajectory read task panicked")??;
 
     println!("{} {}", style("Trajectory Report").magenta().bold(), style(log_path.display()).dim());
     println!(

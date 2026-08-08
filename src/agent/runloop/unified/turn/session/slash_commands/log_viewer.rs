@@ -25,7 +25,27 @@ pub(crate) async fn handle_show_log_viewer(
         return Ok(SlashCommandControl::Continue);
     }
 
-    let entries = collect_log_entries(ctx.thread_handle, &ctx.config.workspace, scope)?;
+    let entries = match scope {
+        LogScope::Thread => read_from_memory(ctx.thread_handle)?,
+        LogScope::All => {
+            // The memory read is non-blocking; the disk scan does
+            // `std::fs::read_dir` + per-file reads, so run it off the async
+            // executor. See `# Blocking` docs in `src/agent/runloop/git.rs`.
+            let mut all_entries = read_from_memory(ctx.thread_handle)?;
+            let workspace = ctx.config.workspace.clone();
+            let disk_entries = tokio::task::spawn_blocking(move || collect_disk_entries(&workspace))
+                .await
+                .context("log disk scan task panicked")?;
+            all_entries.extend(disk_entries);
+            // Sort by seq for approximate chronological ordering. We do NOT
+            // dedup: memory entries use the global `record.sequence` while disk
+            // entries use per-file line indices (see `read_events_from_file`),
+            // so a `dedup_by_key(|e| e.seq)` would incorrectly drop events from
+            // different sessions that happen to share a line number.
+            all_entries.sort_by_key(|e| e.seq);
+            all_entries
+        }
+    };
 
     if entries.is_empty() {
         ctx.renderer.line(MessageStyle::Info, "No events recorded yet.")?;
@@ -85,17 +105,6 @@ struct LogEntry {
     detail: String,
 }
 
-fn collect_log_entries(
-    thread_handle: &vtcode_core::core::threads::ThreadRuntimeHandle,
-    workspace: &std::path::Path,
-    scope: LogScope,
-) -> Result<Vec<LogEntry>> {
-    match scope {
-        LogScope::Thread => read_from_memory(thread_handle),
-        LogScope::All => collect_memory_and_disk(thread_handle, workspace),
-    }
-}
-
 fn read_from_memory(thread_handle: &vtcode_core::core::threads::ThreadRuntimeHandle) -> Result<Vec<LogEntry>> {
     let records: Vec<ThreadEventRecord> = thread_handle.replay_recent();
     let mut entries = Vec::with_capacity(records.len());
@@ -106,14 +115,18 @@ fn read_from_memory(thread_handle: &vtcode_core::core::threads::ThreadRuntimeHan
     Ok(entries)
 }
 
-fn collect_memory_and_disk(
-    thread_handle: &vtcode_core::core::threads::ThreadRuntimeHandle,
-    workspace: &std::path::Path,
-) -> Result<Vec<LogEntry>> {
-    let mut all_entries = read_from_memory(thread_handle)?;
+/// Scan on-disk session event logs for entries. Silently skips missing or
+/// unreadable files — this is a best-effort supplement to the in-memory log.
+///
+/// # Blocking
+///
+/// Does `std::fs::read_dir` + per-file `File::open` + `read_line` — must be
+/// called from `spawn_blocking` in async contexts.
+fn collect_disk_entries(workspace: &std::path::Path) -> Vec<LogEntry> {
     let sessions_root = workspace.join(".vtcode/sessions");
+    let mut entries = Vec::new();
     let Ok(read_dir) = std::fs::read_dir(&sessions_root) else {
-        return Ok(all_entries);
+        return entries;
     };
     for entry in read_dir.filter_map(|entry| entry.ok()) {
         let path = entry.path().join("events.jsonl");
@@ -121,14 +134,18 @@ fn collect_memory_and_disk(
             continue;
         }
         if let Ok(disk_entries) = read_events_from_file(path) {
-            all_entries.extend(disk_entries);
+            entries.extend(disk_entries);
         }
     }
-    all_entries.sort_by_key(|e| e.seq);
-    all_entries.dedup_by_key(|e| e.seq);
-    Ok(all_entries)
+    entries
 }
 
+/// Read and parse a single `events.jsonl` file into log entries.
+///
+/// # Blocking
+///
+/// Does `std::fs::File::open` + `BufReader::lines` — must be called from
+/// `spawn_blocking` in async contexts.
 fn read_events_from_file(path: PathBuf) -> Result<Vec<LogEntry>> {
     let file = std::fs::File::open(&path).with_context(|| format!("Failed to open events log: {}", path.display()))?;
     let reader = std::io::BufReader::new(file);

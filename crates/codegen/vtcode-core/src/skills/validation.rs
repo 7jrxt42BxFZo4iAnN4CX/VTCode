@@ -835,57 +835,70 @@ impl SkillValidator {
     async fn test_tool_execution(&self, config: &CliToolConfig) -> CheckResult {
         let start_time = Instant::now();
 
-        // Try to execute with --help or -h
-        let output = std::process::Command::new(&config.executable_path).arg("--help").output();
+        // Execute tool off the async executor — `Command::output()` blocks
+        // until the subprocess exits. See the `# Blocking` docs in
+        // `src/agent/runloop/git.rs` for the pattern.
+        let exec_path = config.executable_path.clone();
+
+        // Try --help first
+        let output =
+            tokio::task::spawn_blocking(move || std::process::Command::new(&exec_path).arg("--help").output()).await;
 
         match output {
-            Ok(output) => {
-                if output.status.success() {
-                    CheckResult {
+            Ok(Ok(output)) if output.status.success() => CheckResult {
+                name: "tool_executable".to_string(),
+                status: CheckStatus::Passed,
+                message: "Tool executed successfully with --help".to_string(),
+                details: None,
+                execution_time_ms: start_time.elapsed().as_millis() as u64,
+            },
+            Ok(Ok(_)) => {
+                // --help failed, try -h
+                let exec_path = config.executable_path.clone();
+                match tokio::task::spawn_blocking(move || std::process::Command::new(&exec_path).arg("-h").output())
+                    .await
+                {
+                    Ok(Ok(output)) if output.status.success() => CheckResult {
                         name: "tool_executable".to_string(),
                         status: CheckStatus::Passed,
-                        message: "Tool executed successfully with --help".to_string(),
+                        message: "Tool executed successfully with -h".to_string(),
                         details: None,
                         execution_time_ms: start_time.elapsed().as_millis() as u64,
-                    }
-                } else {
-                    // Try -h
-                    let output = std::process::Command::new(&config.executable_path).arg("-h").output();
-
-                    match output {
-                        Ok(output) => {
-                            if output.status.success() {
-                                CheckResult {
-                                    name: "tool_executable".to_string(),
-                                    status: CheckStatus::Passed,
-                                    message: "Tool executed successfully with -h".to_string(),
-                                    details: None,
-                                    execution_time_ms: start_time.elapsed().as_millis() as u64,
-                                }
-                            } else {
-                                CheckResult {
-                                    name: "tool_executable".to_string(),
-                                    status: CheckStatus::Warning,
-                                    message: "Tool executed but returned non-zero exit code".to_string(),
-                                    details: None,
-                                    execution_time_ms: start_time.elapsed().as_millis() as u64,
-                                }
-                            }
-                        }
-                        Err(e) => CheckResult {
-                            name: "tool_executable".to_string(),
-                            status: CheckStatus::Failed,
-                            message: format!("Failed to execute tool: {e}"),
-                            details: None,
-                            execution_time_ms: start_time.elapsed().as_millis() as u64,
-                        },
-                    }
+                    },
+                    Ok(Ok(_)) => CheckResult {
+                        name: "tool_executable".to_string(),
+                        status: CheckStatus::Warning,
+                        message: "Tool executed but returned non-zero exit code".to_string(),
+                        details: None,
+                        execution_time_ms: start_time.elapsed().as_millis() as u64,
+                    },
+                    Ok(Err(e)) => CheckResult {
+                        name: "tool_executable".to_string(),
+                        status: CheckStatus::Failed,
+                        message: format!("Failed to execute tool: {e}"),
+                        details: None,
+                        execution_time_ms: start_time.elapsed().as_millis() as u64,
+                    },
+                    Err(e) => CheckResult {
+                        name: "tool_executable".to_string(),
+                        status: CheckStatus::Failed,
+                        message: format!("Validation task failed: {e}"),
+                        details: None,
+                        execution_time_ms: start_time.elapsed().as_millis() as u64,
+                    },
                 }
             }
-            Err(e) => CheckResult {
+            Ok(Err(e)) => CheckResult {
                 name: "tool_executable".to_string(),
                 status: CheckStatus::Failed,
                 message: format!("Failed to execute tool: {e}"),
+                details: None,
+                execution_time_ms: start_time.elapsed().as_millis() as u64,
+            },
+            Err(e) => CheckResult {
+                name: "tool_executable".to_string(),
+                status: CheckStatus::Failed,
+                message: format!("Validation task failed: {e}"),
                 details: None,
                 execution_time_ms: start_time.elapsed().as_millis() as u64,
             },

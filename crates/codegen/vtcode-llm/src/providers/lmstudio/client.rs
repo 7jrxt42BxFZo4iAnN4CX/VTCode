@@ -237,12 +237,22 @@ impl LMStudioClient {
         let lms = Self::find_lms()?;
         tracing::info!(model, "downloading model");
 
-        let status = std::process::Command::new(&lms)
-            .args(["get", "--yes", model])
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map_err(|e| io::Error::other(format!("Failed to execute '{lms} get --yes {model}': {e}")))?;
+        // `Command::status()` blocks until the `lms get` subprocess exits; run
+        // it off the async executor so it cannot stall Tokio workers. See `# Blocking`
+        // docs in `src/agent/runloop/git.rs`.
+        let model = model.to_string();
+        let lms_for_task = lms.clone();
+        let model_for_task = model.clone();
+        let status = tokio::task::spawn_blocking(move || {
+            std::process::Command::new(&lms_for_task)
+                .args(["get", "--yes", &model_for_task])
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::null())
+                .status()
+        })
+        .await
+        .map_err(|e| io::Error::other(format!("Model download task panicked: {e}")))?
+        .map_err(|e| io::Error::other(format!("Failed to execute '{lms} get --yes {model}': {e}")))?;
 
         if !status.success() {
             return Err(io::Error::other(format!(

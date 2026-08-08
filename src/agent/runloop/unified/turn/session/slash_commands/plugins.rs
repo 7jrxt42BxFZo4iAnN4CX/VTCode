@@ -4,7 +4,7 @@
 //! and in TUI sessions offers an interactive manager modal for browsing,
 //! installing, and removing portable Agent Plugins.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::sync::Arc;
 use vtcode_core::utils::ansi::MessageStyle;
 use vtcode_ui::tui::app::{InlineListItem, InlineListSearchConfig, InlineListSelection, WizardModalMode};
@@ -214,7 +214,15 @@ async fn pick_installed_plugin(
     title: &str,
     description: &str,
 ) -> Result<Option<String>> {
-    let entries = crate::agent::runloop::plugin_commands::discover_installed_plugins(&ctx.config.workspace);
+    let workspace = ctx.config.workspace.clone();
+    // `discover_installed_plugins` does recursive `read_dir` + manifest loads;
+    // run it off the async executor. See `# Blocking` docs in
+    // `src/agent/runloop/git.rs`.
+    let entries = tokio::task::spawn_blocking(move || {
+        crate::agent::runloop::plugin_commands::discover_installed_plugins(&workspace)
+    })
+    .await
+    .context("plugin discovery task panicked")?;
     if entries.is_empty() {
         ctx.renderer
             .line(MessageStyle::Info, "No installed plugins. Add one with 'Add plugin' or '/plugin add <source>'.")?;

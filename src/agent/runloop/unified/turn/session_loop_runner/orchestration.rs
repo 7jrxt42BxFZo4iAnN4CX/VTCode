@@ -49,9 +49,9 @@ use super::metrics::{
 use super::plan_seed::load_active_plan_seed;
 use super::support::{
     ExecutionSummaryStatus, append_transient_turn_notes, approved_plan_execution_summary,
-    checkpoint_session_archive_start, force_reload_workspace_config_for_execution, latest_assistant_result_text,
-    live_reload_preserves_session_config, prepare_resume_bootstrap_without_archive, prompt_startup_planning_workflow,
-    remove_transient_system_notes, take_pending_resumed_user_prompt,
+    build_unrelated_dirty_worktree_note, checkpoint_session_archive_start, force_reload_workspace_config_for_execution,
+    latest_assistant_result_text, live_reload_preserves_session_config, prepare_resume_bootstrap_without_archive,
+    prompt_startup_planning_workflow, remove_transient_system_notes, take_pending_resumed_user_prompt,
 };
 use crate::agent::runloop::unified::turn::primary_agent_runtime::{
     PrimaryAgentRuntimeSyncContext, sync_primary_agent_permissions, sync_primary_agent_runtime,
@@ -867,11 +867,33 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                 }
                 let (session_state, runtime_steering) = runtime.split_mut();
                 let working_history = std::sync::Arc::make_mut(&mut session_state.messages);
+                // Pre-fetch the unrelated dirty worktree note off the async
+                // executor. `build_unrelated_dirty_worktree_note` spawns
+                // blocking `git` subprocesses — see the `# Blocking` docs in
+                // `git.rs`. The note is passed into `append_transient_turn_notes`
+                // so the sync helper never blocks the runtime.
+                let workspace_buf = config.workspace.clone();
+                let touched_clone = agent_touched_paths.clone();
+                let unrelated_dirty_note = match tokio::task::spawn_blocking(move || {
+                    build_unrelated_dirty_worktree_note(&workspace_buf, &touched_clone)
+                })
+                .await
+                {
+                    Ok(Ok(Some(note))) => Some(note),
+                    Ok(Err(err)) => {
+                        tracing::warn!(
+                            error = %err,
+                            "Failed to inspect unrelated dirty worktree entries before turn"
+                        );
+                        None
+                    }
+                    _ => None,
+                };
                 let transient_system_notes = append_transient_turn_notes(
                     working_history,
                     config.workspace.as_path(),
                     &tool_registry,
-                    &agent_touched_paths,
+                    unrelated_dirty_note,
                 );
                 let turn_started_at = Instant::now();
                 let history_snapshot_bytes = estimate_history_bytes(working_history);

@@ -34,7 +34,8 @@ pub(crate) async fn handle_eval_command(
     suite_path: &Path,
     output_path: Option<&Path>,
 ) -> Result<()> {
-    let suite_json = std::fs::read_to_string(suite_path)
+    let suite_json = tokio::fs::read_to_string(suite_path)
+        .await
         .with_context(|| format!("read eval suite from {}", suite_path.display()))?;
     let suite: EvalSuite = serde_json::from_str(&suite_json)
         .with_context(|| format!("parse eval suite JSON from {}", suite_path.display()))?;
@@ -60,7 +61,9 @@ pub(crate) async fn handle_eval_command(
 
     let markdown = report.to_markdown();
     if let Some(path) = output_path {
-        std::fs::write(path, &markdown).with_context(|| format!("write report to {}", path.display()))?;
+        tokio::fs::write(path, &markdown)
+            .await
+            .with_context(|| format!("write report to {}", path.display()))?;
         eprintln!("\nReport written to {}", path.display());
     } else {
         println!("{markdown}");

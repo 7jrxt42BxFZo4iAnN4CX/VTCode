@@ -1,7 +1,6 @@
 use crate::code::code_quality::config::FormatConfig;
 use std::path::Path;
 use std::process::Command;
-// use anyhow::Result;
 
 /// Result of formatting operation
 #[derive(Debug, Clone)]
@@ -55,23 +54,26 @@ impl FormattingOrchestrator {
     }
 
     async fn run_formatter(&self, config: &FormatConfig, file_path: &Path) -> FormatResult {
-        // Execute the actual formatting tool
-        let mut cmd = Command::new(&config.command[0]);
-
-        // Add arguments
-        for arg in &config.args {
-            cmd.arg(arg);
-        }
-
-        // Add the file path as the last argument
-        cmd.arg(file_path);
-
-        match cmd.output() {
-            Ok(output) => {
+        // Execute the formatting tool off the async executor —
+        // `Command::output()` blocks until the subprocess exits. See the
+        // `# Blocking` docs in `src/agent/runloop/git.rs` for the pattern.
+        let config = config.clone();
+        let file_path = file_path.to_path_buf();
+        match tokio::task::spawn_blocking(move || {
+            let mut cmd = Command::new(&config.command[0]);
+            for arg in &config.args {
+                cmd.arg(arg);
+            }
+            cmd.arg(&file_path);
+            cmd.output()
+        })
+        .await
+        {
+            Ok(Ok(output)) => {
                 if output.status.success() {
                     FormatResult {
                         success: true,
-                        formatted_content: None, // We don't capture the formatted content since tools modify files in place
+                        formatted_content: None,
                         error_message: None,
                         tool_used: config.tool_name.clone(),
                     }
@@ -85,10 +87,16 @@ impl FormattingOrchestrator {
                     }
                 }
             }
-            Err(e) => FormatResult {
+            Ok(Err(e)) => FormatResult {
                 success: false,
                 formatted_content: None,
                 error_message: Some(format!("Failed to execute {}: {}", config.tool_name, e)),
+                tool_used: config.tool_name.clone(),
+            },
+            Err(e) => FormatResult {
+                success: false,
+                formatted_content: None,
+                error_message: Some(format!("Formatter task failed: {e}")),
                 tool_used: config.tool_name.clone(),
             },
         }
