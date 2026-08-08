@@ -824,21 +824,22 @@ TODO2.md
 .github/copilot/
 .github/copilot-instructions.md
 # VT Code runtime files (excluded from git, but accessible to agent)
-.vtcode/index/
-.vtcode/checkpoints/
-.vtcode/plan/
-.vtcode/plans/
-.vtcode/skills/
-.vtcode/skills/INDEX.md
-.vtcode/context/tool_outputs/
-.vtcode/context/history/
-.vtcode/mcp/tools/
-.vtcode/mcp/status.json
-.vtcode/terminals/
-.vtcode/sessions/
-.vtcode/tasks/
-.vtcode/tasks/current_blocked.md
-plans/
+# `**/` prefix matches nested `.vtcode/` dirs (e.g. crate-local runtimes)
+**/.vtcode/index/
+**/.vtcode/checkpoints/
+**/.vtcode/plan/
+**/.vtcode/plans/
+**/.vtcode/skills/
+**/.vtcode/skills/INDEX.md
+**/.vtcode/context/tool_outputs/
+**/.vtcode/context/history/
+**/.vtcode/mcp/tools/
+**/.vtcode/mcp/status.json
+**/.vtcode/terminals/
+**/.vtcode/sessions/
+**/.vtcode/tasks/
+**/.vtcode/tasks/current_blocked.md
+**/plans/
 
 .claude/
 .agent/
