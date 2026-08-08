@@ -10,7 +10,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/vinhnx/VTCode/actions/workflows/build-linux-windows.yml"><img src="https://github.com/vinhnx/VTCode/actions/workflows/build-linux-windows.yml/badge.svg" alt="Build Linux and Windows Binaries"></a>
   <a href="https://ratatui.rs/highlights/v030/"><img src="https://img.shields.io/badge/Built_With-Ratatui-000?logo=ratatui&logoColor=fff&labelColor=000&color=fff" alt="Built with Ratatui" /></a>
   <a href="https://deepwiki.com/vinhnx/VTCode"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki" /></a>
 </p>
@@ -97,7 +96,7 @@ VT Code supports 21+ LLM providers out of the box, plus any OpenAI-compatible AP
 | Category            | Providers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Cloud LLMs**      | [Anthropic](./docs/providers/PROVIDER_GUIDES.md#anthropic-claude) · [OpenAI](./docs/providers/PROVIDER_GUIDES.md#openai-gpt) · [Gemini](./docs/providers/PROVIDER_GUIDES.md#google-gemini) · [Z.AI](./docs/providers/PROVIDER_GUIDES.md#zai-zai) · [Moonshot (Kimi)](./docs/providers/PROVIDER_GUIDES.md#moonshot-kimi) · [StepFun](./docs/providers/PROVIDER_GUIDES.md#stepfun) · [MiniMax](./docs/providers/PROVIDER_GUIDES.md#minimax) · [Mistral](./docs/providers/PROVIDER_GUIDES.md#mistral) · [Qwen](./docs/providers/PROVIDER_GUIDES.md#qwen) |
-| **Gateways**        | [OpenRouter](./docs/providers/PROVIDER_GUIDES.md#openrouter-marketplace) · [Evolink](./docs/providers/PROVIDER_GUIDES.md#evolink-multi-model-gateway) · [HuggingFace](./docs/providers/PROVIDER_GUIDES.md#huggingface) · [Atlas Cloud](./docs/providers/PROVIDER_GUIDES.md#atlas-cloud) · [OmniRoute](./docs/providers/PROVIDER_GUIDES.md#omniroute)                                                                                                                                                                                                                                       |
+| **Gateways**        | [OpenRouter](./docs/providers/PROVIDER_GUIDES.md#openrouter-marketplace) · [Evolink](./docs/providers/PROVIDER_GUIDES.md#evolink-multi-model-gateway) · [HuggingFace](./docs/providers/PROVIDER_GUIDES.md#huggingface) · [Atlas Cloud](./docs/providers/PROVIDER_GUIDES.md#atlas-cloud) · [OmniRoute](./docs/providers/PROVIDER_GUIDES.md#omniroute)                                                                                                                                                                                                  |
 | **Local inference** | [Ollama](./docs/providers/PROVIDER_GUIDES.md#ollama-local--cloud-models) · [LM Studio](./docs/providers/PROVIDER_GUIDES.md#lm-studio-local-server) · [llama.cpp](./docs/providers/PROVIDER_GUIDES.md#llamacpp-local-server)                                                                                                                                                                                                                                                                                                                           |
 | **Other**           | [GitHub Copilot](./docs/providers/PROVIDER_GUIDES.md#github-copilot) · [Anthropic API Compat](./docs/providers/PROVIDER_GUIDES.md#anthropic-api-compatibility-server) · [Poolside](./docs/providers/PROVIDER_GUIDES.md#poolside)                                                                                                                                                                                                                                                                                                                      |
 
@@ -186,6 +185,7 @@ cargo nextest run        # parallel test runner
 VT Code is built by an open source community. Whether you're fixing bugs, improving docs, proposing features, reporting security issues, or shipping patches, all contributions are welcome.
 
 **Ways to contribute:**
+
 - **Security advisories**, responsible disclosure makes everyone safer. See the [Security Policy](https://github.com/vinhnx/VTCode/security/policy) for reporting guidelines.
 - **Bug fixes & patches**, small or large, every fix matters.
 - **Documentation**, guides, examples, and improvements help the whole ecosystem.
@@ -193,6 +193,7 @@ VT Code is built by an open source community. Whether you're fixing bugs, improv
 - **Code reviews & testing**, help keep the project healthy.
 
 **Getting started:**
+
 - Browse [good first issues](https://github.com/vinhnx/vtcode/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22)
 - Read [CONTRIBUTING.md](./docs/CONTRIBUTING.md) for humans
 - Check [AGENTS.md](./AGENTS.md) for AI agents
