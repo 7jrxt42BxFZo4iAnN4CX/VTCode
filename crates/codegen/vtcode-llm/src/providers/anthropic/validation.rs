@@ -24,9 +24,10 @@ pub fn validate_request(
     request: &LLMRequest,
     default_model: &str,
     anthropic_config: &AnthropicConfig,
+    provider_name: &str,
 ) -> Result<(), LLMError> {
     if request.messages.is_empty() {
-        let formatted_error = error_display::format_llm_error("Anthropic", "Messages cannot be empty");
+        let formatted_error = error_display::format_llm_error(provider_name, "Messages cannot be empty");
         return Err(LLMError::InvalidRequest { message: formatted_error, metadata: None });
     }
 
@@ -36,7 +37,7 @@ pub fn validate_request(
 
     if request.output_format.is_some() && !supports_structured_output(&request.model, default_model) {
         let formatted_error = error_display::format_llm_error(
-            "Anthropic",
+            provider_name,
             &format!(
                 "Structured output is not supported for model '{}'. Structured outputs are only available for Claude Sonnet 4.5/4.6, Claude Opus 4.5/4.7/4.8, and Claude Haiku 4.5 models.",
                 request.model
@@ -48,7 +49,7 @@ pub fn validate_request(
     if let Some(ref schema) = request.output_format
         && supports_structured_output(&request.model, default_model)
     {
-        validate_anthropic_schema(schema)?;
+        validate_anthropic_schema(schema, provider_name)?;
     }
 
     if let Some(ref effort) = request.effort {
@@ -65,7 +66,7 @@ pub fn validate_request(
         && matches!(effective_thinking_mode, EffectiveThinkingMode::Disabled)
     {
         let formatted_error = error_display::format_llm_error(
-            "Anthropic",
+            provider_name,
             &format!(
                 "{resolved_model} does not support disabled thinking on the Anthropic provider. Leave provider.anthropic.extended_thinking_enabled=true or choose another model."
             ),
@@ -78,7 +79,7 @@ pub fn validate_request(
     {
         if !effort_is_at_most_high(request, anthropic_config) {
             let formatted_error = error_display::format_llm_error(
-                "Anthropic",
+                provider_name,
                 "Claude Opus 5 does not support disabled thinking at xhigh or max effort. Lower effort to high or below, or remove the disable-thinking path.",
             );
             return Err(LLMError::InvalidRequest { message: formatted_error, metadata: None });
@@ -89,7 +90,7 @@ pub fn validate_request(
         && (request.temperature.is_some() || request.top_p.is_some() || request.top_k.is_some())
     {
         let formatted_error = error_display::format_llm_error(
-            "Anthropic",
+            provider_name,
             "Claude Opus 5, Sonnet 5, Fable 5, Mythos 5, and Opus 4.8 reject explicit temperature, top_p, and top_k values; omit sampling parameters entirely.",
         );
         return Err(LLMError::InvalidRequest { message: formatted_error, metadata: None });
@@ -99,7 +100,7 @@ pub fn validate_request(
         && !supports_manual_thinking_budget(resolved_model, default_model)
     {
         let formatted_error = error_display::format_llm_error(
-            "Anthropic",
+            provider_name,
             &format!(
                 "{resolved_model} does not support thinking_budget/budget_tokens. Use adaptive thinking plus effort instead."
             ),
@@ -113,7 +114,7 @@ pub fn validate_request(
         })
     {
         let formatted_error = error_display::format_llm_error(
-            "Anthropic",
+            provider_name,
             &format!(
                 "{resolved_model} does not support thinking_budget/budget_tokens. Use adaptive thinking plus effort instead."
             ),
@@ -125,7 +126,7 @@ pub fn validate_request(
         && budget < 1024
     {
         let formatted_error = error_display::format_llm_error(
-            "Anthropic",
+            provider_name,
             &format!("thinking_budget ({budget}) must be at least 1024 tokens."),
         );
         return Err(LLMError::InvalidRequest { message: formatted_error, metadata: None });
@@ -141,7 +142,7 @@ pub fn validate_request(
     if supports_assistant_prefill(resolved_model, default_model) {
         if request_uses_assistant_prefill(request) && thinking_active {
             let formatted_error = error_display::format_llm_error(
-                "Anthropic",
+                provider_name,
                 "Assistant-message prefills are not supported when thinking is enabled. Use system instructions instead.",
             );
             return Err(LLMError::InvalidRequest { message: formatted_error, metadata: None });
@@ -149,7 +150,7 @@ pub fn validate_request(
 
         if request_uses_assistant_prefill(request) && request.output_format.is_some() {
             let formatted_error = error_display::format_llm_error(
-                "Anthropic",
+                provider_name,
                 "Assistant-message prefills are not supported when structured outputs are enabled.",
             );
             return Err(LLMError::InvalidRequest { message: formatted_error, metadata: None });
@@ -161,7 +162,7 @@ pub fn validate_request(
         && task_budget < 20_000
     {
         let formatted_error = error_display::format_llm_error(
-            "Anthropic",
+            provider_name,
             &format!(
                 "task_budget_tokens ({task_budget}) must be at least 20000 for Claude Opus 4.7/4.8, Fable 5, and Mythos 5."
             ),
@@ -174,7 +175,7 @@ pub fn validate_request(
         && matches!(effective_thinking_mode, EffectiveThinkingMode::Disabled | EffectiveThinkingMode::ManualBudget(_))
     {
         let formatted_error = error_display::format_llm_error(
-            "Anthropic",
+            provider_name,
             "output_config.effort is only valid for adaptive-thinking Anthropic requests.",
         );
         return Err(LLMError::InvalidRequest { message: formatted_error, metadata: None });
@@ -184,7 +185,7 @@ pub fn validate_request(
 
     for message in request.messages.iter() {
         if let Err(err) = message.validate_for_provider("anthropic") {
-            let formatted = error_display::format_llm_error("Anthropic", &err);
+            let formatted = error_display::format_llm_error(provider_name, &err);
             return Err(LLMError::InvalidRequest { message: formatted, metadata: None });
         }
     }
@@ -472,7 +473,7 @@ fn validate_reasoning_constraints(
     Ok(())
 }
 
-pub fn validate_anthropic_schema(schema: &serde_json::Value) -> Result<(), LLMError> {
+pub fn validate_anthropic_schema(schema: &serde_json::Value, _provider_name: &str) -> Result<(), LLMError> {
     use serde_json::Value;
 
     match schema {

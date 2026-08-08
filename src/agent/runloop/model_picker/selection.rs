@@ -22,6 +22,7 @@ pub(super) struct SelectionDetail {
     pub(super) model_id: String,
     pub(super) model_display: String,
     pub(super) known_model: bool,
+    pub(super) context_window: Option<usize>,
     pub(super) reasoning_supported: bool,
     pub(super) reasoning_optional: bool,
     pub(super) reasoning_off_model: Option<ModelId>,
@@ -132,6 +133,7 @@ pub(super) fn parse_model_selection(
         })
         .unwrap_or_else(|| derive_env_key(&provider_lower));
     if custom_provider.is_some() && provider_enum.is_none() {
+        let profile = custom_provider.map(|provider| provider.resolved_profile(model_token.trim()));
         return Ok(SelectionDetail {
             provider_key: provider_lower,
             provider_label,
@@ -139,7 +141,8 @@ pub(super) fn parse_model_selection(
             model_id: model_token.trim().to_string(),
             model_display: model_token.trim().to_string(),
             known_model: false,
-            reasoning_supported: false,
+            context_window: profile.as_ref().and_then(|profile| profile.context_window),
+            reasoning_supported: profile.as_ref().and_then(|profile| profile.supports_reasoning).unwrap_or(false),
             reasoning_optional: true,
             reasoning_off_model: None,
             service_tier_supported: false,
@@ -180,6 +183,7 @@ pub(super) fn parse_model_selection(
         model_id: model_token.trim().to_string(),
         model_display: model_token.trim().to_string(),
         known_model: false,
+        context_window: None,
         reasoning_supported: false,
         reasoning_optional: true,
         reasoning_off_model: None,
@@ -345,7 +349,8 @@ pub(super) fn selections_from_custom_provider(provider: &CustomProviderConfig) -
             model_id: model_id.clone(),
             model_display: model_id.clone(),
             known_model: false,
-            reasoning_supported: false,
+            context_window: provider.resolved_profile(&model_id).context_window,
+            reasoning_supported: provider.resolved_profile(&model_id).supports_reasoning.unwrap_or(false),
             reasoning_optional: true,
             reasoning_off_model: None,
             service_tier_supported: false,
@@ -373,6 +378,7 @@ fn selection_from_resolved(
         model_id: resolved.model_id.clone(),
         model_display: resolved.display_name().into_owned(),
         known_model: resolved.known_model(),
+        context_window: resolved.context_window(),
         reasoning_supported: resolved.reasoning_supported(),
         reasoning_optional,
         reasoning_off_model,

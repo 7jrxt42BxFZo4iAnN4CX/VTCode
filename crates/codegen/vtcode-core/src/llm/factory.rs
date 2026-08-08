@@ -5,6 +5,7 @@ use hashbrown::HashMap;
 use vtcode_commons::ctx_err;
 use vtcode_config::core::{ModelConfig, PromptCachingConfig};
 use vtcode_config::models::Provider;
+use vtcode_llm::providers::CustomProviderBackendRouter;
 use vtcode_llm::providers::openai::CustomProviderAuthHandle;
 
 // ProviderConfig is the canonical factory config imported from vtcode-llm.
@@ -12,6 +13,16 @@ use vtcode_llm::providers::openai::CustomProviderAuthHandle;
 pub use vtcode_llm::provider_config_types::ProviderConfig;
 
 type ProviderFactory = Box<dyn Fn(ProviderConfig) -> Box<dyn LLMProvider> + Send + Sync>;
+
+fn resolve_custom_provider_api_key(
+    api_key: Option<String>,
+    command_auth_configured: bool,
+    api_key_env: &str,
+) -> Option<String> {
+    api_key
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| (!command_auth_configured).then(|| std::env::var(api_key_env).ok()).flatten())
+}
 
 const BUILTIN_PROVIDER_KEYS: &[&str] = &[
     "openai",
@@ -236,13 +247,11 @@ pub fn register_custom_providers(custom_providers: &[vtcode_config::core::Custom
         }
 
         let key = cp.name.to_lowercase();
+        let custom_config = cp.clone();
         let display_name = cp.display_name.clone();
-        let default_base_url = cp.base_url.clone();
         let default_model = cp.model.clone();
-        let supported_models = cp.effective_models();
         let auth_config = cp.auth.clone();
         let api_key_env = cp.resolved_api_key_env();
-        let context_window = cp.context_window;
         let reg_key = key.clone();
 
         factory.register_provider(&reg_key, move |config: ProviderConfig| {
@@ -253,57 +262,39 @@ pub fn register_custom_providers(custom_providers: &[vtcode_config::core::Custom
                 prompt_cache,
                 timeouts,
                 openai,
+                anthropic,
                 model_behavior,
                 workspace_root,
                 ..
             } = config;
 
-            let api_key = if auth_config.is_some() {
-                None
-            } else {
-                api_key.or_else(|| std::env::var(&api_key_env).ok())
-            };
+            let api_key = resolve_custom_provider_api_key(api_key, auth_config.is_some(), &api_key_env);
 
             let model = model.filter(|m| !m.trim().is_empty()).unwrap_or_else(|| default_model.clone());
-
             let base_url = base_url
                 .clone()
                 .filter(|u| !u.trim().is_empty())
-                .unwrap_or_else(|| default_base_url.clone());
+                .unwrap_or_else(|| custom_config.base_url.clone());
             let custom_provider_auth = auth_config
                 .clone()
+                .filter(|_| api_key.is_none())
                 .map(|auth| CustomProviderAuthHandle::new(auth, workspace_root.clone()));
 
-            let models_override =
-                if supported_models.len() > 1 || (supported_models.len() == 1 && supported_models[0] != model) {
-                    Some(supported_models.clone())
-                } else {
-                    None
-                };
-
-            Box::new(
-                vtcode_llm::providers::OpenAIProvider::from_custom_config(
-                    key.clone(),
-                    display_name.clone(),
-                    api_key,
-                    Some(model),
-                    Some(base_url),
-                    prompt_cache,
-                    timeouts,
-                    openai,
-                    model_behavior,
-                    custom_provider_auth,
-                    models_override,
-                )
-                .with_context_window(context_window),
-            )
+            Box::new(CustomProviderBackendRouter::from_config(
+                custom_config.clone(),
+                api_key,
+                Some(model),
+                base_url,
+                prompt_cache,
+                timeouts,
+                openai,
+                anthropic,
+                model_behavior,
+                custom_provider_auth,
+            ))
         });
 
-        tracing::trace!(
-            provider = cp.name,
-            display_name = cp.display_name,
-            "Registered custom OpenAI-compatible provider"
-        );
+        tracing::trace!(provider = key, display_name = display_name, "Registered custom provider");
     }
 }
 
@@ -312,8 +303,18 @@ mod tests {
     use super::super::provider_config::{AnthropicProviderConfig, GeminiProviderConfig, OpenAIProviderConfig};
     use super::super::providers::OllamaProvider;
     use super::*;
+    use std::collections::BTreeMap;
     use vtcode_config::core::CustomProviderConfig;
-    use vtcode_config::core::{AnthropicConfig, OpenAIConfig};
+    use vtcode_config::core::{AnthropicConfig, CustomProviderApiFormat, CustomProviderProfileConfig, OpenAIConfig};
+
+    #[test]
+    fn blank_runtime_api_key_allows_command_auth() {
+        assert_eq!(resolve_custom_provider_api_key(Some("   ".to_string()), true, "MISSING_KEY"), None);
+        assert_eq!(
+            resolve_custom_provider_api_key(Some("explicit-key".to_string()), true, "MISSING_KEY"),
+            Some("explicit-key".to_string())
+        );
+    }
 
     #[test]
     fn builtin_cgp_registration_exposes_expected_provider_keys() {
@@ -499,11 +500,22 @@ mod tests {
             name: "mycorp".to_string(),
             display_name: "MyCorporateName".to_string(),
             base_url: "https://llm.corp.example/v1".to_string(),
+            api_format: CustomProviderApiFormat::Auto,
             context_window: None,
+            supports_tools: None,
+            supports_reasoning: None,
+            supports_reasoning_effort: None,
+            supports_vision: None,
+            supports_structured_output: None,
+            supports_parallel_tool_calls: None,
+            supports_context_caching: None,
+            supports_responses_compaction: None,
+            supports_context_edits: None,
             api_key_env: "MYCORP_API_KEY".to_string(),
             auth: None,
             model: "gpt-5-mini".to_string(),
             models: Vec::new(),
+            profiles: BTreeMap::new(),
         }]);
 
         let provider = create_provider_with_config(
@@ -537,11 +549,22 @@ mod tests {
             name: "mycorp".to_string(),
             display_name: "MyCorporateName".to_string(),
             base_url: "https://llm.corp.example/v1".to_string(),
+            api_format: CustomProviderApiFormat::Auto,
             context_window: Some(256_000),
+            supports_tools: None,
+            supports_reasoning: None,
+            supports_reasoning_effort: None,
+            supports_vision: None,
+            supports_structured_output: None,
+            supports_parallel_tool_calls: None,
+            supports_context_caching: None,
+            supports_responses_compaction: None,
+            supports_context_edits: None,
             api_key_env: "MYCORP_API_KEY".to_string(),
             auth: None,
             model: "gpt-5-mini".to_string(),
             models: Vec::new(),
+            profiles: BTreeMap::new(),
         }]);
 
         let provider = create_provider_with_config(
@@ -567,6 +590,156 @@ mod tests {
         register_custom_providers(&[]);
     }
 
+    fn profile_config(
+        api_format: CustomProviderApiFormat,
+        context_window: Option<usize>,
+        supports_tools: Option<bool>,
+    ) -> CustomProviderProfileConfig {
+        CustomProviderProfileConfig {
+            api_format,
+            context_window,
+            supports_tools,
+            supports_reasoning: None,
+            supports_reasoning_effort: None,
+            supports_vision: None,
+            supports_structured_output: None,
+            supports_parallel_tool_calls: None,
+            supports_context_caching: None,
+            supports_responses_compaction: None,
+            supports_context_edits: None,
+        }
+    }
+
+    fn mixed_profile_provider_config() -> CustomProviderConfig {
+        let mut profiles = BTreeMap::new();
+        profiles.insert(
+            "gpt-5-mini".to_string(),
+            profile_config(CustomProviderApiFormat::OpenAIChat, Some(256_000), Some(false)),
+        );
+        profiles.insert(
+            "claude-sonnet-4-6".to_string(),
+            profile_config(CustomProviderApiFormat::AnthropicMessages, Some(512_000), Some(true)),
+        );
+
+        CustomProviderConfig {
+            name: "mixed".to_string(),
+            display_name: "Mixed".to_string(),
+            base_url: "https://llm.corp.example/v1".to_string(),
+            api_format: CustomProviderApiFormat::Auto,
+            context_window: None,
+            supports_tools: None,
+            supports_reasoning: None,
+            supports_reasoning_effort: None,
+            supports_vision: None,
+            supports_structured_output: None,
+            supports_parallel_tool_calls: None,
+            supports_context_caching: None,
+            supports_responses_compaction: None,
+            supports_context_edits: None,
+            api_key_env: "MIXED_API_KEY".to_string(),
+            auth: None,
+            model: "gpt-5-mini".to_string(),
+            models: vec!["gpt-5-mini".to_string(), "claude-sonnet-4-6".to_string()],
+            profiles,
+        }
+    }
+
+    #[test]
+    #[serial_test::serial(global_llm_factory)]
+    fn custom_provider_backend_kind_and_identity_follow_selected_default_model() {
+        register_custom_providers(&[mixed_profile_provider_config()]);
+
+        let provider = create_provider_with_config(
+            "mixed",
+            ProviderConfig {
+                api_key: Some("test-key".to_string()),
+                openai_chatgpt_auth: None,
+                copilot_auth: None,
+                base_url: None,
+                model: Some("claude-sonnet-4-6".to_string()),
+                prompt_cache: None,
+                timeouts: None,
+                openai: Some(OpenAIConfig::default()),
+                anthropic: Some(AnthropicConfig::default()),
+                model_behavior: None,
+                workspace_root: None,
+            },
+        )
+        .expect("mixed provider should build");
+
+        assert_eq!(provider.name(), "mixed");
+        assert_eq!(provider.backend_kind(), vtcode_commons::llm::BackendKind::Anthropic);
+
+        register_custom_providers(&[]);
+    }
+
+    #[test]
+    #[serial_test::serial(global_llm_factory)]
+    fn custom_provider_profile_overrides_context_and_capabilities() {
+        register_custom_providers(&[mixed_profile_provider_config()]);
+
+        let provider = create_provider_with_config(
+            "mixed",
+            ProviderConfig {
+                api_key: Some("test-key".to_string()),
+                openai_chatgpt_auth: None,
+                copilot_auth: None,
+                base_url: None,
+                model: Some("gpt-5-mini".to_string()),
+                prompt_cache: None,
+                timeouts: None,
+                openai: Some(OpenAIConfig::default()),
+                anthropic: Some(AnthropicConfig::default()),
+                model_behavior: None,
+                workspace_root: None,
+            },
+        )
+        .expect("mixed provider should build");
+
+        assert!(!provider.supports_tools("gpt-5-mini"));
+        assert_eq!(provider.effective_context_size("gpt-5-mini"), 256_000);
+        assert!(provider.supports_tools("claude-sonnet-4-6"));
+        assert_eq!(provider.effective_context_size("claude-sonnet-4-6"), 512_000);
+
+        register_custom_providers(&[]);
+    }
+
+    #[test]
+    #[serial_test::serial(global_llm_factory)]
+    fn custom_provider_validation_errors_use_custom_display_name() {
+        register_custom_providers(&[mixed_profile_provider_config()]);
+
+        let provider = create_provider_with_config(
+            "mixed",
+            ProviderConfig {
+                api_key: Some("test-key".to_string()),
+                openai_chatgpt_auth: None,
+                copilot_auth: None,
+                base_url: None,
+                model: Some("gpt-5-mini".to_string()),
+                prompt_cache: None,
+                timeouts: None,
+                openai: Some(OpenAIConfig::default()),
+                anthropic: Some(AnthropicConfig::default()),
+                model_behavior: None,
+                workspace_root: None,
+            },
+        )
+        .expect("mixed provider should build");
+
+        let error = provider
+            .validate_request(&crate::llm::provider::LLMRequest {
+                messages: std::sync::Arc::new(Vec::new()),
+                model: "gpt-5-mini".to_string(),
+                ..Default::default()
+            })
+            .expect_err("empty request should be rejected");
+
+        assert!(format!("{error:?}").contains("Mixed"));
+
+        register_custom_providers(&[]);
+    }
+
     /// Sample Atlas Cloud config used across custom-provider tests.
     /// Matches the snippet documented in `docs/providers/atlascloud.md` and
     /// `vtcode.toml.example`.
@@ -575,7 +748,17 @@ mod tests {
             name: "atlascloud".to_string(),
             display_name: "Atlas Cloud".to_string(),
             base_url: "https://api.atlascloud.ai/v1".to_string(),
+            api_format: CustomProviderApiFormat::Auto,
             context_window: None,
+            supports_tools: None,
+            supports_reasoning: None,
+            supports_reasoning_effort: None,
+            supports_vision: None,
+            supports_structured_output: None,
+            supports_parallel_tool_calls: None,
+            supports_context_caching: None,
+            supports_responses_compaction: None,
+            supports_context_edits: None,
             api_key_env: "ATLASCLOUD_API_KEY".to_string(),
             auth: None,
             model: "deepseek-ai/deepseek-v4-flash".to_string(),
@@ -615,6 +798,7 @@ mod tests {
                 "kwaipilot/kat-coder-pro-v2".to_string(),
                 "Alibaba-NLP/Tongyi-DeepResearch-30B-A3B".to_string(),
             ],
+            profiles: BTreeMap::new(),
         }
     }
 

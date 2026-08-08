@@ -120,8 +120,18 @@ impl ConfigValidator {
         let is_codex_provider = config.agent.provider.eq_ignore_ascii_case("codex");
 
         // Check if configured model exists
-        if !is_custom_provider
-            && !is_codex_provider
+        if let Some(custom) = custom_provider {
+            if !custom
+                .effective_models()
+                .iter()
+                .any(|model| model == &config.agent.default_model)
+            {
+                result.errors.push(format!(
+                    "Model '{}' not found for custom provider '{}'.",
+                    config.agent.default_model, custom.display_name
+                ));
+            }
+        } else if !is_codex_provider
             && !is_managed_auth_model(managed_auth_provider, &config.agent.default_model)
             && !self.models_db.model_exists(&config.agent.provider, &config.agent.default_model)
         {
@@ -150,11 +160,18 @@ impl ConfigValidator {
         }
 
         // Check context window configuration
-        if !is_custom_provider
-            && let Some(max_tokens) = self
-                .models_db
+        let model_context_window = if let Some(custom) = custom_provider {
+            custom
+                .effective_models()
+                .iter()
+                .any(|model| model == &config.agent.default_model)
+                .then(|| custom.resolved_profile(&config.agent.default_model).context_window)
+                .flatten()
+        } else {
+            self.models_db
                 .get_context_window(&config.agent.provider, &config.agent.default_model)
-        {
+        };
+        if let Some(max_tokens) = model_context_window {
             let configured_context = config.context.max_context_tokens;
             if configured_context > 0 && configured_context > max_tokens {
                 result.warnings.push(format!(
@@ -184,15 +201,21 @@ impl ConfigValidator {
     /// Quick validation - only critical checks
     pub fn quick_validate(&self, config: &VTCodeConfig) -> Result<()> {
         let managed_auth_provider = configured_managed_auth_provider(config);
-        let is_custom_provider = config.custom_provider(&config.agent.provider).is_some();
+        let custom_provider = config.custom_provider(&config.agent.provider);
+        let is_custom_provider = custom_provider.is_some();
         let is_codex_provider = config.agent.provider.eq_ignore_ascii_case("codex");
 
         // Check model exists
-        if !is_custom_provider
-            && !is_codex_provider
-            && !is_managed_auth_model(managed_auth_provider, &config.agent.default_model)
-            && !self.models_db.model_exists(&config.agent.provider, &config.agent.default_model)
-        {
+        let model_is_valid = custom_provider.is_some_and(|custom| {
+            custom
+                .effective_models()
+                .iter()
+                .any(|model| model == &config.agent.default_model)
+        }) || (!is_custom_provider
+            && (is_codex_provider
+                || is_managed_auth_model(managed_auth_provider, &config.agent.default_model)
+                || self.models_db.model_exists(&config.agent.provider, &config.agent.default_model)));
+        if !model_is_valid {
             bail!(
                 "Model '{}' not found for provider '{}'. Check docs/models.json.",
                 config.agent.default_model,
@@ -392,6 +415,7 @@ mod tests {
             auth: None,
             model: "totally-custom-model".to_string(),
             models: Vec::new(),
+            ..vtcode_config::core::CustomProviderConfig::default()
         });
 
         let result = validator.validate(&config).unwrap();

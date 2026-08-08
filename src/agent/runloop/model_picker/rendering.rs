@@ -220,7 +220,11 @@ fn custom_provider_subtitle(
     current_model: &str,
 ) -> Option<String> {
     let mut segments = Vec::new();
-    if let Some(context_window) = context_window_segment(&selection.provider_key, &selection.model_id) {
+    if let Some(context_window) = selection
+        .context_window
+        .filter(|context_window_size| *context_window_size > 0)
+        .map(compact_context_window_label)
+    {
         segments.push(context_window);
     }
     if selection.reasoning_supported {

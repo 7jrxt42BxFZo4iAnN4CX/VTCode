@@ -34,6 +34,7 @@ pub mod zai;
 pub mod common;
 #[cfg(feature = "copilot")]
 pub mod copilot;
+pub mod custom_provider;
 pub mod reasoning;
 pub mod shared;
 pub use shared::TagStreamSanitizer;
@@ -49,6 +50,7 @@ pub use reasoning::{ReasoningBuffer, ReasoningSegment, extract_reasoning_trace, 
 pub use anthropic::AnthropicProvider;
 #[cfg(feature = "copilot")]
 pub use copilot::CopilotProvider;
+pub use custom_provider::CustomProviderBackendRouter;
 pub use deepseek::DeepSeekProvider;
 pub use evolink::EvolinkProvider;
 pub use gemini::GeminiProvider;

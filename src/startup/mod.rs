@@ -802,6 +802,7 @@ mod validation_tests {
             auth: None,
             model: "gpt-5-mini".to_string(),
             models: Vec::new(),
+            ..vtcode_config::core::CustomProviderConfig::default()
         });
 
         let selection = RuntimeModelSelection {

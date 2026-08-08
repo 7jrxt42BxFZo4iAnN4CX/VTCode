@@ -181,6 +181,10 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Summary, Auto-Allowed Commands, Tool Policies, Key Safety Features, Dangerous Operations (Blocked)
   - **User Questions**: "What can you tell me about VT Code Execution Policy?", "How does Summary work?", "How does Auto-Allowed Commands work?"
 
+- **File**: `docs/development/model-profiles.md`
+  - **Content**: model-profiles.md
+  - **User Questions**: "What can you tell me about model-profiles.md?"
+
 - **File**: `docs/development/grep-quick-reference.md`
   - **Content**: rg Text Search Quick Reference Card
   - **Topics**: Essential Commands, Common Search Patterns, Smart Patterns by Language, Performance Tips, Output Example

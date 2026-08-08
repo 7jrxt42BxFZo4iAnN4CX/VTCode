@@ -239,6 +239,7 @@ mod tests {
             auth: None,
             model: "corp-model".to_owned(),
             models: Vec::new(),
+            ..vtcode_config::core::CustomProviderConfig::default()
         });
 
         let selection = resolve_runtime_model_selection(&Cli::parse_from(["vtcode"]), &config);
@@ -338,6 +339,7 @@ mod tests {
             auth: None,
             model: "gpt-5-mini".to_string(),
             models: Vec::new(),
+            ..vtcode_config::core::CustomProviderConfig::default()
         });
 
         assert_eq!(provider_label("mycorp", Some(&config)), "MyCorporateName");

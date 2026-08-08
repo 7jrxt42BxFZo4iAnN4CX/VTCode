@@ -8,8 +8,8 @@ use tempfile::tempdir;
 use tokio::sync::{Notify, mpsc};
 use vtcode_config::OpenAIServiceTier;
 use vtcode_config::auth::AuthCredentialsStoreMode;
-use vtcode_config::core::CustomProviderConfig;
 use vtcode_config::core::ProviderOverrideConfig;
+use vtcode_config::core::{CustomProviderApiFormat, CustomProviderConfig, CustomProviderProfileConfig};
 use vtcode_config::loader::VTCodeConfig;
 use vtcode_core::config::models::ModelId;
 use vtcode_core::utils::ansi::AnsiRenderer;
@@ -168,6 +168,7 @@ fn parse_model_selection_uses_custom_provider_display_and_env_key() {
         auth: None,
         model: "gpt-5-mini".to_string(),
         models: Vec::new(),
+        ..CustomProviderConfig::default()
     });
 
     let detail =
@@ -177,6 +178,36 @@ fn parse_model_selection_uses_custom_provider_display_and_env_key() {
     assert_eq!(detail.provider_label, "MyCorporateName");
     assert_eq!(detail.env_key, "MYCORP_API_KEY");
     assert_eq!(detail.provider_enum, None);
+}
+
+#[test]
+fn custom_provider_picker_uses_exact_profile_metadata() {
+    let mut cfg = VTCodeConfig::default();
+    let mut profiles = BTreeMap::new();
+    profiles.insert(
+        "gpt-5-mini".to_string(),
+        CustomProviderProfileConfig {
+            api_format: CustomProviderApiFormat::OpenAIResponses,
+            context_window: Some(256_000),
+            supports_reasoning: Some(true),
+            ..CustomProviderProfileConfig::default()
+        },
+    );
+    cfg.custom_providers.push(CustomProviderConfig {
+        name: "mycorp".to_string(),
+        display_name: "MyCorporateName".to_string(),
+        base_url: "https://llm.corp.example/v1".to_string(),
+        api_key_env: "MYCORP_API_KEY".to_string(),
+        model: "gpt-5-mini".to_string(),
+        profiles,
+        ..CustomProviderConfig::default()
+    });
+
+    let detail =
+        parse_model_selection(&MODEL_OPTIONS, "mycorp gpt-5-mini", Some(&cfg)).expect("custom provider should parse");
+
+    assert_eq!(detail.context_window, Some(256_000));
+    assert!(detail.reasoning_supported);
 }
 
 #[test]
@@ -197,6 +228,7 @@ fn parse_model_selection_marks_command_auth_custom_provider_as_keyless() {
         }),
         model: "gpt-5-mini".to_string(),
         models: Vec::new(),
+        ..CustomProviderConfig::default()
     });
 
     let detail =
@@ -375,6 +407,7 @@ fn preferred_model_selection_matches_current_custom_provider() {
         auth: None,
         model: "gpt-5-mini".to_string(),
         models: Vec::new(),
+        ..CustomProviderConfig::default()
     };
     picker.custom_providers = selections_from_custom_provider(&config);
 
@@ -483,6 +516,7 @@ fn build_result_uses_selected_service_tier() {
         model_id: "gpt-5.4".to_string(),
         model_display: "GPT-5.4".to_string(),
         known_model: true,
+        context_window: None,
         reasoning_supported: true,
         reasoning_optional: false,
         reasoning_off_model: None,
@@ -511,6 +545,7 @@ fn build_result_uses_selected_flex_service_tier() {
         model_id: "gpt-5.4".to_string(),
         model_display: "GPT-5.4".to_string(),
         known_model: true,
+        context_window: None,
         reasoning_supported: true,
         reasoning_optional: false,
         reasoning_off_model: None,
@@ -539,6 +574,7 @@ async fn openai_login_stays_in_picker_when_ctrl_c_cancels_auth() {
         model_id: "gpt-5.4".to_string(),
         model_display: "GPT-5.4".to_string(),
         known_model: true,
+        context_window: None,
         reasoning_supported: true,
         reasoning_optional: false,
         reasoning_off_model: None,

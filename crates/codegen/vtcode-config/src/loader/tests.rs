@@ -1,8 +1,8 @@
 use super::*;
 
 use crate::constants::tool_limits;
-use crate::core::CustomProviderConfig;
 use crate::core::prompt_cache::PromptCacheRetention;
+use crate::core::{CustomProviderApiFormat, CustomProviderConfig, CustomProviderProfileConfig};
 use crate::defaults::{self, SyntaxHighlightingDefaults, WorkspacePathsDefaults};
 use crate::ide_context::{IdeContextProviderConfig, IdeContextProviderMode, IdeContextProvidersConfig};
 use crate::loader::layers::ConfigLayerSource;
@@ -289,11 +289,37 @@ fn custom_providers_fields_round_trip_through_toml() {
         name: "mycorp".to_string(),
         display_name: "MyCorp".to_string(),
         base_url: "https://llm.corp.example/v1".to_string(),
+        api_format: CustomProviderApiFormat::OpenAIChat,
         context_window: Some(256_000),
+        supports_tools: Some(true),
+        supports_reasoning: Some(false),
+        supports_reasoning_effort: Some(true),
+        supports_vision: Some(false),
+        supports_structured_output: Some(true),
+        supports_parallel_tool_calls: Some(false),
+        supports_context_caching: Some(true),
+        supports_responses_compaction: Some(false),
+        supports_context_edits: Some(true),
         api_key_env: "MYCORP_API_KEY".to_string(),
         auth: None,
         model: "gpt-5-mini".to_string(),
         models: vec!["gpt-5-mini".to_string(), "gpt-5-large".to_string()],
+        profiles: std::collections::BTreeMap::from([(
+            "gpt-5-mini".to_string(),
+            CustomProviderProfileConfig {
+                api_format: CustomProviderApiFormat::OpenAIResponses,
+                context_window: None,
+                supports_tools: Some(false),
+                supports_reasoning: None,
+                supports_reasoning_effort: None,
+                supports_vision: None,
+                supports_structured_output: None,
+                supports_parallel_tool_calls: None,
+                supports_context_caching: None,
+                supports_responses_compaction: None,
+                supports_context_edits: None,
+            },
+        )]),
     });
 
     let serialized = toml::to_string(&config).expect("serialize config");
@@ -306,9 +332,77 @@ fn custom_providers_fields_round_trip_through_toml() {
     assert_eq!(provider.name, "mycorp");
     assert_eq!(provider.display_name, "MyCorp");
     assert_eq!(provider.base_url, "https://llm.corp.example/v1");
+    assert_eq!(provider.api_format, CustomProviderApiFormat::OpenAIChat);
+    assert_eq!(provider.context_window, Some(256_000));
+    assert_eq!(provider.supports_tools, Some(true));
+    assert_eq!(provider.supports_reasoning, Some(false));
+    assert_eq!(provider.supports_reasoning_effort, Some(true));
+    assert_eq!(provider.supports_vision, Some(false));
+    assert_eq!(provider.supports_structured_output, Some(true));
+    assert_eq!(provider.supports_parallel_tool_calls, Some(false));
+    assert_eq!(provider.supports_context_caching, Some(true));
+    assert_eq!(provider.supports_responses_compaction, Some(false));
+    assert_eq!(provider.supports_context_edits, Some(true));
     assert_eq!(provider.api_key_env, "MYCORP_API_KEY");
     assert_eq!(provider.model, "gpt-5-mini");
     assert_eq!(provider.models, vec!["gpt-5-mini".to_string(), "gpt-5-large".to_string()]);
+    assert_eq!(
+        provider.profiles["gpt-5-mini"],
+        CustomProviderProfileConfig {
+            api_format: CustomProviderApiFormat::OpenAIResponses,
+            context_window: None,
+            supports_tools: Some(false),
+            supports_reasoning: None,
+            supports_reasoning_effort: None,
+            supports_vision: None,
+            supports_structured_output: None,
+            supports_parallel_tool_calls: None,
+            supports_context_caching: None,
+            supports_responses_compaction: None,
+            supports_context_edits: None,
+        }
+    );
+}
+
+#[test]
+fn custom_providers_nested_profiles_parse_exactly() {
+    let config: VTCodeConfig = toml::from_str(
+        r#"
+[[custom_providers]]
+name = "mycorp"
+display_name = "MyCorp"
+base_url = "https://llm.corp.example/v1"
+api_format = "openai-chat"
+context_window = 256000
+supports_tools = true
+
+[custom_providers.profiles."gpt-5-mini"]
+supports_tools = false
+supports_parallel_tool_calls = true
+"#,
+    )
+    .expect("nested custom provider config should parse");
+
+    let provider = config.custom_providers.first().expect("provider should exist");
+    assert_eq!(provider.api_format, CustomProviderApiFormat::OpenAIChat);
+    assert_eq!(provider.profile("gpt-5-mini").unwrap().supports_tools, Some(false));
+    assert!(provider.profile("gpt-5").is_none());
+    assert_eq!(
+        provider.resolved_profile("gpt-5-mini"),
+        crate::core::ResolvedCustomProviderProfile {
+            api_format: Some(CustomProviderApiFormat::OpenAIChat),
+            context_window: Some(256_000),
+            supports_tools: Some(false),
+            supports_reasoning: None,
+            supports_reasoning_effort: None,
+            supports_vision: None,
+            supports_structured_output: None,
+            supports_parallel_tool_calls: Some(true),
+            supports_context_caching: None,
+            supports_responses_compaction: None,
+            supports_context_edits: None,
+        }
+    );
 }
 
 #[test]

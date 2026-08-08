@@ -23,6 +23,7 @@ Detailed runloop recovery and allocator notes live in the [vtcode binary gotchas
 - Centralize provider-noise sanitization in `turn::provider_noise` and `stream_sanitization::StreamSanitizer`.
 - Preserve prompt-section ordering and wire-tool shaping invariants; see the detailed guide before changing request assembly.
 - Preserve planning recovery, approval, interview, and budget-synthesis invariants; use the shared `ThreadEvent` contract for telemetry. After denied `request_user_input`, retry synthesis once and never advertise implementation without a validated persisted plan.
+- The model picker must derive custom-provider metadata from exact profiles while keeping `model`/`models` as the availability allowlist.
 - Completed turns must publish a non-empty final response through both renderer and harness paths; blocked recovery remains visible. Async checkpointing acknowledges consumed steering intents only after a `Persisted` history result, never after a throttled checkpoint; archive-disabled sessions release in-flight intents without marking them durable.
 ## Gotchas
 

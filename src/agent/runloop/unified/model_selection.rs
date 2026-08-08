@@ -511,6 +511,7 @@ mod tests {
             }),
             model: "gpt-5-mini".to_string(),
             models: Vec::new(),
+            ..vtcode_config::core::CustomProviderConfig::default()
         });
         let selection = selection("mycorp", None, "", None, false);
 

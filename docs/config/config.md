@@ -158,6 +158,8 @@ vtcode --codex-experimental
 
 Use `custom_providers` for named OpenAI-compatible endpoints that are not one of VT Code's built-in providers. Each entry has a stable `name`, a human-friendly `display_name`, a `base_url`, an optional `api_key_env`, a default `model`, and an optional `context_window` in tokens. When omitted, the provider uses the default context window. This describes the provider capability; the separate `context.max_context_tokens` setting can still impose a lower session budget. Secure credentials are scoped by `(name, api_key_env)`; they are not shared with another configured endpoint that uses the same API-key environment variable.
 
+New provider-level fields
+
 ```toml
 [[custom_providers]]
 name = "mycorp"
@@ -165,8 +167,48 @@ display_name = "MyCorporateName"
 base_url = "https://llm.corp.example/v1"
 api_key_env = "MYCORP_API_KEY"
 model = "gpt-5.4"
-# context_window = 256000  # Optional context window size in tokens
+# context_window = 256000   # Optional context window size in tokens (provider capability)
+# api_format = "auto"      # Optional provider-level API format hint: auto|openai-chat|openai-responses|anthropic-messages
 ```
+
+Notes:
+- `context_window` declares the provider's capability in tokens and drives the context size shown in the UI, compaction thresholds, and preflight token checks.
+- `api_format` is a hint to VT Code about how this provider / endpoint expects model traffic. Accepted values are: `auto`, `openai-chat`, `openai-responses`, and `anthropic-messages`. When omitted VT Code preserves legacy behavior and will try to autodetect; an explicit value is honored and VT Code will not silently fallback to a different format.
+
+Capability defaults and per-model profiles
+
+Custom providers may expose a small, conservative set of capability defaults to use when model metadata is absent. These are useful for gateways and aggregators that do not provide per-model descriptors. Set fields such as `supports_tools`, `supports_vision`, `supports_structured_output`, or `supports_parallel_tool_calls` directly on the provider entry.
+
+For fine-grained overrides you can declare sparse per-model profiles. Profiles live in `custom_providers.profiles."<model-id>"` and only modify runtime defaults for that specific model identifier. IMPORTANT: profiles do not add or enable models in the picker — `model` / `models` remain the allowlist/default. A profile only changes how VT Code treats an already-selected model at runtime (capabilities, context window, api_format, etc.).
+
+Example per-model profile:
+
+```toml
+[custom_providers.profiles."gpt-5.4"]
+api_format = "openai-responses"
+context_window = 131072
+supports_tools = true
+supports_vision = false
+supports_structured_output = true
+supports_parallel_tool_calls = true
+supports_context_caching = false
+supports_responses_compaction = true
+supports_context_edits = false
+```
+
+Precedence and semantics
+
+When determining a model's runtime shape VT Code applies values in the following order (highest wins):
+
+1. per-model profile (`custom_providers.profiles."<model-id>"`)
+2. provider-level defaults (fields on the `[[custom_providers]]` entry)
+3. model metadata discovered from the provider (or autodetection)
+4. conservative built-in fallback defaults
+
+Additional rules:
+- An explicit boolean `false` in any overriding layer is honored and prevents a higher-level implicit `true` from taking effect.
+- Omitting `api_format` preserves legacy autodetection behavior; explicitly setting `api_format` to a value instructs VT Code to use that API shape and not silently fall back.
+- Profiles do not make a model available in the picker — use `model` or `models` to control availability.
 
 Store a custom provider key with the same explicit identity used by the
 configuration:

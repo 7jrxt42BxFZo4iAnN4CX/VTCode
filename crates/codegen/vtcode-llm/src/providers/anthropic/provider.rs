@@ -26,9 +26,11 @@ use super::validation;
 
 use crate::providers::common::{extract_prompt_cache_settings, override_base_url, resolve_model};
 use crate::providers::error_handling::{format_network_error, format_parse_error, handle_anthropic_http_error};
+use crate::providers::openai::CustomProviderAuthHandle;
 
 use async_trait::async_trait;
 use reqwest::Client as HttpClient;
+use reqwest::StatusCode;
 use serde_json::Value;
 use std::env;
 
@@ -44,6 +46,7 @@ pub struct AnthropicProvider {
     prompt_cache_enabled: bool,
     prompt_cache_settings: AnthropicPromptCacheSettings,
     anthropic_config: AnthropicConfig,
+    custom_provider_auth: Option<CustomProviderAuthHandle>,
     model_behavior: Option<ModelConfig>,
 }
 
@@ -87,6 +90,7 @@ impl AnthropicProvider {
             prompt_cache_enabled: false,
             prompt_cache_settings: AnthropicPromptCacheSettings::default(),
             anthropic_config: AnthropicConfig::default(),
+            custom_provider_auth: None,
             model_behavior: None,
         }
     }
@@ -146,8 +150,14 @@ impl AnthropicProvider {
             prompt_cache_enabled,
             prompt_cache_settings,
             anthropic_config,
+            custom_provider_auth: None,
             model_behavior,
         }
+    }
+
+    pub(crate) fn with_custom_auth(mut self, custom_provider_auth: Option<CustomProviderAuthHandle>) -> Self {
+        self.custom_provider_auth = custom_provider_auth;
+        self
     }
 
     fn resolve_minimax_base_url(base_url: Option<String>) -> String {
@@ -272,6 +282,32 @@ impl AnthropicProvider {
     fn advisor_enabled_for_request(&self, request: &LLMRequest) -> bool {
         let executor = capabilities::resolve_model_name(&request.model, &self.model);
         request_builder::resolve_advisor_tool(executor, &self.anthropic_config.advisor).is_some()
+    }
+
+    fn uses_refreshable_auth(&self) -> bool {
+        self.custom_provider_auth.is_some()
+    }
+
+    async fn current_api_key(&self) -> Result<String, LLMError> {
+        if let Some(handle) = &self.custom_provider_auth {
+            return handle
+                .current_token()
+                .await
+                .map_err(|error| format_network_error("Anthropic", &error));
+        }
+
+        Ok(self.api_key.clone())
+    }
+
+    async fn refresh_api_key_for_retry(&self) -> Result<String, LLMError> {
+        if let Some(handle) = &self.custom_provider_auth {
+            return handle
+                .force_refresh()
+                .await
+                .map_err(|error| format_network_error("Anthropic", &error));
+        }
+
+        Ok(self.api_key.clone())
     }
 
     pub fn with_leak_protection(&self, mut request: LLMRequest, secret_description: &str) -> LLMRequest {
@@ -423,29 +459,45 @@ impl AnthropicProvider {
         let betas = self.effective_betas(request);
         let url = format!("{}/messages", self.base_url);
 
-        let mut request_builder = self
-            .http_client
-            .post(&url)
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", urls::ANTHROPIC_API_VERSION);
+        let beta_header =
+            self.beta_header_for_request(request, anthropic_request, include_advanced_tool_use, betas.as_deref());
+        let metadata = request.metadata.clone();
 
-        if let Some(beta_header) =
-            self.beta_header_for_request(request, anthropic_request, include_advanced_tool_use, betas.as_deref())
-        {
-            request_builder = request_builder.header("anthropic-beta", beta_header);
-        }
+        let send_once = |api_key: String| {
+            let mut request_builder = self
+                .http_client
+                .post(&url)
+                .header("x-api-key", api_key)
+                .header("anthropic-version", urls::ANTHROPIC_API_VERSION);
 
-        if let Some(metadata) = &request.metadata
-            && let Ok(metadata_str) = serde_json::to_string(metadata)
-        {
-            request_builder = request_builder.header("X-Turn-Metadata", metadata_str);
-        }
+            if let Some(beta_header) = beta_header.clone() {
+                request_builder = request_builder.header("anthropic-beta", beta_header);
+            }
 
-        let response = request_builder
-            .json(anthropic_request)
+            if let Some(metadata) = metadata.as_ref()
+                && let Ok(metadata_str) = serde_json::to_string(metadata)
+            {
+                request_builder = request_builder.header("X-Turn-Metadata", metadata_str);
+            }
+
+            request_builder.json(anthropic_request)
+        };
+
+        let response = send_once(self.current_api_key().await?)
             .send()
             .await
             .map_err(|e| format_network_error("Anthropic", &e))?;
+
+        let response = if self.uses_refreshable_auth()
+            && matches!(response.status(), StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN)
+        {
+            send_once(self.refresh_api_key_for_retry().await?)
+                .send()
+                .await
+                .map_err(|e| format_network_error("Anthropic", &e))?
+        } else {
+            response
+        };
 
         let response = handle_anthropic_http_error(response).await?;
 
@@ -608,7 +660,7 @@ impl LLMProvider for AnthropicProvider {
     }
 
     fn validate_request(&self, request: &LLMRequest) -> Result<(), LLMError> {
-        validation::validate_request(request, &self.model, &self.anthropic_config)
+        validation::validate_request(request, &self.model, &self.anthropic_config, "Anthropic")
     }
 }
 

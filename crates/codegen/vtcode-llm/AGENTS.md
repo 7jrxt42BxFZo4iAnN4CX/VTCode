@@ -4,7 +4,7 @@
 
 ## Key Modules
 
-`provider/` trait + shared types | `providers/` per-provider impls | `provider.rs` re-exports | `client.rs` + `optimized_client.rs` | `copilot/` (feature-gated) | `open_responses/` | `factory_types.rs` + `provider_config_types.rs` config | `system_prompt.rs` injection | `http_client.rs` | `types.rs` shared types | `utils.rs` + `single_response.rs` + `tool_bridge.rs` + `config_adapter.rs` + `rig_adapter.rs` + `provider_base.rs` + `error_display.rs` + `model_resolver.rs` infra (merged from core)
+`provider/` trait + shared types | `providers/` per-provider impls | `providers/custom_provider.rs` custom profile router | `provider.rs` re-exports | `client.rs` + `optimized_client.rs` | `copilot/` (feature-gated) | `open_responses/` | `factory_types.rs` + `provider_config_types.rs` config | `system_prompt.rs` injection | `http_client.rs` | `types.rs` shared types | `utils.rs` + `single_response.rs` + `tool_bridge.rs` + `config_adapter.rs` + `rig_adapter.rs` + `provider_base.rs` + `error_display.rs` + `model_resolver.rs` infra (merged from core)
 
 ## Architecture Notes
 
@@ -21,6 +21,7 @@
 ## Coding Conventions
 
 Providers in `providers/<name>/mod.rs`. Use `anyhow::Result`, `tracing`, not `println!`. Provider-specific types stay local; shared go in `types.rs` or `provider/`. OpenResponses streaming wire parsing dispatches by `type`; keep hot SSE fields borrowed and update the wire fields and mapping together when adding events.
+- Custom provider profiles match exact model IDs; explicit API formats select the wire backend without protocol fallback.
 ## OpenAI-Compatible Providers
 
 - `providers/openai_compat.rs` owns the shared shell: `OpenAiCompatSpec` (per-provider consts/overrides) + `OpenAiCompatCore<S>` + `impl_openai_compat_provider!`. New compat providers implement a Spec (~50-200 lines), not a full `LLMProvider`; NVIDIA also accepts arbitrary explicit IDs and maps thinking through `chat_template_kwargs`.

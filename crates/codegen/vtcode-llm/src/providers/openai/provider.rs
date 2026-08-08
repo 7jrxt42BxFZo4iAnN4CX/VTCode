@@ -51,6 +51,7 @@ use super::super::{
     extract_reasoning_trace,
 };
 use crate::system_prompt::default_system_prompt;
+use vtcode_config::core::CustomProviderApiFormat;
 
 const INLINE_FILE_LIMIT_ERROR_PREFIX: &str = "Inline OpenAI input_file payload exceeds the 50 MB request limit";
 
@@ -63,6 +64,7 @@ pub struct OpenAIProvider {
     /// When `None`, defaults to `"OpenAI"`.
     provider_display_override: Option<Arc<str>>,
     custom_provider_auth: Option<CustomProviderAuthHandle>,
+    api_format_override: Option<CustomProviderApiFormat>,
     openai_chatgpt_auth: Option<OpenAIChatGptAuthHandle>,
     http_client: HttpClient,
     base_url: Arc<str>,
@@ -177,6 +179,7 @@ impl OpenAIProvider {
             provider_key_override: None,
             provider_display_override: None,
             custom_provider_auth: None,
+            api_format_override: None,
             openai_chatgpt_auth,
             http_client,
             base_url: Arc::from(base_url.as_str()),
@@ -257,11 +260,17 @@ impl OpenAIProvider {
         provider.provider_key_override = Some(Arc::from(provider_key.as_str()));
         provider.provider_display_override = Some(Arc::from(display_name.as_str()));
         provider.custom_provider_auth = custom_provider_auth;
+        provider.api_format_override = None;
         if provider.custom_provider_auth.is_some() {
             provider.backend_setup = provider.backend_setup.clone().with_custom_command_auth();
         }
         provider.supported_models_override = supported_models_override;
         provider
+    }
+
+    pub(crate) fn with_api_format_override(mut self, api_format: Option<CustomProviderApiFormat>) -> Self {
+        self.api_format_override = api_format;
+        self
     }
 
     /// Set an optional context window override for a custom provider.
@@ -333,6 +342,7 @@ impl OpenAIProvider {
             provider_key_override: None,
             provider_display_override: None,
             custom_provider_auth: None,
+            api_format_override: None,
             openai_chatgpt_auth,
             http_client,
             base_url: Arc::from(resolved_base_url.as_str()),
@@ -565,6 +575,15 @@ impl OpenAIProvider {
     }
 
     fn responses_api_state(&self, model: &str) -> ResponsesApiState {
+        if let Some(api_format) = self.api_format_override {
+            return match api_format {
+                CustomProviderApiFormat::Auto => Self::default_responses_state(model),
+                CustomProviderApiFormat::OpenAIChat => ResponsesApiState::Disabled,
+                CustomProviderApiFormat::OpenAIResponses => ResponsesApiState::Required,
+                CustomProviderApiFormat::AnthropicMessages => ResponsesApiState::Disabled,
+            };
+        }
+
         let mut modes = match self.responses_api_modes.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {

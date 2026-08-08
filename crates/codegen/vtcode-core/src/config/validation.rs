@@ -9,6 +9,7 @@ use vtcode_commons::MultiErrors;
 use crate::config::FullAutoConfig;
 use crate::config::loader::VTCodeConfig;
 use crate::config::models::{catalog_provider_keys, model_catalog_entry, supported_models_for_provider};
+use vtcode_config::core::CustomProviderConfig;
 
 /// Result of a configuration validation check
 #[derive(Debug, Clone)]
@@ -95,12 +96,49 @@ pub fn effective_model_context_window(provider: &str, model: &str) -> Result<Opt
     catalog_model_context_window(provider, model)
 }
 
+fn custom_provider_for_model<'a>(
+    config: &'a VTCodeConfig,
+    provider: &str,
+    model: &str,
+) -> Option<&'a CustomProviderConfig> {
+    config
+        .custom_providers
+        .iter()
+        .find(|custom| custom.name.eq_ignore_ascii_case(provider))
+        .and_then(|custom| {
+            custom.effective_models().into_iter().find(|candidate| candidate == model)?;
+            Some(custom)
+        })
+}
+
+fn effective_model_context_window_for_config(
+    config: &VTCodeConfig,
+    provider: &str,
+    model: &str,
+) -> Result<Option<usize>> {
+    if let Some(custom) = custom_provider_for_model(config, provider, model) {
+        let profile = custom.resolved_profile(model);
+        if let Some(context_window) = profile.context_window {
+            return Ok(Some(context_window));
+        }
+
+        return match profile.api_format {
+            Some(vtcode_config::core::CustomProviderApiFormat::AnthropicMessages) => {
+                effective_model_context_window("anthropic", model)
+            }
+            _ => Ok(effective_model_context_window("openai", model)?.or(Some(128_000))),
+        };
+    }
+
+    effective_model_context_window(provider, model)
+}
+
 /// Validate full VTCodeConfig at startup
 pub fn validate_config(config: &VTCodeConfig, workspace: &Path) -> Result<ValidationResult> {
     let mut result = ValidationResult::new();
 
     // Validate agent model exists
-    validate_agent_model(&config.agent.provider, &config.agent.default_model, &mut result);
+    validate_agent_model(config, &mut result);
 
     // Validate provider is in whitelist (if configured)
     if !config.providers_whitelist.is_empty()
@@ -133,15 +171,36 @@ pub fn validate_config(config: &VTCodeConfig, workspace: &Path) -> Result<Valida
     Ok(result)
 }
 
-fn validate_agent_model(provider: &str, model: &str, result: &mut ValidationResult) {
+fn validate_agent_model(config: &VTCodeConfig, result: &mut ValidationResult) {
+    let provider = &config.agent.provider;
+    let model = &config.agent.default_model;
     if provider.eq_ignore_ascii_case("codex") {
         return;
     }
 
-    match validate_model_exists(provider, model) {
+    let validation = if let Some(custom) = config
+        .custom_providers
+        .iter()
+        .find(|custom| custom.name.eq_ignore_ascii_case(provider))
+    {
+        if custom.effective_models().iter().any(|candidate| candidate == model) {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "Model '{}' not found for custom provider '{}'. Available models: {}",
+                model,
+                custom.display_name,
+                custom.effective_models().join(", ")
+            ))
+        }
+    } else {
+        validate_model_exists(provider, model)
+    };
+
+    match validation {
         Ok(_) => {
             // Also check context window
-            if let Ok(Some(context_size)) = effective_model_context_window(provider, model) {
+            if let Ok(Some(context_size)) = effective_model_context_window_for_config(config, provider, model) {
                 let display_size = if context_size >= 1_000_000 {
                     format!("{}M", context_size / 1_000_000)
                 } else if context_size >= 1_000 {
@@ -166,7 +225,7 @@ fn validate_context_window(config: &VTCodeConfig, result: &mut ValidationResult)
     let context_window = config.context.max_context_tokens;
     if context_window > 0
         && let Ok(Some(model_context)) =
-            effective_model_context_window(&config.agent.provider, &config.agent.default_model)
+            effective_model_context_window_for_config(config, &config.agent.provider, &config.agent.default_model)
         && context_window > model_context
     {
         result.add_warning(format!(

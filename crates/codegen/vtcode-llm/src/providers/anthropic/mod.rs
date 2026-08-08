@@ -22,7 +22,7 @@ mod provider;
 pub(crate) mod request_builder;
 mod response_parser;
 mod stream_decoder;
-mod validation;
+pub(crate) mod validation;
 
 pub use provider::AnthropicProvider;
 

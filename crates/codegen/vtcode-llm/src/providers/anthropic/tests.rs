@@ -92,7 +92,7 @@ mod validation_tests {
             ..Default::default()
         };
         let config = AnthropicConfig::default();
-        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config).is_err());
+        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config, "Anthropic").is_err());
     }
 
     #[test]
@@ -106,7 +106,7 @@ mod validation_tests {
             "required": ["name", "age"],
             "additionalProperties": false
         });
-        validate_anthropic_schema(&schema).unwrap();
+        validate_anthropic_schema(&schema, "Anthropic").unwrap();
     }
 
     #[test]
@@ -122,7 +122,7 @@ mod validation_tests {
             },
             "additionalProperties": false
         });
-        assert!(validate_anthropic_schema(&schema).is_err());
+        assert!(validate_anthropic_schema(&schema, "Anthropic").is_err());
     }
 
     #[test]
@@ -138,7 +138,7 @@ mod validation_tests {
             },
             "additionalProperties": false
         });
-        assert!(validate_anthropic_schema(&schema).is_err());
+        assert!(validate_anthropic_schema(&schema, "Anthropic").is_err());
     }
 
     #[test]
@@ -150,7 +150,7 @@ mod validation_tests {
             ..Default::default()
         };
         let config = AnthropicConfig::default();
-        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config).is_err());
+        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config, "Anthropic").is_err());
     }
 
     #[test]
@@ -162,7 +162,7 @@ mod validation_tests {
             effort: Some("max".to_string()),
             ..Default::default()
         };
-        validate_request(&request, models::anthropic::DEFAULT_MODEL, &config).unwrap();
+        validate_request(&request, models::anthropic::DEFAULT_MODEL, &config, "Anthropic").unwrap();
     }
 
     #[test]
@@ -175,7 +175,7 @@ mod validation_tests {
             ..Default::default()
         };
 
-        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config).is_err());
+        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config, "Anthropic").is_err());
     }
 
     #[test]
@@ -191,7 +191,7 @@ mod validation_tests {
             ..Default::default()
         };
 
-        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config).is_ok());
+        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config, "Anthropic").is_ok());
     }
 
     #[test]
@@ -210,7 +210,7 @@ mod validation_tests {
             ..Default::default()
         };
 
-        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config).is_ok());
+        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config, "Anthropic").is_ok());
     }
 
     #[test]
@@ -237,7 +237,7 @@ mod validation_tests {
             ..Default::default()
         };
 
-        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config).is_err());
+        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config, "Anthropic").is_err());
     }
 
     #[test]
@@ -264,7 +264,7 @@ mod validation_tests {
             ..Default::default()
         };
 
-        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config).is_err());
+        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config, "Anthropic").is_err());
     }
 
     #[test]
@@ -291,7 +291,7 @@ mod validation_tests {
             ..Default::default()
         };
 
-        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config).is_err());
+        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config, "Anthropic").is_err());
     }
 
     #[test]
@@ -318,7 +318,7 @@ mod validation_tests {
             ..Default::default()
         };
 
-        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config).is_err());
+        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config, "Anthropic").is_err());
     }
 
     #[test]
@@ -339,7 +339,7 @@ mod validation_tests {
             ..Default::default()
         };
 
-        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config).is_ok());
+        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config, "Anthropic").is_ok());
     }
 
     #[test]
@@ -360,7 +360,7 @@ mod validation_tests {
             ..Default::default()
         };
 
-        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config).is_err());
+        assert!(validate_request(&request, models::anthropic::DEFAULT_MODEL, &config, "Anthropic").is_err());
     }
 }
 

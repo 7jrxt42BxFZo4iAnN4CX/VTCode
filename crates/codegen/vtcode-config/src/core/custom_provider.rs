@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -8,6 +9,148 @@ fn default_auth_timeout_ms() -> u64 {
 
 fn default_auth_refresh_interval_ms() -> u64 {
     300_000
+}
+
+fn skip_serializing_custom_provider_api_format(api_format: &CustomProviderApiFormat) -> bool {
+    api_format.is_auto()
+}
+
+/// Typed API format used by custom providers.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub enum CustomProviderApiFormat {
+    #[default]
+    #[serde(rename = "auto")]
+    Auto,
+    #[serde(rename = "openai-chat")]
+    OpenAIChat,
+    #[serde(rename = "openai-responses")]
+    OpenAIResponses,
+    #[serde(rename = "anthropic-messages")]
+    AnthropicMessages,
+}
+
+impl CustomProviderApiFormat {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::OpenAIChat => "openai-chat",
+            Self::OpenAIResponses => "openai-responses",
+            Self::AnthropicMessages => "anthropic-messages",
+        }
+    }
+
+    pub const fn is_auto(self) -> bool {
+        matches!(self, Self::Auto)
+    }
+
+    pub const fn resolved(self) -> Option<Self> {
+        match self {
+            Self::Auto => None,
+            other => Some(other),
+        }
+    }
+}
+
+/// Sparse per-provider or per-model capability/profile settings.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct CustomProviderProfileConfig {
+    /// Typed API format for this provider/profile.
+    #[serde(default, skip_serializing_if = "skip_serializing_custom_provider_api_format")]
+    pub api_format: CustomProviderApiFormat,
+
+    /// Optional context window size in tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<usize>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_tools: Option<bool>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_reasoning: Option<bool>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_reasoning_effort: Option<bool>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_vision: Option<bool>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_structured_output: Option<bool>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_parallel_tool_calls: Option<bool>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_context_caching: Option<bool>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_responses_compaction: Option<bool>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_context_edits: Option<bool>,
+}
+
+impl CustomProviderProfileConfig {
+    fn validate(&self, provider_name: &str, profile_key: &str) -> Result<(), String> {
+        if self.context_window == Some(0) {
+            return Err(format!(
+                "custom_providers[{provider_name}].profiles[{profile_key}]: `context_window` must be greater than 0"
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+/// Resolved capability/profile settings after applying provider defaults and
+/// exact model-specific overrides.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResolvedCustomProviderProfile {
+    pub api_format: Option<CustomProviderApiFormat>,
+    pub context_window: Option<usize>,
+    pub supports_tools: Option<bool>,
+    pub supports_reasoning: Option<bool>,
+    pub supports_reasoning_effort: Option<bool>,
+    pub supports_vision: Option<bool>,
+    pub supports_structured_output: Option<bool>,
+    pub supports_parallel_tool_calls: Option<bool>,
+    pub supports_context_caching: Option<bool>,
+    pub supports_responses_compaction: Option<bool>,
+    pub supports_context_edits: Option<bool>,
+}
+
+impl ResolvedCustomProviderProfile {
+    fn from_layers(defaults: &CustomProviderProfileConfig, profile: Option<&CustomProviderProfileConfig>) -> Self {
+        let fallback_profile;
+        let profile = match profile {
+            Some(profile) => profile,
+            None => {
+                fallback_profile = CustomProviderProfileConfig::default();
+                &fallback_profile
+            }
+        };
+
+        Self {
+            api_format: profile.api_format.resolved().or(defaults.api_format.resolved()),
+            context_window: profile.context_window.or(defaults.context_window),
+            supports_tools: profile.supports_tools.or(defaults.supports_tools),
+            supports_reasoning: profile.supports_reasoning.or(defaults.supports_reasoning),
+            supports_reasoning_effort: profile.supports_reasoning_effort.or(defaults.supports_reasoning_effort),
+            supports_vision: profile.supports_vision.or(defaults.supports_vision),
+            supports_structured_output: profile.supports_structured_output.or(defaults.supports_structured_output),
+            supports_parallel_tool_calls: profile
+                .supports_parallel_tool_calls
+                .or(defaults.supports_parallel_tool_calls),
+            supports_context_caching: profile.supports_context_caching.or(defaults.supports_context_caching),
+            supports_responses_compaction: profile
+                .supports_responses_compaction
+                .or(defaults.supports_responses_compaction),
+            supports_context_edits: profile.supports_context_edits.or(defaults.supports_context_edits),
+        }
+    }
 }
 
 /// Command-backed bearer token configuration for a custom provider.
@@ -86,12 +229,52 @@ pub struct CustomProviderConfig {
     /// (e.g., `<https://llm.corp.example/v1>`).
     pub base_url: String,
 
+    /// Typed API format for the provider's default profile.
+    #[serde(default, skip_serializing_if = "skip_serializing_custom_provider_api_format")]
+    pub api_format: CustomProviderApiFormat,
+
     /// Optional context window size in tokens for models served by this endpoint.
     ///
     /// When omitted, the OpenAI-compatible provider uses its default context
     /// window size.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window: Option<usize>,
+
+    /// Optional support for tool calling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_tools: Option<bool>,
+
+    /// Optional support for reasoning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_reasoning: Option<bool>,
+
+    /// Optional support for reasoning effort.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_reasoning_effort: Option<bool>,
+
+    /// Optional support for vision inputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_vision: Option<bool>,
+
+    /// Optional support for structured output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_structured_output: Option<bool>,
+
+    /// Optional support for parallel tool calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_parallel_tool_calls: Option<bool>,
+
+    /// Optional support for context caching.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_context_caching: Option<bool>,
+
+    /// Optional support for responses compaction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_responses_compaction: Option<bool>,
+
+    /// Optional support for context edits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_context_edits: Option<bool>,
 
     /// Environment variable name that holds the API key for this endpoint
     /// (e.g., "MYCORP_API_KEY").
@@ -119,6 +302,10 @@ pub struct CustomProviderConfig {
     /// the single [`model`](Self::model) field.
     #[serde(default)]
     pub models: Vec<String>,
+
+    /// Exact model-keyed sparse capability profiles.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub profiles: BTreeMap<String, CustomProviderProfileConfig>,
 }
 
 impl CustomProviderConfig {
@@ -158,6 +345,31 @@ impl CustomProviderConfig {
             Vec::new()
         } else {
             vec![trimmed.to_string()]
+        }
+    }
+
+    pub fn profile(&self, model: &str) -> Option<&CustomProviderProfileConfig> {
+        self.profiles.get(model)
+    }
+
+    pub fn resolved_profile(&self, model: &str) -> ResolvedCustomProviderProfile {
+        let defaults = self.provider_defaults_profile();
+        ResolvedCustomProviderProfile::from_layers(&defaults, self.profile(model))
+    }
+
+    pub fn provider_defaults_profile(&self) -> CustomProviderProfileConfig {
+        CustomProviderProfileConfig {
+            api_format: self.api_format,
+            context_window: self.context_window,
+            supports_tools: self.supports_tools,
+            supports_reasoning: self.supports_reasoning,
+            supports_reasoning_effort: self.supports_reasoning_effort,
+            supports_vision: self.supports_vision,
+            supports_structured_output: self.supports_structured_output,
+            supports_parallel_tool_calls: self.supports_parallel_tool_calls,
+            supports_context_caching: self.supports_context_caching,
+            supports_responses_compaction: self.supports_responses_compaction,
+            supports_context_edits: self.supports_context_edits,
         }
     }
 
@@ -204,6 +416,17 @@ impl CustomProviderConfig {
             return Err(format!("custom_providers[{}]: `models` entries must not be empty", self.name));
         }
 
+        for (profile_key, profile) in &self.profiles {
+            if profile_key.trim().is_empty() || profile_key.trim() != profile_key {
+                return Err(format!(
+                    "custom_providers[{}]: profile key `{profile_key}` must not be empty or contain surrounding whitespace",
+                    self.name
+                ));
+            }
+
+            profile.validate(&self.name, profile_key)?;
+        }
+
         let reserved = [
             "openai",
             "anthropic",
@@ -246,11 +469,12 @@ fn is_valid_provider_name(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     use super::{
-        CustomProviderCommandAuthConfig, CustomProviderConfig, default_auth_refresh_interval_ms,
-        default_auth_timeout_ms,
+        CustomProviderApiFormat, CustomProviderCommandAuthConfig, CustomProviderConfig, CustomProviderProfileConfig,
+        ResolvedCustomProviderProfile, default_auth_refresh_interval_ms, default_auth_timeout_ms,
     };
 
     #[test]
@@ -259,11 +483,22 @@ mod tests {
             name: "mycorp".to_string(),
             display_name: "MyCorp".to_string(),
             base_url: "https://llm.example/v1".to_string(),
+            api_format: CustomProviderApiFormat::Auto,
             context_window: None,
+            supports_tools: None,
+            supports_reasoning: None,
+            supports_reasoning_effort: None,
+            supports_vision: None,
+            supports_structured_output: None,
+            supports_parallel_tool_calls: None,
+            supports_context_caching: None,
+            supports_responses_compaction: None,
+            supports_context_edits: None,
             api_key_env: String::new(),
             auth: None,
             model: "gpt-5-mini".to_string(),
             models: Vec::new(),
+            profiles: BTreeMap::new(),
         };
 
         assert!(config.validate().is_ok());
@@ -276,11 +511,22 @@ mod tests {
             name: "My Corp".to_string(),
             display_name: "My Corp".to_string(),
             base_url: "https://llm.example/v1".to_string(),
+            api_format: CustomProviderApiFormat::Auto,
             context_window: None,
+            supports_tools: None,
+            supports_reasoning: None,
+            supports_reasoning_effort: None,
+            supports_vision: None,
+            supports_structured_output: None,
+            supports_parallel_tool_calls: None,
+            supports_context_caching: None,
+            supports_responses_compaction: None,
+            supports_context_edits: None,
             api_key_env: String::new(),
             auth: None,
             model: "gpt-5-mini".to_string(),
             models: Vec::new(),
+            profiles: BTreeMap::new(),
         };
 
         let err = config.validate().expect_err("invalid name should fail");
@@ -293,7 +539,17 @@ mod tests {
             name: "mycorp".to_string(),
             display_name: "MyCorp".to_string(),
             base_url: "https://llm.example/v1".to_string(),
+            api_format: CustomProviderApiFormat::Auto,
             context_window: None,
+            supports_tools: None,
+            supports_reasoning: None,
+            supports_reasoning_effort: None,
+            supports_vision: None,
+            supports_structured_output: None,
+            supports_parallel_tool_calls: None,
+            supports_context_caching: None,
+            supports_responses_compaction: None,
+            supports_context_edits: None,
             api_key_env: "MYCORP_API_KEY".to_string(),
             auth: Some(CustomProviderCommandAuthConfig {
                 command: "print-token".to_string(),
@@ -304,6 +560,7 @@ mod tests {
             }),
             model: "gpt-5-mini".to_string(),
             models: Vec::new(),
+            profiles: BTreeMap::new(),
         };
 
         let err = config.validate().expect_err("conflicting auth should fail");
@@ -316,7 +573,17 @@ mod tests {
             name: "mycorp".to_string(),
             display_name: "MyCorp".to_string(),
             base_url: "https://llm.example/v1".to_string(),
+            api_format: CustomProviderApiFormat::Auto,
             context_window: None,
+            supports_tools: None,
+            supports_reasoning: None,
+            supports_reasoning_effort: None,
+            supports_vision: None,
+            supports_structured_output: None,
+            supports_parallel_tool_calls: None,
+            supports_context_caching: None,
+            supports_responses_compaction: None,
+            supports_context_edits: None,
             api_key_env: String::new(),
             auth: Some(CustomProviderCommandAuthConfig {
                 command: "print-token".to_string(),
@@ -327,6 +594,7 @@ mod tests {
             }),
             model: "gpt-5-mini".to_string(),
             models: Vec::new(),
+            profiles: BTreeMap::new(),
         };
 
         assert!(config.validate().is_ok());
@@ -339,11 +607,22 @@ mod tests {
             name: "mycorp".to_string(),
             display_name: "MyCorp".to_string(),
             base_url: "https://llm.example/v1".to_string(),
+            api_format: CustomProviderApiFormat::Auto,
             context_window: None,
+            supports_tools: None,
+            supports_reasoning: None,
+            supports_reasoning_effort: None,
+            supports_vision: None,
+            supports_structured_output: None,
+            supports_parallel_tool_calls: None,
+            supports_context_caching: None,
+            supports_responses_compaction: None,
+            supports_context_edits: None,
             api_key_env: "MYCORP_API_KEY".to_string(),
             auth: None,
             model: "gpt-5-mini".to_string(),
             models: vec!["valid-model".to_string(), "   ".to_string()],
+            profiles: BTreeMap::new(),
         };
 
         let err = config.validate().expect_err("blank models entry should fail");
@@ -356,15 +635,72 @@ mod tests {
             name: "mycorp".to_string(),
             display_name: "MyCorp".to_string(),
             base_url: "https://llm.example/v1".to_string(),
+            api_format: CustomProviderApiFormat::Auto,
             context_window: Some(0),
+            supports_tools: None,
+            supports_reasoning: None,
+            supports_reasoning_effort: None,
+            supports_vision: None,
+            supports_structured_output: None,
+            supports_parallel_tool_calls: None,
+            supports_context_caching: None,
+            supports_responses_compaction: None,
+            supports_context_edits: None,
             api_key_env: String::new(),
             auth: None,
             model: "gpt-5-mini".to_string(),
             models: Vec::new(),
+            profiles: BTreeMap::new(),
         };
 
         let err = config.validate().expect_err("zero context window should fail");
         assert!(err.contains("`context_window` must be greater than 0"));
+    }
+
+    #[test]
+    fn validate_rejects_malformed_profile_key() {
+        let mut profiles = BTreeMap::new();
+        profiles.insert(
+            " gpt-5-mini ".to_string(),
+            CustomProviderProfileConfig {
+                api_format: CustomProviderApiFormat::Auto,
+                context_window: Some(128_000),
+                supports_tools: None,
+                supports_reasoning: None,
+                supports_reasoning_effort: None,
+                supports_vision: None,
+                supports_structured_output: None,
+                supports_parallel_tool_calls: None,
+                supports_context_caching: None,
+                supports_responses_compaction: None,
+                supports_context_edits: None,
+            },
+        );
+
+        let config = CustomProviderConfig {
+            name: "mycorp".to_string(),
+            display_name: "MyCorp".to_string(),
+            base_url: "https://llm.example/v1".to_string(),
+            api_format: CustomProviderApiFormat::Auto,
+            context_window: None,
+            supports_tools: None,
+            supports_reasoning: None,
+            supports_reasoning_effort: None,
+            supports_vision: None,
+            supports_structured_output: None,
+            supports_parallel_tool_calls: None,
+            supports_context_caching: None,
+            supports_responses_compaction: None,
+            supports_context_edits: None,
+            api_key_env: String::new(),
+            auth: None,
+            model: "gpt-5-mini".to_string(),
+            models: Vec::new(),
+            profiles,
+        };
+
+        let err = config.validate().expect_err("profile key with whitespace should fail");
+        assert!(err.contains("profile key"));
     }
 
     #[test]
@@ -373,7 +709,17 @@ mod tests {
             name: "atlascloud".to_string(),
             display_name: "Atlas Cloud".to_string(),
             base_url: "https://api.atlascloud.ai/v1".to_string(),
+            api_format: CustomProviderApiFormat::Auto,
             context_window: None,
+            supports_tools: None,
+            supports_reasoning: None,
+            supports_reasoning_effort: None,
+            supports_vision: None,
+            supports_structured_output: None,
+            supports_parallel_tool_calls: None,
+            supports_context_caching: None,
+            supports_responses_compaction: None,
+            supports_context_edits: None,
             api_key_env: "ATLASCLOUD_API_KEY".to_string(),
             auth: None,
             model: "deepseek-ai/deepseek-v4-flash".to_string(),
@@ -387,6 +733,7 @@ mod tests {
                 "zai-org/glm-5.2".to_string(),
                 "minimaxai/minimax-m3".to_string(),
             ],
+            profiles: BTreeMap::new(),
         };
 
         assert_eq!(
@@ -412,5 +759,154 @@ mod tests {
         };
 
         assert_eq!(config.effective_models(), vec!["gpt-5-mini".to_string()]);
+    }
+
+    #[test]
+    fn resolved_profile_prefers_exact_model_key() {
+        let mut profiles = BTreeMap::new();
+        profiles.insert(
+            "gpt-5-mini".to_string(),
+            CustomProviderProfileConfig {
+                api_format: CustomProviderApiFormat::OpenAIResponses,
+                context_window: Some(128_000),
+                supports_tools: Some(true),
+                supports_reasoning: None,
+                supports_reasoning_effort: None,
+                supports_vision: None,
+                supports_structured_output: None,
+                supports_parallel_tool_calls: None,
+                supports_context_caching: None,
+                supports_responses_compaction: None,
+                supports_context_edits: None,
+            },
+        );
+
+        let config = CustomProviderConfig {
+            name: "mycorp".to_string(),
+            display_name: "MyCorp".to_string(),
+            base_url: "https://llm.example/v1".to_string(),
+            api_format: CustomProviderApiFormat::OpenAIChat,
+            context_window: Some(256_000),
+            supports_tools: Some(true),
+            supports_reasoning: Some(true),
+            supports_reasoning_effort: None,
+            supports_vision: None,
+            supports_structured_output: None,
+            supports_parallel_tool_calls: None,
+            supports_context_caching: None,
+            supports_responses_compaction: None,
+            supports_context_edits: None,
+            api_key_env: String::new(),
+            auth: None,
+            model: "gpt-5-mini".to_string(),
+            models: Vec::new(),
+            profiles,
+        };
+
+        let resolved = config.resolved_profile("gpt-5-mini");
+        assert_eq!(
+            resolved,
+            ResolvedCustomProviderProfile {
+                api_format: Some(CustomProviderApiFormat::OpenAIResponses),
+                context_window: Some(128_000),
+                supports_tools: Some(true),
+                supports_reasoning: Some(true),
+                supports_reasoning_effort: None,
+                supports_vision: None,
+                supports_structured_output: None,
+                supports_parallel_tool_calls: None,
+                supports_context_caching: None,
+                supports_responses_compaction: None,
+                supports_context_edits: None,
+            }
+        );
+        assert!(config.profile("gpt-5").is_none());
+    }
+
+    #[test]
+    fn sparse_inheritance_preserves_provider_defaults() {
+        let mut profiles = BTreeMap::new();
+        profiles.insert(
+            "gpt-5-mini".to_string(),
+            CustomProviderProfileConfig {
+                api_format: CustomProviderApiFormat::Auto,
+                context_window: None,
+                supports_tools: Some(false),
+                supports_reasoning: None,
+                supports_reasoning_effort: Some(true),
+                supports_vision: None,
+                supports_structured_output: None,
+                supports_parallel_tool_calls: None,
+                supports_context_caching: None,
+                supports_responses_compaction: None,
+                supports_context_edits: None,
+            },
+        );
+
+        let config = CustomProviderConfig {
+            name: "mycorp".to_string(),
+            display_name: "MyCorp".to_string(),
+            base_url: "https://llm.example/v1".to_string(),
+            api_format: CustomProviderApiFormat::OpenAIChat,
+            context_window: Some(256_000),
+            supports_tools: Some(true),
+            supports_reasoning: Some(false),
+            supports_reasoning_effort: None,
+            supports_vision: Some(true),
+            supports_structured_output: None,
+            supports_parallel_tool_calls: Some(true),
+            supports_context_caching: Some(false),
+            supports_responses_compaction: None,
+            supports_context_edits: None,
+            api_key_env: String::new(),
+            auth: None,
+            model: "gpt-5-mini".to_string(),
+            models: Vec::new(),
+            profiles,
+        };
+
+        let resolved = config.resolved_profile("gpt-5-mini");
+        assert_eq!(resolved.api_format, Some(CustomProviderApiFormat::OpenAIChat));
+        assert_eq!(resolved.context_window, Some(256_000));
+        assert_eq!(resolved.supports_tools, Some(false));
+        assert_eq!(resolved.supports_reasoning, Some(false));
+        assert_eq!(resolved.supports_reasoning_effort, Some(true));
+        assert_eq!(resolved.supports_vision, Some(true));
+        assert_eq!(resolved.supports_parallel_tool_calls, Some(true));
+        assert_eq!(resolved.supports_context_caching, Some(false));
+        assert_eq!(resolved.supports_responses_compaction, None);
+        assert_eq!(resolved.supports_context_edits, None);
+    }
+
+    #[test]
+    fn legacy_default_behavior_retains_auto_and_empty_profiles() {
+        let parsed: CustomProviderConfig = toml::from_str(
+            r#"
+name = "mycorp"
+display_name = "MyCorp"
+base_url = "https://llm.example/v1"
+model = "gpt-5-mini"
+"#,
+        )
+        .expect("legacy custom provider config should parse");
+
+        assert_eq!(parsed.api_format, CustomProviderApiFormat::Auto);
+        assert!(parsed.profiles.is_empty());
+        assert_eq!(parsed.resolved_profile("gpt-5-mini"), ResolvedCustomProviderProfile::default());
+    }
+
+    #[test]
+    fn deserialize_rejects_invalid_api_format() {
+        let err = toml::from_str::<CustomProviderConfig>(
+            r#"
+name = "mycorp"
+display_name = "MyCorp"
+base_url = "https://llm.example/v1"
+api_format = "openai-chatty"
+"#,
+        )
+        .expect_err("invalid api_format should fail");
+
+        assert!(err.to_string().contains("openai-chatty"));
     }
 }

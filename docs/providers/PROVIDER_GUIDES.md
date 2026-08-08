@@ -47,6 +47,14 @@ omitted, custom providers retain the 128000-token default. The separate
 `context.max_context_tokens` setting remains an independent lower session
 budget.
 
+New fields and model profiles
+
+- `api_format` (provider-level): an optional hint describing the provider's preferred API shape. Accepted values are `auto`, `openai-chat`, `openai-responses`, and `anthropic-messages`. When omitted VT Code preserves legacy behavior and will attempt to autodetect; an explicit value is honored and VT Code will not silently fall back to a different format.
+
+- Per-provider capability defaults: custom providers may set fields such as `supports_tools`, `supports_vision`, or `supports_structured_output` to conservative values used when explicit model metadata is unavailable.
+
+- Per-model profiles: define sparse runtime overrides for specific model identifiers under `custom_providers.profiles."<model-id>"`. Profiles do not add models to the picker — they only tweak runtime defaults and capabilities for an existing model identifier. See the Configuration guide for examples and precedence rules.
+
 Worked examples: [Atlas Cloud](./atlascloud.md) and [OmniRoute](./omniroute.md).
 See the [Configuration guide](../config/config.md#custom_providers) for full details.
 

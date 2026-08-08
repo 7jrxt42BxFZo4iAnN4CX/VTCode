@@ -237,6 +237,28 @@ python3 scripts/generate_config_field_reference.py
 | `custom_providers[].auth` | `CustomProviderCommandAuthConfig \| null` | no | `-` | Optional command-backed bearer token configuration. |
 | `custom_providers[].base_url` | `string` | yes | `-` | Base URL of the OpenAI-compatible API endpoint (e.g., `<https://llm.corp.example/v1>`). |
 | `custom_providers[].context_window` | `integer \| null` | no | `-` | Optional context window size in tokens for models served by this endpoint. When omitted, the OpenAI-compatible provider uses its default context window size. |
+| `custom_providers[].api_format` | `string \| null` | no | `null` | Optional provider-level API format hint. Allowed values: `auto`, `openai-chat`, `openai-responses`, `anthropic-messages`. When omitted, VT Code preserves legacy autodetection behavior. An explicit value is honored and will not silently fallback. |
+| `custom_providers[].supports_tools` | `boolean \| null` | no | `null` | Provider-level default for tool calling when per-model metadata is unavailable. |
+| `custom_providers[].supports_reasoning` | `boolean \| null` | no | `null` | Provider-level default for reasoning support when per-model metadata is unavailable. |
+| `custom_providers[].supports_reasoning_effort` | `boolean \| null` | no | `null` | Provider-level default for reasoning-effort controls when per-model metadata is unavailable. |
+| `custom_providers[].supports_vision` | `boolean \| null` | no | `null` | Provider-level default for image/vision inputs when per-model metadata is unavailable. |
+| `custom_providers[].supports_structured_output` | `boolean \| null` | no | `null` | Provider-level default for structured output when per-model metadata is unavailable. |
+| `custom_providers[].supports_parallel_tool_calls` | `boolean \| null` | no | `null` | Provider-level default for parallel tool calls when per-model metadata is unavailable. |
+| `custom_providers[].supports_context_caching` | `boolean \| null` | no | `null` | Provider-level default for context caching when per-model metadata is unavailable. |
+| `custom_providers[].supports_responses_compaction` | `boolean \| null` | no | `null` | Provider-level default for Responses compaction when per-model metadata is unavailable. |
+| `custom_providers[].supports_context_edits` | `boolean \| null` | no | `null` | Provider-level default for context edits when per-model metadata is unavailable. |
+| `custom_providers.profiles."<model-id>"` | `table` | no | `-` | Per-model sparse profile used to override runtime defaults for a specific model identifier. Profiles do NOT add models to the picker; they only alter runtime behavior (capabilities, api_format, context_window, etc.). |
+| `custom_providers.profiles."<model-id>".api_format` | `string \| null` | no | `null` | Per-model API format hint. Same allowed values as `custom_providers[].api_format`. Omitted preserves legacy/autodetect behavior for that model. |
+| `custom_providers.profiles."<model-id>".context_window` | `integer \| null` | no | `null` | Per-model context window in tokens. When omitted the provider or autodetected model metadata applies. |
+| `custom_providers.profiles."<model-id>".supports_tools` | `boolean \| null` | no | `null` | Whether the model supports external tool calls. Explicit `false` is honored. |
+| `custom_providers.profiles."<model-id>".supports_reasoning` | `boolean \| null` | no | `null` | Whether the model supports structured reasoning guidance and longer reasoning passes. |
+| `custom_providers.profiles."<model-id>".supports_reasoning_effort` | `boolean \| null` | no | `null` | Whether the model supports reasoning-effort controls. Explicit `false` is honored. |
+| `custom_providers.profiles."<model-id>".supports_vision` | `boolean \| null` | no | `null` | Whether the model accepts image/vision inputs. |
+| `custom_providers.profiles."<model-id>".supports_structured_output` | `boolean \| null` | no | `null` | Whether the model supports structured output sections (e.g., JSON/ATIF) natively. |
+| `custom_providers.profiles."<model-id>".supports_parallel_tool_calls` | `boolean \| null` | no | `null` | Whether the model reliably supports parallel/async tool call batches. |
+| `custom_providers.profiles."<model-id>".supports_context_caching` | `boolean \| null` | no | `null` | Whether the model benefits from context caching between turns. |
+| `custom_providers.profiles."<model-id>".supports_responses_compaction` | `boolean \| null` | no | `null` | Whether the model supports native Responses-style server compaction. |
+| `custom_providers.profiles."<model-id>".supports_context_edits` | `boolean \| null` | no | `null` | Whether the model supports context edit operations (insert/replace) when the provider API exposes them. |
 | `custom_providers[].display_name` | `string` | yes | `-` | Human-friendly label shown in the TUI header, footer, and model picker (e.g., "MyCorporateName"). |
 | `custom_providers[].model` | `string` | no | `""` | Default model to use with this endpoint (e.g., "gpt-5-mini"). When [`models`](Self::models) is empty, this single model is what the `/model` picker offers for this provider. When [`models`](Self::models) is non-empty, this field is used as the default selection but the picker lists every entry in [`models`](Self::models). |
 | `custom_providers[].models` | `array` | no | `[]` | Optional list of additional model identifiers offered by the provider. Useful for OpenAI-compatible aggregators such as Atlas Cloud that expose many models behind a single endpoint. When set, the `/model` picker shows one entry per model. When empty, the picker falls back to the single [`model`](Self::model) field. |
