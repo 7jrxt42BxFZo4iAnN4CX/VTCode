@@ -38,6 +38,7 @@ const BUILTIN_PROVIDER_KEYS: &[&str] = &[
     "evolink",
     "poolside",
     "xai",
+    "nvidia",
 ];
 
 /// LLM provider factory and registry
@@ -335,6 +336,7 @@ mod tests {
                 "minimax",
                 "mistral",
                 "moonshot",
+                "nvidia",
                 "ollama",
                 "ollama-cloud",
                 "openai",
@@ -737,6 +739,15 @@ mod tests {
             .expect("mistral models should resolve through mistral provider");
 
         assert_eq!(provider.name(), "mistral");
+    }
+
+    #[test]
+    fn create_provider_for_nvidia_model_uses_nvidia_provider() {
+        let provider =
+            create_provider_for_model("nvidia/nemotron-3-ultra-550b-a55b", "test-key".to_string(), None, None)
+                .expect("NVIDIA model should resolve to NVIDIA provider");
+
+        assert_eq!(provider.name(), "nvidia");
     }
 
     #[test]

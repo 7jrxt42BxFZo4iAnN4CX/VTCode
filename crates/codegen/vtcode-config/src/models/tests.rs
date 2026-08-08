@@ -74,6 +74,8 @@ fn test_provider_parsing() {
     assert_eq!("openai".parse::<Provider>().unwrap(), Provider::OpenAI);
     assert_eq!("anthropic".parse::<Provider>().unwrap(), Provider::Anthropic);
     assert_eq!("deepseek".parse::<Provider>().unwrap(), Provider::DeepSeek);
+    assert_eq!("nvidia".parse::<Provider>().unwrap(), Provider::NVIDIA);
+    assert_eq!("nvidia-nim".parse::<Provider>().unwrap(), Provider::NVIDIA);
     assert_eq!("openrouter".parse::<Provider>().unwrap(), Provider::OpenRouter);
     assert_eq!("zai".parse::<Provider>().unwrap(), Provider::ZAI);
     assert_eq!("moonshot".parse::<Provider>().unwrap(), Provider::Moonshot);
@@ -91,6 +93,8 @@ fn test_model_providers() {
     assert_eq!(ModelId::ClaudeSonnet46.provider(), Provider::Anthropic);
     assert_eq!(ModelId::ClaudeHaiku45.provider(), Provider::Anthropic);
     assert_eq!(ModelId::DeepSeekV4Pro.provider(), Provider::DeepSeek);
+    assert_eq!(ModelId::NvidiaNemotron3Ultra550bA55b.provider(), Provider::NVIDIA);
+    assert_eq!(ModelId::NvidiaDeepseekV4Flash0731.provider(), Provider::NVIDIA);
     assert_eq!(ModelId::ZaiGlm51.provider(), Provider::ZAI);
     assert_eq!(ModelId::OpenCodeZenGPT54.provider(), Provider::OpenCodeZen);
     assert_eq!(ModelId::OpenCodeGoMinimaxM27.provider(), Provider::OpenCodeGo);
@@ -109,6 +113,7 @@ fn test_provider_defaults() {
     assert_eq!(ModelId::default_orchestrator_for_provider(Provider::OpenAI), ModelId::GPT54);
     assert_eq!(ModelId::default_orchestrator_for_provider(Provider::Anthropic), ModelId::ClaudeOpus48);
     assert_eq!(ModelId::default_orchestrator_for_provider(Provider::DeepSeek), ModelId::DeepSeekV4Pro);
+    assert_eq!(ModelId::default_orchestrator_for_provider(Provider::NVIDIA), ModelId::NvidiaNemotron3Ultra550bA55b);
     assert_eq!(
         ModelId::default_orchestrator_for_provider(Provider::OpenRouter),
         ModelId::OpenRouterXiaomiMimoV25Pro
@@ -230,6 +235,11 @@ fn test_models_for_provider() {
     assert!(deepseek_models.contains(&ModelId::DeepSeekV4Pro));
     assert!(deepseek_models.contains(&ModelId::DeepSeekV4Flash));
 
+    let nvidia_models = ModelId::models_for_provider(Provider::NVIDIA);
+    assert_eq!(nvidia_models.len(), 5);
+    assert!(nvidia_models.contains(&ModelId::NvidiaNemotron3Ultra550bA55b));
+    assert!(nvidia_models.contains(&ModelId::NvidiaZaiGlm52));
+
     let openrouter_models = ModelId::models_for_provider(Provider::OpenRouter);
     assert!(openrouter_models.contains(&ModelId::OpenRouterOpenAIGpt55));
     for entry in openrouter_generated::ENTRIES {
@@ -349,6 +359,15 @@ fn test_generated_model_capability_lookup() {
         model_catalog_entry("google", "gemini-3-flash-preview").expect("gemini-3-flash-preview metadata");
     assert_eq!(gemini_catalog.provider, "gemini");
     assert_eq!(gemini_catalog.context_window, 1_048_576);
+
+    let nvidia_catalog = model_catalog_entry("nvidia", models::nvidia::DEFAULT_MODEL).expect("NVIDIA metadata");
+    assert_eq!(nvidia_catalog.context_window, 1_000_000);
+    assert!(nvidia_catalog.reasoning);
+    assert!(nvidia_catalog.tool_call);
+    assert!(catalog_provider_keys().contains(&"nvidia"));
+    let ollama_cloud_catalog =
+        model_catalog_entry("ollama", models::ollama::DEEPSEEK_V4_FLASH_CLOUD).expect("Ollama Cloud metadata");
+    assert_eq!(ollama_cloud_catalog.context_window, 1_000_000);
 
     let openai_models = supported_models_for_provider("openai").expect("openai models");
     assert!(openai_models.contains(&models::GPT_5_4));
@@ -474,6 +493,9 @@ fn test_all_models_have_non_empty_metadata_and_parse() {
             // LlamaCpp/Ollama GPT-OSS-20B share the same model string as OpenAI's variant;
             // `gpt-oss-20b` resolves to OpenAIGptOss20b first.
             ModelId::LlamaCppGptOss20b | ModelId::OllamaGptOss20b => continue,
+            // GLM-5.2 is shared with OpenRouter; bare parsing preserves the
+            // existing OpenRouter precedence.
+            ModelId::NvidiaZaiGlm52 => continue,
             _ => ModelId::from_str(&model.as_str()),
         };
         assert_eq!(parsed.unwrap(), model);

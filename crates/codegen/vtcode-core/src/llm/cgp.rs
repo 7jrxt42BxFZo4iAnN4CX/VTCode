@@ -14,7 +14,7 @@ use super::provider::LLMProvider;
 use super::provider_config::{
     AnthropicProviderConfig, CopilotProviderConfig, DeepSeekProviderConfig, EvolinkProviderConfig,
     GeminiProviderConfig, HuggingFaceProviderConfig, LlamaCppProviderConfig, LmStudioProviderConfig,
-    MiMoProviderConfig, MinimaxProviderConfig, MistralProviderConfig, MoonshotProviderConfig,
+    MiMoProviderConfig, MinimaxProviderConfig, MistralProviderConfig, MoonshotProviderConfig, NvidiaProviderConfig,
     OllamaCloudProviderConfig, OllamaProviderConfig, OpenAIProviderConfig, OpenCodeGoProviderConfig,
     OpenCodeZenProviderConfig, OpenResponsesProviderConfig, OpenRouterProviderConfig, PoolsideProviderConfig,
     QwenProviderConfig, StepFunProviderConfig, XAIProviderConfig, ZAIProviderConfig,
@@ -22,7 +22,7 @@ use super::provider_config::{
 use super::providers::{
     AnthropicProvider, CopilotProvider, DeepSeekProvider, EvolinkProvider, GeminiProvider, HuggingFaceProvider,
     LlamaCppProvider, LmStudioProvider, MiMoProvider, MinimaxProvider, MistralProvider, MoonshotProvider,
-    OllamaProvider, OpenCodeGoProvider, OpenCodeZenProvider, OpenResponsesProvider, OpenRouterProvider,
+    NvidiaProvider, OllamaProvider, OpenCodeGoProvider, OpenCodeZenProvider, OpenResponsesProvider, OpenRouterProvider,
     PoolsideProvider, QwenProvider, StepFunProvider, XAIProvider, ZAIProvider,
 };
 use vtcode_commons::cgp::{ComponentProvider, HasComponent};
@@ -262,6 +262,7 @@ impl_standard_provider_constructor!(
     EvolinkProvider,
     PoolsideProvider,
     XAIProvider,
+    NvidiaProvider,
 );
 
 crate::delegate_components!(GeminiProviderConfig {
@@ -360,6 +361,10 @@ crate::delegate_components!(XAIProviderConfig {
     ProviderMetadataComponent => XAIProviderConfig,
     ProviderBuildComponent => StandardProviderBuild<XAIProvider>,
 });
+crate::delegate_components!(NvidiaProviderConfig {
+    ProviderMetadataComponent => NvidiaProviderConfig,
+    ProviderBuildComponent => StandardProviderBuild<NvidiaProvider>,
+});
 
 /// Register all built-in provider contexts into the runtime factory.
 pub fn register_builtin_cgp_providers(factory: &mut LLMFactory) {
@@ -387,6 +392,7 @@ pub fn register_builtin_cgp_providers(factory: &mut LLMFactory) {
     factory.register_cgp_provider::<EvolinkProviderConfig>();
     factory.register_cgp_provider::<PoolsideProviderConfig>();
     factory.register_cgp_provider::<XAIProviderConfig>();
+    factory.register_cgp_provider::<NvidiaProviderConfig>();
 }
 
 #[cfg(test)]
@@ -487,6 +493,7 @@ mod tests {
                 "minimax",
                 "mistral",
                 "moonshot",
+                "nvidia",
                 "ollama",
                 "ollama-cloud",
                 "openai",

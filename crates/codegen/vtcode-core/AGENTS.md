@@ -14,7 +14,7 @@
 - Trajectory logging is best effort: retain line/byte bounds and expose drops/failures through diagnostics.
 ## Workflows
 
-- Add tools under `tools/`, register/classify them, wire them into `core/agent/`; approved-plan task trackers deduplicate normalized step descriptions while preserving first-seen order, approval must fail closed if the tracker cannot be persisted, and plan artifacts must validate concrete targets and verification markers before writing. Add providers with `adding-llm-providers` and update model enumeration, presets, and the `llm/providers` facade.
+- Add tools under `tools/`, register/classify them, wire them into `core/agent/`; approved-plan task trackers deduplicate normalized step descriptions while preserving first-seen order, approval must fail closed if the tracker cannot be persisted, and plan artifacts must validate concrete targets and verification markers before writing. Add providers with `adding-llm-providers` and update model enumeration, presets, and the `llm/providers` facade. NVIDIA-style first-class providers also need startup defaults, the secret enum, lightweight routing, and generated docs metadata.
 
 ## Gotchas
 

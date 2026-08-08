@@ -10,9 +10,10 @@ pub use vtcode_llm::providers::reasoning::{
 pub use vtcode_llm::providers::{
     AnthropicProvider, CopilotProvider, DeepSeekProvider, EvolinkProvider, GeminiProvider, HuggingFaceProvider,
     LlamaCppProvider, LmStudioProvider, MiMoProvider, MinimaxProvider, MistralProvider, MoonshotProvider,
-    OllamaProvider, OpenAIProvider, OpenCodeGoProvider, OpenCodeZenProvider, OpenResponsesProvider, OpenRouterProvider,
-    PoolsideProvider, QwenProvider, StepFunProvider, StreamingProgressBuilder, StreamingProgressCallback,
-    StreamingProgressTracker, TagStreamSanitizer, XAIProvider, ZAIProvider, clean_reasoning_text, reasoning,
+    NvidiaProvider, OllamaProvider, OpenAIProvider, OpenCodeGoProvider, OpenCodeZenProvider, OpenResponsesProvider,
+    OpenRouterProvider, PoolsideProvider, QwenProvider, StepFunProvider, StreamingProgressBuilder,
+    StreamingProgressCallback, StreamingProgressTracker, TagStreamSanitizer, XAIProvider, ZAIProvider,
+    clean_reasoning_text, reasoning,
 };
 
 // Re-export commonly used constants from vtcode-commons::tool_types
@@ -38,6 +39,7 @@ pub use vtcode_llm::providers::mimo;
 pub use vtcode_llm::providers::minimax;
 pub use vtcode_llm::providers::mistral;
 pub use vtcode_llm::providers::moonshot;
+pub use vtcode_llm::providers::nvidia;
 pub use vtcode_llm::providers::ollama;
 pub use vtcode_llm::providers::opencode_go;
 pub use vtcode_llm::providers::opencode_zen;

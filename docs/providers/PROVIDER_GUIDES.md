@@ -85,6 +85,17 @@ See the [Configuration guide](../config/config.md#custom_providers) for full det
 -   Key management and defaults mirror the Gemini/OpenAI flow in [Getting Started](../user-guide/getting-started.md#api-requirements).
 -   Supported model IDs live in [`crates/codegen/vtcode-core/src/config/constants.rs`](../../crates/codegen/vtcode-core/src/config/constants.rs).
 
+## NVIDIA NIM
+
+-   **Guide:** [NVIDIA NIM Integration](./nvidia.md)
+-   **Official docs:** [NVIDIA API catalog](https://build.nvidia.com/llms.txt) · [NIM API reference](https://docs.nvidia.com/nim/large-language-models/latest/api-reference.html)
+-   **Provider key:** `nvidia`
+-   **Authentication:** `NVIDIA_API_KEY` (Bearer token)
+-   **Base URL:** `https://integrate.api.nvidia.com/v1`, override with `NVIDIA_BASE_URL`
+-   **Default model:** `nvidia/nemotron-3-ultra-550b-a55b`
+-   **Curated picker models:** Nemotron 3 Ultra, Nemotron 3 Super, Nemotron 3 Nano, GLM-5.2, and DeepSeek V4 Flash
+-   **Features:** Streaming, tool calls, structured output, 1M-token context, and NVIDIA reasoning-content extraction
+
 ## GitHub Copilot
 
 -   **Guide:** [GitHub Copilot Managed Auth](./copilot.md)

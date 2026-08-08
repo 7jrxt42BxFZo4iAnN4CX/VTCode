@@ -323,6 +323,7 @@ impl ModelsManager {
             Provider::Evolink => crate::config::constants::models::evolink::DEFAULT_MODEL.to_string(),
             Provider::Poolside => crate::config::constants::models::poolside::DEFAULT_MODEL.to_string(),
             Provider::XAI => crate::config::constants::models::xai::DEFAULT_MODEL.to_string(),
+            Provider::NVIDIA => crate::config::constants::models::nvidia::DEFAULT_MODEL.to_string(),
         }
     }
 

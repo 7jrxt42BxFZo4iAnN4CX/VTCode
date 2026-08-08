@@ -271,6 +271,16 @@ define_provider_config!(
     Some(crate::config::constants::env_vars::POOLSIDE_BASE_URL),
     ()
 );
+define_provider_config!(
+    /// Provider configuration for NVIDIA NIM.
+    NvidiaProviderConfig,
+    "nvidia",
+    "NVIDIA",
+    crate::config::constants::models::nvidia::DEFAULT_MODEL,
+    crate::config::constants::urls::NVIDIA_API_BASE,
+    Some(crate::config::constants::env_vars::NVIDIA_BASE_URL),
+    ()
+);
 
 /// Macro kept for source compatibility with older builder-based call sites.
 #[macro_export]

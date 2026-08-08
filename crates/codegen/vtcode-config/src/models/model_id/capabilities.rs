@@ -66,6 +66,8 @@ fn catalog_provider_key(provider: &str) -> &str {
         "poolside"
     } else if provider.eq_ignore_ascii_case("xai") {
         "xai"
+    } else if provider.eq_ignore_ascii_case("nvidia") {
+        "nvidia"
     } else {
         provider
     }
@@ -96,6 +98,7 @@ fn capability_provider_key(provider: Provider) -> &'static str {
         Provider::Evolink => "evolink",
         Provider::Poolside => "poolside",
         Provider::XAI => "xai",
+        Provider::NVIDIA => "nvidia",
     }
 }
 
@@ -156,6 +159,8 @@ impl ModelId {
             ModelId::CopilotGPT54 => Some(ModelId::CopilotGPT54Mini),
             ModelId::CopilotGPT52Codex | ModelId::CopilotGPT51CodexMax => Some(ModelId::CopilotGPT54Mini),
             ModelId::DeepSeekV4Pro => Some(ModelId::DeepSeekV4Flash),
+            ModelId::NvidiaNemotron3Ultra550bA55b => Some(ModelId::NvidiaNemotron3Super120bA12b),
+            ModelId::NvidiaNemotron3Super120bA12b => Some(ModelId::NvidiaNemotron3Nano30bA3b),
             ModelId::OpenCodeGoDeepseekV4Pro => Some(ModelId::OpenCodeGoDeepseekV4Flash),
             ModelId::OpenCodeGoGlm52 => Some(ModelId::OpenCodeGoGlm51),
             ModelId::OpenCodeGoMinimaxM3 => Some(ModelId::OpenCodeGoMinimaxM27),
@@ -229,6 +234,8 @@ impl ModelId {
             ModelId::OpenCodeZenGPT54 => Some(ModelId::OpenCodeZenGPT54Mini),
             ModelId::CopilotGPT52Codex | ModelId::CopilotGPT54 => Some(ModelId::CopilotGPT54Mini),
             ModelId::DeepSeekV4Pro => Some(ModelId::DeepSeekV4Flash),
+            ModelId::NvidiaNemotron3Ultra550bA55b => Some(ModelId::NvidiaNemotron3Nano30bA3b),
+            ModelId::NvidiaNemotron3Super120bA12b => Some(ModelId::NvidiaNemotron3Nano30bA3b),
             ModelId::EvolinkDeepseekV4Pro => Some(ModelId::EvolinkDeepseekV4Flash),
             ModelId::HuggingFaceDeepseekV4ProTogether => Some(ModelId::HuggingFaceDeepseekV4FlashNovita),
             ModelId::HuggingFaceDeepseekV4ProNovita => Some(ModelId::HuggingFaceDeepseekV4FlashNovita),

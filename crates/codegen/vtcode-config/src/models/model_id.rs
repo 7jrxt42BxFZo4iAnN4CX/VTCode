@@ -91,6 +91,18 @@ pub enum ModelId {
     /// DeepSeek V4 Flash - Fast inference model for cost-effective reasoning
     DeepSeekV4Flash,
 
+    // NVIDIA NIM models
+    /// NVIDIA Nemotron 3 Ultra - NVIDIA's flagship agentic reasoning model via NIM
+    NvidiaNemotron3Ultra550bA55b,
+    /// NVIDIA Nemotron 3 Super - Efficient long-context agentic reasoning model via NIM
+    NvidiaNemotron3Super120bA12b,
+    /// NVIDIA Nemotron 3 Nano - Efficient reasoning and tool-use model via NIM
+    NvidiaNemotron3Nano30bA3b,
+    /// Z.AI GLM-5.2 served through NVIDIA NIM
+    NvidiaZaiGlm52,
+    /// DeepSeek V4 Flash served through NVIDIA NIM
+    NvidiaDeepseekV4Flash0731,
+
     // Mistral AI models
     /// Mistral Large 3 - State-of-the-art open-weight general-purpose multimodal model
     MistralLarge3,

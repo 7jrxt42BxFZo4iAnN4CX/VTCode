@@ -305,6 +305,42 @@ model_id_table! {
         display: "DeepSeek V4 Flash",
         description: "Official release with significantly enhanced agent capabilities for coding and tool use (Terminal Bench 2.1: 82.7, DeepSWE: 54.4)",
     },
+    // NVIDIA NIM models
+    NvidiaNemotron3Ultra550bA55b {
+        provider: NVIDIA,
+        id: models::nvidia::NEMOTRON_3_ULTRA_550B_A55B,
+        parse: [models::nvidia::NEMOTRON_3_ULTRA_550B_A55B],
+        display: "Nemotron 3 Ultra (NVIDIA)",
+        description: "NVIDIA's flagship Nemotron 3 Ultra model for long-context agentic reasoning, coding, planning, and tool use via NVIDIA NIM",
+    },
+    NvidiaNemotron3Super120bA12b {
+        provider: NVIDIA,
+        id: models::nvidia::NEMOTRON_3_SUPER_120B_A12B,
+        parse: [models::nvidia::NEMOTRON_3_SUPER_120B_A12B],
+        display: "Nemotron 3 Super (NVIDIA)",
+        description: "Efficient NVIDIA Nemotron 3 Super model for long-context reasoning, agentic workflows, and tool use via NVIDIA NIM",
+    },
+    NvidiaNemotron3Nano30bA3b {
+        provider: NVIDIA,
+        id: models::nvidia::NEMOTRON_3_NANO_30B_A3B,
+        parse: [models::nvidia::NEMOTRON_3_NANO_30B_A3B],
+        display: "Nemotron 3 Nano (NVIDIA)",
+        description: "Efficient NVIDIA Nemotron 3 Nano model for coding, reasoning, instruction following, and tool use via NVIDIA NIM",
+    },
+    NvidiaZaiGlm52 {
+        provider: NVIDIA,
+        id: models::nvidia::Z_AI_GLM_5_2,
+        parse: [],
+        display: "GLM-5.2 (NVIDIA)",
+        description: "Z.AI GLM-5.2 served through NVIDIA NIM for long-horizon reasoning and coding",
+    },
+    NvidiaDeepseekV4Flash0731 {
+        provider: NVIDIA,
+        id: models::nvidia::DEEPSEEK_V4_FLASH_0731,
+        parse: [models::nvidia::DEEPSEEK_V4_FLASH_0731],
+        display: "DeepSeek V4 Flash (NVIDIA)",
+        description: "DeepSeek V4 Flash served through NVIDIA NIM for fast reasoning and agentic coding",
+    },
     // Mistral models
     MistralLarge3 {
         provider: Mistral,
@@ -904,6 +940,10 @@ mod tests {
             model.provider(),
             Provider::OpenCodeZen | Provider::OpenCodeGo | Provider::Qwen
         )
+        // GLM-5.2 is also a curated OpenRouter model, and bare parsing keeps
+        // the existing OpenRouter precedence. Select the NVIDIA variant via
+        // the picker or an explicit provider.
+        || *model == ModelId::NvidiaZaiGlm52
         // "gpt-oss-20b" is shared with OpenAI and parses to OpenAIGptOss20b
         // (legacy behavior preserved by table row order).
         || *model == ModelId::LlamaCppGptOss20b

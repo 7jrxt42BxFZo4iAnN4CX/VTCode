@@ -50,6 +50,12 @@ impl ModelId {
             // DeepSeek models
             ModelId::DeepSeekV4Pro,
             ModelId::DeepSeekV4Flash,
+            // NVIDIA NIM models
+            ModelId::NvidiaNemotron3Ultra550bA55b,
+            ModelId::NvidiaNemotron3Super120bA12b,
+            ModelId::NvidiaNemotron3Nano30bA3b,
+            ModelId::NvidiaZaiGlm52,
+            ModelId::NvidiaDeepseekV4Flash0731,
             // Mistral models
             ModelId::MistralLarge3,
             // Z.AI models

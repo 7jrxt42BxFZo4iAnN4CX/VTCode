@@ -10,9 +10,15 @@ Adding a model requires updates in **three layers**:
 2. **Configuration Layer** - Model palette configuration
 3. **Core Layer** - Runtime model resolution & capabilities
 
+For a new first-class provider, extend this workflow with provider enum,
+configuration, factory registration, resolver, startup defaults, picker
+presets, and a provider guide. NVIDIA is an OpenAI-compatible provider, but
+its curated constants are intentionally separate from the OpenAI constants;
+explicit NVIDIA model IDs remain valid even when they are not in the picker.
+
 ## Quick Checklist
 
-- [ ] Add to OpenAI constants (`crates/codegen/vtcode-config/src/constants/models/openai.rs`)
+- [ ] Add to the provider constants module (for example, NVIDIA uses `constants/models/nvidia.rs`)
 - [ ] Add to model metadata (`docs/models.json`)
 - [ ] Add enum variant (`crates/codegen/vtcode-config/src/models/model_id.rs`)
 - [ ] Update `as_str.rs` - string mapping
@@ -26,12 +32,12 @@ Adding a model requires updates in **three layers**:
 
 ## Detailed Steps
 
-### Step 1: Add to Constants (openai.rs)
+### Step 1: Add to Provider Constants
 
-**File:** `crates/codegen/vtcode-config/src/constants/models/openai.rs`
+**File:** `crates/codegen/vtcode-config/src/constants/models/<provider>.rs`
 
 ```rust
-// In SUPPORTED_MODELS array
+// In the provider's SUPPORTED_MODELS array
 pub const SUPPORTED_MODELS: &[&str] = &[
     // ... existing models
     "gpt-5.4-nano",    // Add here in order

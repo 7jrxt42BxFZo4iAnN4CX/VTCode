@@ -8,6 +8,7 @@ pub(crate) const MIMO_TOKEN_PLAN_API_BASE: &str = "https://token-plan-ams.xiaomi
 pub const MINIMAX_API_BASE: &str = "https://api.minimax.io/anthropic";
 pub const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
 pub const XAI_API_BASE: &str = "https://api.x.ai/v1";
+pub const NVIDIA_API_BASE: &str = "https://integrate.api.nvidia.com/v1";
 pub const DEEPSEEK_API_BASE: &str = "https://api.deepseek.com/v1";
 pub const MISTRAL_API_BASE: &str = "https://api.mistral.ai/v1";
 pub const Z_AI_API_BASE: &str = "https://api.z.ai/api/paas/v4";

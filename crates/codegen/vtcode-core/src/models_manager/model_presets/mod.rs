@@ -191,6 +191,9 @@ pub fn builtin_model_presets() -> Vec<ModelPreset> {
     // xAI presets
     presets.extend(presets::xai_presets());
 
+    // NVIDIA NIM presets
+    presets.extend(presets::nvidia_presets());
+
     // Evolink presets
     presets.extend(presets::evolink_presets());
 
@@ -223,6 +226,7 @@ pub fn presets_for_provider(provider: Provider) -> Vec<ModelPreset> {
         Provider::Evolink => presets::evolink_presets(),
         Provider::Poolside => presets::poolside_presets(),
         Provider::XAI => presets::xai_presets(),
+        Provider::NVIDIA => presets::nvidia_presets(),
     }
 }
 
@@ -298,5 +302,19 @@ mod tests {
             .expect("moonshot default preset");
         assert_eq!(default.id, "kimi-k3");
         assert_eq!(default.provider, Provider::Moonshot);
+    }
+
+    #[test]
+    fn nvidia_presets_expose_curated_models_and_default() {
+        let presets = presets::nvidia_presets();
+        assert_eq!(presets.len(), 5);
+        let default = presets.iter().find(|preset| preset.is_default).expect("NVIDIA default preset");
+        assert_eq!(default.model, "nvidia/nemotron-3-ultra-550b-a55b");
+        assert_eq!(default.context_window, Some(1_000_000));
+        assert!(
+            presets
+                .iter()
+                .all(|preset| preset.provider == Provider::NVIDIA && preset.show_in_picker)
+        );
     }
 }

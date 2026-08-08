@@ -37,7 +37,7 @@ pub(crate) fn ollama_presets() -> Vec<ModelPreset> {
             upgrade: None,
             show_in_picker: true,
             supported_in_api: true,
-            context_window: Some(128_000),
+            context_window: Some(1_000_000),
         },
         ModelPreset {
             id: "ollama/deepseek-v4-pro:cloud".to_string(),

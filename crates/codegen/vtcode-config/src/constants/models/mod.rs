@@ -10,6 +10,7 @@ pub mod mimo;
 pub mod minimax;
 pub mod mistral;
 pub mod moonshot;
+pub mod nvidia;
 pub mod ollama;
 pub mod openai;
 pub mod opencode_go;

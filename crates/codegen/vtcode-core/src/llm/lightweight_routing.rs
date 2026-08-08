@@ -352,6 +352,7 @@ fn known_provider_from_name(provider_name: &str) -> Option<Provider> {
         "huggingface" => Some(Provider::HuggingFace),
         "stepfun" => Some(Provider::StepFun),
         "evolink" => Some(Provider::Evolink),
+        "nvidia" | "nvidia-nim" => Some(Provider::NVIDIA),
         _ => None,
     }
 }
@@ -429,6 +430,7 @@ fn preferred_lightweight_model_slug(provider: Provider, active_model: &str) -> O
         }
         Provider::StepFun => Some(trimmed_model.to_string()),
         Provider::Evolink => Some(trimmed_model.to_string()),
+        Provider::NVIDIA => Some(trimmed_model.to_string()),
         _ => None,
     }
 }
@@ -444,6 +446,7 @@ fn provider_default_lightweight_model(provider: Provider) -> Option<std::borrow:
         Provider::Minimax => Some(ModelId::MinimaxM3.as_str()),
         Provider::StepFun => Some(ModelId::StepFun37Flash.as_str()),
         Provider::Evolink => Some(ModelId::EvolinkGpt52.as_str()),
+        Provider::NVIDIA => Some(ModelId::NvidiaNemotron3Nano30bA3b.as_str()),
         _ => None,
     }
 }

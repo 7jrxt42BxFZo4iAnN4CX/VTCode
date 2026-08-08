@@ -484,6 +484,15 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Supported Providers, Running Ollama, Running LM Studio, Running llama.cpp, Command Reference
   - **User Questions**: "What can you tell me about Local Inference Servers?", "How does Supported Providers work?", "How does Running Ollama work?"
 
+- **File**: `docs/providers/nvidia.md`
+  - **Content**: NVIDIA NIM Provider Guide
+  - **Topics**: Setup, Curated models, Reasoning and tools, References
+  - **User Questions**: "What can you tell me about NVIDIA NIM Provider Guide?", "How does Setup work?", "How does Curated models work?"
+
+- **File**: `docs/providers/nvidia-quick-reference.md`
+  - **Content**: NVIDIA NIM Quick Reference
+  - **User Questions**: "What can you tell me about NVIDIA NIM Quick Reference?"
+
 - **File**: `docs/providers/OLLAMA_INDEX.md`
   - **Content**: Ollama Integration Documentation Index
   - **Topics**: Quick Links, Modules Overview, Data Flow, Integration Roadmap, Common Patterns

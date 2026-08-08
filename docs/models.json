@@ -3184,6 +3184,123 @@
     },
     "default_model": "xiaomi/mimo-v2.5-pro"
   },
+  "nvidia": {
+    "id": "nvidia",
+    "env": [
+      "NVIDIA_API_KEY"
+    ],
+    "api": "https://integrate.api.nvidia.com/v1",
+    "name": "NVIDIA NIM",
+    "doc": "https://build.nvidia.com/llms.txt",
+    "default_model": "nvidia/nemotron-3-ultra-550b-a55b",
+    "models": {
+      "nvidia/nemotron-3-ultra-550b-a55b": {
+        "id": "nvidia/nemotron-3-ultra-550b-a55b",
+        "name": "Nemotron 3 Ultra (NVIDIA)",
+        "description": "NVIDIA's flagship Nemotron 3 Ultra model for long-context agentic reasoning, coding, planning, and tool use.",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 1000000,
+        "capabilities": {
+          "streaming": true,
+          "function_calling": true,
+          "structured_output": true
+        }
+      },
+      "nvidia/nemotron-3-super-120b-a12b": {
+        "id": "nvidia/nemotron-3-super-120b-a12b",
+        "name": "Nemotron 3 Super (NVIDIA)",
+        "description": "Efficient NVIDIA Nemotron 3 Super model for long-context reasoning, agentic workflows, and tool use.",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 1000000,
+        "capabilities": {
+          "streaming": true,
+          "function_calling": true,
+          "structured_output": true
+        }
+      },
+      "nvidia/nemotron-3-nano-30b-a3b": {
+        "id": "nvidia/nemotron-3-nano-30b-a3b",
+        "name": "Nemotron 3 Nano (NVIDIA)",
+        "description": "Efficient NVIDIA Nemotron 3 Nano model for coding, reasoning, instruction following, and tool use.",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 1000000,
+        "capabilities": {
+          "streaming": true,
+          "function_calling": true,
+          "structured_output": true
+        }
+      },
+      "z-ai/glm-5.2": {
+        "id": "z-ai/glm-5.2",
+        "name": "GLM-5.2 (NVIDIA)",
+        "description": "Z.AI GLM-5.2 served through NVIDIA NIM for long-horizon reasoning and coding.",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 1000000,
+        "capabilities": {
+          "streaming": true,
+          "function_calling": true,
+          "structured_output": true
+        }
+      },
+      "deepseek-ai/deepseek-v4-flash-0731": {
+        "id": "deepseek-ai/deepseek-v4-flash-0731",
+        "name": "DeepSeek V4 Flash 0731 (NVIDIA)",
+        "description": "DeepSeek V4 Flash served through NVIDIA NIM for fast reasoning and agentic coding.",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 1000000,
+        "capabilities": {
+          "streaming": true,
+          "function_calling": true,
+          "structured_output": true
+        }
+      }
+    }
+  },
   "ollama": {
     "id": "ollama",
     "env": [
@@ -3287,7 +3404,7 @@
       "deepseek-v4-flash:cloud": {
         "id": "deepseek-v4-flash:cloud",
         "name": "DeepSeek V4 Flash (cloud)",
-        "description": "Fast inference DeepSeek V4 Flash model via Ollama Cloud",
+        "description": "Fast inference DeepSeek V4 Flash model via Ollama Cloud with a 1M-token context window",
         "reasoning": true,
         "tool_call": true,
         "modalities": {
@@ -3298,7 +3415,7 @@
             "text"
           ]
         },
-        "context": 131072
+        "context": 1000000
       },
       "deepseek-v4-pro:cloud": {
         "id": "deepseek-v4-pro:cloud",

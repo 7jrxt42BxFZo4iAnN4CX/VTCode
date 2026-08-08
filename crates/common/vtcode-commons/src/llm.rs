@@ -24,6 +24,7 @@ pub enum BackendKind {
     Evolink,
     Poolside,
     Xai,
+    Nvidia,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

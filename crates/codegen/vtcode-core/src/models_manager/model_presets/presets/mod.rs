@@ -50,6 +50,8 @@ mod stepfun;
 pub(crate) use stepfun::stepfun_presets;
 mod xai;
 pub(crate) use xai::xai_presets;
+mod nvidia;
+pub(crate) use nvidia::nvidia_presets;
 mod evolink;
 pub(crate) use evolink::evolink_presets;
 mod moonshot;

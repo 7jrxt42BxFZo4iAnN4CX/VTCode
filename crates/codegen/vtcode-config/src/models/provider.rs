@@ -65,6 +65,7 @@ impl ProviderModelSupport for Provider {
             Provider::Evolink => models::evolink::REASONING_MODELS.contains(&model),
             Provider::Poolside => false,
             Provider::XAI => models::xai::REASONING_MODELS.contains(&model),
+            Provider::NVIDIA => models::nvidia::REASONING_MODELS.contains(&model),
         }
     }
 

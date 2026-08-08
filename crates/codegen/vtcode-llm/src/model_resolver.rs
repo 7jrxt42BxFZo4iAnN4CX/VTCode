@@ -429,6 +429,7 @@ fn provider_precedence(provider: Provider) -> usize {
         Provider::Evolink => 20,
         Provider::Poolside => 21,
         Provider::XAI => 22,
+        Provider::NVIDIA => 23,
     }
 }
 
@@ -492,12 +493,13 @@ pub fn heuristic_provider_from_model(model: &str) -> Option<Provider> {
         Some(Provider::OpenCodeGo)
     } else if model.starts_with("poolside/") {
         Some(Provider::Poolside)
+    } else if model.starts_with("nvidia/") {
+        Some(Provider::NVIDIA)
     } else if model.starts_with("deepseek-ai/")
         || model.starts_with("openai/gpt-oss-")
         || model.starts_with("zai-org/")
         || model.starts_with("moonshotai/")
         || model.starts_with("minimaxai/")
-        || model.starts_with("nvidia/")
     {
         Some(Provider::HuggingFace)
     } else if model.starts_with("mixtral-")
@@ -541,6 +543,14 @@ mod tests {
         assert_eq!(go.provider, Provider::OpenCodeGo);
         assert!(go.known_model());
         assert_eq!(go.display_name(), "GLM-5.1 (OpenCode Go)");
+    }
+
+    #[test]
+    fn resolver_routes_nvidia_namespace_to_nvidia_provider() {
+        let resolved = ModelResolver::resolve(None, "nvidia/nemotron-3-ultra-550b-a55b", &[], None).expect("model");
+
+        assert_eq!(resolved.provider, Provider::NVIDIA);
+        assert!(resolved.known_model());
     }
 
     #[test]

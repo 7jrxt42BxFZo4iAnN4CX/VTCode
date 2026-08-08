@@ -18,7 +18,7 @@ Adding a new LLM model to VT Code requires updates across **three architectural 
 │  - Capability flags                          │
 ├─────────────────────────────────────────────┤
 │ Constants Layer (Database)                   │
-│  - String constants (openai.rs)              │
+│  - String constants (provider model module)   │
 │  - Metadata (docs/models.json)               │
 └─────────────────────────────────────────────┘
 ```
@@ -29,7 +29,7 @@ Each layer must be independently coherent AND logically connected. This is why a
 
 ### Layer 1: Constants (2 files)
 
-1. **openai.rs** - Add to `SUPPORTED_MODELS` array + define convenience constant
+1. **Provider constants module** - Add to the provider's `SUPPORTED_MODELS` array + define convenience constants
 2. **models.json** - Complete metadata entry (context, capabilities, modalities)
 
 ### Layer 2: Configuration (8 files)

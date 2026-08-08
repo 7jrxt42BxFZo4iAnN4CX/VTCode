@@ -22,6 +22,7 @@ pub fn supported_for(provider: &str) -> Option<&'static [&'static str]> {
         "evolink" => Some(models::evolink::SUPPORTED_MODELS),
         "poolside" => Some(models::poolside::SUPPORTED_MODELS),
         "xai" => Some(models::xai::SUPPORTED_MODELS),
+        "nvidia" => Some(models::nvidia::SUPPORTED_MODELS),
         _ => None,
     }
 }
@@ -48,6 +49,7 @@ pub fn default_for(provider: &str) -> Option<&'static str> {
         "evolink" => Some(models::evolink::DEFAULT_MODEL),
         "poolside" => Some(models::poolside::DEFAULT_MODEL),
         "xai" => Some(models::xai::DEFAULT_MODEL),
+        "nvidia" => Some(models::nvidia::DEFAULT_MODEL),
         _ => None,
     }
 }

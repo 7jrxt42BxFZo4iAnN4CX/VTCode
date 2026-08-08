@@ -67,6 +67,8 @@ pub enum Provider {
     Poolside,
     /// xAI Grok models
     XAI,
+    /// NVIDIA NIM OpenAI-compatible models
+    NVIDIA,
 }
 
 impl Provider {
@@ -96,6 +98,7 @@ impl Provider {
             Provider::Evolink => "EVOLINK_API_KEY",
             Provider::Poolside => "POOLSIDE_API_KEY",
             Provider::XAI => "XAI_API_KEY",
+            Provider::NVIDIA => "NVIDIA_API_KEY",
         }
     }
 
@@ -125,6 +128,7 @@ impl Provider {
             Provider::Evolink,
             Provider::Poolside,
             Provider::XAI,
+            Provider::NVIDIA,
         ]
     }
 
@@ -154,6 +158,7 @@ impl Provider {
             Provider::Evolink => "Evolink",
             Provider::Poolside => "Poolside",
             Provider::XAI => "xAI",
+            Provider::NVIDIA => "NVIDIA",
         }
     }
 
@@ -209,6 +214,7 @@ impl Provider {
             Provider::Evolink => Some("https://evolink.ai/dashboard/keys"),
             Provider::Poolside => Some("https://poolside.ai"),
             Provider::XAI => Some("https://docs.x.ai"),
+            Provider::NVIDIA => Some("https://build.nvidia.com"),
         }
     }
 }
@@ -239,6 +245,7 @@ impl fmt::Display for Provider {
             Provider::Evolink => write!(f, "evolink"),
             Provider::Poolside => write!(f, "poolside"),
             Provider::XAI => write!(f, "xai"),
+            Provider::NVIDIA => write!(f, "nvidia"),
         }
     }
 }
@@ -269,6 +276,7 @@ impl AsRef<str> for Provider {
             Provider::Evolink => "evolink",
             Provider::Poolside => "poolside",
             Provider::XAI => "xai",
+            Provider::NVIDIA => "nvidia",
         }
     }
 }
@@ -301,6 +309,7 @@ impl FromStr for Provider {
             "evolink" => Ok(Provider::Evolink),
             "poolside" => Ok(Provider::Poolside),
             "xai" => Ok(Provider::XAI),
+            "nvidia" | "nvidia-nim" => Ok(Provider::NVIDIA),
             _ => Err(ProviderParseError::InvalidProvider(s.to_string())),
         }
     }

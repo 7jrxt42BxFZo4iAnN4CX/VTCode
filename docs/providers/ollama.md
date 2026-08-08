@@ -72,6 +72,7 @@ The `/model` picker now lists the core Ollama catalog so you can choose them wit
 
 - `gpt-oss:20b` (local)
 - `gpt-oss:120b-cloud`
+- `deepseek-v4-flash:cloud` (1M-token context)
 - `deepseek-v3.1:671b-cloud`
 - `kimi-k3:cloud`
 - `kimi-k2.6:cloud`

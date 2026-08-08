@@ -49,6 +49,8 @@ pub enum SecretProvider {
     LMStudio,
     #[value(name = "copilot")]
     Copilot,
+    #[value(name = "nvidia")]
+    Nvidia,
 }
 
 impl SecretProvider {
@@ -75,6 +77,7 @@ impl SecretProvider {
             SecretProvider::OllamaCloud => "ollama-cloud",
             SecretProvider::LMStudio => "lmstudio",
             SecretProvider::Copilot => "copilot",
+            SecretProvider::Nvidia => "nvidia",
         }
     }
 }

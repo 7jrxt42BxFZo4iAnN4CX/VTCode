@@ -150,6 +150,7 @@ pub trait LLMProvider: Send + Sync {
             "stepfun" => BackendKind::StepFun,
             "evolink" => BackendKind::Evolink,
             "poolside" => BackendKind::Poolside,
+            "nvidia" => BackendKind::Nvidia,
             _ => BackendKind::OpenAI,
         }
     }

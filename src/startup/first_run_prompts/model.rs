@@ -55,6 +55,7 @@ pub(crate) fn default_model_for_provider(provider: Provider) -> &'static str {
         Provider::OpenCodeZen => models::opencode_zen::DEFAULT_MODEL,
         Provider::OpenCodeGo => models::opencode_go::DEFAULT_MODEL,
         Provider::XAI => models::xai::DEFAULT_MODEL,
+        Provider::NVIDIA => models::nvidia::DEFAULT_MODEL,
     }
 }
 
