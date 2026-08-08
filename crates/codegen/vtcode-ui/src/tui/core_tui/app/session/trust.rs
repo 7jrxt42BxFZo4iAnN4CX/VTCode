@@ -1,20 +1,17 @@
 use crate::tui::core_tui::app::types::TrustMode;
 use hashbrown::{HashMap, HashSet};
 
-#[expect(dead_code)]
 #[derive(Debug, Clone)]
 pub struct TrustSetting {
     mode: TrustMode,
     updated_at: String,
 }
 
-#[expect(dead_code)]
 pub struct TrustManager {
     settings: HashMap<String, TrustSetting>,
     session_cache: HashSet<String>,
 }
 
-#[expect(dead_code)]
 impl TrustManager {
     fn new() -> Self {
         Self {

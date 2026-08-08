@@ -174,7 +174,6 @@ impl AppearanceConfig {
     }
 
     /// Check if footer should be shown based on ui_mode
-    #[expect(dead_code)]
     pub fn should_show_footer(&self) -> bool {
         match self.ui_mode {
             UiMode::Full => true,
@@ -298,13 +297,11 @@ impl Default for CustomizationConfig {
 
 impl SessionConfig {
     /// Creates a new default configuration
-    #[expect(dead_code)]
     fn new() -> Self {
         Self::default()
     }
 
     /// Loads configuration from a file
-    #[expect(dead_code)]
     pub fn load_from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let content = read_file_with_context_sync(Path::new(path), "session config file")
             .map_err(|err| -> Box<dyn std::error::Error> { Box::new(std::io::Error::other(err)) })?;
@@ -313,7 +310,6 @@ impl SessionConfig {
     }
 
     /// Saves configuration to a file
-    #[expect(dead_code)]
     pub fn save_to_file(&self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
         let content = toml::to_string_pretty(self)?;
         write_file_with_context_sync(Path::new(path), &content, "session config file")
@@ -322,7 +318,6 @@ impl SessionConfig {
     }
 
     /// Updates a specific configuration value by key
-    #[expect(dead_code)]
     fn set_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         // This is a simplified version - in a real implementation, we'd have more sophisticated
         // parsing and validation for different configuration types
@@ -341,7 +336,6 @@ impl SessionConfig {
     }
 
     /// Gets a configuration value by key
-    #[expect(dead_code)]
     fn get_value(&self, key: &str) -> Option<String> {
         match key {
             "behavior.max_input_lines" => Some(self.behavior.max_input_lines.to_string()),
@@ -351,7 +345,6 @@ impl SessionConfig {
     }
 
     /// Validates the configuration to ensure all values are within acceptable ranges
-    #[expect(dead_code)]
     fn validate(&self) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
 

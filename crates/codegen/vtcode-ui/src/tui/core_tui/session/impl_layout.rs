@@ -36,7 +36,6 @@ impl Session {
         }
     }
 
-    #[expect(dead_code)]
     pub(crate) fn force_view_rows(&mut self, rows: u16) {
         self.apply_view_rows(rows);
     }

@@ -452,7 +452,6 @@ pub(crate) fn modal_render_styles(session: &Session) -> ModalRenderStyles {
     }
 }
 
-#[expect(dead_code)]
 fn handle_tool_code_fence_marker(session: &mut Session, text: &str) -> bool {
     let trimmed = text.trim();
     let stripped = trimmed.strip_prefix("```").or_else(|| trimmed.strip_prefix("~~~"));
@@ -475,7 +474,6 @@ fn handle_tool_code_fence_marker(session: &mut Session, text: &str) -> bool {
     true
 }
 
-#[expect(dead_code)]
 fn remove_trailing_empty_tool_line(session: &mut Session) {
     let should_remove = session
         .lines

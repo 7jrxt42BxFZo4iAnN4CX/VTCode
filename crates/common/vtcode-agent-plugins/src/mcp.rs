@@ -69,11 +69,23 @@ impl McpConfig {
                             Ok(server) => {
                                 config.servers.insert(name.clone(), server);
                             }
-                            Err(e) => {
+                            // Per the Agent Plugins spec, an invalid individual
+                            // server entry is skipped while valid peers continue
+                            // loading. Both missing-field and wrong-type errors
+                            // are entry-local failures — one bad server must not
+                            // disable every MCP server in the plugin.
+                            Err(ServerConfigError::MissingField(msg)) => {
                                 tracing::warn!(
                                     server = name,
-                                    error = %e,
-                                    "skipping invalid MCP server entry in plugin"
+                                    error = msg,
+                                    "skipping MCP server entry with missing required fields"
+                                );
+                            }
+                            Err(ServerConfigError::WrongType(msg)) => {
+                                tracing::warn!(
+                                    server = name,
+                                    error = msg,
+                                    "skipping MCP server entry with wrong-typed fields"
                                 );
                             }
                         }
@@ -99,23 +111,39 @@ impl McpConfig {
     }
 }
 
-fn parse_server_config(name: &str, value: &serde_json::Value) -> Result<ServerConfig, PluginError> {
+/// Distinguishes missing required fields from wrong-typed fields during
+/// MCP server config parsing. Both are entry-local failures: the individual
+/// server is skipped while valid peers continue loading (Agent Plugins spec).
+/// The distinction improves diagnostic messages so users can tell whether a
+/// field was absent or had the wrong JSON type.
+enum ServerConfigError {
+    MissingField(String),
+    WrongType(String),
+}
+
+/// Extract a required string field, distinguishing absent from wrong-typed.
+fn require_string_field<'a>(
+    obj: &'a serde_json::Map<String, serde_json::Value>,
+    name: &'a str,
+    field: &str,
+) -> Result<&'a str, ServerConfigError> {
+    match obj.get(field) {
+        Some(serde_json::Value::String(s)) => Ok(s),
+        Some(_) => Err(ServerConfigError::WrongType(format!("server '{name}' field '{field}' must be a string"))),
+        None => Err(ServerConfigError::MissingField(format!("server '{name}' missing required field: {field}"))),
+    }
+}
+
+fn parse_server_config(name: &str, value: &serde_json::Value) -> Result<ServerConfig, ServerConfigError> {
     let obj = value
         .as_object()
-        .ok_or_else(|| PluginError::InvalidMcp(format!("server '{}' must be an object", name)))?;
+        .ok_or_else(|| ServerConfigError::WrongType(format!("server '{}' must be an object", name)))?;
 
-    let type_val = obj
-        .get("type")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| PluginError::InvalidMcp(format!("server '{}' missing required field: type", name)))?;
+    let type_val = require_string_field(obj, name, "type")?;
 
     match type_val {
         "stdio" => {
-            let command = obj
-                .get("command")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| PluginError::InvalidMcp(format!("server '{}' missing required field: command", name)))?
-                .to_string();
+            let command = require_string_field(obj, name, "command")?.to_string();
 
             let args = obj
                 .get("args")
@@ -134,18 +162,14 @@ fn parse_server_config(name: &str, value: &serde_json::Value) -> Result<ServerCo
                 .map(|v| {
                     v.as_str()
                         .map(String::from)
-                        .ok_or_else(|| PluginError::InvalidMcp(format!("server '{name}' cwd must be a string")))
+                        .ok_or_else(|| ServerConfigError::WrongType(format!("server '{name}' cwd must be a string")))
                 })
                 .transpose()?;
 
             Ok(ServerConfig::Stdio(StdioServerConfig { command, args, env, cwd }))
         }
         "streamable-http" => {
-            let url = obj
-                .get("url")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| PluginError::InvalidMcp(format!("server '{}' missing required field: url", name)))?
-                .to_string();
+            let url = require_string_field(obj, name, "url")?.to_string();
 
             let headers = obj
                 .get("headers")
@@ -156,11 +180,7 @@ fn parse_server_config(name: &str, value: &serde_json::Value) -> Result<ServerCo
             Ok(ServerConfig::StreamableHttp(HttpServerConfig { url, headers }))
         }
         "sse" => {
-            let url = obj
-                .get("url")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| PluginError::InvalidMcp(format!("server '{}' missing required field: url", name)))?
-                .to_string();
+            let url = require_string_field(obj, name, "url")?.to_string();
 
             let headers = obj
                 .get("headers")
@@ -170,11 +190,11 @@ fn parse_server_config(name: &str, value: &serde_json::Value) -> Result<ServerCo
 
             Ok(ServerConfig::Sse(SseServerConfig { url, headers }))
         }
-        _ => Err(PluginError::InvalidMcp(format!("server '{}' has unsupported type: {}", name, type_val))),
+        _ => Err(ServerConfigError::WrongType(format!("server '{}' has unsupported type: {}", name, type_val))),
     }
 }
 
-fn expect_string_array(value: &serde_json::Value, context: &str) -> Result<Vec<String>, PluginError> {
+fn expect_string_array(value: &serde_json::Value, context: &str) -> Result<Vec<String>, ServerConfigError> {
     value
         .as_array()
         .map(|arr| {
@@ -182,14 +202,14 @@ fn expect_string_array(value: &serde_json::Value, context: &str) -> Result<Vec<S
                 .map(|v| {
                     v.as_str()
                         .map(String::from)
-                        .ok_or_else(|| PluginError::InvalidMcp(format!("{context} must contain only strings")))
+                        .ok_or_else(|| ServerConfigError::WrongType(format!("{context} must contain only strings")))
                 })
                 .collect::<Result<Vec<_>, _>>()
         })
-        .unwrap_or_else(|| Err(PluginError::InvalidMcp(format!("{context} must be an array"))))
+        .unwrap_or_else(|| Err(ServerConfigError::WrongType(format!("{context} must be an array"))))
 }
 
-fn expect_string_map(value: &serde_json::Value, context: &str) -> Result<HashMap<String, String>, PluginError> {
+fn expect_string_map(value: &serde_json::Value, context: &str) -> Result<HashMap<String, String>, ServerConfigError> {
     value
         .as_object()
         .map(|obj| {
@@ -197,9 +217,9 @@ fn expect_string_map(value: &serde_json::Value, context: &str) -> Result<HashMap
                 .map(|(k, v)| {
                     v.as_str()
                         .map(|s| (k.clone(), s.to_string()))
-                        .ok_or_else(|| PluginError::InvalidMcp(format!("{context}.{k} must be a string")))
+                        .ok_or_else(|| ServerConfigError::WrongType(format!("{context}.{k} must be a string")))
                 })
                 .collect::<Result<HashMap<_, _>, _>>()
         })
-        .unwrap_or_else(|| Err(PluginError::InvalidMcp(format!("{context} must be an object"))))
+        .unwrap_or_else(|| Err(ServerConfigError::WrongType(format!("{context} must be an object"))))
 }

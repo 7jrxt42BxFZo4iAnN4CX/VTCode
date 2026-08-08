@@ -8,7 +8,6 @@ use super::input_manager::InputManager;
 pub struct ReverseSearchState {
     pub active: bool,
     pub search_term: String,
-    #[expect(dead_code)]
     pub search_position: usize,
     pub original_content: String,
     pub original_cursor: usize,
@@ -37,7 +36,6 @@ impl ReverseSearchState {
         }
     }
 
-    #[expect(dead_code)]
     pub fn start_search(&mut self, input_manager: &InputManager, history: &[String]) {
         self.active = true;
         self.search_term = String::new();

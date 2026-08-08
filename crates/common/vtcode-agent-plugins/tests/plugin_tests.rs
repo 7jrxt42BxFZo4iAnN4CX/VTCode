@@ -1,3 +1,5 @@
+//! Integration tests for Agent Plugin discovery, validation, installation, and removal.
+
 use std::path::PathBuf;
 use vtcode_agent_plugins::*;
 
@@ -92,6 +94,48 @@ fn reject_wrong_typed_optional_field() {
 }
 
 #[test]
+fn reject_keywords_not_array() {
+    let content = r#"{"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json", "name": "test", "keywords": "not-an-array"}"#;
+    assert!(PluginManifest::parse(content).is_err());
+}
+
+#[test]
+fn reject_keywords_non_string_elements() {
+    // Non-string elements in keywords must fail loudly, not be silently dropped.
+    let content = r#"{"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json", "name": "test", "keywords": [1, "two"]}"#;
+    assert!(PluginManifest::parse(content).is_err());
+}
+
+#[test]
+fn accept_valid_keywords() {
+    let content = r#"{"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json", "name": "test", "keywords": ["one", "two"]}"#;
+    let (manifest, _) = PluginManifest::parse(content).unwrap();
+    assert_eq!(manifest.keywords, Some(vec!["one".into(), "two".into()]));
+}
+
+#[test]
+fn ignore_non_object_extensions() {
+    // Per the Agent Plugins spec, a non-object `extensions` value is reported
+    // and ignored — the plugin continues loading. This includes null, strings,
+    // arrays, numbers, and booleans.
+    let content = r#"{"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json", "name": "test", "extensions": "not-an-object"}"#;
+    let (manifest, _) = PluginManifest::parse(content).unwrap();
+    assert!(manifest.extensions.is_none(), "non-object extensions must be ignored, not fatal");
+
+    let content = r#"{"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json", "name": "test", "extensions": null}"#;
+    let (manifest, _) = PluginManifest::parse(content).unwrap();
+    assert!(manifest.extensions.is_none(), "null extensions must be ignored, not fatal");
+}
+
+#[test]
+fn accept_valid_extensions() {
+    let content = r#"{"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json", "name": "test", "extensions": {"foo": true}}"#;
+    let (manifest, _) = PluginManifest::parse(content).unwrap();
+    assert!(manifest.extensions.is_some());
+    assert!(manifest.extensions.unwrap().contains_key("foo"));
+}
+
+#[test]
 fn report_unknown_fields() {
     let content =
         r#"{"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json", "name": "test", "unknown": true}"#;
@@ -176,6 +220,24 @@ fn skip_invalid_server_entry() {
 }
 
 #[test]
+fn skip_wrong_typed_required_fields() {
+    // A present-but-wrong-typed required field (e.g. "type": 42) must skip
+    // the server, not be misdiagnosed as "missing". The valid peer still loads.
+    let content = r#"{
+        "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+        "mcpServers": {
+            "bad_type": {"type": 42, "command": "echo"},
+            "bad_command": {"type": "stdio", "command": 99},
+            "good": {"type": "stdio", "command": "echo"}
+        }
+    }"#;
+    let config = McpConfig::parse(content).unwrap();
+    assert!(!config.servers.contains_key("bad_type"), "wrong-typed type field must skip server");
+    assert!(!config.servers.contains_key("bad_command"), "wrong-typed command field must skip server");
+    assert!(config.servers.contains_key("good"), "valid server must still load");
+}
+
+#[test]
 fn report_unknown_mcp_top_level_fields() {
     let content = r#"{
         "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
@@ -196,31 +258,43 @@ fn reject_unsupported_mcp_schema() {
 }
 
 #[test]
-fn reject_wrong_typed_mcp_fields() {
-    // Wrong-typed args/env/cwd must fail loudly, not be silently dropped.
-    let content = r#"{
-        "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
-        "mcpServers": {
-            "test": {"type": "stdio", "command": "echo", "args": "not-an-array"}
-        }
-    }"#;
-    assert!(McpConfig::parse(content).is_err());
+fn skip_wrong_typed_mcp_fields() {
+    // Per the Agent Plugins spec, an invalid individual server entry is
+    // skipped while valid peers continue loading. Wrong-typed fields cause
+    // the server to be skipped (with a warning), not the whole MCP config
+    // to fail — one bad server must not disable every server in the plugin.
 
+    // args as string → server skipped, parse succeeds
     let content = r#"{
         "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
         "mcpServers": {
-            "test": {"type": "stdio", "command": "echo", "args": [1, 2]}
+            "bad": {"type": "stdio", "command": "echo", "args": "not-an-array"},
+            "good": {"type": "stdio", "command": "echo"}
         }
     }"#;
-    assert!(McpConfig::parse(content).is_err());
+    let config = McpConfig::parse(content).unwrap();
+    assert!(!config.servers.contains_key("bad"), "wrong-typed server must be skipped");
+    assert!(config.servers.contains_key("good"), "valid server must still load");
 
+    // args with non-string elements → server skipped
     let content = r#"{
         "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
         "mcpServers": {
-            "test": {"type": "stdio", "command": "echo", "cwd": 42}
+            "bad": {"type": "stdio", "command": "echo", "args": [1, 2]}
         }
     }"#;
-    assert!(McpConfig::parse(content).is_err());
+    let config = McpConfig::parse(content).unwrap();
+    assert!(!config.servers.contains_key("bad"));
+
+    // cwd as number → server skipped
+    let content = r#"{
+        "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+        "mcpServers": {
+            "bad": {"type": "stdio", "command": "echo", "cwd": 42}
+        }
+    }"#;
+    let config = McpConfig::parse(content).unwrap();
+    assert!(!config.servers.contains_key("bad"));
 }
 
 #[test]

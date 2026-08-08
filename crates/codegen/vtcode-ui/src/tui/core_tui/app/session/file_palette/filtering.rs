@@ -91,7 +91,6 @@ impl FilePalette {
         self.selected = Some(start.min(self.filtered_files.len() - 1));
     }
 
-    #[expect(dead_code)]
     pub(super) fn simple_fuzzy_match(path: &str, query: &str) -> Option<usize> {
         let mut scorer = SearchScorer::new();
         scorer.set_query(query);

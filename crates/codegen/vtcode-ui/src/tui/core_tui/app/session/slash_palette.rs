@@ -68,10 +68,8 @@ impl SlashPaletteHighlightSegment {
 #[derive(Debug, Clone)]
 #[cfg(test)]
 pub struct SlashPaletteItem {
-    #[expect(dead_code)]
     command: Option<SlashCommandItem>,
     name_segments: Vec<SlashPaletteHighlightSegment>,
-    #[expect(dead_code)]
     description: String,
 }
 

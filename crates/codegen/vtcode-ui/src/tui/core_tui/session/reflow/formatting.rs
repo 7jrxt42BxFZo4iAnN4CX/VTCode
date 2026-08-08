@@ -7,7 +7,6 @@ use crate::tui::config::constants::ui;
 
 impl Session {
     /// Create a message divider line
-    #[expect(dead_code)]
     pub(super) fn message_divider_line(&self, width: usize, kind: InlineMessageKind) -> Line<'static> {
         if width == 0 {
             return Line::default();
@@ -19,7 +18,6 @@ impl Session {
     }
 
     /// Get the style for a message divider
-    #[expect(dead_code)]
     fn message_divider_style(&self, kind: InlineMessageKind) -> Style {
         self.styles.message_divider_style(kind)
     }
@@ -30,7 +28,6 @@ impl Session {
     /// - Todo/checkbox items (completed items are dimmed)
     /// - List items with consistent formatting
     /// - Diff lines with background colors
-    #[expect(dead_code)]
     pub(super) fn justify_wrapped_lines(
         &self,
         lines: Vec<Line<'static>>,
@@ -104,7 +101,6 @@ impl Session {
     }
 
     /// Check if a message line should be justified
-    #[expect(dead_code)]
     fn should_justify_message_line(&self, line: &Line<'static>, max_width: usize, is_last: bool) -> bool {
         if is_last || max_width == 0 {
             return false;
@@ -135,7 +131,6 @@ impl Session {
     }
 
     /// Justify a message line by distributing spaces
-    #[expect(dead_code)]
     fn justify_message_line(&self, line: &Line<'static>, max_width: usize) -> Line<'static> {
         let span = &line.spans[0];
         if let Some(justified) = text_utils::justify_plain_text(&span.content, max_width) {
@@ -146,7 +141,6 @@ impl Session {
     }
 
     /// Check if a line is a diff line (has diff markers and background color)
-    #[expect(dead_code)]
     fn is_diff_line(&self, line: &Line<'static>) -> bool {
         if line.spans.is_empty() {
             return false;
@@ -162,7 +156,6 @@ impl Session {
     }
 
     /// Pad a diff line to full width
-    #[expect(dead_code)]
     fn pad_diff_line(&self, line: &Line<'static>, max_width: usize) -> Line<'static> {
         if max_width == 0 || line.spans.is_empty() {
             return line.clone();

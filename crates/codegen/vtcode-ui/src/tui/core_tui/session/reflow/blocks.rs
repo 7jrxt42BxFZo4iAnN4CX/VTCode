@@ -105,7 +105,6 @@ impl Session {
     }
 
     /// Wrap content with left and right borders
-    #[expect(dead_code)]
     fn wrap_block_lines(
         &self,
         first_prefix: &str,
@@ -118,7 +117,6 @@ impl Session {
     }
 
     /// Wrap content with left border only (no right border)
-    #[expect(dead_code)]
     fn wrap_block_lines_no_right_border(
         &self,
         first_prefix: &str,
@@ -229,7 +227,6 @@ impl Session {
     /// - Consistent indentation (2 spaces)
     /// - Dimmed styling for less visual weight
     /// - Optional spacing after tool block ends
-    #[expect(dead_code)]
     pub(super) fn reflow_tool_lines(&self, index: usize, width: u16) -> Vec<Line<'static>> {
         let Some(line) = self.lines.get(index) else {
             return vec![Line::default()];
@@ -351,7 +348,6 @@ impl Session {
     }
 
     /// Check if a PTY block has actual content
-    #[expect(dead_code)]
     fn pty_block_has_content(&self, index: usize) -> bool {
         if self.lines.is_empty() {
             return false;
@@ -394,7 +390,6 @@ impl Session {
     }
 
     /// Reflow PTY output lines with appropriate borders and formatting
-    #[expect(dead_code)]
     pub(crate) fn reflow_pty_lines(&self, index: usize, width: u16) -> Vec<TranscriptLine> {
         let Some(line) = self.lines.get(index) else {
             return vec![TranscriptLine::default()];

@@ -130,14 +130,41 @@ const PLANNING_RECOVERY_SYNTHESIS_FALLBACK: &str = "Planning research completed,
 ///   - `yes`/`implement` → exit plan mode and start implementation
 ///   - `no` → abandon the plan
 ///   - `edit`/`keep planning` → refine the plan (user re-states what to revise)
+///
+/// Use this ONLY when an approval-ready draft was actually persisted
+/// (`persisted_plan_ready`). The message promises "Review the plan below" and
+/// offers `yes`/`implement`/`no`/`edit` choices that dead-end without a
+/// persisted plan. When synthesis produced no draft, use
+/// [`PLANNING_INTERVIEW_DENIED_NO_DRAFT_NOTICE`] instead (checkpoint turn_902).
 const PLANNING_RECOVERY_SYNTHESIS_FALLBACK_NO_INTERVIEW: &str = "Plan draft ready (interactive questions are unavailable in this runtime, so the plan was finalized from the research already gathered). Review the plan below. For long research sessions, choose `Yes, clear context and implement` to preserve the plan while starting execution with a fresh context and tool budget. Choose `Yes, implement this plan` when the recent planning details are still useful. Type `no` to abandon or `edit` to revise.";
+/// Variant of [`PLANNING_RECOVERY_SYNTHESIS_FALLBACK_NO_INTERVIEW`] for the
+/// case where the bounded plan synthesis did NOT produce an approval-ready
+/// draft (the model emitted research prose or pseudo-tool-call markup instead
+/// of a `<proposed_plan>`). The ready-draft variant above promises "Review the
+/// plan below" and offers `yes`/`implement`/`no`/`edit` — choices that
+/// dead-end without a persisted plan, and which the appended
+/// `PLANNING_WORKFLOW_NO_APPROVAL_READY_PLAN_HINT` immediately contradicts with
+/// "no approval-ready plan was produced". This variant makes the primary
+/// message consistent with that hint: it tells the user no draft was produced
+/// and asks them to re-state so the next turn can synthesize from the research
+/// already gathered (checkpoint turn_902).
+const PLANNING_INTERVIEW_DENIED_NO_DRAFT_NOTICE: &str = "Planning synthesis did not produce an approval-ready plan, and interactive questions are unavailable in this runtime. The research gathered this turn is preserved in this conversation. Re-state what you'd like to plan; the next turn will reuse the evidence already gathered instead of re-exploring.";
 /// User-facing final answer for the budget-exhausted plan-mode dead end. The
 /// the planning session stays alive so `implement` / `keep planning` still
-/// work.
+/// work. Use this variant when an approval-ready draft was persisted.
 const PLANNING_BUDGET_EXHAUSTED_USER_NOTICE: &str = "Planning research reached its safe budget before synthesis completed. The evidence and current plan draft are preserved in the session plan file (.vtcode/plans/); retry approval or revision from the preserved plan.";
+/// No-draft variant of [`PLANNING_BUDGET_EXHAUSTED_USER_NOTICE`]. Used when
+/// budget was exhausted but no approval-ready plan was produced. Does NOT
+/// mention a plan draft or plan file, consistent with the appended
+/// `PLANNING_WORKFLOW_NO_APPROVAL_READY_PLAN_HINT`.
+const PLANNING_BUDGET_EXHAUSTED_NO_DRAFT_NOTICE: &str = "Planning research reached its safe budget before synthesis completed. The evidence gathered this turn is preserved in this conversation. Re-state what you'd like to plan; the next turn will reuse the evidence already gathered instead of re-exploring.";
 /// User-facing final answer for the recovery-exhausted plan-mode dead end.
-/// See [`PLANNING_BUDGET_EXHAUSTED_USER_NOTICE`].
+/// See [`PLANNING_BUDGET_EXHAUSTED_USER_NOTICE`]. Use this variant when an
+/// approval-ready draft was persisted.
 const PLANNING_RECOVERY_EXHAUSTED_USER_NOTICE: &str = "Plan synthesis failed after repeated recovery attempts (provider errors or saturated context). The research gathered and the current plan draft are preserved in the session plan file (.vtcode/plans/).";
+/// No-draft variant of [`PLANNING_RECOVERY_EXHAUSTED_USER_NOTICE`]. Used when
+/// recovery is exhausted but no approval-ready plan was produced.
+const PLANNING_RECOVERY_EXHAUSTED_NO_DRAFT_NOTICE: &str = "Plan synthesis failed after repeated recovery attempts (provider errors or saturated context). The research gathered this turn is preserved in this conversation. Re-state what you'd like to plan; the next turn will reuse the evidence already gathered instead of re-exploring.";
 /// Reason set on `TurnLoopResult::Blocked` when the model emits tool calls or
 /// textual tool-call markup during a tool-free recovery pass.  Shared between
 /// `result_handler` (producer) and `post_tool_recovery` (consumer).

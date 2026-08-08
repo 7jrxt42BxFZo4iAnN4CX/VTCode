@@ -321,6 +321,32 @@ fn parse_command_parts_accepts_cmd_alias() {
 }
 
 #[test]
+fn parse_command_parts_rejects_non_string_args() {
+    // Non-string args elements must fail loudly, not be silently dropped.
+    // Silently dropping arguments could change command semantics (turn_902 class).
+    let payload = json!({
+        "command": ["echo"],
+        "args": ["hello", 42]
+    });
+    let payload = payload.as_object().expect("payload object");
+
+    let result = parse_command_parts(payload, "missing command", "empty command");
+    assert!(result.is_err(), "non-string args elements must be rejected, not silently dropped");
+}
+
+#[test]
+fn parse_command_parts_rejects_non_array_args() {
+    let payload = json!({
+        "command": ["echo"],
+        "args": "not-an-array"
+    });
+    let payload = payload.as_object().expect("payload object");
+
+    let result = parse_command_parts(payload, "missing command", "empty command");
+    assert!(result.is_err(), "non-array args must be rejected, not silently ignored");
+}
+
+#[test]
 fn parse_command_parts_accepts_raw_command_alias() {
     let payload = json!({
         "raw_command": "cargo check -p vtcode-core"

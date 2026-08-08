@@ -9,7 +9,6 @@ use unicode_width::UnicodeWidthStr;
 pub use vtcode_commons::ansi::strip_ansi_codes;
 
 /// Simplify tool call display text for better human readability
-#[expect(dead_code)]
 pub fn simplify_tool_display(text: &str) -> String {
     // Common patterns to simplify for human readability
     let simplified = if text.starts_with("file ") {
@@ -40,7 +39,6 @@ pub fn simplify_tool_display(text: &str) -> String {
 }
 
 /// Format tool parameters for better readability
-#[expect(dead_code)]
 pub fn format_tool_parameters(text: &str) -> String {
     // Convert common parameter patterns to more readable formats
     let mut formatted = text.to_owned();
@@ -505,7 +503,6 @@ pub fn detect_todo_state(text: &str) -> TodoState {
 }
 
 /// Check if text appears to be a list item (bullet or numbered)
-#[expect(dead_code)]
 pub fn is_list_item(text: &str) -> bool {
     let trimmed = text.trim_start();
 

@@ -336,49 +336,50 @@ impl RequestProcessor {
     }
 }
 
-/// Common model resolution utilities
-struct ModelResolver {
-    #[expect(dead_code)]
-    provider_name: &'static str,
-    default_model: &'static str,
-    supported_models: &'static [&'static str],
-}
-
-impl ModelResolver {
-    fn new(
-        provider_name: &'static str,
-        default_model: &'static str,
-        supported_models: &'static [&'static str],
-    ) -> Self {
-        Self { provider_name, default_model, supported_models }
-    }
-
-    /// Resolve model with fallback to default
-    fn resolve_model(&self, model: Option<String>) -> String {
-        model.unwrap_or_else(|| self.default_model.to_string())
-    }
-
-    /// Validate model is supported
-    fn validate_model(&self, model: &str) -> Result<()> {
-        if self.supported_models.is_empty() {
-            // If no specific supported models listed, accept any non-empty model
-            if model.is_empty() {
-                anyhow::bail!("Model cannot be empty")
-            }
-            return Ok(());
-        }
-
-        if !self.supported_models.contains(&model) {
-            anyhow::bail!("Unsupported model: {}. Supported models: {:?}", model, self.supported_models)
-        }
-
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Test-only model resolution utilities. The production `ModelResolver`
+    /// lives in [`crate::model_resolver`] — this private duplicate exists only
+    /// to exercise fallback/validation logic in unit tests below.
+    struct ModelResolver {
+        provider_name: &'static str,
+        default_model: &'static str,
+        supported_models: &'static [&'static str],
+    }
+
+    impl ModelResolver {
+        fn new(
+            provider_name: &'static str,
+            default_model: &'static str,
+            supported_models: &'static [&'static str],
+        ) -> Self {
+            Self { provider_name, default_model, supported_models }
+        }
+
+        /// Resolve model with fallback to default
+        fn resolve_model(&self, model: Option<String>) -> String {
+            model.unwrap_or_else(|| self.default_model.to_string())
+        }
+
+        /// Validate model is supported
+        fn validate_model(&self, model: &str) -> Result<()> {
+            if self.supported_models.is_empty() {
+                // If no specific supported models listed, accept any non-empty model
+                if model.is_empty() {
+                    anyhow::bail!("Model cannot be empty")
+                }
+                return Ok(());
+            }
+
+            if !self.supported_models.contains(&model) {
+                anyhow::bail!("Unsupported model: {}. Supported models: {:?}", model, self.supported_models)
+            }
+
+            Ok(())
+        }
+    }
 
     #[test]
     fn test_base_provider_config() {

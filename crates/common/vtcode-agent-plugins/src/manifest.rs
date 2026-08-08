@@ -81,18 +81,20 @@ impl PluginManifest {
                     manifest.license = Some(expect_string(val, "license")?);
                 }
                 "keywords" => {
-                    manifest.keywords = Some(
-                        val.as_array()
-                            .ok_or_else(|| PluginError::InvalidManifest("keywords must be an array".into()))?
-                            .iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect::<Vec<String>>(),
-                    );
+                    manifest.keywords = Some(expect_string_array(val, "keywords")?);
                 }
                 "extensions" => {
-                    manifest.extensions = val
-                        .as_object()
-                        .map(|m| m.into_iter().map(|(k, v)| (k.clone(), v.clone())).collect());
+                    // Per the Agent Plugins spec, a non-object `extensions`
+                    // value (including null) is reported and ignored — the
+                    // plugin continues loading. Only object values are stored.
+                    match val.as_object() {
+                        Some(obj) => {
+                            manifest.extensions = Some(obj.into_iter().map(|(k, v)| (k.clone(), v.clone())).collect());
+                        }
+                        None => {
+                            tracing::warn!(field = "extensions", "extensions is not an object; ignoring");
+                        }
+                    }
                 }
                 _ => unknown.push(key.clone()),
             }
@@ -144,6 +146,19 @@ fn expect_string(value: &serde_json::Value, field: &str) -> Result<String, Plugi
         .as_str()
         .map(String::from)
         .ok_or_else(|| PluginError::InvalidManifest(format!("{field} must be a string")))
+}
+
+fn expect_string_array(value: &serde_json::Value, field: &str) -> Result<Vec<String>, PluginError> {
+    let arr = value
+        .as_array()
+        .ok_or_else(|| PluginError::InvalidManifest(format!("{field} must be an array")))?;
+    arr.iter()
+        .map(|v| {
+            v.as_str()
+                .map(String::from)
+                .ok_or_else(|| PluginError::InvalidManifest(format!("{field} must contain only strings")))
+        })
+        .collect()
 }
 
 fn parse_author(value: &serde_json::Value) -> Result<PluginAuthor, PluginError> {

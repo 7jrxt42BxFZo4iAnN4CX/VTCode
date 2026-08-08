@@ -1,9 +1,4 @@
-#![allow(
-    clippy::unreachable,
-    clippy::cast_sign_loss,
-    clippy::map_err_ignore,
-    unfulfilled_lint_expectations
-)]
+#![allow(clippy::unreachable, clippy::cast_sign_loss, clippy::map_err_ignore)]
 //! `vtcode-ui::tui` exposes inline terminal UI APIs as a reusable module.
 //!
 //! The migrated implementation source lives in `src/core_tui/`.
@@ -11,7 +6,6 @@
 
 #[expect(dead_code)]
 mod cache;
-#[expect(dead_code)]
 mod config;
 mod options;
 pub mod ui;

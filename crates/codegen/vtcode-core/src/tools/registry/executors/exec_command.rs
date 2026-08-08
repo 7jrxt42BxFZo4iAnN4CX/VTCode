@@ -62,13 +62,11 @@ pub(super) fn parse_command_parts(
         },
     };
 
-    if let Some(args_value) = payload.get("args")
-        && let Some(args_array) = args_value.as_array()
-    {
+    if let Some(args_value) = payload.get("args") {
+        let args_array = args_value.as_array().ok_or_else(|| anyhow!("args must be an array"))?;
         for value in args_array {
-            if let Some(part) = value.as_str() {
-                parts.push(part.to_string());
-            }
+            let part = value.as_str().ok_or_else(|| anyhow!("args array must contain only strings"))?;
+            parts.push(part.to_string());
         }
     }
 

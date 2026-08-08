@@ -443,7 +443,6 @@ impl Session {
     }
 
     /// Show a simple modal dialog
-    #[expect(dead_code)]
     pub(crate) fn show_modal(
         &mut self,
         title: String,
@@ -841,7 +840,6 @@ impl Session {
 
     /// Handle scroll down event
     #[inline]
-    #[expect(dead_code)]
     fn handle_scroll_down(
         &mut self,
         events: &UnboundedSender<InlineEvent>,
@@ -854,7 +852,6 @@ impl Session {
 
     /// Handle scroll up event
     #[inline]
-    #[expect(dead_code)]
     fn handle_scroll_up(
         &mut self,
         events: &UnboundedSender<InlineEvent>,

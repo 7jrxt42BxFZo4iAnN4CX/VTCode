@@ -120,7 +120,6 @@ impl MouseSelectionState {
     }
 
     /// Clear any active selection.
-    #[expect(dead_code)]
     pub(crate) fn clear(&mut self) {
         self.is_selecting = false;
         self.has_selection = false;

@@ -19,7 +19,6 @@ impl Session {
         self.finalize_mouse_selection(frame, layout.viewport);
     }
 
-    #[expect(dead_code)]
     pub(crate) fn render_message_spans(&self, index: usize) -> Vec<Span<'static>> {
         let Some(line) = self.lines.get(index) else {
             return vec![Span::raw(String::new())];

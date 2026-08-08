@@ -219,6 +219,63 @@ fn build_recovery_fallback(working_history: &[uni::Message], lead_in: &str) -> S
     }
 }
 
+/// The exhaustion state of the planning session that determines which
+/// final-answer notice the recovery path emits. Extracted from the nested
+/// if/else chain that previously lived inline in
+/// `complete_turn_after_failed_tool_free_recovery_with_events` so all six
+/// combinations are independently testable without async harness state
+/// (checkpoint turn_902 was caused by the wrong combination firing — the
+/// ready-draft prompt was shown when no draft existed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PlanningRecoveryOutcome {
+    BudgetExhausted { plan_ready: bool },
+    RecoveryExhausted { plan_ready: bool },
+    InterviewDenied { plan_ready: bool },
+}
+
+impl PlanningRecoveryOutcome {
+    /// Build the outcome from the live session state and readiness flag.
+    /// Reads only (`&self` methods on the session) — no mutation, no I/O.
+    fn from_session(session: &PlanningWorkflowSessionState, plan_ready: bool) -> Self {
+        if session.is_budget_exhausted() {
+            Self::BudgetExhausted { plan_ready }
+        } else if session.is_recovery_exhausted() {
+            Self::RecoveryExhausted { plan_ready }
+        } else {
+            Self::InterviewDenied { plan_ready }
+        }
+    }
+}
+
+/// Pure mapping from a planning-recovery outcome to the user-facing notice.
+/// No side effects, no async, no I/O — the message policy lives here so the
+/// async orchestration function only decides *whether* to finalize, not *what*
+/// message to show. The critical invariant: a ready-draft prompt (promising
+/// "Review the plan below" with `yes`/`implement`/`no`/`edit` choices) is
+/// returned ONLY when `plan_ready == true`. When no draft was persisted the
+/// no-draft variants are used instead, which are consistent with the appended
+/// `PLANNING_WORKFLOW_NO_APPROVAL_READY_PLAN_HINT`.
+fn planning_finalize_notice(outcome: PlanningRecoveryOutcome) -> &'static str {
+    match outcome {
+        PlanningRecoveryOutcome::BudgetExhausted { plan_ready: true } => super::PLANNING_BUDGET_EXHAUSTED_USER_NOTICE,
+        PlanningRecoveryOutcome::BudgetExhausted { plan_ready: false } => {
+            super::PLANNING_BUDGET_EXHAUSTED_NO_DRAFT_NOTICE
+        }
+        PlanningRecoveryOutcome::RecoveryExhausted { plan_ready: true } => {
+            super::PLANNING_RECOVERY_EXHAUSTED_USER_NOTICE
+        }
+        PlanningRecoveryOutcome::RecoveryExhausted { plan_ready: false } => {
+            super::PLANNING_RECOVERY_EXHAUSTED_NO_DRAFT_NOTICE
+        }
+        PlanningRecoveryOutcome::InterviewDenied { plan_ready: true } => {
+            PLANNING_RECOVERY_SYNTHESIS_FALLBACK_NO_INTERVIEW
+        }
+        PlanningRecoveryOutcome::InterviewDenied { plan_ready: false } => {
+            super::PLANNING_INTERVIEW_DENIED_NO_DRAFT_NOTICE
+        }
+    }
+}
+
 #[cfg(test)]
 pub(super) async fn complete_turn_after_failed_tool_free_recovery(
     working_history: &mut Vec<uni::Message>,
@@ -332,13 +389,13 @@ pub(super) async fn complete_turn_after_failed_tool_free_recovery_with_events(
             // planning session stays alive, so append the confirmation hint —
             // the user can type `implement` to execute the drafted plan or
             // `keep planning` to revise it.
-            let finalize_message = if plan_session.is_budget_exhausted() {
-                super::PLANNING_BUDGET_EXHAUSTED_USER_NOTICE
-            } else if plan_session.is_recovery_exhausted() {
-                super::PLANNING_RECOVERY_EXHAUSTED_USER_NOTICE
-            } else {
-                PLANNING_RECOVERY_SYNTHESIS_FALLBACK_NO_INTERVIEW
-            };
+            // Select the user-facing notice through the pure policy function
+            // so all six (exhaustion × draft-ready) combinations are
+            // independently testable and the invariant — a ready-draft prompt
+            // is shown ONLY when a plan was actually persisted — is enforced
+            // in one place (turn_902).
+            let outcome = PlanningRecoveryOutcome::from_session(plan_session, persisted_plan_ready);
+            let finalize_message = planning_finalize_notice(outcome);
             let mut planning_fallback =
                 plan_mode_recovery_fallback(persisted_salvage, finalize_message, working_history);
             planning_fallback.push_str("\n\n");
@@ -692,6 +749,82 @@ mod tests {
         })
     }
 
+    // ---- Pure policy tests for `planning_finalize_notice` ----
+    // All six (exhaustion × draft-ready) combinations are tested in isolation,
+    // independent of the async harness. The critical invariant: a ready-draft
+    // prompt promising "Review the plan below" must ONLY appear when
+    // plan_ready == true. The no-draft variants must never promise a reviewable
+    // draft (checkpoint turn_902).
+
+    #[test]
+    fn finalize_notice_budget_exhausted_with_draft_mentions_preserved_plan() {
+        let notice = planning_finalize_notice(PlanningRecoveryOutcome::BudgetExhausted { plan_ready: true });
+        assert!(notice.contains("session plan file"), "budget+draft must point to the persisted plan: {notice}");
+        assert!(!notice.contains("Re-state"), "budget+draft must not ask to re-state: {notice}");
+    }
+
+    #[test]
+    fn finalize_notice_budget_exhausted_no_draft_asks_to_restate() {
+        let notice = planning_finalize_notice(PlanningRecoveryOutcome::BudgetExhausted { plan_ready: false });
+        assert!(notice.contains("Re-state"), "budget+no-draft must ask to re-state: {notice}");
+        assert!(!notice.contains("session plan file"), "budget+no-draft must not reference a plan file: {notice}");
+        assert!(!notice.contains("Plan draft ready"), "must not promise a draft: {notice}");
+    }
+
+    #[test]
+    fn finalize_notice_recovery_exhausted_with_draft_mentions_preserved_plan() {
+        let notice = planning_finalize_notice(PlanningRecoveryOutcome::RecoveryExhausted { plan_ready: true });
+        assert!(notice.contains("session plan file"), "recovery+draft must point to the persisted plan: {notice}");
+    }
+
+    #[test]
+    fn finalize_notice_recovery_exhausted_no_draft_asks_to_restate() {
+        let notice = planning_finalize_notice(PlanningRecoveryOutcome::RecoveryExhausted { plan_ready: false });
+        assert!(notice.contains("Re-state"), "recovery+no-draft must ask to re-state: {notice}");
+        assert!(!notice.contains("session plan file"), "recovery+no-draft must not reference a plan file: {notice}");
+        assert!(!notice.contains("Plan draft ready"), "must not promise a draft: {notice}");
+    }
+
+    #[test]
+    fn finalize_notice_interview_denied_with_draft_offers_review_prompt() {
+        let notice = planning_finalize_notice(PlanningRecoveryOutcome::InterviewDenied { plan_ready: true });
+        assert!(notice.contains("Plan draft ready"), "denied+draft must offer the review prompt: {notice}");
+        assert!(notice.contains("Review the plan below"), "denied+draft must present the draft: {notice}");
+    }
+
+    #[test]
+    fn finalize_notice_interview_denied_no_draft_never_promises_review() {
+        let notice = planning_finalize_notice(PlanningRecoveryOutcome::InterviewDenied { plan_ready: false });
+        assert!(!notice.contains("Plan draft ready"), "denied+no-draft must NOT promise a draft: {notice}");
+        assert!(!notice.contains("Review the plan below"), "denied+no-draft must NOT ask to review: {notice}");
+        assert!(
+            notice.contains("did not produce an approval-ready plan"),
+            "must explain no plan was produced: {notice}"
+        );
+    }
+
+    #[test]
+    fn finalize_notice_from_session_classifies_correctly() {
+        let mut session = PlanningWorkflowSessionState::default();
+        assert_eq!(
+            PlanningRecoveryOutcome::from_session(&session, false),
+            PlanningRecoveryOutcome::InterviewDenied { plan_ready: false }
+        );
+        session.mark_budget_exhausted();
+        assert_eq!(
+            PlanningRecoveryOutcome::from_session(&session, true),
+            PlanningRecoveryOutcome::BudgetExhausted { plan_ready: true }
+        );
+        let mut session = PlanningWorkflowSessionState::default();
+        session.mark_recovery_exhausted();
+        assert_eq!(
+            PlanningRecoveryOutcome::from_session(&session, false),
+            PlanningRecoveryOutcome::RecoveryExhausted { plan_ready: false }
+        );
+    }
+
+    // ---- Async integration tests ----
+
     #[tokio::test]
     async fn tool_free_recovery_keeps_planning_alive_on_transient_error() {
         let mut working_history: Vec<uni::Message> = Vec::new();
@@ -834,11 +967,30 @@ mod tests {
             .expect("a final answer must be pushed")
             .content
             .as_text();
-        assert!(!text.contains("`implement`"), "no approval hint is allowed without a valid plan: {text}");
-        assert!(text.to_ascii_lowercase().contains("keep planning"), "fallback must keep planning active: {text}");
+        // No draft was persisted, so the ready-draft HITL prompt must NOT be
+        // used: it promises "Plan draft ready / Review the plan below" and
+        // offers `yes`/`implement`/`no`/`edit` choices that dead-end without a
+        // persisted plan (checkpoint turn_902).
+        assert!(
+            !text.contains("Plan draft ready"),
+            "must not promise a reviewable draft when none was persisted: {text}"
+        );
+        assert!(
+            !text.contains("Review the plan below"),
+            "must not tell the user to review a draft that does not exist: {text}"
+        );
+        assert!(
+            !text.contains("Yes, clear context and implement"),
+            "must not offer an implementation choice without a persisted plan: {text}"
+        );
         assert!(
             !text.contains("interview will be presented"),
             "interview-denied fallback must NOT promise a future interview: {text}"
+        );
+        assert!(text.to_ascii_lowercase().contains("keep planning"), "fallback must keep planning active: {text}");
+        assert!(
+            text.contains("did not produce an approval-ready plan"),
+            "the no-draft notice must explain that synthesis produced no plan: {text}"
         );
     }
 
@@ -963,6 +1115,149 @@ Persist a concrete recovery plan without implementing it.
         assert!(
             content.contains("Add caching"),
             "salvaged plan must be written to the session plan file, got: {content}"
+        );
+    }
+
+    #[tokio::test]
+    async fn interview_denied_with_persisted_draft_offers_approval_prompt() {
+        // Counterpart to `tool_free_recovery_keeps_planning_when_interview_denied_without_valid_plan`:
+        // when the interview is denied AND a valid draft was already persisted
+        // (e.g. from a prior turn) but THIS turn's recovery salvage produced no
+        // ready plan, the ready-draft HITL prompt ("Plan draft ready ... Review
+        // the plan below ... yes/implement/no/edit") must still be shown so the
+        // user can approve the real on-disk draft. Gating the prompt on
+        // `persisted_plan_ready` must not suppress it in the legitimate
+        // with-draft case (turn_902).
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let state = PlanningWorkflowState::new(temp_dir.path().to_path_buf());
+        let plan_file = state.plans_dir().join("denied-interview-plan.md");
+        state.set_plan_file(Some(plan_file.clone())).await;
+        // Pre-persist a valid plan so `persisted_plan_is_ready` returns true,
+        // simulating a draft carried over from a previous turn.
+        let valid_plan = r#"<proposed_plan>
+# Denied-interview approval
+
+## Summary
+Offer the approval prompt when a real draft was persisted despite the denial.
+
+## Implementation Steps
+1. Add caching -> files: [src/cache.rs] -> verify: [cargo nextest run -p vtcode]
+
+## Test Cases and Validation
+1. Run the targeted planning tests.
+
+## Assumptions and Defaults
+1. The existing cache policy remains unchanged.
+</proposed_plan>"#;
+        persist_plan_draft(&state, valid_plan)
+            .await
+            .expect("pre-persisting a valid plan must succeed");
+        assert!(persisted_plan_is_ready(&state).await, "test precondition: a valid plan must be persisted and ready");
+
+        let mut working_history: Vec<uni::Message> = Vec::new();
+        let mut plan_session = PlanningWorkflowSessionState::default();
+        plan_session.mark_interview_denied();
+        // No salvage this turn — the on-disk draft is what the prompt offers.
+
+        let result = complete_turn_after_failed_tool_free_recovery(
+            &mut working_history,
+            "stage",
+            Some(&transient_err()),
+            None,
+            Some(&mut plan_session),
+            Some(&state),
+        )
+        .await;
+
+        assert!(matches!(result, TurnLoopResult::Completed { .. }));
+        let text = working_history
+            .iter()
+            .rev()
+            .find(|m| m.role == uni::MessageRole::Assistant)
+            .expect("a final answer must be pushed")
+            .content
+            .as_text();
+        assert!(
+            text.contains("Plan draft ready"),
+            "a persisted draft must still get the approval HITL prompt: {text}"
+        );
+        assert!(
+            text.contains("Review the plan below"),
+            "the reviewable draft must be presented for approval: {text}"
+        );
+        assert!(
+            !text.contains("did not produce an approval-ready plan"),
+            "the no-draft notice must NOT appear when a draft exists: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn recovery_exhausted_with_persisted_draft_offers_preserved_plan_notice() {
+        // Coverage gap: `RecoveryExhausted { plan_ready: true }` was the only
+        // (exhaustion × draft-ready) combination not exercised by an async
+        // integration test. When recovery is exhausted AND a valid draft was
+        // persisted, the notice must reference the session plan file (not ask
+        // to re-state) so the user can approve the preserved draft.
+        use crate::agent::runloop::unified::planning_workflow::PlanningWorkflowState;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let state = PlanningWorkflowState::new(temp_dir.path().to_path_buf());
+        let plan_file = state.plans_dir().join("recovery-exhausted-plan.md");
+        state.set_plan_file(Some(plan_file.clone())).await;
+        let valid_plan = r#"<proposed_plan>
+# Recovery-exhausted approval
+
+## Summary
+Offer the preserved-plan notice when recovery is exhausted with a persisted draft.
+
+## Implementation Steps
+1. Add caching -> files: [src/cache.rs] -> verify: [cargo nextest run -p vtcode]
+
+## Test Cases and Validation
+1. Run the targeted planning tests.
+
+## Assumptions and Defaults
+1. The existing cache policy remains unchanged.
+</proposed_plan>"#;
+        persist_plan_draft(&state, valid_plan)
+            .await
+            .expect("pre-persisting a valid plan must succeed");
+        assert!(persisted_plan_is_ready(&state).await, "test precondition: a valid plan must be persisted and ready");
+
+        let mut working_history: Vec<uni::Message> = Vec::new();
+        let mut plan_session = PlanningWorkflowSessionState::default();
+        plan_session.mark_recovery_exhausted();
+
+        let result = complete_turn_after_failed_tool_free_recovery(
+            &mut working_history,
+            "stage",
+            Some(&transient_err()),
+            None,
+            Some(&mut plan_session),
+            Some(&state),
+        )
+        .await;
+
+        assert!(matches!(result, TurnLoopResult::Completed { .. }));
+        assert!(!plan_session.interview_pending(), "recovery-exhausted must not re-force the interview");
+        let text = working_history
+            .iter()
+            .rev()
+            .find(|m| m.role == uni::MessageRole::Assistant)
+            .expect("a final answer must be pushed")
+            .content
+            .as_text();
+        assert!(
+            text.contains("session plan file"),
+            "recovery-exhausted+draft must reference the preserved plan file: {text}"
+        );
+        assert!(!text.contains("Re-state"), "recovery-exhausted+draft must not ask to re-state: {text}");
+        assert!(
+            !text.contains("did not produce an approval-ready plan"),
+            "the no-draft notice must NOT appear when a draft exists: {text}"
         );
     }
 }

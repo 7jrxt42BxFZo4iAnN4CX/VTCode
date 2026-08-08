@@ -115,7 +115,6 @@ impl Session {
     }
 
     /// Get the prefix text for a message kind
-    #[expect(dead_code)]
     pub(crate) fn prefix_text(&self, kind: InlineMessageKind) -> Option<String> {
         match kind {
             InlineMessageKind::User => Some(self.labels.user.clone().unwrap_or_else(|| USER_PREFIX.to_owned())),
@@ -130,7 +129,6 @@ impl Session {
     }
 
     /// Get the prefix style for a message line
-    #[expect(dead_code)]
     pub(crate) fn prefix_style(&self, line: &MessageLine) -> InlineTextStyle {
         self.styles.prefix_style(line)
     }

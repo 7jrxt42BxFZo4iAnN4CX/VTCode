@@ -716,4 +716,119 @@ mod tests {
             "outside planning, text responses still end the turn (no new reprompt path)"
         );
     }
+
+    #[tokio::test]
+    async fn denied_interview_without_ready_plan_replaces_prose_with_hint() {
+        // When request_user_input is permanently denied (non-interactive
+        // runtime), no plan was proposed, no plan is persisted, and the model
+        // emits research prose (not a clarifying question), the prose must be
+        // replaced with the no-approval-ready-plan hint so the user gets an
+        // actionable message instead of rambling text.
+        let mut backing = TestTurnProcessingBacking::new(4).await;
+        backing.enable_planning();
+        let mut ctx = backing.turn_processing_context();
+        ctx.plan_session.mark_interview_denied();
+
+        let outcome = ctx
+            .handle_text_response(
+                "I looked at the codebase and found several files.".to_string(),
+                Vec::new(),
+                None,
+                None,
+                false,
+            )
+            .await
+            .expect("text response should be handled");
+
+        // The first denied-interview response gets a bounded synthesis retry
+        // (plan_synthesis_retry_allowed is true on the first attempt).
+        assert!(
+            matches!(outcome, TurnHandlerOutcome::Continue),
+            "first denied-interview response without a plan should retry synthesis"
+        );
+        let directive_present = ctx.working_history.iter().any(|message| {
+            message.role == uni::MessageRole::System && message.content.as_text().contains("Emit exactly one compact")
+        });
+        assert!(directive_present, "a plan-synthesis retry directive should be pushed");
+    }
+
+    #[tokio::test]
+    async fn denied_interview_exhausted_retry_ends_with_hint_not_prose() {
+        // After the bounded retry is exhausted, a second prose response must
+        // end the turn with the no-approval-ready-plan hint, not the model's
+        // research prose.
+        let mut backing = TestTurnProcessingBacking::new(4).await;
+        backing.enable_planning();
+        let mut ctx = backing.turn_processing_context();
+        ctx.plan_session.mark_interview_denied();
+        ctx.plan_session.mark_plan_synthesis_retry_used();
+
+        let outcome = ctx
+            .handle_text_response("I found more files to examine.".to_string(), Vec::new(), None, None, false)
+            .await
+            .expect("text response should be handled");
+
+        assert!(
+            matches!(outcome, TurnHandlerOutcome::Break(_)),
+            "after retry exhaustion, prose without a plan should end the turn"
+        );
+        let last = ctx
+            .working_history
+            .iter()
+            .rev()
+            .find(|m| m.role == uni::MessageRole::Assistant)
+            .expect("an assistant message must be pushed");
+        let text = last.content.as_text();
+        assert!(
+            text.contains("no approval-ready plan was produced"),
+            "the no-approval-ready hint must replace prose: {text}"
+        );
+        assert!(
+            !text.contains("I found more files"),
+            "the model's research prose must NOT be the final answer: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn denied_interview_preserves_clarifying_question() {
+        // A clarifying question (text ending with '?') is the text-mode
+        // equivalent of the unavailable interview modal. It must NOT be
+        // replaced with the hint or trigger a synthesis retry — the turn ends
+        // so the user can answer it (checkpoint turn_856).
+        let mut backing = TestTurnProcessingBacking::new(4).await;
+        backing.enable_planning();
+        let mut ctx = backing.turn_processing_context();
+        ctx.plan_session.mark_interview_denied();
+
+        let outcome = ctx
+            .handle_text_response(
+                "Should I focus on the launch path or the config loading?".to_string(),
+                Vec::new(),
+                None,
+                None,
+                false,
+            )
+            .await
+            .expect("text response should be handled");
+
+        assert!(
+            matches!(outcome, TurnHandlerOutcome::Break(_)),
+            "a clarifying question should end the turn for user input, not retry"
+        );
+        let last = ctx
+            .working_history
+            .iter()
+            .rev()
+            .find(|m| m.role == uni::MessageRole::Assistant)
+            .expect("an assistant message must be pushed");
+        let text = last.content.as_text();
+        assert!(
+            text.contains("Should I focus on the launch path or the config loading?"),
+            "the clarifying question must be preserved verbatim: {text}"
+        );
+        assert!(
+            !text.contains("no approval-ready plan was produced"),
+            "the hint must NOT replace a clarifying question: {text}"
+        );
+    }
 }

@@ -61,7 +61,6 @@ impl SessionStyles {
         Self { theme }
     }
 
-    #[expect(dead_code)]
     pub fn theme(&self) -> &InlineTheme {
         &self.theme
     }
@@ -81,7 +80,6 @@ impl SessionStyles {
     }
 
     /// Get the inline style for a tool based on its name
-    #[expect(dead_code)]
     pub fn tool_inline_style(&self, tool_name: &str) -> InlineTextStyle {
         tool_inline_style_for(tool_name, &self.theme)
     }
@@ -106,7 +104,6 @@ impl SessionStyles {
     }
 
     /// Get the default inline style (for tests and inline conversions)
-    #[expect(dead_code)]
     pub(crate) fn default_inline_style(&self) -> InlineTextStyle {
         InlineTextStyle {
             color: self.theme.foreground,

@@ -265,7 +265,6 @@ impl Session {
         }
     }
 
-    #[expect(dead_code)]
     pub(crate) fn delete_word_forward(&mut self) {
         self.input_manager.delete_word_forward();
         self.refresh_input_edit_state();

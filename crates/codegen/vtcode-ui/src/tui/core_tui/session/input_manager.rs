@@ -167,7 +167,6 @@ pub struct InputManager {
     content_cache: String,
 }
 
-#[expect(dead_code)]
 impl InputManager {
     pub fn new() -> Self {
         let mut textarea = TextArea::default();

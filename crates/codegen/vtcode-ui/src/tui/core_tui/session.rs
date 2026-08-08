@@ -229,7 +229,6 @@ pub struct Session {
     input_compact_mode: bool,
 
     // --- UI State ---
-    #[expect(dead_code)]
     navigation_state: ListState,
     input_enabled: bool,
     pub(crate) activity_state: ActivityState,
@@ -312,7 +311,6 @@ pub struct Session {
     bindings: BindingStore,
 
     // --- Clipboard for yank/paste operations ---
-    #[expect(dead_code)]
     clipboard: String,
     vim_state: VimState,
 
