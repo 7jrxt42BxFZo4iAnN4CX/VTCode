@@ -2,6 +2,16 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.142.0 - 2026-08-08
+
+### Highlights
+#### Features
+
+- Add NVIDIA provider and Ollama Cloud model (db4ff0bc) 
+### Other Changes
+#### Other
+
+- Update TODO (8ec22eba) 
 ## 0.141.16 - 2026-08-08
 
 ### Highlights
