@@ -2,6 +2,18 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.141.16 - 2026-08-08
+
+### Highlights
+#### Documentation
+
+- Add branded Agent Plugins badge to README (d4139ddd) 
+- Add official logo to Agent Skills badge and link agentskills.io (6f37cf35) 
+- Keep original color on Agent Skills badge (a9a4e926) 
+### Other Changes
+#### Other
+
+- Update README (59d9d9c3) 
 ## 0.141.15 - 2026-08-08
 
 ### Highlights
