@@ -57,6 +57,10 @@ Choose one of the supported LLM providers:
     -   Get from [MiniMax Platform](https://platform.minimax.io/docs)
     -   Models: MiniMax-M3, M2.7, M2.5
 
+-   **NVIDIA NIM**: `export NVIDIA_API_KEY=your_key_here`
+    -   Get from [NVIDIA Build](https://build.nvidia.com/)
+    -   Models: Nemotron 3 Ultra/Super/Nano, GLM-5.2, DeepSeek V4 Flash
+
 For more providers, see the [Provider Guides](../providers/PROVIDER_GUIDES.md).
 
 ## Installation

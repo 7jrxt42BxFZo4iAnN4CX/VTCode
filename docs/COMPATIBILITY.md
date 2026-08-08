@@ -121,8 +121,11 @@ All VT Code crates require Rust 1.88 or later due to dependencies (ratatui 0.30,
 | Poolside | Yes | `poolside` | Full support |
 | Qwen | Yes | `qwen` | Alibaba Cloud |
 | HuggingFace | Yes | `huggingface` | Inference Providers |
+| xAI | Yes | `xai` | Grok models |
+| NVIDIA | Yes | `nvidia` | NVIDIA NIM, OpenAI compatible |
 | OpenCode Zen | Yes | `opencode-zen` | Full support |
 | OpenCode Go | Yes | `opencode-go` | Full support |
+| Mistral | Yes | `mistral` | Full support |
 
 ---
 
