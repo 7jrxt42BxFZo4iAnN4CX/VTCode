@@ -2,6 +2,28 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.142.1 - 2026-08-08
+
+### Highlights
+#### Bug Fixes
+
+- Reject invalid args in exec_command to prevent silent semantic changes (efa07f60) 
+- Eliminate blocking-in-async IO, harden audit log and editor cancellation (a0be96dd) 
+#### Documentation
+
+- Document NVIDIA provider in guides and readme (fa64cf12) (@vinhnx)
+#### Features
+
+- Support custom provider api_format and per-model capability overrides (eebfc7e3) 
+### Other Changes
+#### Other
+
+- Update TODO (f1a19adc) (@vinhnx)
+- Update notes (1dd4e68d) 
+- Update TODO (6e998537) 
+#### Performance
+
+- Reduce allocations in output capture and pipe buffering (e0835cae) 
 ## 0.142.0 - 2026-08-08
 
 ### Highlights
