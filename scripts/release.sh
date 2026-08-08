@@ -892,6 +892,11 @@ main() {
 			ci_only=true
 			shift
 			;;
+		--path)
+			print_error "'--path' is not supported by cargo-release."
+			print_info "Use '-p <package-name>' to select a workspace package, or cd into the crate directory."
+			exit 1
+			;;
 		*)
 			if [[ -n "$release_argument" ]]; then
 				print_error 'Multiple versions specified'
@@ -972,6 +977,12 @@ main() {
 			next_version="${v[0]}.${v[1]}.${patch_num}"
 			;;
 		esac
+	fi
+
+	if [[ -z "$next_version" ]]; then
+		print_error "Invalid release argument: '$release_argument'"
+		print_info "Usage: $0 [patch|minor|major|<version>] [options]"
+		exit 1
 	fi
 
 	if [[ "$dry_run" == 'true' ]]; then
