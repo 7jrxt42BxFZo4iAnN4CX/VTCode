@@ -1,3 +1,1 @@
-integrate NVIDIA API as a new Provider
-
-https://build.nvidia.com/explore/discover
+https://x.com/reach_vb/status/2085932251070775490
