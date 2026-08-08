@@ -2,6 +2,13 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## [unreleased]
+
+### Highlights
+#### Features
+
+- Implement Agent Plugins feature with security hardening (b91d8460) 
+### Other Changes
 ## 0.141.14 - 2026-08-07
 
 ### Highlights
