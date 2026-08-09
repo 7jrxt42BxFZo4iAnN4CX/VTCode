@@ -11,23 +11,20 @@ use serde_json::{Map, Value, json};
 /// and lets the runloop project tool definitions without first assembling a full
 /// `LLMRequest`. Cache control markers are intentionally omitted — callers that
 /// need them should use [`build_tools`] directly with an `LLMRequest`.
-pub(crate) fn build_tools_via_formatter(tools: &[ToolDefinition]) -> Option<Value> {
+pub(crate) fn build_tools_via_formatter(tools: &[ToolDefinition]) -> Result<Option<Value>, LLMError> {
     if tools.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     let mut built_tools = Vec::with_capacity(tools.len());
     for tool in tools.iter() {
-        if let Err(err) = push_anthropic_tool(&mut built_tools, tool) {
-            tracing::warn!(
-                error = %err,
-                tool = %tool.tool_type,
-                "AnthropicFormatter: failed to build tool entry, dropping tool"
-            );
-        }
+        push_anthropic_tool(&mut built_tools, tool)?;
     }
 
-    serde_json::to_value(built_tools).ok()
+    serde_json::to_value(built_tools).map(Some).map_err(|err| LLMError::Provider {
+        message: format!("failed to serialize Anthropic tools: {err}"),
+        metadata: None,
+    })
 }
 
 fn push_anthropic_tool(built_tools: &mut Vec<AnthropicTool>, tool: &ToolDefinition) -> Result<(), LLMError> {
@@ -571,6 +568,7 @@ mod tests {
         // Anthropic formatter: builds `AnthropicFunctionTool` manually,
         // field by field.
         let anthropic_value = build_tools_via_formatter(&tools)
+            .expect("anthropic formatter should serialize")
             .expect("anthropic formatter should produce a value for a non-empty tool list");
         let anthropic_json = serde_json::to_string(&anthropic_value).expect("serialize");
         assert!(

@@ -249,7 +249,7 @@ impl GeminiProvider {
             contents.pop();
         }
 
-        let tool_spec = collect_gemini_tool_spec(request.tools.as_deref().map(|v| v.as_slice()));
+        let tool_spec = collect_gemini_tool_spec(request.tools.as_deref().map(|v| v.as_slice()))?;
         let tools = tool_spec.generate_tools;
         let uses_server_side_tools = tool_spec.uses_server_side_tools;
 
@@ -351,7 +351,10 @@ impl GeminiProvider {
         }
 
         request.model.contains("gemini-3")
-            && collect_gemini_tool_spec(request.tools.as_deref().map(|v| v.as_slice())).uses_server_side_tools
+            && request
+                .tools
+                .as_deref()
+                .is_some_and(|tools| tools.iter().any(|tool| gemini_built_in_tool(tool).is_some()))
     }
 
     pub(super) fn convert_to_interaction_request(&self, request: &LLMRequest) -> Result<InteractionRequest, LLMError> {
@@ -373,7 +376,7 @@ impl GeminiProvider {
             Self::HISTORY_DIRECTIVES_SECTION_HEADER,
         );
 
-        let tool_spec = collect_gemini_tool_spec(request.tools.as_deref().map(|v| v.as_slice()));
+        let tool_spec = collect_gemini_tool_spec(request.tools.as_deref().map(|v| v.as_slice()))?;
         let generation_config = build_generation_config(self, request);
         let interaction_input = build_interaction_input(request)?;
 
@@ -981,7 +984,7 @@ fn gemini_built_in_tool(tool: &ToolDefinition) -> Option<Tool> {
     }
 }
 
-fn gemini_interaction_built_in_tool(tool: &ToolDefinition) -> Option<InteractionTool> {
+fn gemini_interaction_built_in_tool(tool: &ToolDefinition) -> Result<Option<InteractionTool>, LLMError> {
     let (tool_type, config) = match tool.tool_type.as_str() {
         "web_search" | "google_search" => ("google_search", tool.web_search.as_ref()),
         "google_maps" => ("google_maps", tool.hosted_tool_config.as_ref()),
@@ -989,20 +992,31 @@ fn gemini_interaction_built_in_tool(tool: &ToolDefinition) -> Option<Interaction
         "file_search" => ("file_search", tool.hosted_tool_config.as_ref()),
         "code_execution" => ("code_execution", tool.hosted_tool_config.as_ref()),
         other if other.starts_with("code_execution_") => ("code_execution", None),
-        _ => return None,
+        _ => return Ok(None),
     };
 
-    Some(InteractionTool::built_in(tool_type, config))
+    if let Some(config) = config.and_then(Value::as_object)
+        && let Some(key) = ["type", "name", "description", "parameters"]
+            .into_iter()
+            .find(|key| config.contains_key(*key))
+    {
+        return Err(LLMError::InvalidRequest {
+            message: format!("Gemini built-in tool extension key '{key}' collides with a reserved wire field"),
+            metadata: None,
+        });
+    }
+
+    Ok(Some(InteractionTool::built_in(tool_type, config)))
 }
 
-fn collect_gemini_tool_spec(definitions: Option<&[ToolDefinition]>) -> GeminiToolSpec {
+fn collect_gemini_tool_spec(definitions: Option<&[ToolDefinition]>) -> Result<GeminiToolSpec, LLMError> {
     let Some(definitions) = definitions else {
-        return GeminiToolSpec {
+        return Ok(GeminiToolSpec {
             generate_tools: None,
             interaction_tools: None,
             uses_server_side_tools: false,
             has_function_tools: false,
-        };
+        });
     };
 
     let mut generate_tools = Vec::new();
@@ -1017,7 +1031,7 @@ fn collect_gemini_tool_spec(definitions: Option<&[ToolDefinition]>) -> GeminiToo
             uses_server_side_tools = true;
             generate_tools.push(built_in_tool);
         }
-        if let Some(interaction_tool) = gemini_interaction_built_in_tool(tool) {
+        if let Some(interaction_tool) = gemini_interaction_built_in_tool(tool)? {
             interaction_tools.push(interaction_tool);
         }
 
@@ -1047,12 +1061,12 @@ fn collect_gemini_tool_spec(definitions: Option<&[ToolDefinition]>) -> GeminiToo
         });
     }
 
-    GeminiToolSpec {
+    Ok(GeminiToolSpec {
         generate_tools: (!generate_tools.is_empty()).then_some(generate_tools),
         interaction_tools: (!interaction_tools.is_empty()).then_some(interaction_tools),
         uses_server_side_tools,
         has_function_tools,
-    }
+    })
 }
 
 fn build_generation_config(provider: &GeminiProvider, request: &LLMRequest) -> GenerationConfig {
@@ -1400,14 +1414,21 @@ fn apply_interaction_delta(
 /// Callers that need access to `interaction_tools` or the
 /// `uses_server_side_tools` flag should use `collect_gemini_tool_spec` directly
 /// via the build helpers in [`crate::providers::gemini`].
-pub fn serialize_gemini_tools(tools: &[ToolDefinition]) -> Option<Value> {
+pub fn serialize_gemini_tools(tools: &[ToolDefinition]) -> Result<Option<Value>, LLMError> {
     if tools.is_empty() {
-        return None;
+        return Ok(None);
     }
 
-    let spec = collect_gemini_tool_spec(Some(tools));
-    let generate_tools = spec.generate_tools?;
-    serde_json::to_value(generate_tools).ok()
+    let spec = collect_gemini_tool_spec(Some(tools))?;
+    let Some(generate_tools) = spec.generate_tools else {
+        return Ok(None);
+    };
+    serde_json::to_value(generate_tools)
+        .map(Some)
+        .map_err(|err| LLMError::Provider {
+            message: format!("failed to serialize Gemini tools: {err}"),
+            metadata: None,
+        })
 }
 
 #[cfg(test)]
@@ -1494,5 +1515,12 @@ mod fabricated_id_tests {
         assert_eq!(unique.len(), 2, "fabricated ids must differ across responses");
         assert!(first_id.starts_with("call_"));
         assert!(second_id.starts_with("call_"));
+    }
+
+    #[test]
+    fn gemini_formatter_rejects_reserved_built_in_extension_keys() {
+        let tool = ToolDefinition::google_maps(json!({"type": "unexpected"}));
+        let error = serialize_gemini_tools(&[tool]).expect_err("reserved extension keys must be rejected");
+        assert!(error.to_string().contains("collides with a reserved wire field"));
     }
 }

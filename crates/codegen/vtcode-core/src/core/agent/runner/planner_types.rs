@@ -97,6 +97,9 @@ pub(super) struct ReplanResponse {
     /// through evaluator testing).
     #[serde(default, alias = "new_tracker_items")]
     pub(super) new_tracker_items: Vec<PlannerItem>,
+    /// Scopes copied verbatim from the evaluator's task-scoped notes.
+    #[serde(default)]
+    pub(super) preserved_scopes: Vec<String>,
     /// Why the replanner made these changes.
     #[serde(default)]
     pub(super) rationale: String,

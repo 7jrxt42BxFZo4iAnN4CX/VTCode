@@ -828,7 +828,7 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/project/PLAN-loop-engineering.md`
   - **Content**: PLAN Loop Engineering
-  - **Topics**: Principles, Lifecycle, Cross-references
+  - **Topics**: Principles, Lifecycle, Evidence-bounded replanning, Cross-references
   - **User Questions**: "What can you tell me about PLAN Loop Engineering?", "How does Principles work?", "How does Lifecycle work?"
 
 - **File**: `docs/pty/PTY_ANSI_HANDLING.md`

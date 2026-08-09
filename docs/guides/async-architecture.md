@@ -223,7 +223,23 @@ tokio::spawn(async move {
 
 **Note:** Use `tokio::sync::*`, not `std::sync::*` for async code.
 
-### Pattern 6: Actor Pattern (Handle + Background Task)
+### Pattern 6a: Bounded coalescing writers for synchronous side channels
+
+Some domain APIs intentionally remain synchronous (`ProgressLedgerSink` is one
+example), while their callers run on async paths. Do not perform filesystem
+writes in those methods. Enqueue the latest snapshot into a bounded queue with
+`try_send`; a dedicated writer thread drains the queue and coalesces stale
+updates. The queue should retain one pending signal and the newest snapshot,
+with checkpoint intent merged into that snapshot. This keeps progress updates
+best-effort and non-blocking without allowing unbounded memory growth.
+
+If the API can be async, prefer `tokio::fs` for ordinary file operations and
+`spawn_blocking` for recursive scans, tree-sitter aggregation, or other
+synchronous libraries. `code_search` follows this split: independent backend
+processes overlap with `tokio::join!`, then filesystem and parser aggregation
+is isolated in one blocking task.
+
+### Pattern 7: Actor Pattern (Handle + Background Task)
 
 The actor pattern separates the handle (what callers interact with) from the background task (which owns state and performs I/O). This is the recommended pattern when a component needs to own exclusive access to a resource while accepting messages from multiple callers.
 

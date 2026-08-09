@@ -23,6 +23,7 @@ Entry point for VT Code contributor workflows.
 ## Performance and Reliability
 
 - [Performance Guide](./performance.md) - Profiling and optimization workflow.
+- [Rust Performance Principles](./rust-performance-principles.md) - Rust hot-path and I/O guidance.
 - [Performance Hasher Policy](./performance-hasher-policy.md) - `rustc_hash` usage policy.
 - [Async Performance Audit](./async-performance-audit.md) - Async architecture performance findings.
 

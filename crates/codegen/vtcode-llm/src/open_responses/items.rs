@@ -7,6 +7,7 @@ use serde::de::{self, MapAccess, Visitor};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
+use std::collections::HashSet;
 
 use super::{ContentPart, ItemStatus};
 use vtcode_macros::StringNewtype;
@@ -139,8 +140,12 @@ impl<'de> Deserialize<'de> for OutputItem {
                 let mut call_id: Option<String> = None;
                 let mut output: Option<String> = None;
                 let mut data: Option<Value> = None;
+                let mut seen_keys = HashSet::new();
 
                 while let Some(key) = map.next_key::<String>()? {
+                    if !seen_keys.insert(key.clone()) {
+                        return Err(de::Error::custom(format!("duplicate OpenResponses field {key:?}")));
+                    }
                     match key.as_str() {
                         "type" => type_field = Some(map.next_value()?),
                         "id" => id = Some(map.next_value()?),
@@ -524,6 +529,19 @@ mod tests {
         } else {
             panic!("Expected Custom variant for unknown type");
         }
+    }
+
+    #[test]
+    fn test_duplicate_output_item_keys_are_rejected() {
+        let json = r#"{
+            "type":"message",
+            "id":"item_1",
+            "id":"item_2",
+            "role":"assistant",
+            "content":[]
+        }"#;
+        let error = serde_json::from_str::<OutputItem>(json).expect_err("duplicate keys must be rejected");
+        assert!(error.to_string().contains("duplicate OpenResponses field"));
     }
 
     #[test]

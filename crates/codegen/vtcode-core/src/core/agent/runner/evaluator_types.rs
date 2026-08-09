@@ -7,6 +7,51 @@ use serde::Deserialize;
 
 /// Minimum score required for each evaluator scorecard dimension.
 const EVALUATOR_SCORE_THRESHOLD: u8 = 4;
+const MAX_GENERALIZATION_NOTES: usize = 8;
+const MAX_GENERALIZATION_NOTE_FIELD_CHARS: usize = 1_000;
+
+/// A bounded, task-scoped observation that may guide a later replan.
+///
+/// These notes deliberately do not model durable beliefs. Every note must
+/// carry the evidence that supports it and a concrete way to falsify it before
+/// it can enter an evaluation artifact or a tracker.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(super) struct GeneralizationNote {
+    pub(super) claim: String,
+    pub(super) scope: String,
+    pub(super) evidence: String,
+    pub(super) falsifier: String,
+}
+
+impl GeneralizationNote {
+    fn validate(self) -> Result<Self, String> {
+        let fields = [
+            ("claim", &self.claim),
+            ("scope", &self.scope),
+            ("evidence", &self.evidence),
+            ("falsifier", &self.falsifier),
+        ];
+        for (name, value) in fields {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err(format!("generalization note {name} must not be empty"));
+            }
+            if trimmed.chars().count() > MAX_GENERALIZATION_NOTE_FIELD_CHARS {
+                return Err(format!(
+                    "generalization note {name} exceeds {MAX_GENERALIZATION_NOTE_FIELD_CHARS} characters"
+                ));
+            }
+        }
+
+        Ok(Self {
+            claim: self.claim.trim().to_string(),
+            scope: self.scope.trim().to_string(),
+            evidence: self.evidence.trim().to_string(),
+            falsifier: self.falsifier.trim().to_string(),
+        })
+    }
+}
 
 /// Structured response from the evaluator LLM.
 #[derive(Debug, Clone, Deserialize)]
@@ -25,6 +70,23 @@ pub(super) struct EvaluatorResponse {
     pub(super) residual_risks: Vec<String>,
     #[serde(default)]
     pub(super) required_tracker_updates: Vec<String>,
+    /// Task-scoped observations. These are validated before rendering and are
+    /// never copied into global beliefs or persistent memory automatically.
+    #[serde(default, deserialize_with = "deserialize_generalization_notes")]
+    pub(super) generalization_notes: Vec<GeneralizationNote>,
+}
+
+fn deserialize_generalization_notes<'de, D>(deserializer: D) -> Result<Vec<GeneralizationNote>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let notes = Vec::<GeneralizationNote>::deserialize(deserializer)?;
+    if notes.len() > MAX_GENERALIZATION_NOTES {
+        return Err(serde::de::Error::custom(format!(
+            "at most {MAX_GENERALIZATION_NOTES} generalization notes are allowed"
+        )));
+    }
+    Ok(notes)
 }
 
 /// A single finding from the evaluator.
@@ -92,9 +154,40 @@ impl EvaluatorScorecard {
     pub(super) fn has_scores(&self) -> bool {
         self.entries().into_iter().any(|(_, score)| score.is_some())
     }
+
+    fn with_min_score(mut self, label: &str, new_score: u8) -> Self {
+        let current = match label {
+            "Contract fidelity" => self.contract_fidelity,
+            "Functionality" => self.functionality,
+            "Code quality" => self.code_quality,
+            "Verification integrity" => self.verification_integrity,
+            _ => None,
+        };
+        let merged = match (current, new_score) {
+            (Some(c), n) if n < c => Some(n),
+            (None, n) => Some(n),
+            (Some(c), _) => Some(c),
+        };
+        match label {
+            "Contract fidelity" => self.contract_fidelity = merged,
+            "Functionality" => self.functionality = merged,
+            "Code quality" => self.code_quality = merged,
+            "Verification integrity" => self.verification_integrity = merged,
+            _ => {}
+        }
+        self
+    }
 }
 
 impl EvaluatorResponse {
+    pub(super) fn validated_generalization_notes(&self) -> Result<Vec<GeneralizationNote>, String> {
+        self.generalization_notes
+            .iter()
+            .cloned()
+            .map(GeneralizationNote::validate)
+            .collect()
+    }
+
     fn effective_scorecard(&self) -> EvaluatorScorecard {
         self.scorecard.unwrap_or_default()
     }
@@ -175,6 +268,7 @@ pub(super) struct SkepticPanelAggregate {
     pub(super) summary: String,
     pub(super) scorecard: EvaluatorScorecard,
     pub(super) high_severity_findings: usize,
+    pub(super) generalization_notes: Vec<GeneralizationNote>,
 }
 
 impl SkepticPanelAggregate {
@@ -187,6 +281,11 @@ impl SkepticPanelAggregate {
             "fail".to_string()
         };
         let high_severity_findings = entries.iter().map(|e| e.response.high_severity_findings).max().unwrap_or(0);
+        let generalization_notes = entries
+            .iter()
+            .flat_map(|entry| entry.response.generalization_notes.iter().cloned())
+            .take(MAX_GENERALIZATION_NOTES)
+            .collect();
         let mut summaries = entries.iter().map(|e| e.response.summary.trim()).collect::<Vec<_>>();
         if summaries.len() > 3 {
             summaries.truncate(3);
@@ -210,31 +309,94 @@ impl SkepticPanelAggregate {
             summary,
             scorecard,
             high_severity_findings,
+            generalization_notes,
         }
     }
 }
 
-impl EvaluatorScorecard {
-    fn with_min_score(mut self, label: &str, new_score: u8) -> Self {
-        let current = match label {
-            "Contract fidelity" => self.contract_fidelity,
-            "Functionality" => self.functionality,
-            "Code quality" => self.code_quality,
-            "Verification integrity" => self.verification_integrity,
-            _ => None,
-        };
-        let merged = match (current, new_score) {
-            (Some(c), n) if n < c => Some(n),
-            (None, n) => Some(n),
-            (Some(c), _) => Some(c),
-        };
-        match label {
-            "Contract fidelity" => self.contract_fidelity = merged,
-            "Functionality" => self.functionality = merged,
-            "Code quality" => self.code_quality = merged,
-            "Verification integrity" => self.verification_integrity = merged,
-            _ => {}
-        }
-        self
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn response_with_notes(notes: serde_json::Value) -> EvaluatorResponse {
+        serde_json::from_value(json!({
+            "verdict": "pass",
+            "summary": "checked",
+            "scorecard": {
+                "contract_fidelity": 5,
+                "functionality": 5,
+                "code_quality": 5,
+                "verification_integrity": 5,
+            },
+            "generalization_notes": notes,
+        }))
+        .expect("evaluator response should deserialize")
+    }
+
+    #[test]
+    fn generalization_notes_are_trimmed_and_require_all_fields() {
+        let response = response_with_notes(json!([{
+            "claim": "  claim  ",
+            "scope": "  one task  ",
+            "evidence": "  a test  ",
+            "falsifier": "  another test  ",
+        }]));
+
+        let notes = response.validated_generalization_notes().expect("note should validate");
+        assert_eq!(notes[0].claim, "claim");
+        assert_eq!(notes[0].scope, "one task");
+        assert_eq!(notes[0].evidence, "a test");
+        assert_eq!(notes[0].falsifier, "another test");
+
+        let invalid = response_with_notes(json!([{
+            "claim": " ",
+            "scope": "scope",
+            "evidence": "evidence",
+            "falsifier": "falsifier",
+        }]));
+        assert!(invalid.validated_generalization_notes().is_err());
+
+        let oversized_claim = "x".repeat(MAX_GENERALIZATION_NOTE_FIELD_CHARS + 1);
+        let oversized = response_with_notes(json!([{
+            "claim": oversized_claim,
+            "scope": "scope",
+            "evidence": "evidence",
+            "falsifier": "falsifier",
+        }]));
+        assert!(oversized.validated_generalization_notes().is_err());
+    }
+
+    #[test]
+    fn generalization_notes_are_bounded() {
+        let note = json!({
+            "claim": "claim",
+            "scope": "scope",
+            "evidence": "evidence",
+            "falsifier": "falsifier",
+        });
+        let too_many = serde_json::from_value::<EvaluatorResponse>(json!({
+            "verdict": "pass",
+            "summary": "checked",
+            "generalization_notes": vec![note; MAX_GENERALIZATION_NOTES + 1],
+        }));
+        assert!(too_many.is_err());
+    }
+
+    #[test]
+    fn skeptic_panel_retains_bounded_task_scoped_notes() {
+        let note = json!({
+            "claim": "claim",
+            "scope": "scope",
+            "evidence": "evidence",
+            "falsifier": "falsifier",
+        });
+        let first = response_with_notes(json!(vec![note.clone(); MAX_GENERALIZATION_NOTES]));
+        let second = response_with_notes(json!([note]));
+        let aggregate = SkepticPanelAggregate::from_entries(vec![
+            SkepticPanelEntry { response: first },
+            SkepticPanelEntry { response: second },
+        ]);
+        assert_eq!(aggregate.generalization_notes.len(), MAX_GENERALIZATION_NOTES);
     }
 }

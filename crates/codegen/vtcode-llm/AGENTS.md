@@ -1,5 +1,4 @@
 # vtcode-llm
-
 [Root AGENTS.md](../AGENTS.md) | **Canonical** LLM provider trait, types, and implementations.
 
 ## Key Modules
@@ -7,7 +6,6 @@
 `provider/` trait + shared types | `providers/` per-provider impls | `providers/custom_provider.rs` custom profile router | `provider.rs` re-exports | `client.rs` + `optimized_client.rs` | `copilot/` (feature-gated) | `open_responses/` | `factory_types.rs` + `provider_config_types.rs` config | `system_prompt.rs` injection | `http_client.rs` | `types.rs` shared types | `utils.rs` + `single_response.rs` + `tool_bridge.rs` + `config_adapter.rs` + `rig_adapter.rs` + `provider_base.rs` + `error_display.rs` + `model_resolver.rs` infra (merged from core)
 
 ## Architecture Notes
-
 - **Canonical home** for all provider code. Core's `llm/` is a thin re-export layer + factory/CGP.
 - `ModelResolver::resolve_with_mode` and `availability_with_mode` must receive the loaded config's credential storage mode; compatibility wrappers are only for callers without workspace config.
 - `ResolvedModel.api_key_env` carries provider-override credential identity through availability and picker selection; do not infer availability from provider alone.
@@ -22,6 +20,7 @@
 
 Providers in `providers/<name>/mod.rs`. Use `anyhow::Result`, `tracing`, not `println!`. Provider-specific types stay local; shared go in `types.rs` or `provider/`. OpenResponses streaming wire parsing dispatches by `type`; keep hot SSE fields borrowed and update the wire fields and mapping together when adding events.
 - Custom provider profiles match exact model IDs; explicit API formats select the wire backend without protocol fallback.
+- Provider tool formatters return `Result<Option<Value>, LLMError>`; never hide serialization failures. Flattened provider extension maps must reject collisions with reserved wire fields before serialization.
 ## OpenAI-Compatible Providers
 
 - `providers/openai_compat.rs` owns the shared shell: `OpenAiCompatSpec` (per-provider consts/overrides) + `OpenAiCompatCore<S>` + `impl_openai_compat_provider!`. New compat providers implement a Spec (~50-200 lines), not a full `LLMProvider`; NVIDIA also accepts arbitrary explicit IDs and maps thinking through `chat_template_kwargs`.

@@ -4,13 +4,17 @@
 //! as markdown artifacts.
 
 use super::AgentRunner;
-use super::evaluator_types::EvaluatorResponse;
+use super::evaluator_types::{EvaluatorResponse, GeneralizationNote};
 use crate::core::agent::task::Task;
 use std::fmt::Write;
 
 impl AgentRunner {
     /// Render an evaluator response as a markdown evaluation report.
-    pub(super) fn render_evaluation(&self, evaluation: &EvaluatorResponse) -> String {
+    pub(super) fn render_evaluation(
+        &self,
+        evaluation: &EvaluatorResponse,
+        generalization_notes: &[GeneralizationNote],
+    ) -> String {
         let mut markdown = format!(
             "# Evaluation\n\n## Verdict\n{}\n\n## Summary\n{}\n",
             evaluation.verdict.trim(),
@@ -51,6 +55,20 @@ impl AgentRunner {
             "Required Tracker Updates",
             &evaluation.required_tracker_updates,
         );
+
+        if !generalization_notes.is_empty() {
+            markdown.push_str("\n## Generalization Notes\n");
+            for (index, note) in generalization_notes.iter().enumerate() {
+                let _ = writeln!(markdown, "### Note {}", index + 1);
+                let _ = writeln!(markdown, "- Claim: {}", note.claim);
+                let _ = writeln!(markdown, "- Scope: {}", note.scope);
+                let _ = writeln!(markdown, "- Evidence: {}", note.evidence);
+                let _ = writeln!(markdown, "- Falsifier: {}", note.falsifier);
+            }
+            markdown.push_str(
+                "\nThese notes are task-scoped observations. They are not promoted to global beliefs or persistent memory automatically.\n",
+            );
+        }
 
         markdown
     }

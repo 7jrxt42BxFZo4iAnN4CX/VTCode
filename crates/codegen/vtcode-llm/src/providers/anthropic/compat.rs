@@ -7,7 +7,8 @@ use crate::providers::anthropic_types::{
     AnthropicOutputConfig, AnthropicOutputFormat, ThinkingConfig, ThinkingDisplay,
 };
 use crate::providers::common::normalize_reasoning_detail_object;
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -118,7 +119,7 @@ pub enum AnthropicSystemPrompt {
     Blocks(Vec<AnthropicContentBlock>),
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum AnthropicTool {
     Advisor {
@@ -153,6 +154,64 @@ pub enum AnthropicTool {
     },
 }
 
+impl Serialize for AnthropicTool {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Advisor {
+                tool_type,
+                name,
+                model,
+                max_uses,
+                max_tokens,
+                caching,
+            } => {
+                let mut map = serializer.serialize_map(None)?;
+                map.serialize_entry("type", tool_type)?;
+                map.serialize_entry("name", name)?;
+                map.serialize_entry("model", model)?;
+                map.serialize_entry("max_uses", max_uses)?;
+                map.serialize_entry("max_tokens", max_tokens)?;
+                map.serialize_entry("caching", caching)?;
+                map.end()
+            }
+            Self::Function {
+                name,
+                description,
+                input_schema,
+                input_examples,
+                strict,
+                allowed_callers,
+            } => {
+                let mut map = serializer.serialize_map(None)?;
+                map.serialize_entry("name", name)?;
+                map.serialize_entry("description", description)?;
+                map.serialize_entry("input_schema", input_schema)?;
+                map.serialize_entry("input_examples", input_examples)?;
+                map.serialize_entry("strict", strict)?;
+                map.serialize_entry("allowed_callers", allowed_callers)?;
+                map.end()
+            }
+            Self::Native { tool_type, name, options } => {
+                if let Some(key) = ["type", "name"].into_iter().find(|key| options.contains_key(*key)) {
+                    return Err(serde::ser::Error::custom(format!(
+                        "Anthropic native tool extension key '{key}' collides with a reserved wire field"
+                    )));
+                }
+                let mut map = serializer.serialize_map(None)?;
+                map.serialize_entry("type", tool_type)?;
+                map.serialize_entry("name", name)?;
+                for (key, value) in options {
+                    map.serialize_entry(key, value)?;
+                }
+                map.end()
+            }
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AnthropicAdvisorCachingCompat {
     #[serde(rename = "type")]
@@ -176,6 +235,25 @@ pub struct AnthropicMessagesResponse {
 pub struct AnthropicUsage {
     pub(crate) input_tokens: u32,
     pub(crate) output_tokens: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_tool_rejects_reserved_extension_keys() {
+        let mut options = serde_json::Map::new();
+        options.insert("type".to_string(), json!("unexpected"));
+        let tool = AnthropicTool::Native {
+            tool_type: "web_search_20250305".to_string(),
+            name: "web_search".to_string(),
+            options,
+        };
+
+        let error = serde_json::to_value(tool).expect_err("reserved extension keys must be rejected");
+        assert!(error.to_string().contains("collides with a reserved wire field"));
+    }
 }
 
 #[derive(Debug, Serialize)]

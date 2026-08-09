@@ -14,8 +14,8 @@ use tokio::task::spawn_blocking;
 
 use crate::tools::ast_grep_language::AstGrepLanguage;
 use crate::tools::file_search_bridge::BoundedPathSearch;
-use crate::tools::grep_file::search_literal_bounded;
-use crate::tools::outline_search::search_declarations_bounded;
+use crate::tools::grep_backend::{LiteralSearchOutcome, search_literal_bounded};
+use crate::tools::outline_search::{DeclarationSearchOutcome, search_declarations_bounded};
 use crate::types::CompactStr;
 use vtcode_commons::formatting::{collapse_whitespace, truncate_byte_budget};
 
@@ -191,38 +191,67 @@ pub async fn execute(workspace_root: &Path, request: CodeSearchRequest) -> Resul
 
     let usage_support = scope::usage_scope_support(&scope, &languages);
     let usage_backend_needed = usage_enabled && usage_support.has_supported_files;
-    let literal_outcome = if text_enabled || usage_backend_needed {
-        search_literal_bounded(&request.query, &scope.requested_path, &languages, candidate_cap)
+    let literal_query = request.query.clone();
+    let literal_path = scope.requested_path.clone();
+    let literal_languages = languages.clone();
+    let literal_future = async move {
+        if text_enabled || usage_backend_needed {
+            search_literal_bounded(&literal_query, &literal_path, &literal_languages, candidate_cap)
+                .await
+                .map(Some)
+        } else {
+            Ok(None)
+        }
+    };
+
+    let declaration_root = scope.workspace_root.clone();
+    let declaration_path = scope.requested_path.clone();
+    let declaration_query = request.query.clone();
+    let declaration_languages = languages.clone();
+    let declaration_future = async move {
+        if definition_enabled || usage_backend_needed {
+            search_declarations_bounded(
+                &declaration_root,
+                &declaration_path,
+                &declaration_query,
+                &declaration_languages,
+                candidate_cap,
+            )
             .await
             .map(Some)
-    } else {
-        Ok(None)
+        } else {
+            Ok(None)
+        }
     };
-    let declaration_outcome = if definition_enabled || usage_backend_needed {
-        search_declarations_bounded(
-            &scope.workspace_root,
-            &scope.requested_path,
-            &request.query,
-            &languages,
-            candidate_cap,
-        )
-        .await
-        .map(Some)
-    } else {
-        Ok(None)
-    };
-    let path_outcome = if path_enabled {
-        let query = request.query.to_string();
-        if scope.requested_is_file {
-            let relative =
-                scope::workspace_relative(&scope, &scope.requested_path).unwrap_or_else(|| CompactStr::from("."));
+
+    let path_requested_is_file = scope.requested_is_file;
+    let path_requested_path = scope.requested_path.clone();
+    let path_workspace_root = scope.workspace_root.clone();
+    let path_query = request.query.to_string();
+    let path_future = async move {
+        if !path_enabled {
+            return Ok(None);
+        }
+        let query = path_query;
+        if path_requested_is_file {
+            let relative = path_requested_path
+                .strip_prefix(&path_workspace_root)
+                .ok()
+                .map(|relative| {
+                    if relative.as_os_str().is_empty() {
+                        CompactStr::from(".")
+                    } else {
+                        CompactStr::from(relative.to_string_lossy().replace('\\', "/"))
+                    }
+                })
+                .unwrap_or_else(|| CompactStr::from("."));
             let matches = relative.to_lowercase().contains(&query.to_lowercase());
             Ok(Some(BoundedPathSearch {
-                paths: matches.then(|| scope.requested_path.clone()).into_iter().collect(),
+                paths: matches.then(|| path_requested_path.clone()).into_iter().collect(),
                 truncated: false,
             }))
         } else {
-            let search_root = scope.requested_path.clone();
+            let search_root = path_requested_path.clone();
             spawn_blocking(move || {
                 crate::tools::file_search_bridge::search_paths_bounded_no_follow(&query, search_root, candidate_cap)
             })
@@ -230,10 +259,107 @@ pub async fn execute(workspace_root: &Path, request: CodeSearchRequest) -> Resul
             .context("path search task failed")?
             .map(Some)
         }
-    } else {
-        Ok(None)
     };
 
+    let (literal_outcome, declaration_outcome, path_outcome) =
+        tokio::join!(literal_future, declaration_future, path_future);
+    let result_types = request.filters.result_types.clone();
+    let query = request.query.to_string();
+    let max_results = request.filters.max_results;
+    let aggregation = spawn_blocking(move || {
+        aggregate_search_results(SearchAggregationInputs {
+            scope,
+            languages,
+            query,
+            result_types,
+            max_results,
+            definition_enabled,
+            text_enabled,
+            usage_enabled,
+            usage_backend_needed,
+            has_unsupported_files: usage_support.has_unsupported_files,
+            requested_unsupported_file_types: usage_support.requested_unsupported_file_types,
+            literal_outcome,
+            declaration_outcome,
+            path_outcome,
+        })
+    })
+    .await
+    .context("code search aggregation task failed")??;
+    let unavailable = aggregation.unavailable;
+    let results = aggregation.results;
+    let truncated = aggregation.truncated;
+
+    let mut hints = Vec::new();
+    if truncated {
+        hints.push(CompactStr::from("Narrow path, file_types, or result_types to refine truncated results."));
+    }
+    let usage_limited =
+        usage_enabled && (usage_support.has_unsupported_files || usage_support.requested_unsupported_file_types);
+    if usage_limited {
+        hints.push(CompactStr::from("Usage results are unavailable for some requested file types."));
+    }
+    if results.iter().any(|result| result.result_type == CodeSearchResultType::Usage) {
+        hints.push(CompactStr::from(
+            "Usage results are syntactic same-spelling identifiers and may refer to different symbols.",
+        ));
+    }
+    if let Some(hint) = ranking::unavailable_hint(&unavailable) {
+        hints.push(hint);
+    }
+    hints.dedup();
+    let returned = results.len();
+    Ok(CodeSearchResponse {
+        query: request.query,
+        filters: request.filters,
+        results,
+        returned,
+        truncated,
+        hints,
+    })
+}
+
+#[derive(Debug)]
+struct AggregatedCodeSearch {
+    results: Vec<CodeSearchResult>,
+    unavailable: Vec<CodeSearchResultType>,
+    truncated: bool,
+}
+
+struct SearchAggregationInputs {
+    scope: ResolvedSearchScope,
+    languages: Vec<AstGrepLanguage>,
+    query: String,
+    result_types: Vec<CodeSearchResultType>,
+    max_results: usize,
+    definition_enabled: bool,
+    text_enabled: bool,
+    usage_enabled: bool,
+    usage_backend_needed: bool,
+    has_unsupported_files: bool,
+    requested_unsupported_file_types: bool,
+    literal_outcome: Result<Option<LiteralSearchOutcome>>,
+    declaration_outcome: Result<Option<DeclarationSearchOutcome>>,
+    path_outcome: Result<Option<BoundedPathSearch>>,
+}
+
+fn aggregate_search_results(inputs: SearchAggregationInputs) -> Result<AggregatedCodeSearch> {
+    let SearchAggregationInputs {
+        scope,
+        languages,
+        query,
+        result_types,
+        max_results,
+        definition_enabled,
+        text_enabled,
+        usage_enabled,
+        usage_backend_needed,
+        has_unsupported_files,
+        requested_unsupported_file_types,
+        literal_outcome,
+        declaration_outcome,
+        path_outcome,
+    } = inputs;
     let mut unavailable = Vec::new();
     let mut candidates = Vec::new();
     let mut truncated = false;
@@ -241,15 +367,11 @@ pub async fn execute(workspace_root: &Path, request: CodeSearchRequest) -> Resul
     let mut source_cache: HashMap<PathBuf, String> = HashMap::new();
     let mut outline_stream_complete = false;
 
-    if usage_enabled
-        && !usage_backend_needed
-        && !usage_support.has_unsupported_files
-        && !usage_support.requested_unsupported_file_types
-    {
+    if usage_enabled && !usage_backend_needed && !has_unsupported_files && !requested_unsupported_file_types {
         unavailable.push(CodeSearchResultType::Usage);
     }
 
-    match &declaration_outcome {
+    match declaration_outcome {
         Ok(Some(outcome)) => {
             truncated |= outcome.truncated;
             outline_stream_complete = outcome.stream_complete;
@@ -257,7 +379,7 @@ pub async fn execute(workspace_root: &Path, request: CodeSearchRequest) -> Resul
                 backends::process_declaration_file(
                     &scope,
                     &languages,
-                    &request.query,
+                    &query,
                     file,
                     definition_enabled,
                     &mut source_cache,
@@ -326,43 +448,18 @@ pub async fn execute(workspace_root: &Path, request: CodeSearchRequest) -> Resul
 
     unavailable.sort_by_key(|kind| kind.precedence());
     unavailable.dedup();
-    let successful_count = request.filters.result_types.len().saturating_sub(unavailable.len());
+    let successful_count = result_types.len().saturating_sub(unavailable.len());
     if successful_count == 0 {
         bail!("all requested code_search result categories are unavailable");
     }
 
     let mut results = ranking::deduplicate_and_order(candidates);
-    if results.len() > request.filters.max_results {
-        results.truncate(request.filters.max_results);
+    if results.len() > max_results {
+        results.truncate(max_results);
         truncated = true;
     }
-    let mut hints = Vec::new();
-    if truncated {
-        hints.push(CompactStr::from("Narrow path, file_types, or result_types to refine truncated results."));
-    }
-    let usage_limited =
-        usage_enabled && (usage_support.has_unsupported_files || usage_support.requested_unsupported_file_types);
-    if usage_limited {
-        hints.push(CompactStr::from("Usage results are unavailable for some requested file types."));
-    }
-    if results.iter().any(|result| result.result_type == CodeSearchResultType::Usage) {
-        hints.push(CompactStr::from(
-            "Usage results are syntactic same-spelling identifiers and may refer to different symbols.",
-        ));
-    }
-    if let Some(hint) = ranking::unavailable_hint(&unavailable) {
-        hints.push(hint);
-    }
-    hints.dedup();
-    let returned = results.len();
-    Ok(CodeSearchResponse {
-        query: request.query,
-        filters: request.filters,
-        results,
-        returned,
-        truncated,
-        hints,
-    })
+
+    Ok(AggregatedCodeSearch { results, unavailable, truncated })
 }
 
 fn normalised_snippet(text: &str) -> CompactStr {

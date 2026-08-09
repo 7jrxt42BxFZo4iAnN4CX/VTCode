@@ -18,6 +18,16 @@ VT Code uses a local-first performance workflow. Performance checks are measured
 
 These rules apply to product code and refactors alike. The burden of proof is on the optimization, not on the simpler baseline.
 
+### Bounded I/O on the agent hot path
+
+Independent code-search backends (literal, declaration, and path search) are
+started together with `tokio::join!`; filesystem reads, tree-sitter parsing,
+and candidate aggregation run in one `spawn_blocking` task. Keep the async
+coordinator responsible for ordering and cancellation, not synchronous disk
+work. For synchronous side-channel APIs such as progress monitoring, use a
+bounded coalescing writer so callers replace stale snapshots and never wait on
+filesystem latency.
+
 ### Serialization and event-log replay
 
 Avoid combining `#[serde(flatten)]` with `#[serde(untagged)]` on frequent,
@@ -218,6 +228,10 @@ measures repeated schema/model-tool projection after the catalog is warm; its
 projection cache is private to an immutable catalog and keyed by documentation
 mode. These benchmarks expose repeated work and synchronization cost rather
 than serving as universal CI thresholds.
+
+Code-search changes should be checked for both backend overlap and blocking
+pool behavior; progress-ledger changes should be checked for bounded queue
+growth and latest-snapshot semantics before comparing end-to-end medians.
 
 Compare repeated local medians rather than adding a noisy hard gate:
 

@@ -486,6 +486,101 @@ async fn evaluator_request_includes_verification_results() {
     assert!(evaluator_prompt.contains("Verification results:"));
     assert!(evaluator_prompt.contains("[PASS] pwd (exit 0)"));
     assert!(evaluator_prompt.contains("contract_fidelity"));
+    assert!(evaluator_request.system_prompt.as_deref().is_some_and(|prompt| {
+        prompt.contains("2301.12987")
+            && prompt.contains("weakest sufficient hypothesis")
+            && prompt.contains("generalization_notes")
+    }));
+}
+
+#[tokio::test]
+async fn evaluator_notes_render_and_replan_adds_falsifier_tracker_steps() {
+    let temp = TempDir::new().expect("tempdir");
+    let workspace = workspace_root(&temp);
+
+    let mut vt_cfg = VTCodeConfig::default();
+    vt_cfg.agent.harness.orchestration_mode = vtcode_config::core::agent::HarnessOrchestrationMode::PlanBuildEvaluate;
+    vt_cfg.automation.full_auto.max_turns = 8;
+    let mut runner = Box::pin(make_runner(&temp, vt_cfg, "thread-evidence-bounded-replan")).await;
+    runner.enable_full_auto(&[tools::TASK_TRACKER.to_string()]).await;
+    let mut provider = RoleQueuedProvider::new();
+    provider
+        .planner(json_response(planner_response_json("pwd")))
+        .build(tool_call_response(
+            tools::TASK_TRACKER,
+            json!({
+                "action": "update",
+                "index": 1,
+                "status": "completed",
+            }),
+        ))
+        .build(text_response("The task is complete."))
+        .evaluator(json_response(evaluator_response_json_with_notes(
+            "fail",
+            "The implementation needs one bounded follow-up.",
+            1,
+            json!([{
+                "claim": "The changed code-search scope remains bounded",
+                "scope": "Only code-search changes in this task",
+                "evidence": "The focused code-search regression tests pass",
+                "falsifier": "A regression test returns a result outside the requested scope",
+            }]),
+        )))
+        .replanner(json_response(json!({
+            "revised_feature_list": "# Features\n\n- [x] Preserve bounded code-search scope",
+            "contract_addendum": "- Preserve the supplied scope.",
+            "new_tracker_items": [],
+            "preserved_scopes": ["Only code-search changes in this task"],
+            "rationale": "Keep the observation task-scoped.",
+        })))
+        .build(tool_call_response(
+            tools::TASK_TRACKER,
+            json!({
+                "action": "update",
+                "index": 2,
+                "status": "completed",
+            }),
+        ))
+        .build(text_response("The falsifier is verified."))
+        .build(text_response("The evidence-bounded follow-up is complete."))
+        .build(text_response("All task-scoped verification is complete."))
+        .evaluator(json_response(evaluator_response_json("pass", "Follow-up verified.", 0)));
+    let recorded = provider.clone();
+    runner.provider_client = Box::new(provider);
+
+    let result = Box::pin(runner.execute_task(&task("Evidence-bounded replan", "exec-task"), &[]))
+        .await
+        .expect("task result");
+
+    assert!(
+        matches!(result.outcome, TaskOutcome::Success | TaskOutcome::StoppedNoAction),
+        "unexpected replan outcome: {:?}",
+        result.outcome
+    );
+    let replan_request = recorded
+        .recorded_requests()
+        .into_iter()
+        .find(|request| harness_role_of(request) == HarnessRole::Replanner)
+        .expect("replanner request");
+    let replan_prompt = replan_request
+        .messages
+        .first()
+        .map(|message| message.content.as_text().into_owned())
+        .expect("replanner prompt");
+    assert!(replan_prompt.contains("Only code-search changes in this task"));
+    assert!(replan_prompt.contains("A regression test returns a result outside the requested scope"));
+    assert!(
+        replan_request.system_prompt.as_deref().is_some_and(|prompt| {
+            prompt.contains("2301.12987") && prompt.contains("weakest sufficient hypothesis")
+        })
+    );
+    let tracker = fs::read_to_string(workspace.join(".vtcode/tasks/current_task.md")).expect("tracker file");
+    assert!(tracker.contains("Falsify task-scoped claim: The changed code-search scope remains bounded"));
+    assert!(tracker.contains("A regression test returns a result outside the requested scope"));
+
+    let contract = fs::read_to_string(workspace.join(".vtcode/tasks/current_contract.md")).expect("contract file");
+    assert!(contract.contains("Only code-search changes in this task"));
+    assert!(contract.contains("Evidence: The focused code-search regression tests pass"));
 }
 
 #[tokio::test]

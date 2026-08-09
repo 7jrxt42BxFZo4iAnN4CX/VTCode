@@ -13,7 +13,9 @@
 //! Persistence is best-effort: a failed disk write is logged, not fatal, so the
 //! live run is never blocked by the progress side-channel.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, SyncSender, TrySendError};
+use std::sync::{Arc, Mutex};
 
 use tracing::warn;
 use vtcode_memory::progress::{Milestone, MilestoneStatus, ProgressLedger, load_progress, save_progress};
@@ -47,34 +49,105 @@ impl ProgressLedgerSink for NullProgressSink {
 /// checkpoints a markdown summary into the workspace's durable memory.
 #[derive(Debug, Clone)]
 pub struct SessionProgressSink {
-    workspace: PathBuf,
+    writer: PendingProgressWriter,
+}
+
+#[derive(Debug, Clone)]
+struct PendingProgressWriter {
+    signal: SyncSender<()>,
+    pending: Arc<Mutex<PendingProgress>>,
+}
+
+#[derive(Debug, Default)]
+struct PendingProgress {
+    ledger: Option<ProgressLedger>,
+    checkpoint: bool,
 }
 
 impl SessionProgressSink {
     /// Create a sink rooted at `workspace`.
     #[must_use]
     pub fn new(workspace: PathBuf) -> Self {
-        Self { workspace }
+        let (signal, receiver) = mpsc::sync_channel(1);
+        let pending = Arc::new(Mutex::new(PendingProgress::default()));
+        let writer_workspace = workspace.clone();
+        let writer_pending = Arc::clone(&pending);
+        if let Err(error) = std::thread::Builder::new()
+            .name("vtcode-progress-writer".to_string())
+            .spawn(move || {
+                while receiver.recv().is_ok() {
+                    let work = match writer_pending.lock() {
+                        Ok(mut pending) => PendingProgress {
+                            ledger: pending.ledger.take(),
+                            checkpoint: std::mem::take(&mut pending.checkpoint),
+                        },
+                        Err(error) => {
+                            warn!(error = %error, "progress writer state lock poisoned");
+                            continue;
+                        }
+                    };
+                    persist_pending_progress(&writer_workspace, work);
+                }
+            })
+        {
+            warn!(error = %error, "failed to start progress writer thread");
+        }
+
+        Self { writer: PendingProgressWriter { signal, pending } }
     }
 }
 
 impl ProgressLedgerSink for SessionProgressSink {
     fn persist(&self, ledger: &ProgressLedger) {
-        if let Err(e) = save_progress(&self.workspace, &ledger.session_id, ledger) {
-            warn!(session = %ledger.session_id, error = %e, "failed to persist progress ledger");
-        }
+        self.writer.enqueue(ledger, false);
     }
 
     fn checkpoint(&self, ledger: &ProgressLedger) {
-        let path = self.workspace.join("memories").join("progress.md");
-        if let Some(parent) = path.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                warn!(path = %parent.display(), error = %e, "failed to create memories dir");
+        self.writer.enqueue(ledger, true);
+    }
+}
+
+impl PendingProgressWriter {
+    fn enqueue(&self, ledger: &ProgressLedger, checkpoint: bool) {
+        let mut pending = match self.pending.lock() {
+            Ok(pending) => pending,
+            Err(error) => {
+                warn!(error = %error, "progress writer state lock poisoned while enqueueing");
                 return;
             }
+        };
+        pending.ledger = Some(ledger.clone());
+        pending.checkpoint |= checkpoint;
+        drop(pending);
+
+        match self.signal.try_send(()) {
+            Ok(()) | Err(TrySendError::Full(())) => {}
+            Err(TrySendError::Disconnected(())) => {
+                warn!("progress writer thread is unavailable");
+            }
         }
-        if let Err(e) = std::fs::write(&path, ledger.to_markdown()) {
-            warn!(path = %path.display(), error = %e, "failed to write progress memory");
+    }
+}
+
+fn persist_pending_progress(workspace: &Path, pending: PendingProgress) {
+    let Some(ledger) = pending.ledger else {
+        return;
+    };
+
+    if let Err(error) = save_progress(workspace, &ledger.session_id, &ledger) {
+        warn!(session = %ledger.session_id, error = %error, "failed to persist progress ledger");
+    }
+
+    if pending.checkpoint {
+        let path = workspace.join("memories").join("progress.md");
+        if let Some(parent) = path.parent()
+            && let Err(error) = std::fs::create_dir_all(parent)
+        {
+            warn!(path = %parent.display(), error = %error, "failed to create memories dir");
+            return;
+        }
+        if let Err(error) = std::fs::write(&path, ledger.to_markdown()) {
+            warn!(path = %path.display(), error = %error, "failed to write progress memory");
         }
     }
 }
@@ -291,5 +364,23 @@ mod tests {
 
         monitor.record_stall();
         assert_eq!(monitor.consecutive_stalls(), 1);
+    }
+
+    #[test]
+    fn filesystem_writer_coalesces_updates_without_blocking_the_caller() {
+        let (signal, receiver) = mpsc::sync_channel(1);
+        let pending = Arc::new(Mutex::new(PendingProgress::default()));
+        let writer = PendingProgressWriter { signal, pending: Arc::clone(&pending) };
+        let first = ProgressLedger::new("first", "goal");
+        let second = ProgressLedger::new("second", "goal");
+
+        writer.enqueue(&first, false);
+        writer.enqueue(&second, true);
+
+        assert!(receiver.try_recv().is_ok());
+        let pending = pending.lock().expect("pending state");
+        assert_eq!(pending.ledger.as_ref().map(|ledger| ledger.session_id.as_str()), Some("second"));
+        assert!(pending.checkpoint);
+        assert!(receiver.try_recv().is_err(), "coalescing should keep one signal queued");
     }
 }

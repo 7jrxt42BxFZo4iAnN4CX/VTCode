@@ -18,7 +18,7 @@
 
 use serde_json::Value;
 
-use crate::provider::ToolDefinition;
+use crate::provider::{LLMError, ToolDefinition};
 
 /// Identifies a provider family for the purpose of tool formatting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -72,7 +72,7 @@ pub trait ProviderToolFormatter: Send + Sync {
     ///
     /// Returns `None` when the slice is empty (mirrors the existing per-provider
     /// helpers).
-    fn format_tools(&self, tools: &[ToolDefinition], model: &str) -> Option<Value>;
+    fn format_tools(&self, tools: &[ToolDefinition], model: &str) -> Result<Option<Value>, LLMError>;
 }
 
 /// Anthropic formatter — extracts logic from
@@ -105,7 +105,7 @@ impl ProviderToolFormatter for AnthropicFormatter {
             || tool.function.is_some()
     }
 
-    fn format_tools(&self, tools: &[ToolDefinition], _model: &str) -> Option<Value> {
+    fn format_tools(&self, tools: &[ToolDefinition], _model: &str) -> Result<Option<Value>, LLMError> {
         // Delegate to the existing build helper so we never regress the wire shape.
         // The function is wired through `crate::providers::anthropic::request_builder::tools`
         // to keep Anthropic-specific knowledge in one place.
@@ -130,8 +130,8 @@ impl ProviderToolFormatter for OpenAIChatFormatter {
         tool.tool_type == "function" || tool.tool_type == "web_search"
     }
 
-    fn format_tools(&self, tools: &[ToolDefinition], _model: &str) -> Option<Value> {
-        super::common::serialize_tools_openai_format(tools).map(Value::Array)
+    fn format_tools(&self, tools: &[ToolDefinition], _model: &str) -> Result<Option<Value>, LLMError> {
+        Ok(super::common::serialize_tools_openai_format(tools).map(Value::Array))
     }
 }
 
@@ -163,9 +163,9 @@ impl ProviderToolFormatter for OpenAIResponsesFormatter {
         true
     }
 
-    fn format_tools(&self, tools: &[ToolDefinition], _model: &str) -> Option<Value> {
+    fn format_tools(&self, tools: &[ToolDefinition], _model: &str) -> Result<Option<Value>, LLMError> {
         // Defer to the existing per-provider helper to keep the wire shape stable.
-        super::openai::tool_serialization::serialize_tools_for_responses(tools, None)
+        Ok(super::openai::tool_serialization::serialize_tools_for_responses(tools, None))
     }
 }
 
@@ -194,7 +194,7 @@ impl ProviderToolFormatter for GeminiFormatter {
         ) || tool.function.is_some()
     }
 
-    fn format_tools(&self, tools: &[ToolDefinition], _model: &str) -> Option<Value> {
+    fn format_tools(&self, tools: &[ToolDefinition], _model: &str) -> Result<Option<Value>, LLMError> {
         // Delegate to the existing helper so the wire shape stays in lockstep with
         // what the Gemini request builder already does today.
         super::gemini::helpers::serialize_gemini_tools(tools)
@@ -219,8 +219,8 @@ impl ProviderToolFormatter for OpenAICompatibleFormatter {
         tool.tool_type == "function" || tool.tool_type == "web_search"
     }
 
-    fn format_tools(&self, tools: &[ToolDefinition], _model: &str) -> Option<Value> {
-        super::common::serialize_tools_openai_format(tools).map(Value::Array)
+    fn format_tools(&self, tools: &[ToolDefinition], _model: &str) -> Result<Option<Value>, LLMError> {
+        Ok(super::common::serialize_tools_openai_format(tools).map(Value::Array))
     }
 }
 
@@ -296,10 +296,18 @@ mod tests {
         // The formatter contract mirrors existing helpers: an empty tool slice yields
         // `None` so callers can omit the `"tools"` key from the wire payload.
         let f = formatter_for_provider("anthropic");
-        assert!(f.format_tools(&[], "claude-opus-4-7").is_none());
+        assert!(
+            f.format_tools(&[], "claude-opus-4-7")
+                .expect("empty formatting should succeed")
+                .is_none()
+        );
 
         let f = formatter_for_provider("deepseek");
-        assert!(f.format_tools(&[], "deepseek-chat").is_none());
+        assert!(
+            f.format_tools(&[], "deepseek-chat")
+                .expect("empty formatting should succeed")
+                .is_none()
+        );
     }
 
     #[test]
@@ -311,6 +319,7 @@ mod tests {
         let f = formatter_for_provider("deepseek");
         let value = f
             .format_tools(std::slice::from_ref(&tool), "deepseek-chat")
+            .expect("formatter should serialize")
             .expect("formatter should yield a value for a non-empty slice");
         let arr = value.as_array().expect("expected array");
         assert_eq!(arr.len(), 1);
@@ -334,7 +343,7 @@ mod tests {
         let value = f
             .format_tools(std::slice::from_ref(&tool), "claude-opus-4-7")
             .expect("formatter should yield a value");
-        let serialized = value.to_string();
+        let serialized = value.expect("non-empty tool should serialize").to_string();
         assert!(serialized.contains("strict"), "anthropic wire payload missing strict: {serialized}");
         assert!(serialized.contains("input_examples"), "anthropic wire payload missing input_examples: {serialized}");
     }

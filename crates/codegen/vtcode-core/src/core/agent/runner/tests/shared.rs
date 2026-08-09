@@ -366,7 +366,19 @@ pub fn evaluator_response_json_with_scorecard(
         "unmet_contract_items": [],
         "residual_risks": [],
         "required_tracker_updates": [],
+        "generalization_notes": [],
     })
+}
+
+pub fn evaluator_response_json_with_notes(
+    verdict: &str,
+    summary: &str,
+    high_severity_findings: usize,
+    notes: serde_json::Value,
+) -> serde_json::Value {
+    let mut response = evaluator_response_json(verdict, summary, high_severity_findings);
+    response["generalization_notes"] = notes;
+    response
 }
 
 pub fn tool_call_response_with_request_id(tool_name: &str, args: serde_json::Value, request_id: &str) -> LLMResponse {

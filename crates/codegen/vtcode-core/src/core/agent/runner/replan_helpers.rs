@@ -4,6 +4,7 @@
 //! generator tasks with contract information.
 
 use super::AgentRunner;
+use super::evaluator_types::GeneralizationNote;
 use super::orchestration::{EvaluationArtifacts, PlannerArtifacts};
 use super::planner_types::ReplanResponse;
 use crate::core::agent::harness_artifacts;
@@ -48,8 +49,21 @@ impl AgentRunner {
             self.apply_required_tracker_updates(&evaluation.required_tracker_updates).await;
         }
 
+        self.apply_generalization_falsifiers(&evaluation.generalization_notes).await;
+
         // Attempt LLM-based structured replan.
-        let replan = self.request_replan_response(task, evaluation, revision_round).await;
+        let replan = self
+            .request_replan_response(task, evaluation, revision_round)
+            .await
+            .filter(|response| preserves_generalization_scopes(response, &evaluation.generalization_notes));
+
+        if evaluation.generalization_notes.iter().any(|note| {
+            replan
+                .as_ref()
+                .is_none_or(|response| !preserves_generalization_scopes(response, std::slice::from_ref(note)))
+        }) {
+            warn!("replanner response did not preserve every generalization-note scope; retaining the prior plan");
+        }
 
         if let Some(ref replan) = replan {
             self.apply_replan_response(replan).await;
@@ -63,6 +77,9 @@ impl AgentRunner {
                 annotate_artifact(&self._workspace, path, label, &evaluation.summary, revision_round).await;
             }
         }
+
+        self.append_generalization_scope_contract(&evaluation.generalization_notes, revision_round)
+            .await;
 
         Some(PlannerArtifacts {
             spec_path,
@@ -90,6 +107,48 @@ impl AgentRunner {
             if let Err(e) = result {
                 warn!(error = %e, item = trimmed, "failed to add required tracker update");
             }
+        }
+    }
+
+    async fn apply_generalization_falsifiers(&self, notes: &[GeneralizationNote]) {
+        if notes.is_empty() {
+            return;
+        }
+
+        let tracker_tool = self.tracker_tool();
+        for note in notes {
+            if let Err(error) = tracker_tool
+                .execute(json!({
+                    "action": "add",
+                    "description": format!("Falsify task-scoped claim: {}", note.claim),
+                    "outcome": format!("The claim is tested only within scope: {}", note.scope),
+                    "verify": [note.falsifier],
+                }))
+                .await
+            {
+                warn!(error = %error, "failed to add generalization falsifier to tracker");
+            }
+        }
+    }
+
+    async fn append_generalization_scope_contract(&self, notes: &[GeneralizationNote], revision_round: usize) {
+        if notes.is_empty() {
+            return;
+        }
+
+        let contract_path = harness_artifacts::current_contract_path(&self._workspace);
+        let existing = tokio::fs::read_to_string(&contract_path).await.unwrap_or_default();
+        let mut guardrails =
+            format!("\n\n--- Evidence-Bounded Generalization Guardrails (round {revision_round}) ---\n");
+        for note in notes {
+            guardrails.push_str(&format!(
+                "- Scope: {}\n  Evidence: {}\n  Falsifier: {}\n",
+                note.scope, note.evidence, note.falsifier
+            ));
+        }
+        let updated = format!("{existing}{guardrails}");
+        if let Err(error) = harness_artifacts::write_contract(&self._workspace, &updated).await {
+            warn!(error = %error, "failed to preserve generalization-note scopes in contract");
         }
     }
 
@@ -165,6 +224,12 @@ impl AgentRunner {
         });
         effective_task
     }
+}
+
+fn preserves_generalization_scopes(response: &ReplanResponse, notes: &[GeneralizationNote]) -> bool {
+    notes
+        .iter()
+        .all(|note| response.preserved_scopes.iter().any(|scope| scope.trim() == note.scope))
 }
 
 async fn annotate_artifact(
