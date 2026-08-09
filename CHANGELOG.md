@@ -2,6 +2,17 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.142.2 - 2026-08-09
+
+### Highlights
+#### Features
+
+- Support Codex ChatGPT session fallback for auth (e4df0b4d) 
+- Add startup tracing and cache user config for first render (7d594139) 
+### Other Changes
+#### Performance
+
+- Reduce idle refresh overhead (41501945) 
 ## 0.142.1 - 2026-08-08
 
 ### Highlights
