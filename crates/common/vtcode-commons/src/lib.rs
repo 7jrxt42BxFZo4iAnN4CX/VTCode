@@ -51,6 +51,8 @@ pub mod retry;
 pub mod sanitizer;
 pub mod serde_helpers;
 pub mod slug;
+#[doc(hidden)]
+pub mod startup_trace;
 pub mod stop_hints;
 pub mod styling;
 pub mod telemetry;

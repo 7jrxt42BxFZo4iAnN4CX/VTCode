@@ -148,26 +148,47 @@ pub(super) async fn run_interaction_loop_impl(
             let model = &ctx.config.model;
             let status = &mut state.input_status_state;
             let status_config = ctx.vt_cfg.as_ref().map(|cfg| &cfg.ui.status_line);
-            status.show_costs =
+            let new_show_costs =
                 crate::agent::runloop::unified::status_line::status_line_shows_auto_components(status_config)
                     && matches!(ctx.provider_client.name(), "deepseek" | "openai");
-            status.cost_usd = ctx.session_stats.total_cost_usd();
+            if status.show_costs != new_show_costs {
+                status.show_costs = new_show_costs;
+                status.status_dirty = true;
+            }
+            let new_cost = ctx.session_stats.total_cost_usd();
+            if status.cost_usd != new_cost {
+                status.cost_usd = new_cost;
+                status.status_dirty = true;
+            }
             let usage = ctx.session_stats.total_usage();
             let total_cache = usage.cached_input_tokens + usage.cache_creation_tokens;
-            status.cache_hit_pct =
+            let new_cache_pct =
                 (total_cache > 0).then(|| (usage.cached_input_tokens as f64 / total_cache as f64) * 100.0);
+            if status.cache_hit_pct != new_cache_pct {
+                status.cache_hit_pct = new_cache_pct;
+                status.status_dirty = true;
+            }
 
-            if let Err(error) = crate::agent::runloop::unified::status_line::update_input_status_if_changed(
-                ctx.handle,
-                &ctx.config.workspace,
-                model,
-                ctx.config.reasoning_effort.as_str(),
-                status_config,
-                status,
-            )
-            .await
-            {
-                tracing::warn!("Failed to refresh status line: {}", error);
+            // Only rebuild the status line when something actually changed or
+            // the clock's displayed second ticked. When idle, 4 out of 5 ticks
+            // (200 ms interval, 1 s clock) produce an identical status and can
+            // be skipped entirely — avoiding the chrono call, model-string
+            // parse, git check, layout build, and dedup normalization.
+            let clock_ticked = crate::agent::runloop::unified::status_line::clock_second_ticked(status);
+            if status.status_dirty || clock_ticked {
+                if let Err(error) = crate::agent::runloop::unified::status_line::update_input_status_if_changed(
+                    ctx.handle,
+                    &ctx.config.workspace,
+                    model,
+                    ctx.config.reasoning_effort.as_str(),
+                    status_config,
+                    status,
+                )
+                .await
+                {
+                    tracing::warn!("Failed to refresh status line: {}", error);
+                }
+                status.status_dirty = false;
             }
 
             // Periodically fetch account balance for providers that support it
@@ -183,7 +204,9 @@ pub(super) async fn run_interaction_loop_impl(
                 )
                 .await;
             } else {
-                status.balance = None;
+                if status.balance.take().is_some() {
+                    status.status_dirty = true;
+                }
                 status.last_balance_refresh = None;
             }
             ctx.handle

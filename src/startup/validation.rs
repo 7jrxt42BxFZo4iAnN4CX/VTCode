@@ -135,7 +135,12 @@ pub(super) fn resolve_workspace_path(workspace_arg: Option<PathBuf>) -> Result<P
     Ok(canonicalize_workspace(&resolved))
 }
 
-pub(super) async fn validate_startup_configuration(config: &VTCodeConfig, workspace: &Path, quiet: bool) -> Result<()> {
+pub(super) async fn validate_startup_configuration(
+    config: &VTCodeConfig,
+    workspace: &Path,
+    quiet: bool,
+    defer_system_prompt_size_check: bool,
+) -> Result<()> {
     // Ripgrep availability is checked lazily when search tools are actually
     // needed (session setup, first-run, `vtcode dependencies`).  Checking it
     // here would fork a subprocess (`rg --version`) on every startup for
@@ -170,7 +175,9 @@ pub(super) async fn validate_startup_configuration(config: &VTCodeConfig, worksp
         for warning in collect_token_overhead_warnings(config) {
             tracing::warn!("{warning}");
         }
-        check_system_prompt_size_at_startup(config, workspace).await;
+        if !defer_system_prompt_size_check {
+            check_system_prompt_size(config, workspace).await;
+        }
     }
 
     Ok(())
@@ -246,7 +253,7 @@ fn collect_token_overhead_warnings(config: &VTCodeConfig) -> Vec<String> {
 /// Checks the actual composed system prompt size at startup and warns if it
 /// exceeds `agent.max_system_prompt_tokens`. This is a one-time cost: the
 /// static prompt layers are cached after the first read.
-async fn check_system_prompt_size_at_startup(config: &VTCodeConfig, workspace: &Path) {
+pub(super) async fn check_system_prompt_size(config: &VTCodeConfig, workspace: &Path) {
     if !config.agent.system_prompt_budget_warning {
         return;
     }

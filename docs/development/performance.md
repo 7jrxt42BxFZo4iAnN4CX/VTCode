@@ -55,25 +55,49 @@ continues to use the canonical `VersionedThreadEvent` decoder.
 
 Artifacts are written to `.vtcode/perf/` and include JSON metrics plus raw logs.
 
-The perf harness clears `RUSTC_WRAPPER` and `CARGO_BUILD_RUSTC_WRAPPER` by default for its cargo steps so local measurements still work when `sccache` is configured but unavailable. Set `PERF_KEEP_RUSTC_WRAPPER=1` only when you explicitly want to keep the wrapper. `startup_ms` measures the built `target/debug/vtcode` binary rather than `cargo run`, which keeps compile time out of the startup number.
+The perf harness builds and measures `target/release/vtcode`, not `cargo run`
+or the debug binary. It clears `RUSTC_WRAPPER` and
+`CARGO_BUILD_RUSTC_WRAPPER` by default for its cargo steps so local
+measurements still work when `sccache` is configured but unavailable. Set
+`PERF_KEEP_RUSTC_WRAPPER=1` only when you explicitly want to keep the wrapper.
 
 Use this loop for any non-trivial performance change. Change one thing at a time so the comparison stays attributable.
 
 ## Startup budget
 
 `vtcode`'s startup-critical work lives in `StartupContext::from_cli_args`
-(`src/startup/mod.rs`). The perf harness captures two distinct startup metrics:
+(`src/startup/mod.rs`). The perf harness captures separate process and
+interactive metrics:
 
-- **`startup_ms`** — `vtcode --version`. This is **clap-only**: the `--version`
-  flag short-circuits during argument parsing and `from_cli_args` never runs.
-  Use it as a stable signal for binary/loader cost, **not** as a proxy for
-  startup optimization work.
-- **`first_user_io_ms`** — `vtcode tool-policy status`. This exercises the
-  credential-free `from_cli_args` path and policy/config loading without a
-  network round-trip or a writable global auth directory. It intentionally
-  follows the command's startup gates, so it is a stable local startup probe,
-  not a full authenticated chat launch. `baseline.sh` measures both via 8
-  warm runs and diffs them in `compare.sh`.
+- **`cold_startup_ms`** — three `--version` launches from fresh copies in
+  `/tmp`. This measures a fresh-copy loader/process path; it does not evict the
+  operating system's page cache.
+- **`warm_startup_ms`** (also reported as `startup_ms`) — eight warm release
+  `--version` runs. This is the stable binary/loader signal and does not enter
+  `StartupContext::from_cli_args`.
+- **`first_user_io_ms`** — eight credential-free release
+  `tool-policy status` runs using temporary `HOME`, config, and data paths. It
+  exercises the non-interactive startup path without a provider request or
+  real user credentials.
+- **`interactive_first_render_ms`** — three interactive release runs through a
+  PTY. The harness answers terminal capability queries and stops timing when
+  the first `Type a request` prompt is rendered; provider response time is not
+  included.
+
+`baseline.sh` writes raw samples for each metric and `compare.sh` reports
+before/after deltas. Use the same machine and workload configuration for both
+runs.
+
+For phase-level diagnostics, set the opt-in trace before launching the binary:
+
+```bash
+VTCODE_STARTUP_TRACE=1 target/release/vtcode --provider ollama --model llama3
+```
+
+The trace is silent when unset and reports only duration records for bootstrap,
+CLI parsing, runtime creation, config, validation, authentication, session
+setup, and first UI render. It is initialized before tracing is configured so
+early startup work is observable without adding work to normal launches.
 
 ### Patterns that pay off on the startup path
 
@@ -92,32 +116,21 @@ Use this loop for any non-trivial performance change. Change one thing at a time
   (`cleanup_old_temp_spools`) runs in `spawn_blocking` so a cold `~/.vtcode/tmp`
   never blocks first user I/O.
 
-### Cold vs warm — what actually costs time
+### Release artifact assumptions
 
-Warm startup (binary already in the OS page cache) is **effectively free**:
+The shipped `release` profile remains tuned for launch size and dead-code
+removal: `opt-level = "z"`, full LTO, `codegen-units = 1`, stripping, and an
+abort-on-panic runtime. macOS release scripts and `.cargo/config.toml` also
+apply `-Wl,-dead_strip`. Verify the effective profile and the measured binary
+size before attributing a result to Rust startup code; a debug binary is not a
+valid proxy for the shipped launch path.
 
-| metric | release (62 MB) | debug (176 MB) |
-|---|---|---|
-| `vtcode --version`, warm | < 1 ms | ~5–8 ms |
-| `vtcode tool-policy status`, warm | < 1 ms | ~10–20 ms |
-
-The **only** meaningful launch cost is **cold binary page-in** (first run after
-the page cache evicts the binary). Measured release cold-start of
-`vtcode --version` ≈ **1.2 s** for the 62 MB release binary; the 176 MB debug
-binary is proportionally ~3 s. Every run after that is sub-millisecond because
-the binary stays resident in the page cache.
-
-This matters most when `vtcode` is spawned as a **subprocess** (sub-agent
-dispatch, background agents): each fresh process pays cold page-in until the
-cache warms.
-
-### Remaining lever: binary size, not `from_cli_args`
-
-The `[profile.release]` is already maxed for load speed — `lto = true`,
-`strip = true`, `panic = "abort"`, `codegen-units = 1`, `opt-level = 3`. There
-is no further safe profile knob. `from_cli_args` is also already parallelized
-and gated. So the launch-time lever that moves the cold range is **reducing the
-binary's on-disk size**, which shrinks page-in time linearly.
+Cold and warm results answer different questions. Warm results isolate process
+and loader overhead after the binary is resident. Fresh-copy results expose
+the size and relocation cost paid by a newly spawned process, which is the
+relevant signal for subprocess-heavy workflows. Interactive results additionally
+include configuration, authentication, terminal initialization, and session
+setup through the first usable frame.
 
 The default binary links heavy subsystems that most invocations never use:
 
@@ -126,15 +139,13 @@ The default binary links heavy subsystems that most invocations never use:
 - transitively via `vtcode-core`: `vtcode-indexer`, `vtcode-mcp`, `vtcode-a2a`,
   `vtcode-skills`.
 
-These are the binary-size lever. Cutting them requires **feature-gating them out
-of the default binary** (and behind an opt-in feature for the commands that need
-them). That is a product decision — dropping them from `default` makes those
-subcommands unavailable unless the binary is built with the feature — so it is
-intentionally **not** done silently. Measure cold-start impact with:
+These are potential binary-size levers. Cutting them requires feature-gating
+them out of the default binary (and behind an opt-in feature for the commands
+that need them). That is a product decision, so it is intentionally not done
+silently. Measure cold-start impact with:
 
 ```bash
-# cold (first run after cache eviction) vs warm
-/usr/bin/time -p target/release/vtcode --version   # repeat; first = cold
+./scripts/perf/baseline.sh latest
 ```
 
 ## Profiling Build

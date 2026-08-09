@@ -24,13 +24,21 @@ baseline_startup_source = baseline.get("startup_source", "unknown")
 current_startup_source = current.get("startup_source", "unknown")
 baseline_io_source = baseline.get("first_user_io_source", "unknown")
 current_io_source = current.get("first_user_io_source", "unknown")
+baseline_cold_source = baseline.get("cold_startup_source", "unknown")
+current_cold_source = current.get("cold_startup_source", "unknown")
+baseline_interactive_source = baseline.get("interactive_first_render_source", "unknown")
+current_interactive_source = current.get("interactive_first_render_source", "unknown")
 
 keys = [
     "cargo_check_ms",
     "tool_pipeline_bench_ms",
     "agent_harness_bench_ms",
+    "release_binary_bytes",
+    "cold_startup_ms",
+    "warm_startup_ms",
     "startup_ms",
     "first_user_io_ms",
+    "interactive_first_render_ms",
 ]
 rows = []
 for key in keys:
@@ -54,6 +62,10 @@ lines = [
     f"Current startup source: `{current_startup_source}`",
     f"Baseline first_user_io source: `{baseline_io_source}`",
     f"Current first_user_io source: `{current_io_source}`",
+    f"Baseline cold startup source: `{baseline_cold_source}`",
+    f"Current cold startup source: `{current_cold_source}`",
+    f"Baseline interactive source: `{baseline_interactive_source}`",
+    f"Current interactive source: `{current_interactive_source}`",
     "",
     "| Metric | Baseline | Current | Delta | Interpretation |",
     "|---|---:|---:|---:|---|",
@@ -74,6 +86,22 @@ if baseline_io_source != current_io_source:
         [
             "",
             "> Warning: first_user_io sources differ, so `first_user_io_ms` is not directly comparable.",
+        ]
+    )
+
+if baseline_cold_source != current_cold_source:
+    lines.extend(
+        [
+            "",
+            "> Warning: cold startup sources differ, so `cold_startup_ms` is not directly comparable.",
+        ]
+    )
+
+if baseline_interactive_source != current_interactive_source:
+    lines.extend(
+        [
+            "",
+            "> Warning: interactive sources differ, so `interactive_first_render_ms` is not directly comparable.",
         ]
     )
 

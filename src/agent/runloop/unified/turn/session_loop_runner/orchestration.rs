@@ -205,6 +205,7 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
         {
             tracing::warn!("Failed to checkpoint session archive at startup: {}", err);
         }
+        let session_setup_phase = vtcode_commons::startup_trace::phase_started();
         let mut session_state = initialize_session(
             &config,
             vt_cfg.as_ref(),
@@ -244,6 +245,7 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
             },
         )
         .await?;
+        vtcode_commons::startup_trace::record_phase("session_setup", session_setup_phase);
         let mut renderer = ui_setup.renderer;
         let mut session = ui_setup.session;
         let handle = ui_setup.handle;

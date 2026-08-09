@@ -111,7 +111,11 @@ fn remove_runtime_env_var(key: &str) {
 }
 
 fn bootstrap_main() -> Result<BootstrapOutcome> {
+    // This must run before tracing initialization so early CLI/config phases
+    // can be captured when VTCODE_STARTUP_TRACE=1.
+    vtcode_commons::startup_trace::initialize();
     let bootstrap_start = std::time::Instant::now();
+    let bootstrap_phase = vtcode_commons::startup_trace::phase_started();
     let launch_argv = std::env::args_os().collect::<Vec<_>>();
     let launch_cwd = std::env::current_dir().context("failed to resolve current directory")?;
     configure_runtime_relaunch_context(launch_argv, launch_cwd);
@@ -163,6 +167,7 @@ fn bootstrap_main() -> Result<BootstrapOutcome> {
     }
 
     let cli_start = std::time::Instant::now();
+    let cli_phase = vtcode_commons::startup_trace::phase_started();
     let matches = match build_augmented_cli_command().try_get_matches() {
         Ok(m) => m,
         Err(err) => {
@@ -176,6 +181,7 @@ fn bootstrap_main() -> Result<BootstrapOutcome> {
     };
     tracing::debug!(target = "vtcode.startup", elapsed_ms = cli_start.elapsed().as_millis() as u64, "cli parsed");
     let args = Cli::from_arg_matches(&matches)?;
+    vtcode_commons::startup_trace::record_phase("cli_parsing", cli_phase);
     panic_hook::set_debug_mode(args.debug);
     let color_eyre_enabled = debug_runtime_flag_enabled(args.debug, "VTCODE_COLOR_EYRE");
     panic_hook::set_color_eyre_enabled(color_eyre_enabled);
@@ -204,11 +210,17 @@ fn bootstrap_main() -> Result<BootstrapOutcome> {
     // resolution and the main agent run loop.  Previously a single-threaded
     // runtime was created here and a second multi-threaded one later in main(),
     // which duplicated thread-pool and I/O-driver setup.
+    let runtime_phase = vtcode_commons::startup_trace::phase_started();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("failed to build Tokio runtime")?;
-    tracing::debug!(target = "vtcode.startup", elapsed_ms = bootstrap_start.elapsed().as_millis() as u64, "runtime ready");
+    vtcode_commons::startup_trace::record_phase("runtime_creation", runtime_phase);
+    tracing::debug!(
+        target = "vtcode.startup",
+        elapsed_ms = bootstrap_start.elapsed().as_millis() as u64,
+        "runtime ready"
+    );
 
     #[cfg(feature = "profiling")]
     hotpath::tokio_runtime!(runtime.handle());
@@ -229,7 +241,12 @@ fn bootstrap_main() -> Result<BootstrapOutcome> {
     }
 
     let startup = runtime.block_on(resolve_startup_context(&args))?;
-    tracing::debug!(target = "vtcode.startup", elapsed_ms = bootstrap_start.elapsed().as_millis() as u64, "bootstrap ready");
+    vtcode_commons::startup_trace::record_phase("bootstrap", bootstrap_phase);
+    tracing::debug!(
+        target = "vtcode.startup",
+        elapsed_ms = bootstrap_start.elapsed().as_millis() as u64,
+        "bootstrap ready"
+    );
 
     Ok(BootstrapOutcome::Ready(Box::new(BootstrapReady {
         prepared: PreparedRun { args, startup, print_mode },

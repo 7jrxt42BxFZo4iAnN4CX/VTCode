@@ -33,6 +33,14 @@ impl Session {
         if self.transcript_width != width {
             self.transcript_width = width;
             self.invalidate_scroll_metrics();
+            // The hidden-header line is built against `transcript_width`: the
+            // right-aligned mode/model summary only renders when width > 0.
+            // On the first frame `transcript_width` is still 0, so the line is
+            // cached without the summary. Invalidate that cache and request a
+            // redraw so the next frame recomputes it with the real width,
+            // instead of waiting for an unrelated keypress to flush it.
+            self.header_lines_cache = None;
+            self.needs_redraw = true;
         }
     }
 

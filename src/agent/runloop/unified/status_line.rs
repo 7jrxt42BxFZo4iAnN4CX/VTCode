@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::str::FromStr;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use chrono::Local;
@@ -39,6 +39,15 @@ pub(crate) struct InputStatusState {
     pub(crate) cost_usd: Option<f64>,
     pub(crate) cache_hit_pct: Option<f64>,
     pub(crate) last_balance_refresh: Option<Instant>,
+    /// Set to `true` whenever a status-affecting field actually changes.
+    /// The interaction loop clears it after a successful status rebuild and
+    /// uses it to skip `update_input_status_if_changed` when nothing changed
+    /// and the clock second hasn't ticked.
+    pub(crate) status_dirty: bool,
+    /// The Unix-second of the last formatted clock value. Used to detect when
+    /// the `HH:MM:SS` display would actually change (once per second) so the
+    /// status rebuild can be skipped between ticks.
+    pub(crate) last_clock_second: Option<u64>,
 }
 
 const GIT_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
@@ -63,21 +72,32 @@ impl BottomStatusLayout {
 
 pub(crate) fn update_context_budget(state: &mut InputStatusState, used_tokens: usize, limit_tokens: usize) {
     if limit_tokens == 0 {
-        state.context_utilization = None;
-        state.context_tokens = None;
-        state.context_limit_tokens = None;
-        state.context_remaining_tokens = None;
+        if state.context_utilization.is_some() {
+            state.context_utilization = None;
+            state.context_tokens = None;
+            state.context_limit_tokens = None;
+            state.context_remaining_tokens = None;
+            state.status_dirty = true;
+        }
         return;
     }
 
     let used = used_tokens.min(limit_tokens);
     let remaining = limit_tokens.saturating_sub(used);
     let left_percent = (remaining as f64 / limit_tokens as f64) * 100.0;
+    let utilization = Some(left_percent.clamp(0.0, 100.0));
 
-    state.context_utilization = Some(left_percent.clamp(0.0, 100.0));
-    state.context_tokens = Some(used);
-    state.context_limit_tokens = Some(limit_tokens);
-    state.context_remaining_tokens = Some(remaining);
+    if state.context_utilization != utilization
+        || state.context_tokens != Some(used)
+        || state.context_limit_tokens != Some(limit_tokens)
+        || state.context_remaining_tokens != Some(remaining)
+    {
+        state.context_utilization = utilization;
+        state.context_tokens = Some(used);
+        state.context_limit_tokens = Some(limit_tokens);
+        state.context_remaining_tokens = Some(remaining);
+        state.status_dirty = true;
+    }
 }
 
 pub(crate) fn status_line_shows_auto_components(status_config: Option<&StatusLineConfig>) -> bool {
@@ -97,6 +117,22 @@ pub(crate) fn status_line_shows_clock(status_config: Option<&StatusLineConfig>) 
 
 fn now_statusline_clock() -> String {
     Local::now().format("%H:%M:%S").to_string()
+}
+
+/// Cheap `SystemTime` read returning the current Unix second without any
+/// timezone resolution or string allocation. Used to detect whether the
+/// `HH:MM:SS` clock display would actually differ from the last frame.
+fn current_second() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// Returns `true` when the clock display (HH:MM:SS) would change since the
+/// last recorded second, updating the tracked second in the process.
+pub(crate) fn clock_second_ticked(state: &mut InputStatusState) -> bool {
+    let now = current_second();
+    let changed = state.last_clock_second.is_none_or(|prev| prev != now);
+    state.last_clock_second = Some(now);
+    changed
 }
 
 pub(crate) async fn update_input_status_if_changed(
@@ -344,7 +380,10 @@ fn join_status_components(values: Vec<String>) -> Option<String> {
 
 /// Update spooled files count in status state
 pub(crate) fn update_spooled_files_count(state: &mut InputStatusState, count: usize) {
-    state.spooled_files_count = Some(count);
+    if state.spooled_files_count != Some(count) {
+        state.spooled_files_count = Some(count);
+        state.status_dirty = true;
+    }
 }
 
 pub(crate) fn update_thread_context(state: &mut InputStatusState, thread_label: &str, local_agent_count: usize) {
@@ -358,7 +397,11 @@ pub(crate) fn update_thread_context(state: &mut InputStatusState, thread_label: 
             value.push_str(&suffix);
         }
     }
-    state.thread_context = (!value.trim().is_empty()).then_some(value);
+    let new_value = (!value.trim().is_empty()).then_some(value);
+    if state.thread_context != new_value {
+        state.thread_context = new_value;
+        state.status_dirty = true;
+    }
 }
 
 /// Refresh account balance from the provider and update the status line.
@@ -388,7 +431,11 @@ pub(crate) async fn refresh_balance_info(
     match tokio::time::timeout(BALANCE_REQUEST_TIMEOUT, provider_client.get_balance()).await {
         Ok(Ok(Some(bal))) => {
             let warn = if bal.is_available { "" } else { " !" };
-            state.balance = Some(format!("{}{}", bal.display, warn));
+            let new_balance = Some(format!("{}{}", bal.display, warn));
+            if state.balance != new_balance {
+                state.balance = new_balance;
+                state.status_dirty = true;
+            }
             if let Err(e) =
                 update_input_status_if_changed(handle, workspace, model, reasoning_effort, status_config, state).await
             {
@@ -396,7 +443,10 @@ pub(crate) async fn refresh_balance_info(
             }
         }
         Ok(Ok(None)) => {
-            state.balance = None;
+            if state.balance.is_some() {
+                state.balance = None;
+                state.status_dirty = true;
+            }
         }
         Ok(Err(e)) => {
             tracing::debug!("Failed to fetch provider balance: {e}");
@@ -465,5 +515,48 @@ mod tests {
 
         let off = StatusLineConfig { show_clock: false, ..StatusLineConfig::default() };
         assert!(!status_line_shows_clock(Some(&off)));
+    }
+
+    #[test]
+    fn clock_second_ticked_returns_true_on_first_call() {
+        let mut state = InputStatusState::default();
+        assert!(super::clock_second_ticked(&mut state), "first call must report a tick");
+        assert!(state.last_clock_second.is_some(), "second should be tracked");
+    }
+
+    #[test]
+    fn clock_second_ticked_returns_false_within_same_second() {
+        let mut state = InputStatusState::default();
+        super::clock_second_ticked(&mut state);
+        // A second call within the same second must not report a tick.
+        assert!(!super::clock_second_ticked(&mut state), "same-second call must not tick");
+    }
+
+    #[test]
+    fn update_spooled_files_count_sets_dirty_only_on_change() {
+        let mut state = InputStatusState::default();
+        super::update_spooled_files_count(&mut state, 3);
+        assert!(state.status_dirty, "first set must mark dirty");
+
+        state.status_dirty = false;
+        super::update_spooled_files_count(&mut state, 3);
+        assert!(!state.status_dirty, "unchanged value must not mark dirty");
+
+        super::update_spooled_files_count(&mut state, 5);
+        assert!(state.status_dirty, "changed value must mark dirty");
+    }
+
+    #[test]
+    fn update_context_budget_sets_dirty_only_on_change() {
+        let mut state = InputStatusState::default();
+        super::update_context_budget(&mut state, 1000, 10_000);
+        assert!(state.status_dirty, "first set must mark dirty");
+
+        state.status_dirty = false;
+        super::update_context_budget(&mut state, 1000, 10_000);
+        assert!(!state.status_dirty, "unchanged values must not mark dirty");
+
+        super::update_context_budget(&mut state, 2000, 10_000);
+        assert!(state.status_dirty, "changed used tokens must mark dirty");
     }
 }

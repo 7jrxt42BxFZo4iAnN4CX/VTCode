@@ -22,11 +22,16 @@ These scripts provide a repeatable local performance workflow for VT Code.
 ./scripts/perf/native-run.sh -- --version
 ```
 
-The baseline captures `tool_pipeline_bench_ms` and the `vtcode-core`
-`agent_harness_bench_ms`. The harness benchmark includes deterministic cases
-for prompt-resource cache hits, few-shot selection, tool-catalog sorting, and
-warm indexed file-search scoring. These measurements are for local comparison;
-they are not a CI performance gate.
+The baseline builds and measures `target/release/vtcode`. It captures release
+binary size, cold launch from fresh `/tmp` copies, warm `--version`, a
+credential-free `tool-policy status`, and interactive first-render latency
+through a PTY that answers terminal capability queries. It also retains the
+`vtcode-core` pipeline and harness benchmarks for local comparison; none of
+these measurements is a CI performance gate.
+
+Criterion workloads are skipped by default so launch measurements do not wait
+for a full benchmark-profile rebuild. Set `PERF_RUN_BENCHMARKS=1` to include
+them in the JSON capture.
 
 ## Outputs
 
@@ -36,12 +41,15 @@ All artifacts are written to `.vtcode/perf/`:
 - `*-cargo_check.log`: cargo check output
 - `*-bench_tool_pipeline.log`: `vtcode-core` tool-pipeline bench output
 - `*-bench_agent_harness.log`: `vtcode-core` interactive harness and optimization bench output
-- `*-startup.json` (if `hyperfine` installed)
+- `*-cold_startup.json`, `*-warm_startup.json`, `*-first_user_io.json`: raw release launch samples
+- `*-interactive_first_render.json`: raw PTY prompt-render samples
 - `diff.md`: markdown comparison report
 
 ## Notes
 
 - Cargo steps clear `RUSTC_WRAPPER` and `CARGO_BUILD_RUSTC_WRAPPER` by default so the scripts still work when the environment or `.cargo/config.toml` points at a blocked `sccache`.
 - Set `PERF_KEEP_RUSTC_WRAPPER=1` if you explicitly want the perf run to keep the configured wrapper.
-- `startup_ms` measures the built `target/debug/vtcode` binary, not `cargo run`, so it tracks process startup instead of compile time.
-- When `hyperfine` is unavailable, startup falls back to a 10-run Python mean and writes the raw sample summary to `*-startup.log`.
+- `startup_ms` is retained as an alias for `warm_startup_ms` for compatibility with older reports.
+- `cold_startup_ms` measures three launches of fresh copies in `/tmp`; it is a fresh-copy loader/process signal, not a page-cache eviction benchmark.
+- `interactive_first_render_ms` ends when the PTY sees the initial `Type a request` prompt and terminates the isolated sample.
+- The harness uses a release build and a credential-free temporary `HOME`/config directory, so it does not use provider credentials or write to the real user config.

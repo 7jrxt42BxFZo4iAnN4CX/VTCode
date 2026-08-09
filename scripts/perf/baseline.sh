@@ -7,6 +7,13 @@ mkdir -p "${OUT_DIR}"
 
 LABEL="${1:-latest}"
 OUT_JSON="${OUT_DIR}/${LABEL}.json"
+RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vtcode-perf.XXXXXX")"
+RELEASE_BIN="${ROOT_DIR}/target/release/vtcode"
+
+cleanup() {
+  rm -rf "${RUN_DIR}"
+}
+trap cleanup EXIT
 
 run_timed() {
   local name="$1"
@@ -27,85 +34,54 @@ run_cargo_timed() {
   fi
 }
 
-ensure_vtcode_binary() {
-  if [[ -x "${ROOT_DIR}/target/debug/vtcode" ]]; then
+ensure_release_binary() {
+  if [[ -x "${RELEASE_BIN}" ]]; then
     return 0
   fi
 
-  echo "[perf] building target/debug/vtcode for startup measurement"
+  echo "[perf] building target/release/vtcode for startup measurement"
   if [[ "${PERF_KEEP_RUSTC_WRAPPER:-0}" == "1" ]]; then
-    (cd "${ROOT_DIR}" && cargo build --quiet --bin vtcode)
+    (cd "${ROOT_DIR}" && cargo build --release --locked --quiet --bin vtcode)
   else
-    (cd "${ROOT_DIR}" && env CARGO_BUILD_RUSTC_WRAPPER= RUSTC_WRAPPER= cargo build --quiet --bin vtcode)
+    (cd "${ROOT_DIR}" && env CARGO_BUILD_RUSTC_WRAPPER= RUSTC_WRAPPER= cargo build --release --locked --quiet --bin vtcode)
   fi
 }
 
-echo "[perf] collecting baseline in ${OUT_JSON}"
-
-check_ms="$(run_cargo_timed cargo_check check --workspace --quiet)"
-tool_pipeline_bench_ms="$(run_cargo_timed bench_tool_pipeline bench -p vtcode-core --bench tool_pipeline -- --sample-size 20 --warm-up-time 0.5 --measurement-time 1)"
-agent_harness_bench_ms="$(run_cargo_timed bench_agent_harness bench -p vtcode-core --bench agent_harness -- --sample-size 20 --warm-up-time 0.5 --measurement-time 1)"
-
-# Measure a command's mean startup latency (warm: 2 warmups + 8 measured runs).
+# Measure a command's mean warm latency (2 warmups + 8 measured runs).
 # Usage: measure_command <metric_name> <command> [args...]
-# Sets <metric_name>_ms (float) and <metric_name>_src ("hyperfine"|"binary-mean").
 measure_command() {
-  local name="$1"; shift
+  local name="$1"
+  shift
   local json_path="${OUT_DIR}/${LABEL}-${name}.json"
   local log_path="${OUT_DIR}/${LABEL}-${name}.log"
-  local time_path="${OUT_DIR}/${LABEL}-${name}.time"
-  local src ms
-  ensure_vtcode_binary
-  if command -v hyperfine >/dev/null 2>&1; then
-    src="hyperfine"
-    ( cd "${ROOT_DIR}" && hyperfine --warmup 2 --runs 8 --export-json "${json_path}" "$@" >/dev/null )
-    ms="$(python3 - "$json_path" <<'PY'
-import json, sys
-from pathlib import Path
-print(round(json.loads(Path(sys.argv[1]).read_text())["results"][0]["mean"] * 1000.0, 3))
-PY
-)"
-  else
-    src="binary-mean"
-    ms="$(
-      MCMD_CMD="$*" \
-      MCMD_JSON="${json_path}" \
-      MCMD_LOG="${log_path}" \
-      MCMD_TIME="${time_path}" \
-      python3 - <<'PY'
+  local ms
+
+  ms="$(python3 - "${json_path}" "${log_path}" "$@" <<'PY'
 import json
-import os
 import statistics
 import subprocess
+import sys
 import time
 from pathlib import Path
 
-cmd = os.environ.get("MCMD_CMD", "").split()
-log_path = Path(os.environ["MCMD_LOG"])
-time_path = Path(os.environ["MCMD_TIME"])
+json_path = Path(sys.argv[1])
+log_path = Path(sys.argv[2])
+command = sys.argv[3:]
 warmup_runs = []
 measured_runs = []
+
 for _ in range(2):
     started = time.perf_counter()
-    subprocess.run(
-        cmd,
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     warmup_runs.append((time.perf_counter() - started) * 1000.0)
 
 for _ in range(8):
     started = time.perf_counter()
-    subprocess.run(
-        cmd,
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     measured_runs.append((time.perf_counter() - started) * 1000.0)
 
 summary = {
+    "command": command,
     "warmup_runs_ms": [round(value, 3) for value in warmup_runs],
     "runs_ms": [round(value, 3) for value in measured_runs],
     "mean_ms": round(statistics.mean(measured_runs), 3),
@@ -113,8 +89,8 @@ summary = {
     "max_ms": round(max(measured_runs), 3),
     "p95_ms": round(statistics.quantiles(measured_runs, n=20)[-1], 3),
 }
-log_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-time_path.write_text(
+json_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+log_path.write_text(
     "\n".join(
         [
             f"mean {summary['mean_ms']}",
@@ -128,25 +104,245 @@ time_path.write_text(
 )
 print(summary["mean_ms"])
 PY
-)"
-  fi
-  printf -v "${name}_ms" '%s' "$ms"
-  printf -v "${name}_src" '%s' "$src"
+  )"
+  printf -v "${name}_ms" '%s' "${ms}"
+  printf -v "${name}_src" '%s' 'release-python-mean'
 }
 
-# startup_ms: clap-only path — bypasses from_cli_args (binary load + parse only).
-# Stable signal for binary/loader cost, NOT a proxy for the optimization plan.
-measure_command startup "${ROOT_DIR}/target/debug/vtcode" --version
-# first_user_io_ms: a credential-free from_cli_args path (local, no network).
-# Tool-policy status loads the workspace/config context without requiring a
-# writable global auth directory, keeping this probe portable in CI and sandboxes.
-measure_command first_user_io "${ROOT_DIR}/target/debug/vtcode" tool-policy status
+measure_cold_startup() {
+  local json_path="${OUT_DIR}/${LABEL}-cold_startup.json"
+  local log_path="${OUT_DIR}/${LABEL}-cold_startup.log"
+  local ms
 
-startup_ms="${startup_ms}"
-startup_src="${startup_src}"
-first_user_io_ms="${first_user_io_ms}"
-first_user_io_src="${first_user_io_src}"
+  ms="$(python3 - "${RELEASE_BIN}" "${RUN_DIR}" "${json_path}" "${log_path}" <<'PY'
+import json
+import shutil
+import subprocess
+import sys
+import time
+import os
+from pathlib import Path
 
+binary = Path(sys.argv[1])
+run_dir = Path(sys.argv[2])
+json_path = Path(sys.argv[3])
+log_path = Path(sys.argv[4])
+runs = []
+environment = os.environ.copy()
+environment["VTCODE_STARTUP_TRACE"] = "0"
+
+for index in range(3):
+    cold_dir = run_dir / f"cold-{index}"
+    cold_dir.mkdir()
+    cold_binary = cold_dir / "vtcode"
+    shutil.copy2(binary, cold_binary)
+    cold_binary.chmod(0o755)
+    started = time.perf_counter()
+    subprocess.run(
+        [str(cold_binary), "--version"],
+        check=True,
+        env=environment,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    runs.append((time.perf_counter() - started) * 1000.0)
+
+summary = {
+    "command": [str(binary), "--version"],
+    "runs_ms": [round(value, 3) for value in runs],
+    "mean_ms": round(sum(runs) / len(runs), 3),
+    "min_ms": round(min(runs), 3),
+    "max_ms": round(max(runs), 3),
+}
+json_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+log_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+print(summary["mean_ms"])
+PY
+  )"
+  cold_startup_ms="${ms}"
+  cold_startup_src='release-fresh-copy-mean'
+}
+
+measure_interactive_first_render() {
+  local json_path="${OUT_DIR}/${LABEL}-interactive_first_render.json"
+  local log_path="${OUT_DIR}/${LABEL}-interactive_first_render.log"
+  local ms
+
+  ms="$(python3 - "${RELEASE_BIN}" "${ROOT_DIR}" "${RUN_DIR}" "${json_path}" "${log_path}" <<'PY'
+import json
+import fcntl
+import os
+import pty
+import select
+import signal
+import struct
+import sys
+import termios
+import time
+from pathlib import Path
+
+binary = sys.argv[1]
+workspace = sys.argv[2]
+run_dir = Path(sys.argv[3])
+json_path = Path(sys.argv[4])
+log_path = Path(sys.argv[5])
+
+
+def respond_to_terminal_queries(fd, output):
+    replies = []
+    if b"\x1b]10;?" in output:
+        replies.append(b"\x1b]10;rgb:ffff/ffff/ffff\x07")
+    if b"\x1b]11;?" in output:
+        replies.append(b"\x1b]11;rgb:0000/0000/0000\x07")
+    if b"\x1b[6n" in output:
+        replies.append(b"\x1b[1;1R")
+    if b"\x1b[18t" in output:
+        replies.append(b"\x1b[8;24;80t")
+    if b"\x1b[>c" in output or b"\x1b[c" in output:
+        replies.append(b"\x1b[?1;2c")
+    if b"\x1b[?u" in output:
+        replies.append(b"\x1b[?1u")
+    for reply in replies:
+        os.write(fd, reply)
+
+
+def run_sample(index):
+    home = run_dir / f"pty-home-{index}"
+    config_dir = run_dir / f"pty-config-{index}"
+    home.mkdir()
+    config_dir.mkdir()
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "HOME": str(home),
+            "VTCODE_CONFIG": str(config_dir),
+            "VTCODE_DATA": str(run_dir / f"pty-data-{index}"),
+            "VTCODE_STARTUP_TRACE": "0",
+            "NO_COLOR": "1",
+            "TERM": "xterm-256color",
+        }
+    )
+
+    started = time.perf_counter()
+    pid, fd = pty.fork()
+    if pid == 0:
+        fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+        os.chdir(workspace)
+        os.execve(binary, [binary, "--provider", "ollama", "--model", "llama3"], environment)
+
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+
+    output = bytearray()
+    first_render_ms = None
+    child_reaped = False
+
+    def terminate_child():
+        nonlocal child_reaped
+        if child_reaped:
+            return
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        for _ in range(20):
+            try:
+                waited_pid, _ = os.waitpid(pid, os.WNOHANG)
+            except ChildProcessError:
+                child_reaped = True
+                return
+            if waited_pid == pid:
+                child_reaped = True
+                return
+            time.sleep(0.05)
+
+    deadline = started + 20.0
+    try:
+        while time.perf_counter() < deadline:
+            waited_pid, status = os.waitpid(pid, os.WNOHANG)
+            if waited_pid == pid:
+                child_reaped = True
+                break
+            readable, _, _ = select.select([fd], [], [], 0.05)
+            if not readable:
+                continue
+            try:
+                chunk = os.read(fd, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            output.extend(chunk)
+            respond_to_terminal_queries(fd, chunk)
+            if first_render_ms is None and (b"Type a request" in output or b"> VT Code" in output):
+                first_render_ms = (time.perf_counter() - started) * 1000.0
+                terminate_child()
+                break
+        if first_render_ms is None:
+            terminate_child()
+    finally:
+        if not child_reaped:
+            terminate_child()
+        os.close(fd)
+
+    if first_render_ms is None:
+        log_path.write_bytes(bytes(output))
+        raise RuntimeError("interactive UI did not render the request prompt")
+    return first_render_ms
+
+
+runs = [run_sample(index) for index in range(3)]
+summary = {
+    "command": [binary, "--provider", "ollama", "--model", "llama3"],
+    "runs_ms": [round(value, 3) for value in runs],
+    "mean_ms": round(sum(runs) / len(runs), 3),
+    "min_ms": round(min(runs), 3),
+    "max_ms": round(max(runs), 3),
+}
+json_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+log_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+print(summary["mean_ms"])
+PY
+  )"
+  interactive_first_render_ms="${ms}"
+  interactive_first_render_src='release-pty-prompt-mean'
+}
+
+ensure_release_binary
+echo "[perf] collecting release baseline in ${OUT_JSON}"
+
+check_ms="$(run_cargo_timed cargo_check check --workspace --quiet --locked)"
+tool_pipeline_bench_ms=""
+agent_harness_bench_ms=""
+if [[ "${PERF_RUN_BENCHMARKS:-0}" == "1" ]]; then
+  tool_pipeline_bench_ms="$(run_cargo_timed bench_tool_pipeline bench --locked -p vtcode-core --bench tool_pipeline -- --sample-size 20 --warm-up-time 0.5 --measurement-time 1)"
+  agent_harness_bench_ms="$(run_cargo_timed bench_agent_harness bench --locked -p vtcode-core --bench agent_harness -- --sample-size 20 --warm-up-time 0.5 --measurement-time 1)"
+else
+  echo "[perf] skipping Criterion workloads (set PERF_RUN_BENCHMARKS=1 to enable)"
+fi
+
+measure_cold_startup
+measure_command warm_startup env VTCODE_STARTUP_TRACE=0 "${RELEASE_BIN}" --version
+
+credential_free_home="${RUN_DIR}/credential-free-home"
+credential_free_config_dir="${RUN_DIR}/credential-free-config"
+credential_free_config_file="${RUN_DIR}/credential-free.toml"
+mkdir -p "${credential_free_home}" "${credential_free_config_dir}"
+printf '%s\n' '# Deliberately empty: exercise startup without credentials or provider calls.' >"${credential_free_config_file}"
+measure_command first_user_io \
+  env HOME="${credential_free_home}" \
+  VTCODE_CONFIG="${credential_free_config_dir}" \
+  VTCODE_DATA="${RUN_DIR}/credential-free-data" \
+  VTCODE_CONFIG_PATH="${credential_free_config_file}" \
+  VTCODE_STARTUP_TRACE=0 \
+  NO_COLOR=1 \
+  "${RELEASE_BIN}" tool-policy status
+
+measure_interactive_first_render
+
+startup_ms="${warm_startup_ms}"
+startup_src="${warm_startup_src}"
+
+release_binary_bytes="$(wc -c <"${RELEASE_BIN}" | tr -d ' ')"
 python3 - <<PY
 import json
 from datetime import datetime, timezone
@@ -155,15 +351,22 @@ out = {
     "timestamp_utc": datetime.now(timezone.utc).isoformat(),
     "workspace": r"${ROOT_DIR}",
     "label": r"${LABEL}",
+    "binary": r"${RELEASE_BIN}",
     "metrics": {
         "cargo_check_ms": int(r"${check_ms}"),
-        "tool_pipeline_bench_ms": int(r"${tool_pipeline_bench_ms}"),
-        "agent_harness_bench_ms": int(r"${agent_harness_bench_ms}"),
+        "tool_pipeline_bench_ms": None if not r"${tool_pipeline_bench_ms}" else int(r"${tool_pipeline_bench_ms}"),
+        "agent_harness_bench_ms": None if not r"${agent_harness_bench_ms}" else int(r"${agent_harness_bench_ms}"),
+        "release_binary_bytes": int(r"${release_binary_bytes}"),
+        "cold_startup_ms": float(r"${cold_startup_ms}"),
+        "warm_startup_ms": float(r"${warm_startup_ms}"),
         "startup_ms": float(r"${startup_ms}"),
         "first_user_io_ms": float(r"${first_user_io_ms}"),
+        "interactive_first_render_ms": float(r"${interactive_first_render_ms}"),
     },
     "startup_source": r"${startup_src}",
+    "cold_startup_source": r"${cold_startup_src}",
     "first_user_io_source": r"${first_user_io_src}",
+    "interactive_first_render_source": r"${interactive_first_render_src}",
 }
 with open(r"${OUT_JSON}", "w", encoding="utf-8") as f:
     json.dump(out, f, indent=2, sort_keys=True)

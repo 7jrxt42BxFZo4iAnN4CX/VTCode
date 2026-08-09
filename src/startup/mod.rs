@@ -65,27 +65,42 @@ pub(crate) enum SessionResumeMode {
 impl StartupContext {
     pub(crate) async fn from_cli_args(args: &Cli) -> Result<Self> {
         let startup_start = std::time::Instant::now();
+        let config_phase = vtcode_commons::startup_trace::phase_started();
         let loaded = load_startup_config(args).await?;
-        tracing::debug!(target = "vtcode.startup", phase = "config", elapsed_ms = startup_start.elapsed().as_millis() as u64, "startup phase complete");
+        vtcode_commons::startup_trace::record_phase("config", config_phase);
+        tracing::debug!(
+            target = "vtcode.startup",
+            phase = "config",
+            elapsed_ms = startup_start.elapsed().as_millis() as u64,
+            "startup phase complete"
+        );
         if args.workspace_path.is_some() {
             validate_path_exists(&loaded.workspace, "Workspace")?;
         }
         if loaded.full_auto_requested {
             validate_full_auto_configuration(&loaded.config, &loaded.workspace)?;
         }
-        tracing::debug!(target = "vtcode.startup", phase = "validation", elapsed_ms = startup_start.elapsed().as_millis() as u64, "startup phase complete");
+        tracing::debug!(
+            target = "vtcode.startup",
+            phase = "validation",
+            elapsed_ms = startup_start.elapsed().as_millis() as u64,
+            "startup phase complete"
+        );
 
         let mut config = loaded.config;
         apply_codex_experimental_override(&mut config, args.codex_experimental_override());
+        let uses_interactive_ui = command_uses_interactive_ui(args);
 
         let planning_entry_source = PlanningEntrySource::None;
         apply_cli_permission_overrides(&mut config, &args.allowed_tools, &args.disallowed_tools);
 
         // Validate configuration against models database
-        validate_startup_configuration(&config, &loaded.workspace, args.quiet).await?;
+        let validation_phase = vtcode_commons::startup_trace::phase_started();
+        validate_startup_configuration(&config, &loaded.workspace, args.quiet, uses_interactive_ui).await?;
 
         let (custom_session_id, session_resume) = resolve_session_resume(args)?;
         validate_resume_all_usage(args, session_resume.as_ref())?;
+        vtcode_commons::startup_trace::record_phase("validation", validation_phase);
 
         if session_resume.is_some() && args.command.is_some() {
             bail!(
@@ -94,6 +109,7 @@ impl StartupContext {
         }
 
         let mut selection = resolve_runtime_model_selection(args, &config);
+        let auth_phase = vtcode_commons::startup_trace::phase_started();
         let codex_fallback_notice = if command_skips_provider_auth(args.command.as_ref()) {
             None
         } else {
@@ -187,9 +203,20 @@ impl StartupContext {
         if theme_changed {
             update_theme_preference(&theme_selection).await.ok();
         }
+        vtcode_core::utils::dot_config::set_startup_user_config(if uses_interactive_ui {
+            theme_resolution.loaded_dot_config
+        } else {
+            None
+        });
 
         let (api_key, openai_chatgpt_auth) = auth_res?;
-        tracing::debug!(target = "vtcode.startup", phase = "auth_and_runtime", elapsed_ms = startup_start.elapsed().as_millis() as u64, "startup phase complete");
+        vtcode_commons::startup_trace::record_phase("auth", auth_phase);
+        tracing::debug!(
+            target = "vtcode.startup",
+            phase = "auth_and_runtime",
+            elapsed_ms = startup_start.elapsed().as_millis() as u64,
+            "startup phase complete"
+        );
 
         let mut agent_config =
             build_runtime_agent_config(args, &config, loaded.workspace.clone(), selection, api_key, theme_selection);
@@ -234,6 +261,23 @@ impl StartupContext {
             planning_entry_source,
         })
     }
+}
+
+/// Defer the warning-only prompt-size calculation until the first interactive
+/// frame has been drawn. Non-interactive diagnostics call the same check
+/// synchronously during validation.
+pub(crate) fn defer_system_prompt_size_check(config: &VTCodeConfig, workspace: &Path) {
+    if !config.agent.system_prompt_budget_warning {
+        return;
+    }
+
+    let config = config.clone();
+    let workspace = workspace.to_path_buf();
+    vtcode_commons::startup_trace::install_first_render_hook(move || {
+        tokio::spawn(async move {
+            validation::check_system_prompt_size(&config, &workspace).await;
+        });
+    });
 }
 
 fn apply_codex_experimental_override(config: &mut VTCodeConfig, override_value: Option<bool>) {
@@ -576,6 +620,17 @@ pub(crate) fn command_runs_interactive_session(command: Option<&Commands>, has_p
         return false;
     }
     matches!(command, None | Some(Commands::Chat | Commands::ChatVerbose | Commands::Continue))
+}
+
+/// Whether startup validation can defer warning-only work until the first TUI
+/// frame. Full-auto prompts are dispatched through a non-interactive runner,
+/// even though they share the no-subcommand shape with interactive chat.
+pub(crate) fn command_uses_interactive_ui(args: &Cli) -> bool {
+    if args.print.is_some() || args.full_auto.as_ref().is_some_and(|prompt| !prompt.trim().is_empty()) {
+        return false;
+    }
+
+    command_runs_interactive_session(args.command.as_ref(), false)
 }
 
 fn command_skips_provider_auth(command: Option<&Commands>) -> bool {
@@ -1208,5 +1263,17 @@ mod validation_tests {
     fn print_mode_excluded_from_interactive_session_predicate() {
         // `--print` with no subcommand resolves to a one-shot Ask.
         assert!(!command_runs_interactive_session(None, true));
+    }
+
+    #[test]
+    fn full_auto_prompt_keeps_validation_synchronous() {
+        let args = Cli::parse_from(["vtcode", "--full-auto", "inspect the workspace"]);
+        assert!(!command_uses_interactive_ui(&args));
+    }
+
+    #[test]
+    fn empty_full_auto_option_still_uses_interactive_chat() {
+        let args = Cli::parse_from(["vtcode", "--full-auto"]);
+        assert!(command_uses_interactive_ui(&args));
     }
 }

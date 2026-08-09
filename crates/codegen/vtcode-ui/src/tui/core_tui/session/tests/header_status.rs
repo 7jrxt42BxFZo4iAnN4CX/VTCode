@@ -432,6 +432,35 @@ fn hidden_header_summary_live_reloads_model_changes() {
 }
 
 #[test]
+fn hidden_header_summary_appears_after_width_set_post_measure() {
+    // Reproduces the startup ordering bug: `measure_frame` reads `header_lines()`
+    // while `transcript_width` is still 0, caching a header line WITHOUT the
+    // right-aligned mode/model summary (it only renders when width > 0). The
+    // transcript widget then sets the real width via `apply_transcript_width`.
+    // The summary must appear on the next read without waiting for a keypress.
+    let mut session = fresh_session();
+    session.appearance.hide_header = true;
+    session.header_context.provider = format!("{}mimo", ui::HEADER_PROVIDER_PREFIX);
+    session.header_context.model = format!("{}mimo-v2.5", ui::HEADER_MODEL_PREFIX);
+    session.header_context.reasoning = format!("{}medium", ui::HEADER_REASONING_PREFIX);
+
+    // First frame's measure step: width is still 0, so the summary is omitted
+    // and the line is cached.
+    let first = header_line_text(&mut session);
+    assert!(!first.contains("Mimo Mimo-V2.5"), "width=0 header must omit the summary, got: {first}");
+
+    // Transcript widget sets the real width during render.
+    session.apply_transcript_width(VIEW_WIDTH);
+
+    // The next read must reflect the now-known width without any keypress.
+    let second = header_line_text(&mut session);
+    assert!(
+        second.contains("Mimo Mimo-V2.5"),
+        "header summary should appear once transcript width is known, got: {second}"
+    );
+}
+
+#[test]
 fn hidden_header_summary_renders_active_primary_agent() {
     let mut session = fresh_session();
     session.appearance.hide_header = true;

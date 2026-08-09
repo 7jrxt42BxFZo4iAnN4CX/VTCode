@@ -253,6 +253,7 @@ fn render_if_dirty<B: Backend, S: TuiSessionDriver>(
     terminal
         .draw(|frame| session.render(frame))
         .map_err(|e| anyhow::anyhow!("failed to draw inline session: {e}"))?;
+    vtcode_commons::startup_trace::record_first_render();
     let draw_elapsed = draw_started_at.elapsed();
     if let Some(input_started_at) = input_started_at {
         let input_to_draw_elapsed = input_started_at.elapsed();

@@ -556,6 +556,7 @@ fn workspace_trust_key(workspace: &Path) -> String {
 
 /// Global dot manager instance
 static DOT_MANAGER: OnceLock<Mutex<DotManager>> = OnceLock::new();
+static STARTUP_USER_CONFIG: OnceLock<Mutex<Option<DotConfig>>> = OnceLock::new();
 
 /// Get global dot manager instance
 pub fn get_dot_manager() -> Result<&'static Mutex<DotManager>, DotError> {
@@ -577,6 +578,27 @@ fn clone_manager() -> Result<DotManager, DotError> {
 pub async fn initialize_dot_folder() -> Result<(), DotError> {
     let manager = clone_manager()?;
     manager.initialize().await
+}
+
+/// Cache the user configuration already read during startup for session setup.
+///
+/// The interactive UI consumes this snapshot for keybindings instead of
+/// parsing the same file a second time. A missing snapshot is valid for
+/// embedded callers that enter session setup without the normal CLI bootstrap.
+pub fn set_startup_user_config(config: Option<DotConfig>) {
+    let cache = STARTUP_USER_CONFIG.get_or_init(|| Mutex::new(None));
+    if let Ok(mut cached) = cache.lock() {
+        *cached = config;
+    }
+}
+
+/// Take the startup user-config snapshot, if one was prepared by the CLI.
+pub fn take_startup_user_config() -> Option<DotConfig> {
+    STARTUP_USER_CONFIG
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|mut cached| cached.take())
 }
 
 /// Load user configuration

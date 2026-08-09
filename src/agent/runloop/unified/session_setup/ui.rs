@@ -42,7 +42,7 @@ use vtcode_core::ui::{
     to_tui_keyboard_protocol, to_tui_slash_commands, to_tui_surface,
 };
 use vtcode_core::utils::ansi::{AnsiRenderer, MessageStyle};
-use vtcode_core::utils::dot_config::load_user_config;
+use vtcode_core::utils::dot_config::{load_user_config, take_startup_user_config};
 use vtcode_core::utils::session_archive::SessionArchive;
 use vtcode_core::utils::transcript;
 use vtcode_ui::tui::app::{
@@ -134,6 +134,10 @@ pub(crate) async fn initialize_session_ui(
         .map(|cfg| cfg.ui.inline_viewport_rows)
         .unwrap_or(ui::DEFAULT_INLINE_VIEWPORT_ROWS);
 
+    if let Some(vt_cfg) = vt_cfg {
+        crate::startup::defer_system_prompt_size_check(vt_cfg, &config.workspace);
+    }
+
     if !is_tui_mode() {
         set_tui_mode(true);
     }
@@ -190,14 +194,22 @@ pub(crate) async fn initialize_session_ui(
     slash_command_items.extend(template_slash_commands);
 
     // Load user keybindings from dot config (best-effort)
-    let user_key_bindings: HashMap<String, Vec<String>> = match load_user_config().await {
-        Ok(dot) => dot
+    let user_dot_config = match take_startup_user_config() {
+        Some(config) => Some(config),
+        None => {
+            // Embedded callers can enter session setup without the normal CLI
+            // bootstrap, so retain the old best-effort fallback for them.
+            load_user_config().await.ok()
+        }
+    };
+    let user_key_bindings: HashMap<String, Vec<String>> = match user_dot_config {
+        Some(dot) => dot
             .preferences
             .keybindings
             .into_iter()
             .map(|(action, key)| (action, vec![key]))
             .collect(),
-        Err(_) => HashMap::new(),
+        None => HashMap::new(),
     };
 
     // Synchronous preview callback that applies the theme preview on the TUI
