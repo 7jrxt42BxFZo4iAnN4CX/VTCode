@@ -146,7 +146,7 @@ mod tests {
     async fn read_exact_uninit_reads_across_multiple_poll_reads() {
         // A payload larger than a single `read_buf` is likely to require
         // several poll_read calls; the loop must still accumulate correctly.
-        let payload: Vec<u8> = (0..2000u32).map(|i| (i % 256) as u8).collect();
+        let payload: Vec<u8> = (0..2000u32).map(|i| u8::try_from(i % 256).unwrap_or_default()).collect();
         let mut reader = std::io::Cursor::new(payload.clone());
         let got = read_exact_uninit(&mut reader, payload.len()).await.expect("read full payload");
         assert_eq!(got, payload);

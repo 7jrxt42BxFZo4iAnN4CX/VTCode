@@ -1,4 +1,7 @@
-#![allow(clippy::let_underscore_must_use)]
+#![allow(
+    clippy::let_underscore_must_use,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 
 use anyhow::{Context, Result};
 use std::fmt::Write as _;

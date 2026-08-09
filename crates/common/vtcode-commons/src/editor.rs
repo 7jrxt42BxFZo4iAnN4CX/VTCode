@@ -1,3 +1,10 @@
+#![expect(
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    unused_results,
+    reason = "Editor URI parsing uses validated delimiters and intentionally ignores String mutation results."
+)]
+
 use std::borrow::Cow;
 use std::env;
 use std::path::{Path, PathBuf};

@@ -7930,6 +7930,7 @@ dependencies = [
  "vtcode-config",
  "vtcode-exec-events",
  "vtcode-macros",
+ "vtcode-safety",
  "vtcode-utility-tool-specs",
  "which",
  "wiremock",
@@ -7974,6 +7975,7 @@ dependencies = [
  "vtcode-commons",
  "vtcode-config",
  "vtcode-llm",
+ "vtcode-safety",
  "vtcode-utility-tool-specs",
 ]
 

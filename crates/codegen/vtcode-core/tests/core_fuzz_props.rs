@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use proptest::prelude::*;
 use vtcode_core::command_safety::dangerous_commands::command_might_be_dangerous;
 use vtcode_core::command_safety::shell_parser::parse_shell_commands;
@@ -21,7 +24,7 @@ proptest! {
     ) {
         let command = to_strings(vec![cmd0, cmd1, cmd2, cmd3, cmd4]);
         // Must not panic regardless of input
-        let _ = command_might_be_dangerous(&command);
+        let _dangerous = command_might_be_dangerous(&command);
     }
 }
 
@@ -32,7 +35,7 @@ proptest! {
         args in prop::collection::vec("\\PC{0,32}", 0..10),
     ) {
         let command = to_strings(args);
-        let _ = command_might_be_dangerous(&command);
+        let _dangerous = command_might_be_dangerous(&command);
     }
 }
 
@@ -42,7 +45,7 @@ proptest! {
     fn fuzz_shell_parser_never_panics(
         script in "\\PC{0,512}",
     ) {
-        let _ = parse_shell_commands(&script);
+        let _parsed_commands = parse_shell_commands(&script);
     }
 }
 
@@ -56,7 +59,7 @@ proptest! {
     ) {
         let pattern: Vec<String> = pattern_words.into_iter().take(pattern_len).collect();
         let rule = PrefixRule::new(pattern, Decision::Allow);
-        let _ = rule.matches(&command_words.to_vec());
+        let _matches = rule.matches(&command_words.to_vec());
     }
 }
 
@@ -71,11 +74,11 @@ proptest! {
         for _ in 0..rules_count {
             let pat: Vec<String> = (0..3).map(|_| "[a-zA-Z]{0,8}".to_string()).collect();
             let parsed: Vec<String> = pat.iter().map(|_| "test".to_string()).collect();
-            let _ = policy.add_prefix_rule(&parsed, Decision::Allow);
+            let _rule_result = policy.add_prefix_rule(&parsed, Decision::Allow);
         }
         for _ in 0..commands_count {
             let cmd: Vec<String> = (0..4).map(|_| "test".to_string()).collect();
-            let _ = policy.check(&cmd);
+            let _decision = policy.check(&cmd);
         }
     }
 }
@@ -86,7 +89,7 @@ proptest! {
     fn fuzz_path_validation_never_panics(
         path in "\\PC{0,256}",
     ) {
-        let _ = validate_path_safety(&path);
+        let _validation = validate_path_safety(&path);
     }
 }
 
@@ -97,9 +100,9 @@ proptest! {
         path in "\\PC{0,128}",
     ) {
         if !path.is_empty() {
-            let _ = validate_non_root_listing_path(Some(&path));
+            let _validation = validate_non_root_listing_path(Some(&path));
         }
-        let _ = validate_non_root_listing_path(None);
+        let _validation = validate_non_root_listing_path(None);
     }
 }
 
@@ -120,7 +123,7 @@ proptest! {
                 1 => Decision::Prompt,
                 _ => Decision::Forbidden,
             };
-            let _ = policy.add_prefix_rule(&pat, dec);
+            let _rule_result = policy.add_prefix_rule(&pat, dec);
         }
 
         let cmds: Vec<Vec<String>> = (0..command_count)
@@ -129,7 +132,7 @@ proptest! {
             })
             .collect();
 
-        let _ = policy.check_multiple(cmds.iter(), &|_| Decision::Prompt);
+        let _decisions = policy.check_multiple(cmds.iter(), &|_| Decision::Prompt);
     }
 }
 

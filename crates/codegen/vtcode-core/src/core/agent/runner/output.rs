@@ -8,7 +8,10 @@ impl AgentRunner {
         !(stdout_is_terminal && stderr_is_terminal)
     }
 
-    #[expect(clippy::print_stdout)]
+    #[expect(
+        clippy::print_stdout,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     fn print_final_message_to_stdout(text: &str) {
         if text.trim().is_empty() {
             return;

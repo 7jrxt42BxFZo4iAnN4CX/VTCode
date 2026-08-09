@@ -515,6 +515,11 @@ pub fn compute_content_hash_with(content: &str, algorithm: HashAlgorithm) -> Str
 }
 
 /// MurmurHash3 x86_32 implementation.
+#[expect(
+    clippy::indexing_slicing,
+    clippy::cast_possible_truncation,
+    reason = "MurmurHash3 intentionally processes fixed four-byte chunks and folds arbitrary input length modulo u32."
+)]
 fn murmur3_32(data: &[u8], seed: u32) -> u32 {
     const C1: u32 = 0xcc9e2d51;
     const C2: u32 = 0x1b873593;
@@ -742,7 +747,11 @@ impl TraceContext {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 mod tests {
     use super::*;
 

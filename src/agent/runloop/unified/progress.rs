@@ -150,7 +150,10 @@ impl ProgressReporter {
     }
 
     /// Get the current progress as a percentage (0-100)
-    #[allow(clippy::cast_sign_loss)] // current/total are u64 so ratio is always non-negative
+    #[allow(
+        clippy::cast_sign_loss,
+        reason = "Intentional compatibility, platform, or test-only suppression."
+    )] // current/total are u64 so ratio is always non-negative
     pub async fn percentage(&self) -> u8 {
         let (current, total, _, _) = self.state.get_progress().await;
         if total > 0 {
@@ -201,7 +204,10 @@ impl ProgressInfo {
 }
 
 /// Format an ETA duration as a human-readable string
-#[allow(clippy::cast_sign_loss)] // secs is u64 from Duration::as_secs(), always non-negative
+#[allow(
+    clippy::cast_sign_loss,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)] // secs is u64 from Duration::as_secs(), always non-negative
 fn format_eta(duration: Duration) -> String {
     let secs = duration.as_secs();
     if secs < 60 {

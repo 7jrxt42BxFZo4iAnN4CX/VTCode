@@ -6,7 +6,7 @@ use tokio::time::{Duration, timeout};
 use tracing::{error, info, warn};
 use vtcode_core::config::mcp::McpClientConfig;
 use vtcode_core::exec_policy::{AskForApproval, RejectConfig};
-use vtcode_core::mcp::McpClient;
+use vtcode_core::mcp::{McpClient, McpSandboxContext};
 
 use crate::agent::runloop::mcp_events::McpEvent;
 
@@ -97,16 +97,35 @@ pub(crate) struct AsyncMcpManager {
     initialization_mutex: Arc<Mutex<()>>,
     /// Event callback for MCP events
     event_callback: Arc<dyn Fn(McpEvent) + Send + Sync>,
+    /// Sandbox inherited by MCP stdio providers and reconnects.
+    sandbox_context: Option<McpSandboxContext>,
     /// Handle for the background initialization task, aborted on drop.
     init_task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl AsyncMcpManager {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Retained as the unsandboxed compatibility constructor for MCP tests and library callers."
+        )
+    )]
     pub(crate) fn new(
         config: McpClientConfig,
         hitl_notification_bell: bool,
         approval_policy: AskForApproval,
         event_callback: Arc<dyn Fn(McpEvent) + Send + Sync>,
+    ) -> Self {
+        Self::new_with_sandbox(config, hitl_notification_bell, approval_policy, event_callback, None)
+    }
+
+    pub(crate) fn new_with_sandbox(
+        config: McpClientConfig,
+        hitl_notification_bell: bool,
+        approval_policy: AskForApproval,
+        event_callback: Arc<dyn Fn(McpEvent) + Send + Sync>,
+        sandbox_context: Option<McpSandboxContext>,
     ) -> Self {
         let init_status = if config.enabled {
             McpInitStatus::Initializing { progress: "Initializing MCP client...".to_string() }
@@ -121,6 +140,7 @@ impl AsyncMcpManager {
             status: Arc::new(RwLock::new(init_status)),
             initialization_mutex: Arc::new(Mutex::new(())),
             event_callback,
+            sandbox_context,
             init_task: std::sync::Mutex::new(None),
         }
     }
@@ -155,6 +175,7 @@ impl AsyncMcpManager {
         let event_callback = Arc::clone(&self.event_callback);
         let hitl_notification_bell = self.hitl_notification_bell;
         let approval_policy = Arc::clone(&self.approval_policy);
+        let sandbox_context = self.sandbox_context.clone();
 
         // Spawn the initialization task. Store the JoinHandle so it can be
         // aborted on drop — prevents an orphan task if the manager is dropped
@@ -180,7 +201,15 @@ impl AsyncMcpManager {
             }
 
             // Initialize MCP client
-            match Self::initialize_mcp_client(config, hitl_notification_bell, approval_policy, event_callback).await {
+            match Self::initialize_mcp_client(
+                config,
+                hitl_notification_bell,
+                approval_policy,
+                event_callback,
+                sandbox_context,
+            )
+            .await
+            {
                 Ok(client) => {
                     let mut status_guard = status.write().await;
                     *status_guard = McpInitStatus::Ready { client: Arc::new(client) };
@@ -283,6 +312,7 @@ impl AsyncMcpManager {
         hitl_notification_bell: bool,
         approval_policy: Arc<StdRwLock<AskForApproval>>,
         event_callback: Arc<dyn Fn(McpEvent) + Send + Sync>,
+        sandbox_context: Option<McpSandboxContext>,
     ) -> Result<McpClient> {
         info!("Initializing MCP client with {} providers", config.providers.len());
 
@@ -295,7 +325,7 @@ impl AsyncMcpManager {
         let startup_timeout_secs = config.startup_timeout_seconds.unwrap_or(30);
         let startup_timeout = Duration::from_secs(startup_timeout_secs);
 
-        let mut client = McpClient::new(config);
+        let mut client = McpClient::with_sandbox_context(config, sandbox_context);
 
         // Set up elicitation handler
         use crate::agent::runloop::mcp_elicitation::InteractiveMcpElicitationHandler;

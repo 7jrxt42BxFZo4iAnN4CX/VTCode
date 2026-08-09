@@ -1,3 +1,9 @@
+#![expect(
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    reason = "Shell parsing tracks byte offsets at character boundaries while validating operator pairs."
+)]
+
 //! Shell script parser for `bash -lc` and similar commands.
 //!
 //! This module parses shell commands like:
@@ -532,7 +538,7 @@ pub(crate) fn split_shell_segments(command: &str) -> Result<Vec<String>> {
                         if let Some((next_idx, next_ch)) = chars.peek().copied()
                             && next_ch == ch
                         {
-                            chars.next();
+                            let _next = chars.next();
                             segment_start = next_idx + next_ch.len_utf8();
                         }
                     }

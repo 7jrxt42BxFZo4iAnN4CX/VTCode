@@ -1,3 +1,8 @@
+#![expect(
+    clippy::string_slice,
+    reason = "Cargo manifest offsets come from ASCII markers and are therefore UTF-8 boundaries."
+)]
+
 //! Generic utility functions
 
 use anyhow::{Context, Result};
@@ -40,7 +45,10 @@ pub fn calculate_sha256(content: &[u8]) -> String {
     output
 }
 
-#[allow(clippy::unreachable)]
+#[allow(
+    clippy::unreachable,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 fn nibble_to_hex(nibble: u8) -> char {
     match nibble {
         0..=9 => char::from(b'0' + nibble),

@@ -208,7 +208,10 @@ impl TableFormatter {
 
         let scale = (available as f64) / (total_content as f64);
         for column in &mut self.columns {
-            #[allow(clippy::cast_sign_loss)]
+            #[allow(
+                clippy::cast_sign_loss,
+                reason = "Intentional compatibility, platform, or test-only suppression."
+            )]
             {
                 column.width = ((column.width as f64) * scale).max(3.0) as usize;
             }

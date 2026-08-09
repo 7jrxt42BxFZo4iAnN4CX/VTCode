@@ -1,3 +1,10 @@
+#![expect(
+    clippy::string_slice,
+    clippy::let_underscore_must_use,
+    unused_results,
+    reason = "Markdown extraction uses validated ASCII fences and best-effort lock/storage cleanup."
+)]
+
 //! Markdown-backed storage utilities extracted from VT Code.
 //!
 //! This module provides lightweight persistence helpers that serialize

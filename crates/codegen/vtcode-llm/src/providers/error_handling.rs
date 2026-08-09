@@ -3,9 +3,10 @@
 
 use crate::error_display;
 use crate::provider::{LLMError, LLMErrorMetadata};
-use crate::providers::common::extract_header;
+use crate::providers::common::{extract_header, read_provider_error_body};
 use reqwest::Response;
 use serde_json::Value;
+use vtcode_commons::sanitizer::sanitize_provider_diagnostic;
 
 #[derive(Debug, Clone, Default)]
 struct ApiResponseMetadata {
@@ -46,7 +47,7 @@ pub async fn handle_gemini_http_error(response: Response) -> Result<Response, LL
 
     let status = response.status();
     let metadata = extract_response_metadata(&response);
-    let error_text = response.text().await.unwrap_or_default();
+    let error_text = read_provider_error_body(response).await;
     Err(parse_api_error_with_metadata("Gemini", status, &error_text, metadata))
 }
 
@@ -59,7 +60,7 @@ pub(crate) async fn handle_anthropic_http_error(response: Response) -> Result<Re
 
     let status = response.status();
     let metadata = extract_response_metadata(&response);
-    let error_text = response.text().await.unwrap_or_default();
+    let error_text = read_provider_error_body(response).await;
     Err(parse_api_error_with_metadata("Anthropic", status, &error_text, metadata))
 }
 
@@ -76,14 +77,14 @@ pub(crate) async fn handle_openai_http_error(
 
     let status = response.status();
     let metadata = extract_response_metadata(&response);
-    let error_text = response.text().await.unwrap_or_default();
+    let error_text = read_provider_error_body(response).await;
 
     // Universal diagnostic logging — helps debug post-tool follow-up failures
     // and transient API issues across all OpenAI-compatible providers.
     tracing::warn!(
         provider = provider_name,
         status = %status,
-        body = %error_text,
+        body = %sanitize_provider_diagnostic(error_text.as_bytes()),
         "{} HTTP error",
         provider_name
     );
@@ -145,7 +146,8 @@ fn parse_api_error_with_metadata(
     response_metadata: ApiResponseMetadata,
 ) -> LLMError {
     // Try to extract a meaningful error message from JSON
-    let error_message = extract_human_error_message(body);
+    let error_message = sanitize_provider_diagnostic(extract_human_error_message(body).as_bytes());
+    let diagnostic = sanitize_provider_diagnostic(body.as_bytes());
 
     // Categorize by status code
     let status_code = status.as_u16();
@@ -163,7 +165,7 @@ fn parse_api_error_with_metadata(
                 response_metadata.request_id.clone(),
                 response_metadata.organization_id.clone(),
                 response_metadata.retry_after.clone(),
-                Some(body.to_string()),
+                Some(diagnostic.clone()),
             )),
         },
         402 => LLMError::InvalidRequest {
@@ -175,7 +177,7 @@ fn parse_api_error_with_metadata(
                 response_metadata.request_id.clone(),
                 response_metadata.organization_id.clone(),
                 response_metadata.retry_after.clone(),
-                Some(body.to_string()),
+                Some(diagnostic.clone()),
             )),
         },
         422 => LLMError::InvalidRequest {
@@ -187,7 +189,7 @@ fn parse_api_error_with_metadata(
                 response_metadata.request_id.clone(),
                 response_metadata.organization_id.clone(),
                 response_metadata.retry_after.clone(),
-                Some(body.to_string()),
+                Some(diagnostic.clone()),
             )),
         },
         429 => LLMError::RateLimit {
@@ -198,7 +200,7 @@ fn parse_api_error_with_metadata(
                 response_metadata.request_id.clone(),
                 response_metadata.organization_id.clone(),
                 response_metadata.retry_after.clone(),
-                Some(error_message),
+                Some(error_message.clone()),
             )),
         },
         400 if is_rate_limit_error(status_code, body) => LLMError::RateLimit {
@@ -209,7 +211,7 @@ fn parse_api_error_with_metadata(
                 response_metadata.request_id.clone(),
                 response_metadata.organization_id.clone(),
                 response_metadata.retry_after.clone(),
-                Some(error_message),
+                Some(error_message.clone()),
             )),
         },
         400 => LLMError::InvalidRequest {
@@ -221,7 +223,7 @@ fn parse_api_error_with_metadata(
                 response_metadata.request_id.clone(),
                 response_metadata.organization_id.clone(),
                 response_metadata.retry_after.clone(),
-                Some(body.to_string()),
+                Some(diagnostic.clone()),
             )),
         },
         _ => LLMError::Provider {
@@ -233,7 +235,7 @@ fn parse_api_error_with_metadata(
                 response_metadata.request_id,
                 response_metadata.organization_id,
                 response_metadata.retry_after,
-                Some(body.to_string()),
+                Some(diagnostic),
             )),
         },
     }

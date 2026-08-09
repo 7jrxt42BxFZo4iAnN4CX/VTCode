@@ -238,7 +238,10 @@ pub enum RetryEvent<'a> {
 /// site-specific context (e.g. `policy.max_attempts`) without having
 /// to capture the policy in its environment — which is exactly the
 /// pattern that conflicts with `&mut state`.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 pub async fn run_with_retry<T, E, S, F, OnEvent, Synthesize>(
     policy: &RetryPolicy,
     state: &mut S,

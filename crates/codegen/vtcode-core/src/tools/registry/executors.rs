@@ -34,6 +34,8 @@ mod sandbox_runtime;
 mod search_introspection;
 mod subagents;
 
+pub use sandbox_runtime::sandbox_policy_from_runtime_config;
+
 #[derive(Clone, Copy)]
 enum ExecRunBackendKind {
     Pty,
@@ -52,6 +54,7 @@ struct PreparedExecRunRequest {
     confirm: bool,
     rows: Option<u16>,
     cols: Option<u16>,
+    sandbox_active: bool,
 }
 
 struct ResolvedExecSandboxRequest {
@@ -144,7 +147,13 @@ impl ToolRegistry {
     /// For legacy alias calls that omit `action`, the action is inferred from
     /// the argument shape: `prompt` implies create, `id` implies delete,
     /// otherwise list.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "Legacy executor aliases remain available for compatibility tests."
+        )
+    )]
     pub(super) fn cron_executor(&self, args: Value) -> BoxFuture<'_, Result<Value>> {
         Box::pin(async move {
             let action = args
@@ -309,6 +318,14 @@ impl ToolRegistry {
 
         enforce_pty_command_policy(&prepared_command.display_command, confirm)?;
         let sandbox_config = self.sandbox_config();
+        let sandbox_plan = build_shell_execution_plan(
+            &sandbox_config,
+            self.workspace_root(),
+            &prepared_command.requested_command,
+            sandbox_request.sandbox_permissions,
+            sandbox_request.additional_permissions.as_ref(),
+        )?;
+        let sandbox_active = sandbox_plan.sandbox_policy.is_some();
         prepared_command.command = apply_runtime_sandbox_to_command(
             prepared_command.command,
             &prepared_command.requested_command,
@@ -347,6 +364,7 @@ impl ToolRegistry {
             confirm,
             rows,
             cols,
+            sandbox_active,
         })
     }
 
@@ -548,7 +566,13 @@ impl ToolRegistry {
     /// evaluated under the action-qualified policy keys `mcp:connect` /
     /// `mcp:disconnect` so they keep their Prompt confirmation even though
     /// `mcp` itself is `ToolPolicy::Allow`.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "Legacy executor aliases remain available for compatibility tests."
+        )
+    )]
     pub(super) fn mcp_executor(&self, args: Value) -> BoxFuture<'_, Result<Value>> {
         Box::pin(async move {
             let action = args

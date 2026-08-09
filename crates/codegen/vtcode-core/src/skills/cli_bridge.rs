@@ -521,7 +521,10 @@ impl PathExt for PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[expect(unused_imports)]
+    #[expect(
+        unused_imports,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     use tempfile::TempDir;
 
     #[test]

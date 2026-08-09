@@ -1,4 +1,7 @@
-#![allow(clippy::let_underscore_must_use)]
+#![allow(
+    clippy::let_underscore_must_use,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 //! Skill persistence and management for reusable code functions.
 //!
 //! Agents can save working code implementations as reusable "skills" in the

@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 /// Integration test to ensure constants.rs stays in sync with docs/models.json
 /// This test enforces the "Always check ./docs/models.json" rule from the project guidelines.
 use hashbrown::HashSet;
@@ -32,27 +35,27 @@ fn constants_cover_models_json() {
         // Check our supported providers
         let constants_models = match provider_name.as_str() {
             "openai" => {
-                validated_providers.insert("openai");
+                let _inserted = validated_providers.insert("openai");
                 Some(models::openai::SUPPORTED_MODELS)
             }
             "anthropic" => {
-                validated_providers.insert("anthropic");
+                let _inserted = validated_providers.insert("anthropic");
                 Some(models::anthropic::SUPPORTED_MODELS)
             }
             "google" => {
-                validated_providers.insert("google");
+                let _inserted = validated_providers.insert("google");
                 Some(models::google::SUPPORTED_MODELS)
             }
             "openrouter" => {
-                validated_providers.insert("openrouter");
+                let _inserted = validated_providers.insert("openrouter");
                 Some(models::openrouter::SUPPORTED_MODELS)
             }
             "deepseek" => {
-                validated_providers.insert("deepseek");
+                let _inserted = validated_providers.insert("deepseek");
                 Some(models::deepseek::SUPPORTED_MODELS)
             }
             "zai" => {
-                validated_providers.insert("zai");
+                let _inserted = validated_providers.insert("zai");
                 Some(models::zai::SUPPORTED_MODELS)
             }
             _ => None, // Skip providers we don't have constants for yet

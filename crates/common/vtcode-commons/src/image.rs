@@ -1,3 +1,8 @@
+#![expect(
+    clippy::indexing_slicing,
+    reason = "Image signatures are checked for minimum length before fixed-format byte access."
+)]
+
 //! Image processing utilities
 
 use anyhow::{Context, Result};

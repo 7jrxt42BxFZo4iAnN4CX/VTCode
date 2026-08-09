@@ -6,6 +6,7 @@ use std::time::Duration;
 use portable_pty::{CommandBuilder, PtySize};
 
 use super::command_utils::is_shell_program;
+use crate::sandboxing::should_filter_env_var;
 use crate::tools::path_env;
 use crate::tools::shell_snapshot::ShellSnapshot;
 
@@ -21,16 +22,21 @@ pub(super) fn exit_status_code(status: portable_pty::ExitStatus) -> i32 {
     }
 }
 
-pub(super) fn set_command_environment(
+pub(super) fn set_command_environment_with_sandbox(
     builder: &mut CommandBuilder,
     program: &str,
     size: PtySize,
     workspace_root: &Path,
     extra_paths: &[PathBuf],
     extra_env: &HashMap<String, String>,
+    sandbox_active: bool,
 ) {
     // Inherit environment from parent process to preserve PATH and other important variables
     let mut env_map: HashMap<OsString, OsString> = std::env::vars_os().collect();
+
+    if sandbox_active {
+        env_map.retain(|key, _| !should_filter_env_var(&key.to_string_lossy()));
+    }
 
     // Ensure HOME is set - this is crucial for proper path expansion in cargo and other tools
     let home_key = OsString::from("HOME");
@@ -82,7 +88,9 @@ pub(super) fn set_command_environment(
     builder.env_remove("MallocQuiet");
 
     for (key, value) in extra_env {
-        builder.env(key, value);
+        if !sandbox_active || !should_filter_env_var(key) {
+            builder.env(key, value);
+        }
     }
 
     if is_shell_program(program) {
@@ -95,7 +103,10 @@ pub(super) fn set_command_environment(
 /// This uses a pre-captured shell environment instead of inheriting from the
 /// parent process, which can speed up command execution by avoiding the need
 /// to run login scripts via `-l` flag.
-#[expect(dead_code)] // Infrastructure for future snapshot-based PTY execution
+#[expect(
+    dead_code,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)] // Infrastructure for future snapshot-based PTY execution
 fn set_command_environment_from_snapshot(
     builder: &mut CommandBuilder,
     snapshot: &ShellSnapshot,

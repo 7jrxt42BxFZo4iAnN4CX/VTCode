@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use vtcode_core::ui::styled::*;
 
 fn main() {

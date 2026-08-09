@@ -5,7 +5,7 @@
 //! which is intentionally fixed — no research context is consulted, so the
 //! wording and options are constant.
 
-#![allow(dead_code)]
+#![allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 
 use serde_json::{Value, json};
 

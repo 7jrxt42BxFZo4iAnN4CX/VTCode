@@ -1,7 +1,10 @@
 //! Integration tests for the vtcode-config JSON Schema export.
 
 #![cfg(feature = "schema")]
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 
 use vtcode_config::{vtcode_config_schema, vtcode_config_schema_json, vtcode_config_schema_pretty};
 

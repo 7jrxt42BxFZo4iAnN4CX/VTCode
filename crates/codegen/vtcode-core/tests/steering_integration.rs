@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use anyhow::Result;
 use tokio::sync::mpsc;
 use vtcode_core::config::models::ModelId;

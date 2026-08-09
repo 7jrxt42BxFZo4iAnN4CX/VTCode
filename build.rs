@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 
 fn main() {
     let git_output = std::process::Command::new("git").args(["rev-parse", "--git-dir"]).output().ok();

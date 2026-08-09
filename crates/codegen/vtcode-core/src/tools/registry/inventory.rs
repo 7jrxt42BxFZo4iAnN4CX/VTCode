@@ -120,13 +120,13 @@ impl ToolInventory {
     }
 
     /// Get alias usage metrics for debugging and analytics
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
     pub fn alias_metrics(&self) -> AliasMetrics {
         self.alias_metrics.lock().clone()
     }
 
     /// Reset alias metrics
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
     pub fn reset_alias_metrics(&self) {
         *self.alias_metrics.lock() = AliasMetrics::default();
     }

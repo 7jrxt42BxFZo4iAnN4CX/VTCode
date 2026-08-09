@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 //! Focused test for LLM provider functionality
 
 use std::sync::Arc;
@@ -55,25 +58,25 @@ fn test_provider_auto_detection() {
 fn test_unified_client_creation() {
     // Test creating providers directly using the factory
     let gemini = create_provider_for_model("gemini-3-flash-preview", "test_key".to_string(), None, None);
-    gemini.unwrap();
+    let _gemini = gemini.unwrap();
 
     let openai = create_provider_for_model(models::GPT_OSS_20B, "test_key".to_string(), None, None);
-    openai.unwrap();
+    let _openai = openai.unwrap();
 
     let anthropic = create_provider_for_model(models::CLAUDE_SONNET_4_6, "test_key".to_string(), None, None);
-    anthropic.unwrap();
+    let _anthropic = anthropic.unwrap();
 
     let openrouter = create_provider_for_model(models::openrouter::DEEPSEEK_V4_PRO, "test_key".to_string(), None, None);
-    openrouter.unwrap();
+    let _openrouter = openrouter.unwrap();
 
     let moonshot = create_provider_for_model(models::moonshot::DEFAULT_MODEL, "test_key".to_string(), None, None);
-    moonshot.unwrap();
+    let _moonshot = moonshot.unwrap();
 
     let ollama = create_provider_for_model(models::ollama::DEFAULT_MODEL, String::new(), None, None);
-    ollama.unwrap();
+    let _ollama = ollama.unwrap();
 
     let lmstudio = create_provider_for_model(models::lmstudio::DEFAULT_MODEL, String::new(), None, None);
-    lmstudio.unwrap();
+    let _lmstudio = lmstudio.unwrap();
 }
 
 #[test]

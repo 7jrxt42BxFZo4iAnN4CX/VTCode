@@ -68,7 +68,7 @@ impl TaskManager {
             self.evict_oldest_tasks(&mut state);
         }
 
-        state.tasks.insert(task_id.clone(), task.clone());
+        drop(state.tasks.insert(task_id.clone(), task.clone()));
         if let Some(ctx_id) = context_id {
             state.contexts.entry(ctx_id).or_default().push(task_id);
         }
@@ -95,8 +95,8 @@ impl TaskManager {
         }
 
         for id in &evicted_ids {
-            state.tasks.remove(id);
-            state.webhook_configs.remove(id);
+            drop(state.tasks.remove(id));
+            drop(state.webhook_configs.remove(id));
         }
 
         state.contexts.retain(|_, task_ids| {
@@ -213,7 +213,7 @@ impl TaskManager {
             && task.history.len() > history_length
         {
             let trim_count = task.history.len() - history_length;
-            task.history.drain(..trim_count);
+            drop(task.history.drain(..trim_count));
         }
 
         task
@@ -255,7 +255,7 @@ impl TaskManager {
 
         matching_tasks.sort_by(|a, b| b.1.cmp(&a.1));
 
-        let total_size = matching_tasks.len() as u32;
+        let total_size = u32::try_from(matching_tasks.len()).unwrap_or(u32::MAX);
         let page_size = params.page_size.unwrap_or(50).min(100);
         let start_idx = params
             .page_token
@@ -330,7 +330,7 @@ impl TaskManager {
             return Err(A2aError::TaskNotFound(config.task_id));
         }
 
-        state.webhook_configs.insert(config.task_id.clone(), config);
+        drop(state.webhook_configs.insert(config.task_id.clone(), config));
         Ok(())
     }
 
@@ -343,7 +343,7 @@ impl TaskManager {
     /// Remove webhook configuration for a task
     pub async fn remove_webhook_config(&self, task_id: &str) {
         let mut state = self.state.write().await;
-        state.webhook_configs.remove(task_id);
+        drop(state.webhook_configs.remove(task_id));
     }
 }
 
@@ -429,13 +429,15 @@ mod tests {
         let manager = TaskManager::new();
         let task = manager.create_task(None).await;
 
-        manager
-            .update_status(&task.id, TaskState::Completed, None)
-            .await
-            .expect("complete");
+        drop(
+            manager
+                .update_status(&task.id, TaskState::Completed, None)
+                .await
+                .expect("complete"),
+        );
 
         let result = manager.cancel_task(&task.id).await;
-        result.unwrap_err();
+        drop(result.unwrap_err());
     }
 
     #[tokio::test]
@@ -443,10 +445,12 @@ mod tests {
         let manager = TaskManager::with_capacity(1);
         let task = manager.create_task(Some("ctx-1".to_string())).await;
 
-        manager
-            .update_status(&task.id, TaskState::Completed, None)
-            .await
-            .expect("complete");
+        drop(
+            manager
+                .update_status(&task.id, TaskState::Completed, None)
+                .await
+                .expect("complete"),
+        );
         manager
             .set_webhook_config(TaskPushNotificationConfig {
                 task_id: task.id.clone(),
@@ -493,18 +497,24 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(2)).await;
         let newer = manager.create_task(Some("ctx-1".to_string())).await;
 
-        manager
-            .add_artifact(&newer.id, Artifact::text("art-1", "Generated content"))
-            .await
-            .expect("add artifact");
-        manager
-            .add_message(&newer.id, Message::user_text("Hello"))
-            .await
-            .expect("add msg1");
-        manager
-            .add_message(&newer.id, Message::agent_text("Hi there"))
-            .await
-            .expect("add msg2");
+        drop(
+            manager
+                .add_artifact(&newer.id, Artifact::text("art-1", "Generated content"))
+                .await
+                .expect("add artifact"),
+        );
+        drop(
+            manager
+                .add_message(&newer.id, Message::user_text("Hello"))
+                .await
+                .expect("add msg1"),
+        );
+        drop(
+            manager
+                .add_message(&newer.id, Message::agent_text("Hi there"))
+                .await
+                .expect("add msg2"),
+        );
 
         let first_page = manager
             .list_tasks(ListTasksParams {
@@ -546,7 +556,7 @@ mod tests {
         let msg1 = Message::user_text("Hello");
         let msg2 = Message::agent_text("Hi there!");
 
-        manager.add_message(&task.id, msg1).await.expect("add msg1");
+        drop(manager.add_message(&task.id, msg1).await.expect("add msg1"));
         let updated = manager.add_message(&task.id, msg2).await.expect("add msg2");
 
         assert_eq!(updated.history.len(), 2);

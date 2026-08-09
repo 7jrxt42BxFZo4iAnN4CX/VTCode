@@ -1,4 +1,7 @@
-#![allow(clippy::collapsible_if)]
+#![allow(
+    clippy::collapsible_if,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 
 use tracing::warn;
 
@@ -10,6 +13,7 @@ use reqwest::{Client as HttpClient, Response, StatusCode};
 use serde_json::Value;
 use std::borrow::Cow;
 use std::str::FromStr;
+use vtcode_commons::sanitizer::sanitize_provider_diagnostic;
 use vtcode_config::TimeoutsConfig;
 use vtcode_config::constants::{env_vars, models, urls};
 use vtcode_config::core::{AnthropicConfig, ModelConfig, OpenRouterPromptCacheSettings, PromptCachingConfig};
@@ -223,14 +227,16 @@ impl OpenRouterProvider {
         }
 
         let fallback_status = fallback_response.status();
-        let fallback_text = fallback_response.text().await.unwrap_or_default();
+        let fallback_text = crate::providers::common::read_provider_error_body(fallback_response).await;
 
         if fallback_status.as_u16() == 429 || fallback_text.contains("quota") {
             return Err(LLMError::RateLimit { metadata: None });
         }
 
         let combined_error = format!(
-            "HTTP {original_status}: {original_error} | {label} fallback failed with HTTP {fallback_status}: {fallback_text}"
+            "HTTP {original_status}: {} | {label} fallback failed with HTTP {fallback_status}: {}",
+            sanitize_provider_diagnostic(original_error.as_bytes()),
+            sanitize_provider_diagnostic(fallback_text.as_bytes()),
         );
         let formatted_error = error_display::format_llm_error("OpenRouter", &combined_error);
         Err(LLMError::Provider { message: formatted_error, metadata: None })
@@ -241,7 +247,10 @@ impl OpenRouterProvider {
     /// Returns `Ok(Some(response))` if the fallback succeeds, `Ok(None)` if the
     /// condition doesn't match (caller should try the next fallback), and `Err`
     /// for rate-limit or combined error failures.
-    #[allow(clippy::too_many_arguments)] // fallback dispatcher, all params needed
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Intentional compatibility, platform, or test-only suppression."
+    )] // fallback dispatcher, all params needed
     async fn try_feature_fallback(
         &self,
         request: &LLMRequest,
@@ -300,7 +309,7 @@ impl OpenRouterProvider {
         }
 
         let status = response.status();
-        let error_text = response.text().await.unwrap_or_default();
+        let error_text = crate::providers::common::read_provider_error_body(response).await;
 
         if status.as_u16() == 429 || error_text.contains("quota") {
             return Err(LLMError::RateLimit { metadata: None });

@@ -15,7 +15,10 @@ static INLINE_HANDLE: Lazy<RwLock<Option<Arc<InlineHandle>>>> = Lazy::new(|| RwL
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TranscriptMode {
-    #[expect(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     Normal,
     Suppressed,
 }

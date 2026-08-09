@@ -43,6 +43,7 @@ vtcode-commons = { workspace = true }
 vtcode-config = { workspace = true }
 vtcode-exec-events = { workspace = true }
 vtcode-macros = { workspace = true }
+vtcode-safety = { workspace = true }
 vtcode-utility-tool-specs = { workspace = true }
 anstyle = { workspace = true }
 lru = "0.18"

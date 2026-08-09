@@ -116,7 +116,7 @@ pub(super) fn build_shell_execution_plan(
     })
 }
 
-pub(super) fn sandbox_policy_from_runtime_config(
+pub fn sandbox_policy_from_runtime_config(
     sandbox_config: &vtcode_config::SandboxConfig,
     workspace_root: &Path,
 ) -> Result<SandboxPolicy> {

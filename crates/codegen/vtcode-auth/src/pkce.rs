@@ -3,7 +3,7 @@
 //! Implements RFC 7636 for secure OAuth flows without client secrets.
 //! Uses SHA-256 (S256) code challenge method as recommended by the spec.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::rand::{SecureRandom, SystemRandom};
 use sha2::{Digest, Sha256};
@@ -76,8 +76,9 @@ pub fn generate_pkce_challenge() -> Result<PkceChallenge> {
 /// user-space PRNG to ensure ≥128 bits of entropy as required by the spec.
 fn generate_code_verifier() -> Result<String> {
     let rng = SystemRandom::new();
-    let charset_len = CODE_VERIFIER_CHARSET.len() as u8;
-    let max_valid = (256u16 - 256u16 % charset_len as u16) as u8;
+    let charset_len = u8::try_from(CODE_VERIFIER_CHARSET.len()).context("PKCE verifier alphabet is too large")?;
+    let max_valid =
+        u8::try_from(256u16 - 256u16 % u16::from(charset_len)).context("PKCE verifier rejection range is invalid")?;
     let mut verifier = String::with_capacity(CODE_VERIFIER_LENGTH);
     let mut buf = [0u8; 1];
 
@@ -86,8 +87,10 @@ fn generate_code_verifier() -> Result<String> {
             .map_err(|_| anyhow::anyhow!("failed to read from OS random source"))?;
         // Rejection sampling to avoid modulo bias.
         if buf[0] < max_valid {
-            let idx = (buf[0] % charset_len) as usize;
-            verifier.push(CODE_VERIFIER_CHARSET[idx] as char);
+            let idx = usize::from(buf[0] % charset_len);
+            if let Some(&character) = CODE_VERIFIER_CHARSET.get(idx) {
+                verifier.push(char::from(character));
+            }
         }
     }
 

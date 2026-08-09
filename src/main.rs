@@ -7,9 +7,22 @@
     clippy::filter_next,
     clippy::large_futures,
     clippy::uninlined_format_args,
-    clippy::unwrap_used
+    clippy::unwrap_used,
+    reason = "The CLI preserves compatibility with existing diagnostics while the workspace migration addresses actionable lint families."
 )]
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
+#![expect(
+    unused_results,
+    clippy::let_underscore_must_use,
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    reason = "CLI startup and compatibility modules retain established builder, parser, and best-effort I/O patterns while they are migrated incrementally."
+)]
 
 use anyhow::{Context, Result};
 

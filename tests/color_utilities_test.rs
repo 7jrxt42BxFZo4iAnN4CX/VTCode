@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 use vtcode_core::utils::colors::*;
 
 #[test]

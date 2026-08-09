@@ -1,10 +1,18 @@
-#![allow(clippy::unreachable, clippy::cast_sign_loss, clippy::map_err_ignore)]
+#![allow(
+    clippy::unreachable,
+    clippy::cast_sign_loss,
+    clippy::map_err_ignore,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 //! `vtcode-ui::tui` exposes inline terminal UI APIs as a reusable module.
 //!
 //! The migrated implementation source lives in `src/core_tui/`.
 //! Public API is exported directly from this crate.
 
-#[expect(dead_code)]
+#[expect(
+    dead_code,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 mod cache;
 mod config;
 mod options;

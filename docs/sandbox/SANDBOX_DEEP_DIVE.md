@@ -88,6 +88,14 @@ Following Codex: "Completely clear the environment and rebuild it with only the 
 - Dynamic linker: `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`
 - Database passwords: `DATABASE_URL`, `PGPASSWORD`, `MYSQL_PWD`
 
+The same filter is applied to provider-owned child processes, including local
+Ollama/LM Studio/llama.cpp helpers and custom provider authentication
+commands. Copilot and its optional `gh` status probe use narrow, explicit
+GitHub-auth exceptions so they can complete their intended login flow without
+inheriting unrelated provider credentials. Command-specific environment
+overrides are applied only after this boundary and cannot restore filtered
+names.
+
 **Preserved variables**:
 - Shell basics: `PATH`, `HOME`, `USER`, `SHELL`, `TERM`
 - Build tools: `CARGO_HOME`, `RUSTUP_HOME`, `GOPATH`

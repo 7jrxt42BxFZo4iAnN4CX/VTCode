@@ -236,14 +236,14 @@ impl JsonlFileSink {
         }
         // Drop the writer before renaming.
         if let Some(mut writer) = state.writer.take() {
-            let _ = writer.flush();
+            drop(writer.flush());
         }
         // Shift generations: <path>.N-1 -> <path>.N, …, <path> -> <path>.1
         for index in (1..max_files).rev() {
             let from = rotated_path(path, index);
             let to = rotated_path(path, index + 1);
             if from.exists() {
-                let _ = std::fs::rename(&from, &to);
+                drop(std::fs::rename(&from, &to));
             }
         }
         if path.exists() {
@@ -296,7 +296,7 @@ impl ToolAuditSink for JsonlFileSink {
             Err(poisoned) => poisoned.into_inner(),
         };
         if let Some(writer) = state.writer.as_mut() {
-            let _ = writer.flush();
+            drop(writer.flush());
         }
     }
 }
@@ -420,7 +420,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(digest.len() * 2);
     for byte in digest {
         use std::fmt::Write;
-        let _ = write!(&mut out, "{byte:02x}");
+        let _ignored = write!(&mut out, "{byte:02x}");
     }
     out
 }

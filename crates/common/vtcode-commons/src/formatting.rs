@@ -1,3 +1,9 @@
+#![expect(
+    clippy::string_slice,
+    unused_results,
+    reason = "Formatting uses ASCII delimiters and intentionally ignores infallible String mutation results."
+)]
+
 //! Unified formatting utilities for UI and logging
 
 /// Format file size in human-readable form (KB, MB, GB, etc.)

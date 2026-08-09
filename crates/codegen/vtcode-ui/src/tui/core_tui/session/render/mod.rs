@@ -29,7 +29,10 @@ pub(super) fn render_tool_segments(session: &Session, line: &MessageLine) -> Vec
     message_renderer::render_tool_segments(line, &session.theme)
 }
 
-#[expect(dead_code)]
+#[expect(
+    dead_code,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 pub fn render(session: &mut Session, frame: &mut Frame<'_>) {
     session.render(frame);
 }

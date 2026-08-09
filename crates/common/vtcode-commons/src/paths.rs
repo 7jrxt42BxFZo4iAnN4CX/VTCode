@@ -1,3 +1,8 @@
+#![expect(
+    unused_results,
+    reason = "Path normalization intentionally ignores the boolean returned by pop after a validated component check."
+)]
+
 use anyhow::{Context, Result, anyhow, bail};
 use std::path::{Component, Path, PathBuf};
 use tracing::warn;

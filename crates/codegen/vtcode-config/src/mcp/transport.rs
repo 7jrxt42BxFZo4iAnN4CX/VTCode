@@ -33,7 +33,10 @@ use vtcode_auth::McpOAuthConfig;
 
 /// Transport configuration for MCP providers
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[allow(clippy::large_enum_variant)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum McpTransportConfig {

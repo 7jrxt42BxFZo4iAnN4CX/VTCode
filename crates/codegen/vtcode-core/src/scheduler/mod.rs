@@ -168,9 +168,15 @@ impl ScheduleSpec {
                 let Some(period) = self.nominal_period()? else {
                     return Ok(base_fire_at);
                 };
-                #[allow(clippy::cast_sign_loss)]
+                #[allow(
+                    clippy::cast_sign_loss,
+                    reason = "Intentional compatibility, platform, or test-only suppression."
+                )]
                 let period_secs = period.num_seconds().max(0) as u64;
-                #[allow(clippy::cast_sign_loss)]
+                #[allow(
+                    clippy::cast_sign_loss,
+                    reason = "Intentional compatibility, platform, or test-only suppression."
+                )]
                 let max_delay = (((period_secs as f64) * 0.10).floor()).max(0.0) as u64;
                 let max_delay = max_delay.min(SESSION_JITTER_CAP_SECS);
                 let delay_secs = if max_delay == 0 { 0 } else { hash % (max_delay + 1) };
@@ -918,7 +924,13 @@ impl ServiceManager {
         {
             return Some(Self::SystemdUser);
         }
-        #[cfg_attr(unix, allow(unreachable_code))]
+        #[cfg_attr(
+            unix,
+            allow(
+                unreachable_code,
+                reason = "Platform-specific returns make the fallback unreachable on Unix."
+            )
+        )]
         None
     }
 }

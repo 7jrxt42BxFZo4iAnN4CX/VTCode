@@ -33,14 +33,14 @@ fn read_env_var(key: &str) -> Option<String> {
 #[cfg(test)]
 pub(crate) fn set_test_env_override(key: &str, value: Option<&str>) {
     if let Ok(mut map) = TEST_ENV_OVERRIDES.lock() {
-        map.insert(key.to_owned(), value.map(ToOwned::to_owned));
+        drop(map.insert(key.to_owned(), value.map(ToOwned::to_owned)));
     }
 }
 
 #[cfg(test)]
 pub(crate) fn clear_test_env_override(key: &str) {
     if let Ok(mut map) = TEST_ENV_OVERRIDES.lock() {
-        map.remove(key);
+        drop(map.remove(key));
     }
 }
 
@@ -66,7 +66,7 @@ pub(crate) fn ensure_timezone_argument(arguments: &mut Map<String, Value>, requi
 
     let timezone = detect_local_timezone().context("failed to determine a default timezone for MCP tool invocation")?;
     debug!("Injecting local timezone '{timezone}' for MCP tool call");
-    arguments
+    let _entry = arguments
         .entry(TIMEZONE_ARGUMENT.to_string())
         .or_insert_with(|| Value::String(timezone));
     Ok(())
@@ -149,7 +149,7 @@ pub(crate) fn build_headers(
         match HeaderName::from_bytes(key.as_bytes()) {
             Ok(name) => match HeaderValue::from_str(value) {
                 Ok(header_value) => {
-                    map.insert(name, header_value);
+                    drop(map.insert(name, header_value));
                 }
                 Err(err) => {
                     warn!(
@@ -174,7 +174,7 @@ pub(crate) fn build_headers(
             Some(value) if !value.trim().is_empty() => match HeaderName::from_bytes(key.as_bytes()) {
                 Ok(name) => match HeaderValue::from_str(&value) {
                     Ok(header_value) => {
-                        map.insert(name, header_value);
+                        drop(map.insert(name, header_value));
                     }
                     Err(err) => {
                         warn!(

@@ -4,7 +4,8 @@
     clippy::uninlined_format_args,
     clippy::expect_used,
     clippy::unwrap_used,
-    missing_docs
+    missing_docs,
+    reason = "The binary preserves existing compatibility lints while the workspace migration addresses actionable lint families."
 )]
 //! # VT Code - Terminal Coding Agent
 //!

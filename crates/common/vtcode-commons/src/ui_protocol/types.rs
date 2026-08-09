@@ -1,3 +1,8 @@
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "Progress percentages are clamped to the documented byte-sized display range."
+)]
+
 //! Pure data types with no dependencies beyond `std`.
 
 /// Message kind tag for inline transcript lines.
@@ -299,7 +304,10 @@ impl PlanContent {
     }
 
     /// Get progress as a percentage.
-    #[allow(clippy::cast_sign_loss)]
+    #[allow(
+        clippy::cast_sign_loss,
+        reason = "Intentional compatibility, platform, or test-only suppression."
+    )]
     pub fn progress_percent(&self) -> u8 {
         if self.total_steps == 0 {
             0

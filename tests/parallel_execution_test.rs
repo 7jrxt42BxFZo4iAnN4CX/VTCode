@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 //! Integration test for parallel tool execution
 //!
 //! This test verifies that read-only tools (list_files, read_file, grep_file)

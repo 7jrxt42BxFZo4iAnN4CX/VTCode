@@ -1,4 +1,14 @@
-#![allow(missing_docs, dead_code, unused_imports)]
+#![allow(
+    missing_docs,
+    dead_code,
+    unused_imports,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
+#![expect(
+    unused_results,
+    reason = "Indexer cache and walker updates intentionally use mutation APIs for side effects and discard prior entries."
+)]
+
 //! Workspace-friendly file indexer and file utilities for VT Code.
 //!
 //! `vtcode-indexer` provides:

@@ -104,10 +104,10 @@ fn normalize_input_schema(value: Value) -> Value {
 fn ensure_object_schema(mut map: Map<String, Value>) -> Value {
     let needs_type = matches!(map.get("type"), None | Some(Value::Null));
     if needs_type {
-        map.insert("type".to_owned(), Value::String("object".to_owned()));
+        drop(map.insert("type".to_owned(), Value::String("object".to_owned())));
     }
     if !map.contains_key("properties") {
-        map.insert("properties".to_owned(), Value::Object(Map::new()));
+        drop(map.insert("properties".to_owned(), Value::Object(Map::new())));
     }
     Value::Object(map)
 }

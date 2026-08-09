@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 //! Integration tests for pipe-based process spawning.
 //!
 //! These tests verify the async pipe spawning functionality works correctly
@@ -223,7 +226,8 @@ async fn test_pipe_reliable_output_preserves_high_volume_stream() -> anyhow::Res
     let text = String::from_utf8_lossy(&output);
 
     assert_eq!(code, 0, "high-volume process should exit cleanly");
-    assert!(text.starts_with("line-00000\n"), "first output chunk was lost: {:?}", &text[..text.len().min(80)]);
+    let first_output = text.chars().take(80).collect::<String>();
+    assert!(text.starts_with("line-00000\n"), "first output chunk was lost: {first_output:?}");
     assert!(text.contains("line-19999\n"), "last output chunk was lost");
     assert_eq!(text.lines().count(), 20_000);
 

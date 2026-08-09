@@ -404,7 +404,7 @@ fn mock_service_tier_fallback(
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 fn schema_keyword_path(value: &Value, keywords: &[&str], path: &str) -> Option<String> {
     match value {
         Value::Object(map) => {

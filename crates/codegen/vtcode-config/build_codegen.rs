@@ -224,7 +224,7 @@ pub fn generate_openrouter_metadata(entries: &[EntryData]) -> String {
             pub tool_call: bool,
         }
 
-        #[allow(dead_code)]
+        #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
         pub const ENTRIES: &[Entry] = &[
             #entry_literals
         ];
@@ -410,7 +410,7 @@ pub fn generate_model_capabilities(entries: &[CapabilityEntry]) -> String {
             pub pricing: Pricing,
         }
 
-        #[allow(dead_code)]
+        #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
         pub const ENTRIES: &[Entry] = &[
             #entry_literals
         ];

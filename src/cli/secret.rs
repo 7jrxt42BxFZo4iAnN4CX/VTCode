@@ -357,7 +357,10 @@ async fn handle_migrate(
     Ok(())
 }
 
-#[allow(clippy::let_unit_value)]
+#[allow(
+    clippy::let_unit_value,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 fn prompt_hidden_input(prompt: &str) -> Result<String> {
     if !io::stdin().is_terminal() {
         anyhow::bail!("Cannot prompt for hidden input: stdin is not a terminal");

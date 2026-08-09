@@ -1,4 +1,10 @@
-#![cfg_attr(not(test), allow(clippy::large_futures,))]
+#![cfg_attr(
+    not(test),
+    allow(
+        clippy::large_futures,
+        reason = "Core async orchestration intentionally keeps some large stateful futures together."
+    )
+)]
 // Suppress unreachable in test code (assert macros trigger false positives).
 #![allow(
     clippy::expect_used,
@@ -6,7 +12,17 @@
     clippy::unnecessary_safety_comment,
     clippy::unreachable,
     clippy::unwrap_used,
-    missing_docs
+    missing_docs,
+    reason = "Core exposes compatibility and feature-gated surfaces whose documentation is maintained in project guides."
+)]
+#![expect(
+    unused_results,
+    clippy::let_underscore_must_use,
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    reason = "Core runtime code intentionally maintains side-effect-only caches, validated text offsets, and protocol-sized counters across feature-gated paths."
 )]
 #![recursion_limit = "256"]
 //! # vtcode-core - Runtime for VT Code

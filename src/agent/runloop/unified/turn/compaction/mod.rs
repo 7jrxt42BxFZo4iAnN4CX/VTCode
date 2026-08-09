@@ -151,7 +151,10 @@ fn boundary_reason_for_compaction_trigger(
     }
 }
 
-#[allow(clippy::cast_sign_loss)] // context_size is usize (non-negative), ratio is positive
+#[allow(
+    clippy::cast_sign_loss,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)] // context_size is usize (non-negative), ratio is positive
 pub(crate) fn build_server_compaction_context_management(
     configured_threshold: Option<u64>,
     context_size: usize,
@@ -218,7 +221,13 @@ pub(crate) async fn build_summarized_fork_history(
     Ok(compacted)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "Retained as a testable compatibility entry point for in-place compaction."
+    )
+)]
 pub(crate) async fn compact_history_in_place(
     provider: &dyn LLMProvider,
     model: &str,

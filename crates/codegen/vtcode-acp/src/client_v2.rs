@@ -49,14 +49,14 @@ pub(crate) struct AcpClientV2 {
     base_url: String,
 
     /// Local client identifier
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
     client_id: String,
 
     /// Client capabilities
     capabilities: ClientCapabilities,
 
     /// Request timeout
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
     timeout: Duration,
 
     /// Request ID counter for correlation
@@ -143,7 +143,7 @@ impl AcpClientV2 {
     /// Get the next request ID
     fn next_request_id(&self) -> JsonRpcId {
         let id = self.request_counter.fetch_add(1, Ordering::Relaxed);
-        JsonRpcId::Number(id as i64)
+        JsonRpcId::Number(i64::try_from(id).unwrap_or(i64::MAX))
     }
 
     /// Check if client has been initialized
@@ -332,7 +332,7 @@ impl AcpClientV2 {
 
         // Track session locally
         let session = AcpSession::new(&result.session_id);
-        self.sessions.write().await.insert(result.session_id.clone(), session);
+        drop(self.sessions.write().await.insert(result.session_id.clone(), session));
 
         debug!(session_id = %result.session_id, "Session created");
 
@@ -350,10 +350,12 @@ impl AcpClientV2 {
         let result: SessionLoadResult = self.call("session/load", Some(params)).await?;
 
         // Track session locally
-        self.sessions
-            .write()
-            .await
-            .insert(session_id.to_string(), result.session.clone());
+        drop(
+            self.sessions
+                .write()
+                .await
+                .insert(session_id.to_string(), result.session.clone()),
+        );
 
         debug!(session_id = session_id, turns = result.history.len(), "Session loaded");
 
@@ -488,11 +490,11 @@ impl AcpClientV2 {
         let auth_token = self.auth_token.read().await.clone();
 
         // Spawn SSE listener task
-        tokio::spawn(async move {
+        drop(tokio::spawn(async move {
             if let Err(e) = Self::sse_listener(url, auth_token, tx).await {
                 warn!("SSE listener error: {}", e);
             }
-        });
+        }));
 
         Ok(rx)
     }
@@ -631,6 +633,6 @@ mod tests {
         };
         // Expect a network error since localhost:9999 won't be listening,
         // but the method must exist and be callable.
-        let _ = client.session_tool_response("sess-1", result).await;
+        drop(client.session_tool_response("sess-1", result).await);
     }
 }

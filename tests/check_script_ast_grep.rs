@@ -1,6 +1,9 @@
 #![cfg(unix)]
-#![allow(missing_docs, clippy::expect_used)]
-
+#![allow(
+    missing_docs,
+    clippy::expect_used,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 use assert_cmd::Command;
 use std::fs;
 use std::path::PathBuf;
@@ -34,14 +37,14 @@ fn check_script_delegates_ast_grep_to_vtcode_command() {
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     let mut command = Command::new("bash");
-    command
+    let _configured_command = command
         .current_dir(&workspace)
         .arg("scripts/check.sh")
         .arg("ast-grep")
         .env("PATH", current_path)
         .env("VTCODE_CHECK_SCRIPT_VTCODE_BIN", fake_bin.path().join("vtcode"));
 
-    command.assert().success();
+    let _assertion = command.assert().success();
 
     let args = fs::read_to_string(fake_bin.path().join("vtcode-args.log")).expect("read args log");
     assert_eq!(args.lines().collect::<Vec<_>>(), ["check", "ast-grep"]);

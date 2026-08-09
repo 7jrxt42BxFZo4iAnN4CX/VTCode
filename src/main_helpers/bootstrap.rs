@@ -471,7 +471,10 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::float_cmp)]
+    #[allow(
+        clippy::float_cmp,
+        reason = "Intentional compatibility, platform, or test-only suppression."
+    )]
     fn similarity_score_exact_match() {
         assert_eq!(similarity_score("chat", "chat"), 1.0);
     }

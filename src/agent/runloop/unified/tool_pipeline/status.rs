@@ -71,7 +71,9 @@ pub(crate) enum ToolExecutionStatus {
     },
     /// Tool execution was cancelled
     Cancelled,
-    // TODO: Progress variant planned for streaming tool progress updates
+    // Planned: `Progress { chunk: String }` variant for streaming tool progress
+    // updates. Adding it requires updating all match arms in display_status(),
+    // error(), and the UI renderers. Tracked in docs/project/TODO.md.
 }
 
 impl ToolExecutionStatus {

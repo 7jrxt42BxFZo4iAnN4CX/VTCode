@@ -126,7 +126,7 @@ impl ZedAgent {
             if parts.is_empty() {
                 return Err("command array cannot be empty".to_string());
             }
-            if parts[0].trim().is_empty() {
+            if parts.first().is_none_or(|part| part.trim().is_empty()) {
                 return Err("command executable cannot be empty".to_string());
             }
             Ok(parts)
@@ -231,11 +231,12 @@ impl ZedAgent {
             return Err(Self::argument_message(TOOL_READ_FILE_INVALID_INTEGER_TEMPLATE, key));
         }
 
-        if value > u32::MAX as u64 {
-            return Err(Self::argument_message(TOOL_READ_FILE_INTEGER_RANGE_TEMPLATE, key));
-        }
+        let value = match u32::try_from(value) {
+            Ok(value) => value,
+            Err(_conversion_error) => return Err(Self::argument_message(TOOL_READ_FILE_INTEGER_RANGE_TEMPLATE, key)),
+        };
 
-        Ok(Some(value as u32))
+        Ok(Some(value))
     }
 
     pub(super) fn parse_tool_path(&self, args: &Value) -> Result<PathBuf, String> {

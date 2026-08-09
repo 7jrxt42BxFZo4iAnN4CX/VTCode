@@ -67,7 +67,10 @@ impl SearchMetrics {
         files_searched: usize,
     ) {
         // Estimate tokens from character count (using default 4.0 chars/token)
-        #[allow(clippy::cast_sign_loss)]
+        #[allow(
+            clippy::cast_sign_loss,
+            reason = "Intentional compatibility, platform, or test-only suppression."
+        )]
         let estimated_tokens = ((result_chars as f64 / 4.0).ceil()).max(0.0) as usize;
         let is_expensive = estimated_tokens > self.expensive_threshold;
 

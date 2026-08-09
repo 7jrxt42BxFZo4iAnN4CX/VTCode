@@ -1,3 +1,8 @@
+#![expect(
+    clippy::indexing_slicing,
+    reason = "Error rendering indexes only validated structured diagnostic entries."
+)]
+
 use std::borrow::Cow;
 use std::fmt;
 

@@ -193,6 +193,6 @@ fn push_registry_entry(
     tool: SupportedTool,
     definition: ToolDefinition,
 ) {
-    mapping.insert(definition.function_name().to_string(), ToolDescriptor::Acp(tool));
+    let _previous = mapping.insert(definition.function_name().to_string(), ToolDescriptor::Acp(tool));
     entries.push(ToolRegistryEntry { tool, definition });
 }

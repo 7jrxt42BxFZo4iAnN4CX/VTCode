@@ -7,7 +7,10 @@
 //! The `linkme::distributed_slice` macro uses `link_section` internally,
 //! which triggers the `unsafe_code` lint. This is inherent to the crate's
 //! mechanism and cannot be avoided at the call site.
-#![allow(unsafe_code)]
+#![allow(
+    unsafe_code,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 
 use std::sync::Arc;
 

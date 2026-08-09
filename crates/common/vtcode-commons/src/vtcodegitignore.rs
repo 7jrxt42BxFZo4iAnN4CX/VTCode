@@ -1,3 +1,9 @@
+#![expect(
+    clippy::cast_possible_truncation,
+    unused_results,
+    reason = "Ignore-pattern counts use the platform's documented compact representation and builder calls are side effects."
+)]
+
 //! .vtcodegitignore file pattern matching utilities
 //!
 //! Uses the `ignore` crate's gitignore parser for correct, battle-tested

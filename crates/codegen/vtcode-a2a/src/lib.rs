@@ -1,4 +1,10 @@
-#![allow(missing_docs, clippy::expect_used, dead_code, unused_imports)]
+#![allow(
+    missing_docs,
+    clippy::expect_used,
+    dead_code,
+    unused_imports,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 //! Agent2Agent (A2A) Protocol support for VT Code.
 
 pub mod agent_card;

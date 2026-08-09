@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use tempfile::TempDir;
 use vtcode_core::tools::editing::{Patch, PatchError};
 
@@ -117,7 +120,7 @@ async fn update_preserves_file_permissions() {
     let patch_text = "*** Begin Patch\n*** Update File: mode.txt\n@@\n-keep\n+changed\n*** End Patch";
     let patch = Patch::parse(patch_text).unwrap();
 
-    patch.apply(temp_dir.path()).await.unwrap();
+    let _messages = patch.apply(temp_dir.path()).await.unwrap();
 
     let contents = tokio::fs::read_to_string(&source_path).await.unwrap();
     assert_eq!(contents, "changed\n");

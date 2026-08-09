@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 use assert_fs::TempDir;
 use futures::future::BoxFuture;
 use serde_json::{Value, json};

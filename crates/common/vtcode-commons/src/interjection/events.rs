@@ -1,3 +1,8 @@
+#![expect(
+    unused_results,
+    reason = "Queue maintenance intentionally discards fluent collection mutation results."
+)]
+
 use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Debug)]

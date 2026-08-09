@@ -121,7 +121,7 @@ impl_openai_compat_provider!(DeepSeekProvider, DeepSeekSpec, {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body = crate::providers::common::read_provider_error_body(response).await;
             return Err(LLMError::Provider {
                 message: crate::error_display::format_llm_error(
                     <DeepSeekSpec as OpenAiCompatSpec>::NAME,

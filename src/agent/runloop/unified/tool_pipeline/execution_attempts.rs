@@ -49,7 +49,7 @@ pub(crate) async fn execute_tool_with_timeout(
 }
 
 #[cfg(test)]
-#[allow(dead_code)]
+#[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 pub(crate) async fn execute_tool_with_timeout_ref(
     registry: &ToolRegistry,
     name: &str,
@@ -179,7 +179,10 @@ async fn execute_tool_with_timeout_ref_mode(
     result
 }
 
-#[allow(clippy::too_many_arguments)] // internal pipeline function, all params needed
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)] // internal pipeline function, all params needed
 async fn execute_tool_with_progress(
     registry: &ToolRegistry,
     name: &str,
@@ -239,7 +242,10 @@ async fn execute_tool_with_progress(
     status
 }
 
-#[allow(clippy::too_many_arguments)] // internal pipeline function, all params needed
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)] // internal pipeline function, all params needed
 async fn run_attempt_with_logging(
     registry: &ToolRegistry,
     name: &str,
@@ -285,7 +291,10 @@ async fn run_attempt_with_logging(
     status
 }
 
-#[allow(clippy::too_many_arguments)] // internal pipeline function, all params needed
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)] // internal pipeline function, all params needed
 async fn run_single_tool_attempt(
     registry: &ToolRegistry,
     name: &str,

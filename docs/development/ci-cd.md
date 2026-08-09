@@ -169,6 +169,27 @@ cargo clippy --fix
 - `clippy::nursery`: Experimental lints
 - `clippy::cargo`: Cargo.toml specific lints
 
+### First-party debt scan
+
+The lint migration keeps the actionable marker scan separate from generated or
+fixture content. Run it from the repository root:
+
+```bash
+./scripts/first-party-debt-scan.sh
+```
+
+The scanner covers first-party `src/`, `crates/`, and `scripts/` content while
+excluding vendored, generated, fixture, template, sample, and task-panel
+content. New `TODO:`, `FIXME:`, `HACK:`, or `XXX:` markers fail the check.
+
+The workspace lint gate also enforces the previously suppressed result,
+indexing, string-slice, cast, and allow-without-reason lint families:
+
+```bash
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo nextest run --locked --workspace
+```
+
 ## Local Development
 
 ### Development Check Script

@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 //! Integration snapshot tests for the Ratatui TUI components
 //!
 //! These tests use the `insta` crate to capture visual snapshots of the actual terminal output.
@@ -17,7 +20,7 @@ fn test_basic_terminal_rendering() {
     let mut terminal = Terminal::new(backend).unwrap();
 
     // Draw a simple frame - this is a basic test of the TestBackend functionality
-    terminal
+    let _frame = terminal
         .draw(|f| {
             // Create a simple area test
             let _area = f.area();
@@ -61,7 +64,7 @@ fn test_terminal_rendering_with_content() {
     let mut terminal = Terminal::new(backend).unwrap();
 
     // Draw a simple representation
-    terminal
+    let _frame = terminal
         .draw(|f| {
             // Use the frame for basic rendering operations
             // Note: this is basic test of terminal drawing functionality

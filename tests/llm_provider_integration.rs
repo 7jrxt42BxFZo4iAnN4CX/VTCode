@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 //! Integration tests for universal LLM provider system
 
 use vtcode_core::config::constants::models;
@@ -29,26 +32,26 @@ fn test_provider_factory() {
 fn test_provider_creation() {
     // Test creating providers
     let gemini = create_provider_for_model("gemini-3-flash-preview", "test_key".to_string(), None, None);
-    gemini.unwrap();
+    let _gemini = gemini.unwrap();
 
     let openai = create_provider_for_model("gpt-5", "test_key".to_string(), None, None);
-    openai.unwrap();
+    let _openai = openai.unwrap();
 
     let anthropic = create_provider_for_model(models::CLAUDE_SONNET_4_6, "test_key".to_string(), None, None);
-    anthropic.unwrap();
+    let _anthropic = anthropic.unwrap();
 }
 
 #[test]
 fn test_unified_client_creation() {
     // Test creating providers for different models
     let gemini_client = create_provider_for_model("gemini-3-flash-preview", "test_key".to_string(), None, None);
-    gemini_client.unwrap();
+    let _gemini_client = gemini_client.unwrap();
 
     let openai_client = create_provider_for_model("gpt-5", "test_key".to_string(), None, None);
-    openai_client.unwrap();
+    let _openai_client = openai_client.unwrap();
 
     let anthropic_client = create_provider_for_model(models::CLAUDE_SONNET_4_6, "test_key".to_string(), None, None);
-    anthropic_client.unwrap();
+    let _anthropic_client = anthropic_client.unwrap();
 }
 
 #[test]

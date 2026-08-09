@@ -13,6 +13,7 @@ use crate::providers::shared::parse_compacted_output_messages;
 use futures::StreamExt;
 use serde_json::{Value, json};
 use std::borrow::Cow;
+use vtcode_commons::sanitizer::sanitize_provider_diagnostic;
 
 const MANUAL_COMPACTION_INSTRUCTIONS_LABEL: &str = "[Manual Compaction Instructions]";
 
@@ -239,7 +240,7 @@ impl OpenAIProvider {
         if !response.status().is_success() {
             let status = response.status();
             let headers = response.headers().clone();
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text = crate::providers::common::read_provider_error_body(response).await;
             let formatted_error = error_display::format_llm_error(
                 "OpenAI",
                 &format_openai_error(
@@ -332,7 +333,7 @@ impl OpenAIProvider {
             if !response.status().is_success() {
                 let mut status = response.status();
                 let mut headers = response.headers().clone();
-                let mut error_text = response.text().await.unwrap_or_default();
+                let mut error_text = crate::providers::common::read_provider_error_body(response).await;
                 let mut effective_client_request_id = client_request_id.clone();
 
                 if payload_uses_flex_service_tier(&openai_request)
@@ -364,7 +365,7 @@ impl OpenAIProvider {
 
                     status = retry_response.status();
                     headers = retry_response.headers().clone();
-                    error_text = retry_response.text().await.unwrap_or_default();
+                    error_text = crate::providers::common::read_provider_error_body(retry_response).await;
                 }
                 let lower_error = error_text.to_ascii_lowercase();
                 if status == reqwest::StatusCode::BAD_REQUEST
@@ -375,7 +376,7 @@ impl OpenAIProvider {
                         client_request_id = %client_request_id,
                         status = %status,
                         openai_request = %truncate_for_log(&openai_request.to_string(), 12_000),
-                        openai_error_body = %truncate_for_log(&error_text, 8_000),
+                        openai_error_body = %sanitize_provider_diagnostic(error_text.as_bytes()),
                         "OpenAI Responses request rejected with invalid input payload"
                     );
                 }
@@ -499,7 +500,7 @@ impl OpenAIProvider {
         if !response.status().is_success() {
             let mut status = response.status();
             let mut headers = response.headers().clone();
-            let mut error_text = response.text().await.unwrap_or_default();
+            let mut error_text = crate::providers::common::read_provider_error_body(response).await;
             let mut effective_client_request_id = client_request_id.clone();
 
             if payload_uses_flex_service_tier(&openai_request) && is_flex_service_tier_unsupported(status, &error_text)
@@ -530,7 +531,7 @@ impl OpenAIProvider {
 
                 status = retry_response.status();
                 headers = retry_response.headers().clone();
-                error_text = retry_response.text().await.unwrap_or_default();
+                error_text = crate::providers::common::read_provider_error_body(retry_response).await;
             }
 
             if is_rate_limit_error(status.as_u16(), &error_text) {

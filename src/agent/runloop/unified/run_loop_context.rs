@@ -290,7 +290,7 @@ impl CrossTurnTracker {
     }
 
     /// Check if the tracker has detected a stuck pattern (for diagnostics).
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
     pub(crate) fn zero_mutation_turns(&self) -> usize {
         self.zero_mutation_turns
     }
@@ -407,7 +407,10 @@ pub(crate) struct HarnessTurnState {
 }
 
 impl HarnessTurnState {
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Intentional compatibility, platform, or test-only suppression."
+    )]
     pub(crate) fn new(
         run_id: TurnRunId,
         turn_id: TurnId,
@@ -986,7 +989,10 @@ pub(crate) struct AutoPermissionRuntimeContext<'a> {
 }
 
 impl<'a> RunLoopContext<'a> {
-    #[expect(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     pub(crate) fn new(
         renderer: &'a mut AnsiRenderer,
         handle: &'a InlineHandle,
@@ -1030,7 +1036,10 @@ impl<'a> RunLoopContext<'a> {
         )
     }
 
-    #[expect(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     pub(crate) fn new_with_auto_permission_context(
         renderer: &'a mut AnsiRenderer,
         handle: &'a InlineHandle,

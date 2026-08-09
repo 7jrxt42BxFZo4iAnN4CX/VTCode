@@ -282,7 +282,10 @@ impl JsonRpcError {
 }
 
 #[cfg(test)]
-#[allow(clippy::uninlined_format_args)]
+#[allow(
+    clippy::uninlined_format_args,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 mod tests {
     use super::*;
     use serde_json::json;

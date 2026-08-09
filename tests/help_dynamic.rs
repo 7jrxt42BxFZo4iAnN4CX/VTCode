@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 use clap::CommandFactory;
 use vtcode_core::cli::args::Cli;
 use vtcode_core::cli::help::openai_responses_models_help;

@@ -58,7 +58,10 @@ impl PredictiveMonitor {
         let mut latencies: Vec<u64> = self.samples.iter().map(|s| s.latency_ms).collect();
         latencies.sort_unstable();
 
-        #[allow(clippy::cast_sign_loss)]
+        #[allow(
+            clippy::cast_sign_loss,
+            reason = "Intentional compatibility, platform, or test-only suppression."
+        )]
         let idx = ((latencies.len() as f32) * 0.95).ceil() as usize - 1;
         latencies.get(idx).cloned()
     }

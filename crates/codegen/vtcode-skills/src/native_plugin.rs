@@ -1,4 +1,7 @@
-#![allow(unsafe_code)]
+#![allow(
+    unsafe_code,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 
 //! Native Plugin System for VT Code Skills
 //!

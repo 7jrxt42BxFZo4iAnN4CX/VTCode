@@ -52,7 +52,13 @@ impl ToolRegistry {
     /// the argument shape: `id` + `message`/`items` implies send_input, `id`
     /// alone implies resume, otherwise spawn. `wait` and `close` require an
     /// explicit `action` since the schema marks it required.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "Legacy agent executor aliases remain available for compatibility tests."
+        )
+    )]
     pub(crate) fn agent_executor(&self, mut args: Value) -> BoxFuture<'_, Result<Value>> {
         Box::pin(async move {
             let action = args

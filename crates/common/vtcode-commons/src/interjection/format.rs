@@ -1,3 +1,8 @@
+#![expect(
+    clippy::string_slice,
+    reason = "The prompt formatter truncates at a validated character boundary."
+)]
+
 /// Truncation threshold, matching the shell's large-prompt limit.
 pub(crate) const LARGE_PROMPT_THRESHOLD: usize = 25_000;
 

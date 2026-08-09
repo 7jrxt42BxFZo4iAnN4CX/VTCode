@@ -31,7 +31,10 @@ pub trait TuiSessionDriver {
     type Event;
 
     fn handle_command(&mut self, command: Self::Command);
-    #[expect(clippy::type_complexity)]
+    #[expect(
+        clippy::type_complexity,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     fn handle_event(
         &mut self,
         event: crossterm::event::Event,

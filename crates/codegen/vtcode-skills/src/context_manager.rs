@@ -583,7 +583,10 @@ mod tests {
         assert!(size_of::<SkillContextEntry>() < size_of::<SkillContextEntryInlineSkill>());
     }
 
-    #[expect(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     struct SkillContextEntryInlineSkill {
         name: String,
         level: ContextLevel,

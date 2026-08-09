@@ -395,7 +395,7 @@ impl OpenAIProvider {
         if !response.status().is_success() {
             let status = response.status();
             let headers = response.headers().clone();
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text = crate::providers::common::read_provider_error_body(response).await;
             let formatted_error = error_display::format_llm_error(
                 "OpenAI",
                 &format_openai_error(status, &error_text, &headers, "Harmony inference server error", None),

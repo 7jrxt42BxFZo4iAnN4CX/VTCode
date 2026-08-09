@@ -5,10 +5,53 @@ use crate::provider::{
 };
 use crate::types as llm_types;
 use crate::utils::extract_reasoning_content;
+use futures::StreamExt;
 use serde_json::{Value, json};
 use vtcode_config::core::{PromptCachingConfig, ProviderPromptCachingConfig};
 
 use crate::providers::openai::tool_serialization::sanitize_openai_function_parameters;
+
+/// Caps provider error bodies before they are parsed, logged, or copied into
+/// an [`LLMError`]. The diagnostic sanitizer applies a smaller display cap;
+/// this boundary cap prevents a hostile provider from causing an unbounded
+/// allocation while still leaving room for structured error metadata.
+pub(crate) const PROVIDER_ERROR_BODY_MAX_BYTES: usize = 16 * 1024;
+
+/// Read at most [`PROVIDER_ERROR_BODY_MAX_BYTES`] from a provider error body.
+///
+/// Error responses are untrusted input. Do not replace this with
+/// `Response::text()` in error paths: that method buffers the complete body
+/// before the diagnostic sanitizer can bound it.
+pub(crate) async fn read_provider_error_body(response: reqwest::Response) -> String {
+    let mut body = Vec::with_capacity(PROVIDER_ERROR_BODY_MAX_BYTES);
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk_result) = stream.next().await {
+        let Ok(chunk) = chunk_result else {
+            break;
+        };
+
+        let remaining = PROVIDER_ERROR_BODY_MAX_BYTES.saturating_sub(body.len());
+        if remaining == 0 {
+            break;
+        }
+
+        body.extend(chunk.iter().copied().take(remaining));
+        if body.len() == PROVIDER_ERROR_BODY_MAX_BYTES {
+            break;
+        }
+    }
+
+    match String::from_utf8(body) {
+        Ok(body) => body,
+        Err(error) => {
+            let valid_up_to = error.utf8_error().valid_up_to();
+            let mut bytes = error.into_bytes();
+            bytes.truncate(valid_up_to);
+            String::from_utf8(bytes).unwrap_or_default()
+        }
+    }
+}
 
 /// Returns the first present header among `names`, as an owned string.
 pub(crate) fn extract_header(headers: &reqwest::header::HeaderMap, names: &[&str]) -> Option<String> {
@@ -706,7 +749,7 @@ pub async fn execute_token_count_request(
     }
 
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
+        let body = read_provider_error_body(response).await;
         let message =
             error_display::format_llm_error(provider_name, &format!("Token-count request failed ({status}): {body}"));
         return Err(LLMError::Provider { message, metadata: None });
@@ -1324,13 +1367,35 @@ pub fn make_anthropic_thinking_config(config: &vtcode_config::core::AnthropicCon
 #[cfg(test)]
 mod tests {
     use super::{
-        assistant_interleaved_history_text, extract_reasoning_text_from_detail_values,
+        PROVIDER_ERROR_BODY_MAX_BYTES, assistant_interleaved_history_text, extract_reasoning_text_from_detail_values,
         extract_reasoning_text_from_serialized_details, is_interleaved_thinking_model, is_minimax_m2_model,
         normalize_reasoning_detail_object, parse_chat_request_openai_format, parse_response_openai_format,
-        parse_usage_openai_format,
+        parse_usage_openai_format, read_provider_error_body,
     };
     use crate::provider::{AssistantPhase, Message};
     use serde_json::{Value, json};
+
+    #[tokio::test]
+    async fn provider_error_body_reader_caps_untrusted_response_body() {
+        let server = wiremock::MockServer::start().await;
+        let mut body = "a".repeat(PROVIDER_ERROR_BODY_MAX_BYTES + 256);
+        body.push_str("tail-that-must-not-be-read");
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(500).set_body_string(body))
+            .mount(&server)
+            .await;
+
+        let response = reqwest::Client::new()
+            .get(server.uri())
+            .send()
+            .await
+            .expect("mock provider response should be available");
+        let body = read_provider_error_body(response).await;
+
+        assert_eq!(body.len(), PROVIDER_ERROR_BODY_MAX_BYTES);
+        assert!(!body.contains("tail-that-must-not-be-read"));
+    }
 
     #[test]
     fn minimax_m2_model_detection_handles_variants() {

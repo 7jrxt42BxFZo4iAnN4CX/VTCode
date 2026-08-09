@@ -112,7 +112,10 @@ fn finish_successful_tool_output(
     );
 }
 
-#[allow(clippy::too_many_arguments)] // internal pipeline function, all params needed
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)] // internal pipeline function, all params needed
 fn apply_tool_success(
     runner: &AgentRunner,
     runtime: &mut AgentRuntime,
@@ -790,7 +793,10 @@ impl AgentRunner {
     /// invocation record, and emit the corresponding event recorder
     /// notifications. Shared between the parallel and sequential execution
     /// paths to keep fallback handling behaviorally identical.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Intentional compatibility, platform, or test-only suppression."
+    )]
     fn apply_fallback_success(
         &self,
         runtime: &mut AgentRuntime,

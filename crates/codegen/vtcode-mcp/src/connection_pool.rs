@@ -9,7 +9,7 @@ use std::time::Duration;
 use tokio::sync::{RwLock, Semaphore};
 use tracing::{error, info, warn};
 
-use super::{McpElicitationHandler, McpProvider};
+use super::{McpElicitationHandler, McpProvider, McpSandboxContext};
 use rmcp::model::{ClientCapabilities, InitializeRequestParams};
 use vtcode_commons::MultiErrors;
 use vtcode_config::mcp::{McpAllowListConfig, McpProviderConfig};
@@ -41,6 +41,7 @@ impl McpConnectionPool {
         &self,
         provider_configs: Vec<McpProviderConfig>,
         elicitation_handler: Option<Arc<dyn McpElicitationHandler>>,
+        sandbox_context: Option<McpSandboxContext>,
         tool_timeout: Option<Duration>,
         allowlist_snapshot: &McpAllowListConfig,
     ) -> Result<Vec<(String, Arc<McpProvider>)>, McpPoolError> {
@@ -51,12 +52,14 @@ impl McpConnectionPool {
             .into_iter()
             .map(|config| {
                 let elicitation_handler = elicitation_handler.clone();
+                let sandbox_context = sandbox_context.clone();
                 let allowlist_snapshot = allowlist_snapshot.clone();
 
                 async move {
                     self.initialize_provider(
                         config,
                         elicitation_handler,
+                        sandbox_context,
                         tool_timeout.unwrap_or(Duration::from_secs(30)),
                         allowlist_snapshot,
                     )
@@ -90,6 +93,7 @@ impl McpConnectionPool {
         &self,
         config: McpProviderConfig,
         elicitation_handler: Option<Arc<dyn McpElicitationHandler>>,
+        sandbox_context: Option<McpSandboxContext>,
         tool_timeout: Duration,
         allowlist_snapshot: McpAllowListConfig,
     ) -> Result<(String, Arc<McpProvider>), McpPoolError> {
@@ -103,11 +107,13 @@ impl McpConnectionPool {
         info!("Initializing MCP provider '{}'", config.name);
 
         // Connect to provider with timeout
-        let provider =
-            tokio::time::timeout(self.connection_timeout, McpProvider::connect(config.clone(), elicitation_handler))
-                .await
-                .map_err(|_e| McpPoolError::ConnectionTimeout(config.name.clone()))?
-                .map_err(|e| McpPoolError::ConnectionError(config.name.clone(), e.to_string()))?;
+        let provider = tokio::time::timeout(
+            self.connection_timeout,
+            McpProvider::connect(config.clone(), elicitation_handler, sandbox_context),
+        )
+        .await
+        .map_err(|_e| McpPoolError::ConnectionTimeout(config.name.clone()))?
+        .map_err(|e| McpPoolError::ConnectionError(config.name.clone(), e.to_string()))?;
 
         // Initialize the provider with proper parameters
         let provider_startup_timeout = self.resolve_startup_timeout(&config);
@@ -194,7 +200,7 @@ impl McpConnectionPool {
         };
         let mut results = HashMap::with_capacity(providers.len());
         for (name, provider) in providers {
-            results.insert(name, provider.is_healthy().await);
+            let _previous = results.insert(name, provider.is_healthy().await);
         }
         results
     }
@@ -268,19 +274,26 @@ impl PooledMcpManager {
         &self,
         provider_configs: Vec<McpProviderConfig>,
         elicitation_handler: Option<Arc<dyn McpElicitationHandler>>,
+        sandbox_context: Option<McpSandboxContext>,
         tool_timeout: Option<Duration>,
         allowlist_snapshot: &McpAllowListConfig,
     ) -> Result<Vec<(String, Arc<McpProvider>)>, McpPoolError> {
         // Initialize providers in parallel
         let providers = self
             .pool
-            .initialize_providers_parallel(provider_configs, elicitation_handler, tool_timeout, allowlist_snapshot)
+            .initialize_providers_parallel(
+                provider_configs,
+                elicitation_handler,
+                sandbox_context,
+                tool_timeout,
+                allowlist_snapshot,
+            )
             .await?;
 
         // Add providers to the pool
         let mut pool_providers = self.pool.providers.write().await;
         for (name, provider) in &providers {
-            pool_providers.insert(name.clone(), provider.clone());
+            drop(pool_providers.insert(name.clone(), provider.clone()));
         }
 
         Ok(providers)
@@ -315,7 +328,7 @@ impl PooledMcpManager {
     }
 
     /// Check if a tool is read-only (safe to cache)
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
     fn is_read_only_tool(&self, tool_name: &str) -> bool {
         // This is a simple heuristic - in practice, you might want to
         // check tool metadata or maintain a list of read-only tools

@@ -683,14 +683,20 @@ pub(crate) struct CodexTurn {
     pub(crate) id: String,
 }
 
-#[expect(dead_code)]
+#[expect(
+    dead_code,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct CodexTurnSteerResponse {
     #[serde(rename = "turnId")]
     pub(crate) turn_id: String,
 }
 
-#[expect(dead_code)]
+#[expect(
+    dead_code,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct CodexReviewStartResponse {
     #[serde(rename = "reviewThreadId")]
@@ -713,7 +719,10 @@ impl CodexReviewStartRequest {
     }
 }
 
-#[expect(dead_code)]
+#[expect(
+    dead_code,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub(crate) enum CodexReviewTarget {

@@ -1,3 +1,10 @@
+#![expect(
+    clippy::indexing_slicing,
+    clippy::cast_possible_truncation,
+    unused_results,
+    reason = "Snapshot reads use bounded counts and serialize platform timestamps into the documented compact format."
+)]
+
 //! Cheap workspace environment-delta observability.
 //!
 //! Long-horizon agents operate in a *changing environment*: files are written,
@@ -205,7 +212,7 @@ mod tests {
         assert_eq!(delta.changed, vec!["a.txt".to_string()]);
         assert_eq!(delta.removed, vec!["b.txt".to_string()]);
         assert!(is_drift(&delta));
-        let _ = std::fs::remove_dir_all(&tmp);
+        drop(std::fs::remove_dir_all(&tmp));
     }
 
     #[test]
@@ -223,6 +230,6 @@ mod tests {
         save_json(&snap, &path).unwrap();
         let loaded = load_json(&path).unwrap();
         assert_eq!(loaded, snap);
-        let _ = std::fs::remove_dir_all(&tmp);
+        drop(std::fs::remove_dir_all(&tmp));
     }
 }

@@ -49,7 +49,7 @@ pub(crate) use self::runtime_context::{
 #[derive(Clone, Debug)]
 pub(crate) enum TurnLoopResult {
     Completed {
-        #[allow(dead_code)]
+        #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
         plan_approved_execution_pending: bool,
     },
     Aborted,
@@ -205,7 +205,7 @@ impl<'a> TurnProcessingContext<'a> {
         self.harness_state.recovery_is_tool_free()
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
     pub(crate) fn switch_to_tool_free_recovery(&mut self) -> bool {
         self.harness_state.switch_to_tool_free_recovery()
     }
@@ -226,12 +226,12 @@ impl<'a> TurnProcessingContext<'a> {
         self.harness_state.recovery_retry_count()
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
     pub(crate) fn post_tool_recovery_cycles(&self) -> u8 {
         self.harness_state.post_tool_recovery_cycles()
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
     pub(crate) fn increment_post_tool_recovery_cycle(&mut self) -> u8 {
         self.harness_state.increment_post_tool_recovery_cycle()
     }

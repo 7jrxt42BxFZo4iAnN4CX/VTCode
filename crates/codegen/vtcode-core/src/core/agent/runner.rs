@@ -172,7 +172,10 @@ impl AgentRunner {
     }
 
     /// Create an agent runner with prebuilt thread bootstrap, config, and auth.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Intentional compatibility, platform, or test-only suppression."
+    )]
     pub async fn new_with_bootstrap(
         agent_type: AgentType,
         model: ModelId,
@@ -200,7 +203,10 @@ impl AgentRunner {
         .await
     }
 
-    #[expect(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     async fn new_internal(
         agent_type: AgentType,
         model: ModelId,

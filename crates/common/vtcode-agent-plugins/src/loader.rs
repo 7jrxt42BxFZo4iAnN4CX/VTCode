@@ -156,7 +156,7 @@ impl PluginInstaller for FileSystemPluginInstaller {
                 .status()
                 .map_err(PluginError::Io)?;
             if !status.success() {
-                let _ = std::fs::remove_dir_all(&install_dir);
+                drop(std::fs::remove_dir_all(&install_dir));
                 return Err(PluginError::Io(std::io::Error::other(format!("git clone failed for {}", source))));
             }
         } else {
@@ -175,7 +175,7 @@ impl PluginInstaller for FileSystemPluginInstaller {
         }
 
         let loaded = LoadedPlugin::load_from_dir(&install_dir).inspect_err(|_| {
-            let _ = std::fs::remove_dir_all(&install_dir);
+            drop(std::fs::remove_dir_all(&install_dir));
         })?;
         Ok(InstalledPlugin { name: target_name, path: install_dir, loaded })
     }
@@ -243,14 +243,14 @@ fn copy_dir_all_inner(src: &Path, dst: &Path, ancestors: &mut Vec<PathBuf>) -> s
             #[cfg(unix)]
             std::os::unix::fs::symlink(target, &dst_path)?;
             #[cfg(not(unix))]
-            std::fs::copy(&src_path, &dst_path)?;
+            let _copied_bytes = std::fs::copy(&src_path, &dst_path)?;
         } else if meta.is_dir() {
             copy_dir_all_inner(&src_path, &dst_path, ancestors)?;
         } else {
-            std::fs::copy(&src_path, &dst_path)?;
+            let _copied_bytes = std::fs::copy(&src_path, &dst_path)?;
         }
     }
 
-    ancestors.pop();
+    drop(ancestors.pop());
     Ok(())
 }

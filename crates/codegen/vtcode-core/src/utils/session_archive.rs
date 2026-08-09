@@ -229,7 +229,10 @@ fn usd_to_micros(value: f64) -> Option<u64> {
         return None;
     }
 
-    #[allow(clippy::cast_sign_loss)]
+    #[allow(
+        clippy::cast_sign_loss,
+        reason = "Intentional compatibility, platform, or test-only suppression."
+    )]
     Some((value * 1_000_000.0).round() as u64)
 }
 
@@ -382,19 +385,28 @@ pub struct SessionMessage {
 
 impl Eq for SessionMessage {}
 
-#[expect(clippy::box_collection)]
+#[expect(
+    clippy::box_collection,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 #[inline]
 fn boxed_non_empty_string(value: Option<String>) -> Option<Box<String>> {
     value.and_then(|value| (!value.is_empty()).then_some(Box::new(value)))
 }
 
-#[expect(clippy::box_collection)]
+#[expect(
+    clippy::box_collection,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 #[inline]
 fn boxed_non_empty_vec<T>(value: Option<Vec<T>>) -> Option<Box<Vec<T>>> {
     value.and_then(|value| (!value.is_empty()).then_some(Box::new(value)))
 }
 
-#[expect(clippy::box_collection)]
+#[expect(
+    clippy::box_collection,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 fn clone_non_empty_boxed_string(value: &Option<Box<String>>) -> Option<String> {
     value
         .as_deref()
@@ -410,12 +422,18 @@ where
     crate::core::message_metadata::MessageMetadata::deserialize(deserializer).map(|m| Some(Box::new(m)))
 }
 
-#[expect(clippy::box_collection)]
+#[expect(
+    clippy::box_collection,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 fn clone_non_empty_boxed_vec<T: Clone>(value: &Option<Box<Vec<T>>>) -> Option<Vec<T>> {
     value.as_deref().and_then(|value| (!value.is_empty()).then_some(value.clone()))
 }
 
-#[expect(clippy::box_collection)]
+#[expect(
+    clippy::box_collection,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 fn deserialize_boxed_non_empty_string_opt<'de, D>(deserializer: D) -> Result<Option<Box<String>>, D::Error>
 where
     D: Deserializer<'de>,
@@ -423,7 +441,10 @@ where
     Option::<String>::deserialize(deserializer).map(boxed_non_empty_string)
 }
 
-#[expect(clippy::box_collection)]
+#[expect(
+    clippy::box_collection,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 fn deserialize_boxed_non_empty_vec_opt<'de, D, T>(deserializer: D) -> Result<Option<Box<Vec<T>>>, D::Error>
 where
     D: Deserializer<'de>,

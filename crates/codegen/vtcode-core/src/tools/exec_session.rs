@@ -10,6 +10,7 @@ use tokio::sync::{Mutex, RwLock, watch};
 use tokio::task::JoinHandle;
 use vtcode_bash_runner::{PipeSpawnOptions, ProcessHandle, spawn_pipe_process_with_options};
 
+use crate::sandboxing::filter_sensitive_env;
 use crate::tools::ExecSessionId;
 use crate::tools::pty::PtySize;
 use crate::tools::registry::{PtySessionGuard, PtySessionManager};
@@ -478,7 +479,24 @@ impl ExecSessionManager {
         working_dir: PathBuf,
         env: HashMap<String, String>,
     ) -> Result<VTCodeExecSession> {
+        self.create_pipe_session_with_sandbox(session_id, command, working_dir, env, false)
+            .await
+    }
+
+    pub(crate) async fn create_pipe_session_with_sandbox(
+        &self,
+        session_id: ExecSessionId,
+        command: Vec<String>,
+        working_dir: PathBuf,
+        env: HashMap<String, String>,
+        sandbox_active: bool,
+    ) -> Result<VTCodeExecSession> {
         self.ensure_session_absent(&session_id).await?;
+        let env = if sandbox_active {
+            filter_sensitive_env(&env)
+        } else {
+            env
+        };
         let metadata = self.pipe_sessions.create_session(session_id, command, working_dir, env).await?;
         self.insert_session(metadata.clone(), ExecSessionBackend::Pipe, None).await?;
         Ok(metadata)
@@ -493,15 +511,30 @@ impl ExecSessionManager {
         extra_env: HashMap<String, String>,
         zsh_exec_bridge: Option<ZshExecBridgeSession>,
     ) -> Result<VTCodeExecSession> {
+        self.create_pty_session_with_sandbox(session_id, command, working_dir, size, extra_env, zsh_exec_bridge, false)
+            .await
+    }
+
+    pub(crate) async fn create_pty_session_with_sandbox(
+        &self,
+        session_id: ExecSessionId,
+        command: Vec<String>,
+        working_dir: PathBuf,
+        size: PtySize,
+        extra_env: HashMap<String, String>,
+        zsh_exec_bridge: Option<ZshExecBridgeSession>,
+        sandbox_active: bool,
+    ) -> Result<VTCodeExecSession> {
         self.ensure_session_absent(&session_id).await?;
         let pty_guard = self.pty_sessions.start_session()?;
-        let metadata = self.pty_sessions.manager().create_session_with_bridge(
+        let metadata = self.pty_sessions.manager().create_session_with_bridge_sandboxed(
             session_id.clone().into(),
             command,
             working_dir,
             size,
             extra_env,
             zsh_exec_bridge,
+            sandbox_active,
         )?;
         let exec_metadata = VTCodeExecSession::from(metadata);
         self.insert_session(exec_metadata.clone(), ExecSessionBackend::Pty, Some(pty_guard))

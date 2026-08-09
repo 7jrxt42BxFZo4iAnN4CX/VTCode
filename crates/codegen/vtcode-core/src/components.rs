@@ -458,7 +458,10 @@ fn hash_json_value<H: Hasher>(hasher: &mut H, value: &Value) {
             keys.sort();
             for k in keys {
                 hasher.write(k.as_bytes());
-                #[allow(clippy::expect_used)]
+                #[allow(
+                    clippy::expect_used,
+                    reason = "Intentional compatibility, platform, or test-only suppression."
+                )]
                 let value = map.get(k).expect("key from map.keys() must exist in map");
                 hash_json_value(hasher, value);
             }

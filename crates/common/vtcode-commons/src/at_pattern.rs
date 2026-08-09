@@ -5,7 +5,10 @@ use std::sync::LazyLock;
 
 /// Regex to match @ followed by a potential file path or URL
 /// Handles both quoted paths (with spaces) and unquoted paths
-#[allow(clippy::panic)]
+#[allow(
+    clippy::panic,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 static AT_PATTERN_REGEX: LazyLock<Regex> =
     LazyLock::new(|| match Regex::new(r#"@(?:\"([^\"]+)\"|'([^']+)'|([^\s"'\[\](){}<>|\\^`]+))"#) {
         Ok(regex) => regex,

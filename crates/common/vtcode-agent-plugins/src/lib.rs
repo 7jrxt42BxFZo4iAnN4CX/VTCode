@@ -1,4 +1,10 @@
-#![allow(missing_docs, clippy::expect_used, dead_code, unused_imports)]
+#![allow(
+    missing_docs,
+    clippy::expect_used,
+    dead_code,
+    unused_imports,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 //! Agent Plugins loader for VT Code.
 //!
 //! Portable plugin format: a directory with a root `plugin.json` manifest,

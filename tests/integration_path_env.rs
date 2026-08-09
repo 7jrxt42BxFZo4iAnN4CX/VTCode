@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 //! Integration tests for PATH environment variable inheritance
 //! Tests that the agent can properly access commands in user PATH locations
 //! This verifies the fix for: https://github.com/vinhnx/vtcode/issues/...

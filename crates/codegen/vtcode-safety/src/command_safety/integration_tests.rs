@@ -249,7 +249,7 @@ mod tests {
         let cmd = vec!["   ".to_string()];
         // Note: This may or may not be caught at this level depending on trim behavior
         // Just ensure it doesn't panic
-        let _ = evaluator.evaluate(&cmd).await;
+        drop(evaluator.evaluate(&cmd).await);
     }
 
     // ========== PolicyAwareEvaluator Tests ==========

@@ -56,14 +56,14 @@ impl AgentRegistry {
     /// Register an agent
     async fn register(&self, agent: AgentInfo) -> AcpResult<()> {
         let mut agents = self.agents.write().await;
-        agents.insert(agent.id.clone(), agent);
+        drop(agents.insert(agent.id.clone(), agent));
         Ok(())
     }
 
     /// Unregister an agent
     async fn unregister(&self, agent_id: &str) -> AcpResult<()> {
         let mut agents = self.agents.write().await;
-        agents.remove(agent_id);
+        drop(agents.remove(agent_id));
         Ok(())
     }
 

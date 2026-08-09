@@ -67,7 +67,7 @@ impl McpConfig {
                     for (name, server_val) in servers_map {
                         match parse_server_config(name, server_val) {
                             Ok(server) => {
-                                config.servers.insert(name.clone(), server);
+                                drop(config.servers.insert(name.clone(), server));
                             }
                             // Per the Agent Plugins spec, an invalid individual
                             // server entry is skipped while valid peers continue

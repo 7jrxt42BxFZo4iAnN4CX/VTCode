@@ -96,7 +96,10 @@ pub(crate) use selection::ModelSelectionResult;
 pub(super) use vtcode_config::read_workspace_env_value as read_workspace_env;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[expect(clippy::enum_variant_names)]
+#[expect(
+    clippy::enum_variant_names,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 enum PickerStep {
     AwaitModel,
     AwaitReasoning,
@@ -151,7 +154,10 @@ pub(crate) enum ModelPickerStart {
 }
 
 impl ModelPickerState {
-    #[expect(clippy::new_ret_no_self)]
+    #[expect(
+        clippy::new_ret_no_self,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     pub(crate) async fn new(
         renderer: &mut AnsiRenderer,
         vt_cfg: Option<VTCodeConfig>,

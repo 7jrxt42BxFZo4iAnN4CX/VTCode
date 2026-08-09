@@ -26,7 +26,10 @@ pub struct TwoPassSplit<'a> {
 }
 
 /// Choose a split index so prefix weight is at least `fraction` of total.
-#[allow(clippy::cast_sign_loss)]
+#[allow(
+    clippy::cast_sign_loss,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 fn split_index_by_token_fraction(weights: &[usize], fraction: f64) -> usize {
     if weights.is_empty() {
         return 0;

@@ -20,7 +20,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 use vtcode_core::acp::ToolPermissionCache;
 use vtcode_core::config::WorkspaceTrustLevel;
 use vtcode_core::config::loader::VTCodeConfig;
@@ -477,11 +477,28 @@ fn create_async_mcp_manager(
 
     info!("Setting up async MCP client with {} providers", mcp_config.providers.len());
     let approval_policy = approval_policy_from_human_in_the_loop(cfg.security.human_in_the_loop);
-    let manager = AsyncMcpManager::new(
+    let sandbox_context = if cfg.sandbox.enabled
+        && !matches!(cfg.sandbox.default_policy, vtcode_config::SandboxPolicy::DangerFullAccess)
+    {
+        let policy =
+            match vtcode_core::tools::registry::sandbox_policy_from_runtime_config(&cfg.sandbox, workspace_root) {
+                Ok(policy) => policy,
+                Err(error) => {
+                    error!("Unable to construct the MCP sandbox policy: {error}");
+                    return None;
+                }
+            };
+        Some(vtcode_core::mcp::McpSandboxContext::new(policy, workspace_root))
+    } else {
+        None
+    };
+
+    let manager = AsyncMcpManager::new_with_sandbox(
         mcp_config,
         cfg.security.hitl_notification_bell,
         approval_policy,
         Arc::new(|_event: mcp_events::McpEvent| {}),
+        sandbox_context,
     );
     Some(Arc::new(manager))
 }

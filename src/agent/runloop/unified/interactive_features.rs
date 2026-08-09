@@ -67,7 +67,10 @@ impl PromptSuggestionRoute {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 pub(crate) async fn generate_prompt_suggestions(
     provider: &dyn uni::LLMProvider,
     config: &CoreAgentConfig,
@@ -122,7 +125,10 @@ pub(crate) async fn generate_prompt_suggestions(
     resolved
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 pub(crate) async fn generate_inline_prompt_suggestion(
     provider: &dyn uni::LLMProvider,
     config: &CoreAgentConfig,

@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 //! End-to-end tests for file operations with quick-cache integration
 
 use assert_fs::TempDir;
@@ -261,7 +264,7 @@ mod e2e_tests {
             "content": "Hello",
             "mode": "overwrite"
         });
-        execute_harness_tool(&registry, "write_file", &initial_args)
+        let _initial_write = execute_harness_tool(&registry, "write_file", &initial_args)
             .await
             .expect("Initial write should succeed");
 
@@ -296,7 +299,7 @@ mod e2e_tests {
             "content": "Original",
             "mode": "overwrite"
         });
-        execute_harness_tool(&registry, "write_file", &initial_args)
+        let _initial_write = execute_harness_tool(&registry, "write_file", &initial_args)
             .await
             .expect("Initial write should succeed");
 
@@ -331,7 +334,7 @@ mod e2e_tests {
             "content": "Hello World\nThis is a test file.",
             "mode": "overwrite"
         });
-        execute_harness_tool(&registry, "write_file", &initial_args)
+        let _initial_write = execute_harness_tool(&registry, "write_file", &initial_args)
             .await
             .expect("Initial write should succeed");
 
@@ -365,7 +368,7 @@ mod e2e_tests {
             "content": "test\ntest\nmore test content",
             "mode": "overwrite"
         });
-        execute_harness_tool(&registry, "write_file", &initial_args)
+        let _initial_write = execute_harness_tool(&registry, "write_file", &initial_args)
             .await
             .expect("Initial write should succeed");
 
@@ -399,7 +402,7 @@ mod e2e_tests {
             "content": "Line 1\nLine 2\nLine 3",
             "mode": "overwrite"
         });
-        execute_harness_tool(&registry, "write_file", &initial_args)
+        let _initial_write = execute_harness_tool(&registry, "write_file", &initial_args)
             .await
             .expect("Initial write should succeed");
 

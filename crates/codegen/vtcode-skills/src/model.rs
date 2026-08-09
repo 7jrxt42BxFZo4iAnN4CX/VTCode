@@ -64,7 +64,10 @@ mod tests {
         assert!(size_of::<SkillMetadata>() < size_of::<SkillMetadataInlineManifest>());
     }
 
-    #[expect(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     struct SkillMetadataInlineManifest {
         name: String,
         description: String,

@@ -1,3 +1,8 @@
+#![expect(
+    unused_results,
+    reason = "The left-right writer API returns fluent handles and prior values that are intentionally not needed here."
+)]
+
 //! Lock-free concurrent map built on [`left_right`].
 //!
 //! [`LrMap`] keeps two copies of a `HashMap` — readers see one copy while the

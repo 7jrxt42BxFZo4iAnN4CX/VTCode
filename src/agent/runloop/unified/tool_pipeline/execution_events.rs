@@ -8,7 +8,10 @@ use vtcode_core::exec::events::{ToolCallStatus, tool_outcome_from_status};
 
 use super::status::ToolExecutionStatus;
 
-#[allow(clippy::too_many_arguments)] // event emitter, all identity/status params needed
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)] // event emitter, all identity/status params needed
 pub(super) fn emit_tool_completion_status(
     harness_emitter: Option<&HarnessEventEmitter>,
     tool_started_emitted: bool,

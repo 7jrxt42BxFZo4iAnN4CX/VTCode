@@ -1,4 +1,11 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
+#![expect(
+    unused_results,
+    reason = "Benchmark rendering and criterion group methods are invoked for their measurement side effects."
+)]
 
 use std::hint::black_box;
 use std::sync::Arc;

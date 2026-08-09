@@ -226,6 +226,10 @@ impl McpOAuthService {
     }
 }
 
+#[expect(
+    unused_results,
+    reason = "URL query builder methods mutate the serializer and return a fluent reference."
+)]
 fn build_auth_url(config: &McpOAuthConfig, challenge: &PkceChallenge, state: &str) -> Result<String> {
     let mut url = Url::parse(&config.authorization_url).context("invalid oauth.authorization_url")?;
     {
@@ -424,7 +428,7 @@ mod tests {
             crate::storage_paths::set_auth_storage_dir_override_for_tests(self.previous.clone())
                 .expect("restore auth dir override");
             if let Some(temp_dir) = self.temp_dir.take() {
-                let _ = temp_dir.close();
+                drop(temp_dir.close());
             }
         }
     }
@@ -506,7 +510,7 @@ mod tests {
         )
         .expect("save token");
 
-        service.logout("demo", storage_mode).expect("logout");
+        drop(service.logout("demo", storage_mode).expect("logout"));
         assert!(load_token("demo", storage_mode).expect("load").is_none());
     }
 }

@@ -1,5 +1,11 @@
-#![allow(clippy::panic_in_result_fn)]
-#![allow(missing_docs)]
+#![allow(
+    clippy::panic_in_result_fn,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use anyhow::Result;
 use serde_json::json;
 use vtcode_core::config::constants::tools;
@@ -10,7 +16,7 @@ use support::TestHarness;
 #[tokio::test]
 async fn run_command_uses_pty_backend() -> Result<()> {
     let harness = TestHarness::new()?;
-    harness.write_file("sample.txt", "hello")?;
+    let _sample_path = harness.write_file("sample.txt", "hello")?;
     let registry = harness.registry().await;
     registry.allow_all_tools().await?;
 
@@ -47,7 +53,7 @@ async fn run_command_uses_pty_backend() -> Result<()> {
 #[tokio::test]
 async fn exec_pty_cmd_resolves_and_runs_in_registry() -> Result<()> {
     let harness = TestHarness::new()?;
-    harness.write_file("sample_pty.txt", "hello")?;
+    let _sample_path = harness.write_file("sample_pty.txt", "hello")?;
     let registry = harness.registry().await;
     registry.allow_all_tools().await?;
 
@@ -78,7 +84,7 @@ async fn exec_pty_cmd_resolves_and_runs_in_registry() -> Result<()> {
 #[tokio::test]
 async fn run_command_accepts_indexed_arguments_zero_based() -> Result<()> {
     let harness = TestHarness::new()?;
-    harness.write_file("sample.txt", "hello")?;
+    let _sample_path = harness.write_file("sample.txt", "hello")?;
     let registry = harness.registry().await;
     registry.allow_all_tools().await?;
 
@@ -109,7 +115,7 @@ async fn run_command_accepts_indexed_arguments_zero_based() -> Result<()> {
 #[tokio::test]
 async fn run_command_accepts_indexed_arguments_one_based() -> Result<()> {
     let harness = TestHarness::new()?;
-    harness.write_file("sample2.txt", "hello2")?;
+    let _sample_path = harness.write_file("sample2.txt", "hello2")?;
     let registry = harness.registry().await;
     registry.allow_all_tools().await?;
 

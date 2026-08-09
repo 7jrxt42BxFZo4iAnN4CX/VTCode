@@ -971,7 +971,7 @@ struct RefreshLockGuard {
 
 impl Drop for RefreshLockGuard {
     fn drop(&mut self) {
-        let _ = FileExt::unlock(&self.file);
+        drop(FileExt::unlock(&self.file));
     }
 }
 
@@ -1009,7 +1009,7 @@ async fn read_bounded_text(mut response: reqwest::Response, max_bytes: usize) ->
                 if chunk.len() <= remaining {
                     buf.extend_from_slice(&chunk);
                 } else {
-                    buf.extend_from_slice(&chunk[..remaining]);
+                    buf.extend_from_slice(chunk.get(..remaining).unwrap_or_default());
                     break;
                 }
             }
@@ -1367,9 +1367,12 @@ fn derive_encryption_key() -> Result<LessSafeKey> {
 
     key_material.extend_from_slice(b"vtcode-openai-chatgpt-oauth-v1");
     let hash = digest(&SHA256, &key_material);
-    let key_bytes: &[u8; 32] = hash.as_ref()[..32]
+    let key_bytes: &[u8; 32] = hash
+        .as_ref()
+        .get(..32)
+        .context("openai session encryption key was too short")?
         .try_into()
-        .context("openai session encryption key was too short")?;
+        .context("openai session encryption key had an invalid length")?;
     let unbound =
         UnboundKey::new(&aead::AES_256_GCM, key_bytes).map_err(|_| anyhow!("invalid openai session encryption key"))?;
     Ok(LessSafeKey::new(unbound))

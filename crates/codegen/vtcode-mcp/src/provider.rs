@@ -20,7 +20,7 @@ use vtcode_config::auth::McpOAuthService;
 use vtcode_config::mcp::{McpAllowListConfig, McpProviderConfig, McpTransportConfig};
 use vtcode_utility_tool_specs::parse_mcp_tool;
 
-use super::{McpClient, RmcpClient};
+use super::{McpClient, McpSandboxContext, RmcpClient};
 use super::{
     McpElicitationHandler, McpPromptDetail, McpPromptInfo, McpResourceData, McpResourceInfo, McpToolInfo,
     TIMEZONE_ARGUMENT, build_headers, ensure_timezone_argument, schema_requires_field,
@@ -28,13 +28,18 @@ use super::{
 
 pub struct McpProvider {
     pub(super) name: String,
-    #[expect(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     protocol_version: String,
     client: ArcSwap<RmcpClient>,
     /// Stored config so we can reconnect after disconnection.
     config: McpProviderConfig,
     /// Stored elicitation handler for reconnection.
     elicitation_handler: Option<Arc<dyn McpElicitationHandler>>,
+    /// Sandbox inherited by stdio launches and reconnects.
+    sandbox_context: Option<McpSandboxContext>,
     pub(crate) semaphore: Arc<Semaphore>,
     caches: Mutex<ProviderCaches>,
     initialize_result: Mutex<Option<ServerPeerInfo>>,
@@ -51,6 +56,7 @@ impl McpProvider {
     pub(super) async fn connect(
         config: McpProviderConfig,
         elicitation_handler: Option<Arc<dyn McpElicitationHandler>>,
+        sandbox_context: Option<McpSandboxContext>,
     ) -> Result<Self> {
         if config.name.trim().is_empty() {
             return Err(anyhow!("MCP provider name cannot be empty"));
@@ -75,6 +81,7 @@ impl McpProvider {
                     working_dir,
                     Some(env),
                     elicitation_handler.clone(),
+                    sandbox_context.clone(),
                 )
                 .await?;
                 (client, LATEST_PROTOCOL_VERSION.to_string())
@@ -132,6 +139,7 @@ impl McpProvider {
             client: ArcSwap::from_pointee(client),
             config,
             elicitation_handler,
+            sandbox_context,
             semaphore: Arc::new(Semaphore::new(max_requests)),
             caches: Mutex::new(ProviderCaches::default()),
             initialize_result: Mutex::new(None),
@@ -518,13 +526,14 @@ impl McpProvider {
         // Shut down the old client (best-effort).
         {
             let old = self.client.load_full();
-            let _ = old.shutdown().await;
+            drop(old.shutdown().await);
         }
 
         // Create a fresh client from the stored config.
-        let new_provider = McpProvider::connect(self.config.clone(), self.elicitation_handler.clone())
-            .await
-            .with_context(|| format!("MCP reconnect failed for provider '{}'", self.name))?;
+        let new_provider =
+            McpProvider::connect(self.config.clone(), self.elicitation_handler.clone(), self.sandbox_context.clone())
+                .await
+                .with_context(|| format!("MCP reconnect failed for provider '{}'", self.name))?;
 
         // Swap inner client.
         {
@@ -575,7 +584,7 @@ impl McpProvider {
                 name: resource.name.clone(),
                 description: resource.description.clone(),
                 mime_type: resource.mime_type.clone(),
-                size: resource.size.map(|s| s as i64),
+                size: resource.size.map(|s| i64::try_from(s).unwrap_or(i64::MAX)),
             })
             .collect()
     }
@@ -649,7 +658,7 @@ mod tests {
 
         fn flush(&self) {
             if let Ok(mut w) = self.0.lock() {
-                let _ = w.flush();
+                drop(w.flush());
             }
         }
     }

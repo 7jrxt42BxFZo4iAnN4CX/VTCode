@@ -163,7 +163,10 @@ struct SessionLayout {
     main: Rect,
     sidebar: Option<Rect>,
     footer: Rect,
-    #[expect(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     mode: LayoutMode,
 }
 
@@ -358,7 +361,10 @@ impl<'a> SessionWidget<'a> {
     }
 }
 
-#[expect(dead_code)]
+#[expect(
+    dead_code,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 fn has_input_status(session: &Session) -> bool {
     let left_present = session.input_status_left.as_ref().is_some_and(|value| !value.trim().is_empty());
     if left_present {

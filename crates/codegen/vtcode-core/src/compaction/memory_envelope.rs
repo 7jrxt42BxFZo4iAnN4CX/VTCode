@@ -255,7 +255,10 @@ fn merge_grounded_facts(
     merged.into_iter().skip(keep_from).collect()
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 pub fn build_session_memory_envelope(
     session_id: &str,
     workspace_root: &Path,
@@ -361,7 +364,10 @@ pub fn persist_memory_envelope(
 /// Variant of [`persist_memory_envelope`] that applies a live session update
 /// while constructing the envelope. Keeping the compatibility wrapper above
 /// avoids changing synchronous callers that do not track steering state.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 pub fn persist_memory_envelope_with_update(
     workspace_root: &Path,
     session_id: &str,
@@ -446,7 +452,10 @@ pub async fn persist_memory_envelope_async(
 
 /// Async variant of [`persist_memory_envelope_async`] that applies a live
 /// session update while constructing the envelope.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 pub async fn persist_memory_envelope_async_with_update(
     workspace_root: &Path,
     session_id: &str,
@@ -1260,7 +1269,10 @@ pub fn dedup_repeated_file_reads_for_local_compaction(history: &[Message]) -> Ve
 // Threshold resolution (shared by every compaction trigger)
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::cast_sign_loss)] // context_size is usize (non-negative), ratio is positive
+#[allow(
+    clippy::cast_sign_loss,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)] // context_size is usize (non-negative), ratio is positive
 pub fn resolve_compaction_threshold(configured_threshold: Option<u64>, context_size: usize) -> Option<u64> {
     let configured_threshold = configured_threshold.filter(|threshold| *threshold > 0);
     let derived_threshold = if context_size > 0 {

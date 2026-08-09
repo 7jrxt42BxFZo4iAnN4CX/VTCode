@@ -1,7 +1,10 @@
 // The `linkme::distributed_slice` macro uses `link_section` internally,
 // which triggers the `unsafe_code` lint. This is inherent to the crate's
 // mechanism and cannot be avoided at the call site.
-#![allow(unsafe_code)]
+#![allow(
+    unsafe_code,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 
 use std::path::PathBuf;
 
@@ -35,7 +38,7 @@ use super::{ToolRegistry, native_cgp_tool_factory};
 ///
 /// In metadata-only contexts (e.g., declaration building), callers may pass
 /// `None`, and a placeholder `PlanningWorkflowState` will be used.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 pub(super) fn builtin_tool_registrations(
     planning_workflow_state: Option<&PlanningWorkflowState>,
 ) -> Vec<ToolRegistration> {
@@ -553,7 +556,7 @@ fn register_apply_patch(_plan_state: Option<&PlanningWorkflowState>) -> ToolRegi
 // - load_skill
 // - load_skill_resource
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 fn with_builtin_behavior(registration: ToolRegistration) -> ToolRegistration {
     if let Some(behavior) = builtin_tool_behavior(registration.name()) {
         registration.with_behavior(behavior)

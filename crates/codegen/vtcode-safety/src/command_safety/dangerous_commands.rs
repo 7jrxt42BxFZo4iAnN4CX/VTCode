@@ -1,3 +1,8 @@
+#![expect(
+    clippy::indexing_slicing,
+    reason = "Dangerous-command matching uses validated token lengths and fixed ASCII option prefixes."
+)]
+
 //! Detection of dangerous commands that should never be executed.
 //!
 //! This module implements hardcoded detection for commands that are inherently

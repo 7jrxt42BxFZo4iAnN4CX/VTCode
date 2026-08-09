@@ -5,6 +5,7 @@ use std::sync::Mutex as StdMutex;
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use tokio::time::timeout;
+use vtcode_commons::sanitizer::sanitize_provider_diagnostic;
 use vtcode_commons::serde_helpers::json_to_string_pretty;
 use vtcode_config::auth::CopilotAuthConfig;
 
@@ -671,7 +672,8 @@ fn spawn_runtime_response_task<TResponse, F>(
         };
 
         if let Err(err) = send_rpc_reply(inner.as_ref(), id, reply) {
-            tracing::warn!(target: "copilot.acp", context = warn_context, error = %err, "copilot acp response failed");
+            let safe_error = sanitize_provider_diagnostic(err.to_string().as_bytes());
+            tracing::warn!(target: "copilot.acp", context = warn_context, error = %safe_error, "copilot acp response failed");
         }
     });
 }

@@ -87,7 +87,7 @@ impl OpenAIProvider {
 
             let status = response.status();
             let headers = response.headers().clone();
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text = crate::providers::common::read_provider_error_body(response).await;
 
             if is_model_not_found(status, &error_text) {
                 if let Some(fallback_model) = fallback_model_if_not_found(&request.model)
@@ -175,7 +175,7 @@ impl OpenAIProvider {
 
             let status = response.status();
             let headers = response.headers().clone();
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text = crate::providers::common::read_provider_error_body(response).await;
 
             if is_model_not_found(status, &error_text) {
                 if let Some(fallback_model) = fallback_model_if_not_found(&request.model)
@@ -250,7 +250,7 @@ impl OpenAIProvider {
         if !response.status().is_success() {
             let status = response.status();
             let headers = response.headers().clone();
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text = crate::providers::common::read_provider_error_body(response).await;
 
             if is_rate_limit_error(status.as_u16(), &error_text) {
                 return Err(parse_api_error("OpenAI", status, &error_text));

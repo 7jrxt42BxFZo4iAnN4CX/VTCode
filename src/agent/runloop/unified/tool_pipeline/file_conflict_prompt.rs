@@ -42,7 +42,10 @@ enum ConflictResolution {
     Proceed,
 }
 
-#[allow(clippy::too_many_arguments)] // pipeline function, all params needed
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)] // pipeline function, all params needed
 pub(super) async fn resolve_file_conflict_status<S>(
     registry: &mut ToolRegistry,
     tool_result_cache: &Arc<tokio::sync::RwLock<ToolResultCache>>,
@@ -91,7 +94,10 @@ where
 /// between re-executions (e.g., from a file watcher or formatter).
 const MAX_CONFLICT_RESOLUTION_ATTEMPTS: u32 = 10;
 
-#[allow(clippy::too_many_arguments)] // internal pipeline function, all params needed
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)] // internal pipeline function, all params needed
 async fn resolve_file_conflict_status_inner<S>(
     registry: &mut ToolRegistry,
     tool_result_cache: &Arc<tokio::sync::RwLock<ToolResultCache>>,

@@ -162,7 +162,10 @@ impl ToolRegistry {
     /// Check if a unified tool call represents a read-only action.
     /// Allows `file_operation` with action "read" and `command_session` with read-only actions
     /// (poll/list/inspect/continue without input) plus allowlisted run commands or `--dry-run`.
-    #[expect(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     fn is_readonly_unified_action(&self, tool_name: &str, args: &Value) -> bool {
         classify_tool_intent(tool_name, args).readonly_unified_action
     }

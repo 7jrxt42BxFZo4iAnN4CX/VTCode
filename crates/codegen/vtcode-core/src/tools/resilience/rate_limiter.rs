@@ -101,7 +101,10 @@ impl RateLimiterInner {
         }
 
         // Fractional refill: (per_sec * multiplier) tokens per 1000ms
-        #[allow(clippy::cast_sign_loss)]
+        #[allow(
+            clippy::cast_sign_loss,
+            reason = "Intentional compatibility, platform, or test-only suppression."
+        )]
         let effective_rate = ((self.config.per_sec as f64 * speed_multiplier).max(0.0)) as u64;
 
         // Using integer math: tokens = (effective_rate * millis) / 1000
@@ -109,7 +112,10 @@ impl RateLimiterInner {
 
         if added > 0 {
             let effective_burst = self.config.burst as f64 * speed_multiplier.max(1.0);
-            #[allow(clippy::cast_sign_loss)]
+            #[allow(
+                clippy::cast_sign_loss,
+                reason = "Intentional compatibility, platform, or test-only suppression."
+            )]
             let effective_burst: u32 =
                 if effective_burst.is_finite() && effective_burst >= 0.0 && effective_burst <= u32::MAX as f64 {
                     effective_burst as u32

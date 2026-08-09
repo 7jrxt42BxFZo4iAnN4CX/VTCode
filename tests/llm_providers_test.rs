@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 //! Comprehensive tests for LLM providers refactor
 
 use serde_json::json;
@@ -89,25 +92,25 @@ fn infer_provider_respects_override_and_model() {
 fn test_provider_creation() {
     // Test creating providers directly
     let gemini = create_provider_for_model("gemini-3-flash-preview", "test_key".to_string(), None, None);
-    gemini.unwrap();
+    let _gemini = gemini.unwrap();
 
     let openai = create_provider_for_model(models::GPT_OSS_20B, "test_key".to_string(), None, None);
-    openai.unwrap();
+    let _openai = openai.unwrap();
 
     let openai_reasoning = create_provider_for_model("o4-mini", "test_key".to_string(), None, None);
-    openai_reasoning.unwrap();
+    let _openai_reasoning = openai_reasoning.unwrap();
 
     let anthropic = create_provider_for_model(models::CLAUDE_SONNET_4_6, "test_key".to_string(), None, None);
-    anthropic.unwrap();
+    let _anthropic = anthropic.unwrap();
 
     let openrouter = create_provider_for_model(models::openrouter::DEEPSEEK_V4_PRO, "test_key".to_string(), None, None);
-    openrouter.unwrap();
+    let _openrouter = openrouter.unwrap();
 
     let moonshot = create_provider_for_model(models::moonshot::DEFAULT_MODEL, "test_key".to_string(), None, None);
-    moonshot.unwrap();
+    let _moonshot = moonshot.unwrap();
 
     let ollama = create_provider_for_model(models::ollama::DEFAULT_MODEL, String::new(), None, None);
-    ollama.unwrap();
+    let _ollama = ollama.unwrap();
 
     // Test invalid model
     let invalid = create_provider_for_model("invalid-model", "test_key".to_string(), None, None);

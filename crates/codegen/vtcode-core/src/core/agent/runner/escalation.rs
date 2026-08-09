@@ -42,10 +42,10 @@ pub enum EscalationDecision {
         /// Human-readable reason for the escalation.
         reason: String,
         /// The tool name that triggered escalation.
-        #[allow(dead_code)]
+        #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
         tool_name: String,
         /// Serialized arguments for the blocked-handoff report.
-        #[allow(dead_code)]
+        #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
         args: serde_json::Value,
     },
 }
@@ -194,7 +194,10 @@ impl EscalationGate {
     ///   2. If `p_success < tau_conf` → Escalate
     ///   3. If `cost > B_auto` → Escalate
     ///   4. Otherwise → Proceed
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Intentional compatibility, platform, or test-only suppression."
+    )]
     pub fn decide(
         tool_calls: &[ToolCall],
         config: &ConfidenceEscalationConfig,

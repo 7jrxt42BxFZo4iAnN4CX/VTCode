@@ -15,7 +15,10 @@
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[cfg(all(feature = "allocator-jemalloc", not(feature = "profiling"), unix))]
-#[allow(unsafe_code)]
+#[allow(
+    unsafe_code,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 mod jemalloc_malloc_conf {
     /// jemalloc looks up `extern const char *malloc_conf` — a thin pointer,
     /// not a Rust `&[u8]` fat pointer.
@@ -31,12 +34,18 @@ mod jemalloc_malloc_conf {
     static CONF: [u8; 63] = *b"prof:true,prof_active:false,lg_prof_sample:19,prof_final:false\0";
     #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     #[used]
-    #[allow(unsafe_code)]
+    #[allow(
+        unsafe_code,
+        reason = "Intentional compatibility, platform, or test-only suppression."
+    )]
     #[unsafe(export_name = "malloc_conf")]
     static MALLOC_CONF: MallocConfPtr = MallocConfPtr(CONF.as_ptr());
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     #[used]
-    #[allow(unsafe_code)]
+    #[allow(
+        unsafe_code,
+        reason = "Intentional compatibility, platform, or test-only suppression."
+    )]
     #[unsafe(export_name = "_rjem_malloc_conf")]
     static MALLOC_CONF: MallocConfPtr = MallocConfPtr(CONF.as_ptr());
 }

@@ -24,3 +24,4 @@
 - `enhanced_config.rs` uses `#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]`.
 - `rmcp-reqwest` is a renamed `reqwest` with rustls features -- not the same as the workspace `reqwest`.
 - `DEFAULT_ENV_VARS` is platform-conditional (`#[cfg(unix)]` / `#[cfg(windows)]`).
+- `McpSandboxContext` is optional for unsandboxed `McpClient::new`; session setup must pass it through initial, pooled, and reconnect stdio launches, whose stderr is bounded and redacted.

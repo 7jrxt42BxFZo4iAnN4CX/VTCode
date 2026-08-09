@@ -1,3 +1,8 @@
+#![expect(
+    clippy::indexing_slicing,
+    reason = "Safe-command validators inspect arguments only after validating the relevant token shape and bounds."
+)]
+
 //! Safe command registry: defines which commands and subcommands are safe to execute.
 //!
 //! This module implements the "safe-by-subcommand" pattern from Codex:
@@ -88,6 +93,10 @@ impl SafeCommandRegistry {
     }
 
     /// Builds the default safe command rules (Codex patterns + VT Code extensions)
+    #[expect(
+        unused_results,
+        reason = "The built-in registry intentionally ignores prior values while constructing a fresh command map."
+    )]
     fn default_rules() -> HashMap<String, CommandRule> {
         let mut rules = HashMap::new();
 

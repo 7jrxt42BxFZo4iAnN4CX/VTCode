@@ -1,3 +1,8 @@
+#![expect(
+    unused_results,
+    reason = "Provider abstraction caches and compatibility adapters intentionally discard replacement results after state updates."
+)]
+
 //! Universal LLM provider abstraction with API-specific role handling
 //!
 //! This module provides a unified interface for different LLM providers (OpenAI, Anthropic, Gemini)

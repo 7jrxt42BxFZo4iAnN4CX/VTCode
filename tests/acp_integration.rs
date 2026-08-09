@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 use std::collections::HashMap;
 
 use serde_json::Value;
@@ -30,9 +33,9 @@ struct FakeRegistry {
 impl FakeRegistry {
     fn new() -> Self {
         let mut descriptors = HashMap::new();
-        descriptors
+        let _previous = descriptors
             .insert(SupportedTool::ReadFile.function_name().to_string(), ToolDescriptor::Acp(SupportedTool::ReadFile));
-        descriptors.insert(
+        let _previous = descriptors.insert(
             SupportedTool::ListFiles.function_name().to_string(),
             ToolDescriptor::Acp(SupportedTool::ListFiles),
         );
@@ -104,7 +107,10 @@ fn prompter() -> DefaultPermissionPrompter<FakeRegistry> {
 // -- Option construction tests (no ACP connection needed) ---------------
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 struct TestOption {
     option_id: String,
     name: String,
@@ -264,11 +270,3 @@ fn cancelled_message_contains_keyword() {
 fn failure_message_contains_keyword() {
     assert!(TOOL_PERMISSION_REQUEST_FAILURE_MESSAGE.contains("failed"));
 }
-
-// -- ACP permission flow tests TODO ------------------------------------
-// The permission flow tests (permission_allow_flow, permission_denied_flow,
-// etc.) need a real ACP ConnectionHandle to interact with. In ACP 1.0.1,
-// `Client` is a struct (not a trait), so the old `impl acp::Client for FakeClient`
-// pattern no longer applies. To re-enable these tests, create a
-// ConnectionHandle from a Channel::duplex() pair and handle the
-// request_permission requests on the agent side.

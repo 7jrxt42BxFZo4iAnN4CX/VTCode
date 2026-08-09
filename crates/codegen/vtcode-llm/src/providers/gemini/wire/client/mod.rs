@@ -126,7 +126,7 @@ impl Client {
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text = crate::providers::common::read_provider_error_body(response).await;
             let error = llm_error_for_status(status, &error_text);
             return Err(anyhow::Error::new(error));
         }
@@ -167,7 +167,7 @@ impl Client {
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text = crate::providers::common::read_provider_error_body(response).await;
             return Err(self.classify_api_error(status, error_text));
         }
 

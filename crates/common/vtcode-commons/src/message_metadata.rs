@@ -187,7 +187,10 @@ pub enum CompressionStatus {
     Dropped,
 }
 
-#[allow(clippy::derivable_impls)]
+#[allow(
+    clippy::derivable_impls,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 impl Default for CompressionStatus {
     fn default() -> Self {
         Self::Uncompressed

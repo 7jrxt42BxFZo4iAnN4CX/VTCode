@@ -1,3 +1,9 @@
+#![expect(
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    reason = "The ANSI parser validates byte positions while walking escape-sequence boundaries."
+)]
+
 //! Shared ANSI escape parser and stripping utilities for VT Code.
 //!
 //! See `docs/reference/ansi-in-vtcode.md` for the workspace usage map.

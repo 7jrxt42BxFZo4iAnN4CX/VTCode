@@ -4,7 +4,10 @@ use crate::llm::provider::{Message, MessageRole};
 
 impl AgentRunner {
     /// Generate a meaningful summary of the task execution
-    #[expect(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     pub(super) fn generate_task_summary(
         &self,
         task: &Task,

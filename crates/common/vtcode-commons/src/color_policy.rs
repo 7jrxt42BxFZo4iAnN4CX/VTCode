@@ -1,3 +1,8 @@
+#![expect(
+    unused_results,
+    reason = "Forcing the one-time environment initialization is intentionally used only for its side effect."
+)]
+
 //! Runtime color output policy helpers.
 //!
 //! This module centralizes color enable/disable decisions for CLI and

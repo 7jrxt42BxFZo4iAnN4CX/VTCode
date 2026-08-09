@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 //! Advanced TUI snapshot tests with real content rendering
 //!
 //! These tests simulate actual user interactions with real content to verify
@@ -70,7 +73,7 @@ fn test_tui_with_conversation_history() {
     let mut terminal = Terminal::new(backend).unwrap();
 
     // Draw a representation of what a conversation might look like
-    terminal
+    let _frame = terminal
         .draw(|f| {
             // This simulates drawing with conversation content
             let area = f.area();

@@ -1,3 +1,11 @@
+#![expect(
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    clippy::let_underscore_must_use,
+    unused_results,
+    reason = "Filesystem helpers validate path lengths and intentionally ignore local cleanup results."
+)]
+
 //! File utility functions for common operations
 
 use anyhow::{Context, Result};

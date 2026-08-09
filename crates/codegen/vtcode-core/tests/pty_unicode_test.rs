@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 //! Unicode handling tests for PTY scrollback functionality
 //!
 //! This test file focuses specifically on testing the `push_utf8` function
@@ -151,7 +154,7 @@ async fn test_unicode_rendering_scenarios() {
     use vtcode_core::tools::ToolRegistry;
 
     let registry = ToolRegistry::new(temp.path().to_path_buf()).await;
-    registry.allow_all_tools().await.ok();
+    let _allow_result = registry.allow_all_tools().await.ok();
 
     // Test 1: Command with unicode output
     println!("Testing unicode output from commands...");

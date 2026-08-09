@@ -1,6 +1,12 @@
-#![allow(clippy::expect_used, clippy::panic)]
-#![allow(missing_docs)]
-
+#![allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 use assert_fs::TempDir;
 use assert_fs::prelude::*;
 use std::env;
@@ -51,7 +57,7 @@ impl Default for TestEnv {
 impl Drop for TestEnv {
     fn drop(&mut self) {
         // Restore original working directory
-        let _ = env::set_current_dir(&self.original_cwd);
+        drop(env::set_current_dir(&self.original_cwd));
     }
 }
 
@@ -67,7 +73,7 @@ pub fn create_test_project() -> TestEnv {
     let env = TestEnv::new();
 
     // Create main source files
-    env.create_test_file(
+    let _cargo_manifest = env.create_test_file(
         "Cargo.toml",
         r#"
 [package]
@@ -81,7 +87,7 @@ tokio = { version = "1.0", features = ["macros"] }
 "#,
     );
 
-    env.create_test_file(
+    let _main_source = env.create_test_file(
         "src/main.rs",
         r#"
 use hashbrown::HashMap;
@@ -123,7 +129,7 @@ mod tests {
 "#,
     );
 
-    env.create_test_file(
+    let _lib_source = env.create_test_file(
         "src/lib.rs",
         r#"
 pub mod utils;
@@ -147,8 +153,8 @@ mod tests {
     );
 
     // Create submodules
-    env.create_test_dir("src");
-    env.create_test_file(
+    let _source_dir = env.create_test_dir("src");
+    let _utils_source = env.create_test_file(
         "src/utils.rs",
         r#"
 use regex::Regex;
@@ -180,7 +186,7 @@ mod tests {
 "#,
     );
 
-    env.create_test_file(
+    let _models_source = env.create_test_file(
         "src/models.rs",
         r#"
 use serde::{Serialize, Deserialize};
@@ -231,7 +237,7 @@ mod tests {
     );
 
     // Create some documentation
-    env.create_test_file(
+    let _readme = env.create_test_file(
         "README.md",
         r#"
 # Test Project

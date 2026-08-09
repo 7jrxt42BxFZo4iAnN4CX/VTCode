@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use super::super::*;
 use super::helpers::*;
 use crate::tui::core_tui::session::input_manager::InputHistoryEntry;

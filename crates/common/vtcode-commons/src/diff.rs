@@ -1,3 +1,12 @@
+#![expect(
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    unused_results,
+    reason = "Diff ranges and offsets use one character/byte mapping; discarded map updates are intentional."
+)]
+
 //! Diff utilities for generating structured diffs.
 
 use hashbrown::HashMap;
@@ -184,7 +193,10 @@ fn backtrack_equal_run(
     (x, y)
 }
 
-#[allow(clippy::cast_sign_loss)]
+#[allow(
+    clippy::cast_sign_loss,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 fn myers_diff(old: &[char], new: &[char]) -> Vec<Edit> {
     let n = old.len();
     let m = new.len();
@@ -233,7 +245,10 @@ fn myers_diff(old: &[char], new: &[char]) -> Vec<Edit> {
     vec![]
 }
 
-#[allow(clippy::cast_sign_loss)]
+#[allow(
+    clippy::cast_sign_loss,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 fn backtrack_myers(old: &[char], new: &[char], v_index: &[usize], d: usize, mut k: i32, max_d: usize) -> Vec<Edit> {
     let mut edits = Vec::with_capacity(old.len() + new.len());
     let mut x = old.len();

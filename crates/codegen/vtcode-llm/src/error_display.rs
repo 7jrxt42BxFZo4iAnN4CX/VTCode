@@ -5,6 +5,7 @@
 
 use anstyle::Style;
 use vtcode_commons::color_policy;
+use vtcode_commons::sanitizer::sanitize_provider_diagnostic;
 use vtcode_commons::styling::Styles;
 
 /// Internal helper to wrap text with style codes - reduces duplication
@@ -49,7 +50,8 @@ fn style_provider_name(provider: &str) -> String {
 #[cold]
 pub fn format_llm_error(provider: &str, error: &str) -> String {
     let provider_styled = style_provider_name(provider);
-    let error_styled = style_llm_error(error);
+    let safe_error = sanitize_provider_diagnostic(error.as_bytes());
+    let error_styled = style_llm_error(&safe_error);
     format!("{provider_styled} {error_styled}")
 }
 

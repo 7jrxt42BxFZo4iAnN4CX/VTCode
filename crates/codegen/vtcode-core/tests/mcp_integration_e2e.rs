@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 //! End-to-End MCP Integration Tests
 //!
 //! These tests verify that MCP integration works correctly with real MCP servers.
@@ -277,8 +280,8 @@ max_concurrent_requests = 1
     #[tokio::test]
     async fn test_provider_environment_variables() {
         let mut env_vars = HashMap::new();
-        env_vars.insert("API_KEY".to_string(), "secret_key".to_string());
-        env_vars.insert("DEBUG".to_string(), "true".to_string());
+        drop(env_vars.insert("API_KEY".to_string(), "secret_key".to_string()));
+        drop(env_vars.insert("DEBUG".to_string(), "true".to_string()));
 
         let provider_config = McpProviderConfig {
             name: "test_provider".to_string(),
@@ -369,7 +372,7 @@ max_concurrent_requests = 1
     #[tokio::test]
     async fn test_http_provider_missing_api_key_env_is_not_initialized() {
         const MISSING_API_KEY_ENV: &str = "MCP_TEST_MISSING_API_KEY_9A3F65";
-        std::env::var(MISSING_API_KEY_ENV).unwrap_err();
+        let _missing_api_key = std::env::var(MISSING_API_KEY_ENV).unwrap_err();
 
         let mcp_config = McpClientConfig {
             enabled: true,

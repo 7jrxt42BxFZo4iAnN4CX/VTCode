@@ -246,6 +246,10 @@ impl ToolDiscovery {
     /// Uses the battle-tested [`strsim`](https://docs.rs/strsim) implementation.
     /// Handles partial and fuzzy matches more accurately than simple subsequence
     /// matching for keywords in tool names and descriptions.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "Sørensen-Dice is normalized to the [0, 1] range, so the f32 score remains bounded."
+    )]
     fn fuzzy_score(&self, haystack: &str, needle: &str) -> f32 {
         if needle.is_empty() {
             return 1.0;

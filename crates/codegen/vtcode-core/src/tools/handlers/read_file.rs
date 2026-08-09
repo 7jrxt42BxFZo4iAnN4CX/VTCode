@@ -690,7 +690,10 @@ mod indentation {
 
             // Expand upward
             if i >= 0 {
-                #[allow(clippy::cast_sign_loss)]
+                #[allow(
+                    clippy::cast_sign_loss,
+                    reason = "Intentional compatibility, platform, or test-only suppression."
+                )]
                 let iu = i as usize;
                 if effective_indents[iu] >= min_indent {
                     out.push_front(&collected[iu]);
@@ -957,7 +960,10 @@ mod defaults {
 
 #[cfg(test)]
 mod tests {
-    #[expect(unused_imports)]
+    #[expect(
+        unused_imports,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     use super::indentation::*;
     use super::slice::*;
     use super::*;

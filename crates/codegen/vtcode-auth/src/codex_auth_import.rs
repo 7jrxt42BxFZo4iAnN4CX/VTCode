@@ -742,10 +742,10 @@ mod tests {
         write_codex_auth_json(temp.path(), r#"{"auth_mode":"chatg"#);
         // Spawn a thread that completes the file after a short delay.
         let path = temp.path().join("auth.json");
-        std::thread::spawn(move || {
+        drop(std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(15));
             std::fs::write(&path, codex_auth_json_with_access_token("oauth-access")).expect("complete the file");
-        });
+        }));
         let result = try_load_codex_chatgpt_session();
         vtcode_commons::env_lock::lock().restore_var("CODEX_HOME", prev.as_deref());
         let session = result.expect("should succeed after retry");

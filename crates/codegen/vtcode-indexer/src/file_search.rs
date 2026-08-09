@@ -1,3 +1,8 @@
+#![expect(
+    unused_results,
+    reason = "File-search walker and heap operations intentionally use fluent/configuration mutation for side effects."
+)]
+
 //! Fast fuzzy file search library for VT Code.
 //!
 //! Uses the `ignore` crate (same as ripgrep) for parallel directory traversal

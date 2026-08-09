@@ -1,3 +1,8 @@
+#![expect(
+    clippy::indexing_slicing,
+    reason = "Command validators inspect byte-oriented option tokens after checking their lengths and delimiters."
+)]
+
 use std::env;
 use std::path::{Path, PathBuf};
 use tokio::fs;
@@ -191,7 +196,8 @@ async fn validate_head(args: &[String], workspace_root: &Path, working_dir: &Pat
                 let value = args
                     .get(index + 1)
                     .ok_or_else(|| anyhow!("option '{current}' requires a value"))?;
-                parse_positive_int(value).with_context(|| format!("invalid value '{value}' for '{current}'"))?;
+                let _parsed =
+                    parse_positive_int(value).with_context(|| format!("invalid value '{value}' for '{current}'"))?;
                 index += 2;
             }
             value if value.starts_with('-') => {
@@ -257,7 +263,8 @@ async fn validate_rg(args: &[String], workspace_root: &Path, working_dir: &Path)
                 let value = args
                     .get(index + 1)
                     .ok_or_else(|| anyhow!("option '{current}' requires a value"))?;
-                parse_positive_int(value).with_context(|| format!("invalid value '{value}' for '{current}'"))?;
+                let _parsed =
+                    parse_positive_int(value).with_context(|| format!("invalid value '{value}' for '{current}'"))?;
                 index += 2;
             }
             "-g" | "--glob" => {

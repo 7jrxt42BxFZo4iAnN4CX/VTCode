@@ -1,6 +1,9 @@
 //! Core LLM types shared across the project
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, ser::SerializeStruct};
+use std::fmt;
+
+use crate::sanitizer::sanitize_provider_diagnostic;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BackendKind {
@@ -387,7 +390,7 @@ fn extract_balanced_json(input: &str) -> Option<&str> {
     let mut in_string = false;
     let mut escaped = false;
 
-    for (offset, ch) in input[start..].char_indices() {
+    for (offset, ch) in input.get(start..)?.char_indices() {
         if in_string {
             if escaped {
                 escaped = false;
@@ -428,7 +431,7 @@ fn repair_tag_polluted_json(input: &str) -> Option<String> {
         return None;
     }
 
-    close_incomplete_json_prefix(candidate[..boundary].trim_end())
+    close_incomplete_json_prefix(candidate.get(..boundary)?.trim_end())
 }
 
 fn find_provider_markup_boundary(input: &str) -> Option<usize> {
@@ -566,7 +569,7 @@ impl LLMResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Deserialize, PartialEq, Eq)]
 pub struct LLMErrorMetadata {
     provider: Option<String>,
     pub status: Option<u16>,
@@ -575,6 +578,48 @@ pub struct LLMErrorMetadata {
     organization_id: Option<String>,
     pub retry_after: Option<String>,
     pub message: Option<String>,
+}
+
+impl fmt::Debug for LLMErrorMetadata {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LLMErrorMetadata")
+            .field("provider", &self.provider)
+            .field("status", &self.status)
+            .field("code", &self.code)
+            .field("request_id", &self.request_id)
+            .field("organization_id", &self.organization_id)
+            .field("retry_after", &self.retry_after)
+            .field(
+                "message",
+                &self
+                    .message
+                    .as_deref()
+                    .map(|message| sanitize_provider_diagnostic(message.as_bytes())),
+            )
+            .finish()
+    }
+}
+
+impl Serialize for LLMErrorMetadata {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("LLMErrorMetadata", 7)?;
+        state.serialize_field("provider", &self.provider)?;
+        state.serialize_field("status", &self.status)?;
+        state.serialize_field("code", &self.code)?;
+        state.serialize_field("request_id", &self.request_id)?;
+        state.serialize_field("organization_id", &self.organization_id)?;
+        state.serialize_field("retry_after", &self.retry_after)?;
+        let message = self
+            .message
+            .as_deref()
+            .map(|message| sanitize_provider_diagnostic(message.as_bytes()));
+        state.serialize_field("message", &message)?;
+        state.end()
+    }
 }
 
 impl LLMErrorMetadata {
@@ -597,42 +642,133 @@ impl LLMErrorMetadata {
             request_id,
             organization_id,
             retry_after,
-            message,
+            message: message.map(|message| sanitize_provider_diagnostic(message.as_bytes())),
         })
     }
 }
 
 /// LLM error types with optional provider metadata
-#[derive(Debug, thiserror::Error, Serialize, Deserialize, Clone)]
+#[derive(Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LLMError {
-    #[error("Authentication failed: {message}")]
     Authentication {
         message: String,
         metadata: Option<Box<LLMErrorMetadata>>,
     },
-    #[error("Rate limit exceeded")]
-    RateLimit { metadata: Option<Box<LLMErrorMetadata>> },
-    #[error("Invalid request: {message}")]
+    RateLimit {
+        metadata: Option<Box<LLMErrorMetadata>>,
+    },
     InvalidRequest {
         message: String,
         metadata: Option<Box<LLMErrorMetadata>>,
     },
-    #[error("Network error: {message}")]
     Network {
         message: String,
         metadata: Option<Box<LLMErrorMetadata>>,
     },
-    #[error("Provider error: {message}")]
     Provider {
         message: String,
         metadata: Option<Box<LLMErrorMetadata>>,
     },
 }
 
+impl fmt::Debug for LLMError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Authentication { message, metadata } => formatter
+                .debug_struct("Authentication")
+                .field("message", &sanitize_provider_diagnostic(message.as_bytes()))
+                .field("metadata", metadata)
+                .finish(),
+            Self::RateLimit { metadata } => formatter.debug_struct("RateLimit").field("metadata", metadata).finish(),
+            Self::InvalidRequest { message, metadata } => formatter
+                .debug_struct("InvalidRequest")
+                .field("message", &sanitize_provider_diagnostic(message.as_bytes()))
+                .field("metadata", metadata)
+                .finish(),
+            Self::Network { message, metadata } => formatter
+                .debug_struct("Network")
+                .field("message", &sanitize_provider_diagnostic(message.as_bytes()))
+                .field("metadata", metadata)
+                .finish(),
+            Self::Provider { message, metadata } => formatter
+                .debug_struct("Provider")
+                .field("message", &sanitize_provider_diagnostic(message.as_bytes()))
+                .field("metadata", metadata)
+                .finish(),
+        }
+    }
+}
+
+impl fmt::Display for LLMError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Authentication { message, .. } => {
+                write!(formatter, "Authentication failed: {}", sanitize_provider_diagnostic(message.as_bytes()))
+            }
+            Self::RateLimit { .. } => formatter.write_str("Rate limit exceeded"),
+            Self::InvalidRequest { message, .. } => {
+                write!(formatter, "Invalid request: {}", sanitize_provider_diagnostic(message.as_bytes()))
+            }
+            Self::Network { message, .. } => {
+                write!(formatter, "Network error: {}", sanitize_provider_diagnostic(message.as_bytes()))
+            }
+            Self::Provider { message, .. } => {
+                write!(formatter, "Provider error: {}", sanitize_provider_diagnostic(message.as_bytes()))
+            }
+        }
+    }
+}
+
+impl std::error::Error for LLMError {}
+
+impl Serialize for LLMError {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Authentication { message, metadata } => {
+                let mut state = serializer.serialize_struct("LLMError", 3)?;
+                state.serialize_field("type", "authentication")?;
+                state.serialize_field("message", &sanitize_provider_diagnostic(message.as_bytes()))?;
+                state.serialize_field("metadata", metadata)?;
+                state.end()
+            }
+            Self::RateLimit { metadata } => {
+                let mut state = serializer.serialize_struct("LLMError", 2)?;
+                state.serialize_field("type", "rate_limit")?;
+                state.serialize_field("metadata", metadata)?;
+                state.end()
+            }
+            Self::InvalidRequest { message, metadata } => {
+                let mut state = serializer.serialize_struct("LLMError", 3)?;
+                state.serialize_field("type", "invalid_request")?;
+                state.serialize_field("message", &sanitize_provider_diagnostic(message.as_bytes()))?;
+                state.serialize_field("metadata", metadata)?;
+                state.end()
+            }
+            Self::Network { message, metadata } => {
+                let mut state = serializer.serialize_struct("LLMError", 3)?;
+                state.serialize_field("type", "network")?;
+                state.serialize_field("message", &sanitize_provider_diagnostic(message.as_bytes()))?;
+                state.serialize_field("metadata", metadata)?;
+                state.end()
+            }
+            Self::Provider { message, metadata } => {
+                let mut state = serializer.serialize_struct("LLMError", 3)?;
+                state.serialize_field("type", "provider")?;
+                state.serialize_field("message", &sanitize_provider_diagnostic(message.as_bytes()))?;
+                state.serialize_field("metadata", metadata)?;
+                state.end()
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ToolCall;
+    use super::{LLMError, LLMErrorMetadata, ToolCall};
     use serde_json::json;
 
     #[test]
@@ -692,6 +828,33 @@ mod tests {
         );
 
         assert!(call.parsed_arguments().is_err());
+    }
+
+    #[test]
+    fn llm_error_debug_and_json_redact_provider_secrets() {
+        let secret = "sk-test1234567890abcdefghij";
+        let error = LLMError::Provider {
+            message: format!("response body api_key={secret} bearer Bearer abcdefghijklmnop"),
+            metadata: Some(LLMErrorMetadata::new(
+                "OpenAI",
+                Some(401),
+                Some("invalid_api_key".to_owned()),
+                Some("req-123".to_owned()),
+                None,
+                None,
+                Some("AWS_SECRET_ACCESS_KEY=cloud-secret-value".to_owned()),
+            )),
+        };
+
+        let debug = format!("{error:?}");
+        let json = serde_json::to_string(&error).expect("LLM errors should serialize");
+
+        assert!(!debug.contains(secret));
+        assert!(!debug.contains("cloud-secret-value"));
+        assert!(!json.contains(secret));
+        assert!(!json.contains("cloud-secret-value"));
+        assert!(json.contains("req-123"));
+        assert!(json.contains("401"));
     }
 
     #[test]

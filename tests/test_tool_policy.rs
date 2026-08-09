@@ -1,5 +1,8 @@
 #!/usr/bin/env rust-script
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 //! ```cargo
 //! [dependencies]
 //! anyhow = "1.0"
@@ -90,7 +93,7 @@ impl ToolPolicyManager {
         // Add new tools as "prompt"
         for tool in &tools {
             if !current_tools.contains(tool) {
-                self.config.policies.insert(tool.clone(), ToolPolicy::Prompt);
+                let _previous = self.config.policies.insert(tool.clone(), ToolPolicy::Prompt);
             }
         }
 
@@ -104,7 +107,7 @@ impl ToolPolicyManager {
             .collect();
 
         for tool in tools_to_remove {
-            self.config.policies.shift_remove(&tool);
+            let _removed = self.config.policies.shift_remove(&tool);
         }
 
         // Update available tools list
@@ -120,7 +123,7 @@ impl ToolPolicyManager {
 
     /// Set policy for a specific tool
     pub fn set_policy(&mut self, tool_name: &str, policy: ToolPolicy) -> Result<()> {
-        self.config.policies.insert(tool_name.to_string(), policy);
+        let _previous = self.config.policies.insert(tool_name.to_string(), policy);
         self.save_config()
     }
 

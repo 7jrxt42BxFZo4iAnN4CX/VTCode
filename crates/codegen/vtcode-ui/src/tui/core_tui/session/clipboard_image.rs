@@ -1,5 +1,5 @@
 // Slice 4 wires this helper into application shortcut handling.
-#![allow(dead_code)]
+#![allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 
 use std::{
     env, fs,

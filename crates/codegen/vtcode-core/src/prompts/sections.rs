@@ -61,7 +61,7 @@ impl SectionKind {
 
 /// A single layer of the composed system prompt, carrying its logical kind
 /// and rendered text.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 pub(crate) struct PromptSection {
     pub(crate) kind: SectionKind,
     pub(crate) text: String,

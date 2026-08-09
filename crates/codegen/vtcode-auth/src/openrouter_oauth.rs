@@ -222,7 +222,12 @@ fn derive_encryption_key() -> Result<LessSafeKey> {
 
     // Hash to get 32-byte key
     let hash = digest(&SHA256, &key_material);
-    let key_bytes: &[u8; 32] = hash.as_ref()[..32].try_into().context("Hash too short")?;
+    let key_bytes: &[u8; 32] = hash
+        .as_ref()
+        .get(..32)
+        .context("Hash too short")?
+        .try_into()
+        .context("Hash had an invalid length")?;
 
     let unbound_key = UnboundKey::new(&aead::AES_256_GCM, key_bytes).map_err(|_| anyhow!("Invalid key length"))?;
 
@@ -459,8 +464,8 @@ pub fn clear_oauth_token_with_mode(mode: AuthCredentialsStoreMode) -> Result<()>
         AuthCredentialsStoreMode::Keyring => clear_oauth_token_keyring(),
         AuthCredentialsStoreMode::File => clear_oauth_token_file(),
         AuthCredentialsStoreMode::Auto => {
-            let _ = clear_oauth_token_keyring();
-            let _ = clear_oauth_token_file();
+            drop(clear_oauth_token_keyring());
+            drop(clear_oauth_token_file());
             Ok(())
         }
     }
@@ -468,8 +473,8 @@ pub fn clear_oauth_token_with_mode(mode: AuthCredentialsStoreMode) -> Result<()>
 
 pub fn clear_oauth_token() -> Result<()> {
     // Clear from both keyring and file to ensure complete removal
-    let _ = clear_oauth_token_keyring();
-    let _ = clear_oauth_token_file();
+    drop(clear_oauth_token_keyring());
+    drop(clear_oauth_token_file());
 
     tracing::info!("OAuth token cleared from all storage");
     Ok(())

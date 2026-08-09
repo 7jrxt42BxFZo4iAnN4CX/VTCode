@@ -3,7 +3,7 @@
 
 ## Key Modules
 
-`provider/` trait + shared types | `providers/` per-provider impls | `providers/custom_provider.rs` custom profile router | `provider.rs` re-exports | `client.rs` + `optimized_client.rs` | `copilot/` (feature-gated) | `open_responses/` | `factory_types.rs` + `provider_config_types.rs` config | `system_prompt.rs` injection | `http_client.rs` | `types.rs` shared types | `utils.rs` + `single_response.rs` + `tool_bridge.rs` + `config_adapter.rs` + `rig_adapter.rs` + `provider_base.rs` + `error_display.rs` + `model_resolver.rs` infra (merged from core)
+`provider/` trait + shared types | `providers/` per-provider impls | `providers/custom_provider.rs` custom profile router | `provider.rs` re-exports | `client.rs` + `optimized_client.rs` | `copilot/` (feature-gated) | `open_responses/` | `factory_types.rs` + `provider_config_types.rs` config | `system_prompt.rs` injection | `http_client.rs` | `types.rs` shared types | `utils.rs` + `single_response.rs` + `tool_bridge.rs` + `config_adapter.rs` + `rig_adapter.rs` + `provider_base.rs` + `error_display.rs` + `model_resolver.rs` infra (merged from core) | `process_env.rs` provider child environment policy
 
 ## Architecture Notes
 - **Canonical home** for all provider code. Core's `llm/` is a thin re-export layer + factory/CGP.
@@ -14,7 +14,7 @@
 
 ## Dependencies
 
-`vtcode-commons` (HTTP, CGP, types) | `vtcode-config` (provider config, timeouts) | `vtcode-utility-tool-specs` (schemas) | `vtcode-exec-events` | `vtcode-macros`
+`vtcode-commons` (HTTP, CGP, types) | `vtcode-config` (provider config, timeouts) | `vtcode-utility-tool-specs` (schemas) | `vtcode-exec-events` | `vtcode-macros` | `vtcode-safety` (child-process environment policy)
 
 ## Coding Conventions
 
@@ -26,4 +26,4 @@ Providers in `providers/<name>/mod.rs`. Use `anyhow::Result`, `tracing`, not `pr
 - `providers/openai_compat.rs` owns the shared shell: `OpenAiCompatSpec` (per-provider consts/overrides) + `OpenAiCompatCore<S>` + `impl_openai_compat_provider!`. New compat providers implement a Spec (~50-200 lines), not a full `LLMProvider`; NVIDIA also accepts arbitrary explicit IDs and maps thinking through `chat_template_kwargs`.
 - Model normalization happens in `core.prepare()`, not `convert_request()` — payload tests must call `prepare` first. `stream: true` is only inserted when `request.stream` is set.
 - Providers with extra protocols (evolink Anthropic path, opencode) hand-write the provider over `OpenAiCompatCore` instead of using the macro.
-- Registration contract: keep the type name and 7-arg `from_config` consumed by `impl_standard_provider_constructor!` in vtcode-core. The Open Responses bridge maps authoritative plan-approval `ThreadEvent` variants to `vtcode.*` custom events for client parity.
+- Registration contract: keep the type name and 7-arg `from_config` consumed by `impl_standard_provider_constructor!` in vtcode-core. The Open Responses bridge maps authoritative plan-approval `ThreadEvent` variants to `vtcode.*` custom events for client parity. Provider error bodies are stream-read with a 16 KiB cap, then diagnostics use the bounded, secret-redacting sanitizer before metadata, display, or logs. Provider-owned child processes use the shared filtered environment, with only narrow GitHub-auth exceptions for Copilot.

@@ -98,7 +98,7 @@ pub(crate) fn compute_extra_search_paths(entries: &[String], workspace_root: &Pa
 }
 
 /// Attempt to resolve a program against the provided path iterator.
-#[allow(dead_code)] // Function is deprecated but kept for explicit path iteration tests
+#[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")] // Function is deprecated but kept for explicit path iteration tests
 pub(crate) fn resolve_program_path_from_paths(program: &str, paths: impl Iterator<Item = PathBuf>) -> Option<String> {
     for path_dir in paths {
         let full_path = path_dir.join(program);

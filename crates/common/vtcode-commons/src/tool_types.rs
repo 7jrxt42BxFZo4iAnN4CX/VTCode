@@ -1,3 +1,8 @@
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "Quality scores are normalized to the documented 0..=100 display range before narrowing."
+)]
+
 //! Shared runtime types for the VT Code tool system.
 //!
 //! This module provides types shared between the LLM and tools subsystems,
@@ -305,7 +310,10 @@ impl EnhancedToolResult {
     }
 
     /// Convert to a message-friendly format
-    #[allow(clippy::cast_sign_loss)] // quality_score is always 0.0-1.0
+    #[allow(
+        clippy::cast_sign_loss,
+        reason = "Intentional compatibility, platform, or test-only suppression."
+    )] // quality_score is always 0.0-1.0
     pub fn to_summary(&self) -> String {
         let quality = ((self.metadata.quality_score() * 100.0).round().max(0.0) as u32).min(100);
         match self.metadata.completeness {

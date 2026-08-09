@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 //! Language consistency tests to detect mixed-language segments in LLM outputs
 //!
 //! These tests validate that structured outputs (JSON, Markdown) maintain
@@ -115,7 +118,7 @@ fn validate_markdown_language_consistency(markdown: &str) -> Result<()> {
 
     // Flag if sections switch languages unexpectedly
     if section_scripts.len() > 1 {
-        let first_script = section_scripts[0];
+        let first_script = section_scripts.first().copied().unwrap_or(Script::Mixed);
         for (idx, &script) in section_scripts.iter().enumerate().skip(1) {
             if script != first_script && script != Script::Mixed {
                 eprintln!("Warning: Markdown section {idx} changed from {first_script:?} to {script:?}");
@@ -129,7 +132,10 @@ fn validate_markdown_language_consistency(markdown: &str) -> Result<()> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Script {
     Latin,
-    #[allow(non_camel_case_types)]
+    #[allow(
+        non_camel_case_types,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     Cjk,
     Cyrillic,
     Arabic,
@@ -460,7 +466,7 @@ mod integration_tests {
         let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
 
         // Allow tools for testing
-        let _ = registry.allow_all_tools().await;
+        drop(registry.allow_all_tools().await);
 
         let response = registry
             .execute_tool(
@@ -491,7 +497,7 @@ mod integration_tests {
 
         let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
 
-        let _ = registry.allow_all_tools().await;
+        drop(registry.allow_all_tools().await);
 
         let response = registry
             .execute_tool(
@@ -519,7 +525,7 @@ mod integration_tests {
         let temp_dir = TempDir::new().unwrap();
         let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
 
-        let _ = registry.allow_all_tools().await;
+        drop(registry.allow_all_tools().await);
 
         let response = registry
             .execute_tool(
@@ -548,7 +554,7 @@ mod integration_tests {
         let temp_dir = TempDir::new().unwrap();
         let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
 
-        let _ = registry.allow_all_tools().await;
+        drop(registry.allow_all_tools().await);
 
         let mut responses = Vec::new();
 

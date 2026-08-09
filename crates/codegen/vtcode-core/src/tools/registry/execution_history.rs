@@ -124,7 +124,10 @@ impl ToolTaskTelemetrySnapshot {
 
 impl ToolExecutionRecord {
     /// Create a new failed execution record.
-    #[expect(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     #[cold]
     pub fn failure(
         tool_name: String,
@@ -162,7 +165,10 @@ impl ToolExecutionRecord {
     }
 
     /// Create a new successful execution record.
-    #[expect(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     #[inline]
     pub fn success(
         tool_name: String,

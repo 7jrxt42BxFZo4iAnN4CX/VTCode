@@ -371,7 +371,10 @@ pub(crate) struct TurnLoopContext<'a> {
 }
 
 impl<'a> TurnLoopContext<'a> {
-    #[expect(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     pub(crate) fn new(
         renderer: &'a mut AnsiRenderer,
         handle: &'a InlineHandle,

@@ -1,4 +1,7 @@
-#![allow(clippy::too_many_arguments)]
+#![allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 mod approval_cache;
 mod approval_persistence;
 mod approval_policy;
@@ -519,7 +522,10 @@ async fn reuse_saved_approval(
     None
 }
 
-#[expect(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 async fn finalize_permission_decision(
     tool_registry: &ToolRegistry,
     tool_name: &str,

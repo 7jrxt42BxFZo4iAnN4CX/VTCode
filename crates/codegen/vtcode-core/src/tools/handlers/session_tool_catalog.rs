@@ -671,7 +671,10 @@ impl ToolCatalogEntry {
         ))
     }
 
-    #[expect(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     fn new(
         public_name: String,
         registration_name: String,

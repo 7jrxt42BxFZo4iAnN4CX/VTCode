@@ -1,3 +1,8 @@
+#![expect(
+    clippy::let_underscore_must_use,
+    reason = "The category formatter intentionally ignores infallible formatting results."
+)]
+
 //! Unified error categorization system for consistent error classification across VT Code.
 //!
 //! This module provides a single canonical `ErrorCategory` enum that unifies the

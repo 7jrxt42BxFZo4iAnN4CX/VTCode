@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 //! Test that verifies performance optimizations are actually integrated into execute_tool_ref
 //! This test validates that the optimizations work in the REAL execution path used by VT Code
 
@@ -50,7 +53,7 @@ async fn test_execute_tool_ref_uses_optimizations() {
 
     // Third execution with alias - should resolve and potentially cache
     let result3 = registry.execute_tool_ref(tools::READ_FILE, &args).await;
-    result3.unwrap();
+    let _third_result = result3.unwrap();
 
     // Verify results are consistent. The second read may reuse a recent
     // identical read-only call, which annotates the response with cache-reuse
@@ -88,7 +91,7 @@ async fn test_execute_tool_ref_memory_pool_integration() {
     });
 
     let result = registry.execute_tool_ref(tools::LIST_FILES, &args).await;
-    result.unwrap();
+    let _result = result.unwrap();
 
     println!("v execute_tool_ref memory pool integration test passed");
 }
@@ -118,7 +121,7 @@ async fn test_execute_tool_ref_without_optimizations() {
     });
 
     let result = registry.execute_tool_ref(tools::LIST_FILES, &args).await;
-    result.unwrap();
+    let _result = result.unwrap();
 
     println!("v execute_tool_ref without optimizations test passed");
 }
@@ -172,20 +175,20 @@ async fn test_execute_tool_ref_performance_comparison() {
     let args = json!({"path": "."});
 
     // Warm up both registries
-    let _ = registry_unoptimized.execute_tool_ref(tools::LIST_FILES, &args).await;
-    let _ = registry_optimized.execute_tool_ref(tools::LIST_FILES, &args).await;
+    drop(registry_unoptimized.execute_tool_ref(tools::LIST_FILES, &args).await);
+    drop(registry_optimized.execute_tool_ref(tools::LIST_FILES, &args).await);
 
     // Time unoptimized execution
     let start = std::time::Instant::now();
     for _ in 0..5 {
-        let _ = registry_unoptimized.execute_tool_ref(tools::LIST_FILES, &args).await;
+        drop(registry_unoptimized.execute_tool_ref(tools::LIST_FILES, &args).await);
     }
     let unoptimized_duration = start.elapsed();
 
     // Time optimized execution
     let start = std::time::Instant::now();
     for _ in 0..5 {
-        let _ = registry_optimized.execute_tool_ref(tools::LIST_FILES, &args).await;
+        drop(registry_optimized.execute_tool_ref(tools::LIST_FILES, &args).await);
     }
     let optimized_duration = start.elapsed();
 

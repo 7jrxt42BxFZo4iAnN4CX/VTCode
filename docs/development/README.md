@@ -16,6 +16,7 @@ Entry point for VT Code contributor workflows.
 - [Process Hardening](./PROCESS_HARDENING.md) - Runtime hardening controls.
 - [Execution Policy](./EXECUTION_POLICY.md) - Command policy model.
 - [Command Security Model](./COMMAND_SECURITY_MODEL.md) - Command validation and threat model.
+- [Security Guide](../guides/security.md) - Process sandbox boundaries, MCP inheritance, and provider diagnostic redaction.
 - [Runtime Guidance](./runtime-guidance.md) - Boundary between compiled universal behavior and dynamic project instructions.
 - [vtcode Binary Gotchas](./vtcode-binary-gotchas.md) - Binary startup, runloop recovery, allocator, and request-assembly invariants.
 - [AI Tool Surface Migration](./ai-tool-surface-migration.md) - Breaking-change notes for the Codex-style default tools.
@@ -41,6 +42,7 @@ Entry point for VT Code contributor workflows.
 - [Desire Paths](./DESIRE_PATHS.md) - Known architecture pressure points.
 - [TUI-Only Refactoring Notes](./TUI_ONLY_REFACTORING.md) - Historical refactor details.
 - [Tool Summary Display](./tool-summary-display.md) - Compact and expanded tool transition summaries, configuration, and testing boundaries.
+- [First-party debt scan](../../scripts/first-party-debt-scan.sh) - Detect actionable debt markers while excluding generated and fixture content.
 
 ## Navigation
 

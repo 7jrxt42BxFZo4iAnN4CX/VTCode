@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 // Example demonstrating dialoguer usage
 //
 // This example shows various prompt types available in dialoguer.
@@ -46,7 +49,7 @@ fn main() -> Result<()> {
         .default(0)
         .interact()?;
 
-    println!("You selected: {}", selections[selection]);
+    println!("You selected: {}", selections.get(selection).copied().unwrap_or("Unknown"));
 
     // MultiSelect prompt
     let features = &[
@@ -65,7 +68,7 @@ fn main() -> Result<()> {
 
     println!("Enabled features:");
     for &index in &chosen_features {
-        println!("  - {}", features[index]);
+        println!("  - {}", features.get(index).copied().unwrap_or("Unknown"));
     }
 
     // Password prompt (only if they selected a security-related option)

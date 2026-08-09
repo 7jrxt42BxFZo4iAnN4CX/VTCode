@@ -1,4 +1,7 @@
-#![allow(clippy::cast_sign_loss)]
+#![allow(
+    clippy::cast_sign_loss,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 //! Shared theme registry and runtime state for VT Code UI crates.
 
 mod color_math;

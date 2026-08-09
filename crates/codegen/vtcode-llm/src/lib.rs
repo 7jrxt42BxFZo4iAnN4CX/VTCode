@@ -1,4 +1,17 @@
-#![allow(missing_docs, clippy::expect_used, dead_code, unused_imports)]
+#![allow(
+    missing_docs,
+    clippy::expect_used,
+    dead_code,
+    unused_imports,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
+#![expect(
+    clippy::let_underscore_must_use,
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    clippy::cast_possible_truncation,
+    reason = "Provider adapters intentionally mutate request JSON, maintain bounded stream buffers, and convert wire counters into protocol-sized fields."
+)]
 //! # vtcode-llm - LLM Provider Abstraction
 //!
 //! Provides a unified interface for multiple LLM providers including
@@ -14,6 +27,7 @@ pub mod factory_types;
 pub mod http_client;
 pub mod model_resolver;
 pub mod open_responses;
+mod process_env;
 pub mod provider;
 pub mod provider_base;
 pub mod provider_config_types;

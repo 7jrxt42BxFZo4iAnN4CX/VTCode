@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
@@ -7,25 +10,31 @@ use vtcode_core::tools::rate_limiter::{RateLimiter, RateLimiterConfig};
 pub fn rate_limiter_benchmark(c: &mut Criterion) {
     let config = RateLimiterConfig { per_sec: 100, burst: 200 };
 
-    c.bench_function("rate_limiter_acquire", |b| {
+    let _rate_limiter_benchmark = c.bench_function("rate_limiter_acquire", |b| {
         let mut limiter = RateLimiter::new_with_config(config);
         b.iter(|| {
             // Benchmark token acquisition
-            let _ = black_box(limiter.acquire("tool_name"));
+            drop(black_box(limiter.acquire("tool_name")));
         })
     });
 }
 
 fn simulated_tool_outcome_clone(c: &mut Criterion) {
     // Simulate the ToolPipelineOutcome structure
-    #[expect(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     struct ExecutionStatus {
         output: Option<String>,
         stdout: Option<String>,
         modified_files: Vec<String>,
     }
 
-    #[expect(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     struct PipelineOutcome {
         status: ExecutionStatus,
         stdout: Option<String>,
@@ -35,7 +44,7 @@ fn simulated_tool_outcome_clone(c: &mut Criterion) {
     let big_string = "x".repeat(10000); // 10KB
     let modified = vec!["file1.rs".to_string(), "file2.rs".to_string(), "file3.rs".to_string()];
 
-    c.bench_function("outcome_double_clone", |b| {
+    let _double_clone_benchmark = c.bench_function("outcome_double_clone", |b| {
         b.iter(|| {
             // Old way: double clone
             let output = Some(big_string.clone());
@@ -54,7 +63,7 @@ fn simulated_tool_outcome_clone(c: &mut Criterion) {
         })
     });
 
-    c.bench_function("outcome_single_clone", |b| {
+    let _single_clone_benchmark = c.bench_function("outcome_single_clone", |b| {
         b.iter(|| {
             // New way: single clone
             let output = Some(big_string.clone());

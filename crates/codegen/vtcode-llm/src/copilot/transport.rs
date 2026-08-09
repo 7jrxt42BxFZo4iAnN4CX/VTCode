@@ -35,6 +35,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::timeout;
+use vtcode_commons::sanitizer::sanitize_provider_diagnostic;
 
 use super::error::{AcpError, AcpResult};
 
@@ -274,7 +275,8 @@ fn spawn_stderr_logger(stderr: ChildStderr) {
             match reader.read_line(&mut line).await {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
-                    tracing::debug!(target: "vtcode.stdio_transport.stderr", "{}", line.trim_end())
+                    let safe_line = sanitize_provider_diagnostic(line.trim_end().as_bytes());
+                    tracing::debug!(target: "vtcode.stdio_transport.stderr", "{}", safe_line)
                 }
             }
         }

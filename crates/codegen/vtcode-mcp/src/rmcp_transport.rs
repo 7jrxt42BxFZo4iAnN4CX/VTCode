@@ -30,16 +30,16 @@ pub fn create_stdio_transport(
     let mut cmd = Command::new(&stdio_config.command);
 
     // Add arguments
-    cmd.args(&stdio_config.args);
+    let _command = cmd.args(&stdio_config.args);
 
     // Set working directory if specified
     if let Some(working_dir) = &stdio_config.working_directory {
-        cmd.current_dir(working_dir);
+        let _command = cmd.current_dir(working_dir);
     }
 
     // Configure environment variables
     for (key, value) in env {
-        cmd.env(key, value);
+        let _command = cmd.env(key, value);
     }
 
     // Create the child process transport
@@ -68,7 +68,8 @@ pub fn create_stdio_transport_with_stderr(
 ) -> Result<(TokioChildProcess, Option<tokio::process::ChildStderr>)> {
     let mut cmd = Command::new(program);
 
-    cmd.kill_on_drop(true)
+    let _command = cmd
+        .kill_on_drop(true)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -76,16 +77,16 @@ pub fn create_stdio_transport_with_stderr(
 
     // Add all environment variables
     for (key, value) in env {
-        cmd.env(key, value);
+        let _command = cmd.env(key, value);
     }
 
     // Set working directory if provided
     if let Some(dir) = working_dir {
-        cmd.current_dir(dir);
+        let _command = cmd.current_dir(dir);
     }
 
     // Add command arguments
-    cmd.args(args);
+    let _command = cmd.args(args);
 
     // Create transport with stderr capture for logging
     let builder = TokioChildProcess::builder(cmd);

@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use hashbrown::HashMap;
 use std::path::PathBuf;
 use tokio::process::Command;

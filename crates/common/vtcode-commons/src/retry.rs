@@ -1,3 +1,9 @@
+#![expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    reason = "Retry exponents and jitter are clamped to the supported retry range before conversion."
+)]
+
 //! Canonical retry policy shared across the workspace.
 //!
 //! This module owns the retry *policy math*: attempt budgets, exponential
@@ -62,7 +68,10 @@ impl RetryPolicy {
             return base_delay;
         }
 
-        #[allow(clippy::cast_sign_loss)]
+        #[allow(
+            clippy::cast_sign_loss,
+            reason = "Intentional compatibility, platform, or test-only suppression."
+        )]
         let max_jitter_ms = (base_delay.as_millis() as f64 * self.jitter)
             .round()
             .clamp(0.0, u64::MAX as f64) as u64;

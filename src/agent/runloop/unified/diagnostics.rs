@@ -39,7 +39,10 @@ enum DoctorCheckOutcome {
     Fail(String),
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 pub(crate) async fn run_checkup_diagnostics(
     renderer: &mut AnsiRenderer,
     config: &CoreAgentConfig,

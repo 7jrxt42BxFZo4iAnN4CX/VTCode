@@ -1,3 +1,9 @@
+#![expect(
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    reason = "Token and UTF-8 boundaries come from tokenizer output and the byte truncation helper."
+)]
+
 //! Token counting via tiktoken BPE tokenizer.
 //!
 //! All token estimation goes through [`tiktoken`]'s `cl100k_base` encoding

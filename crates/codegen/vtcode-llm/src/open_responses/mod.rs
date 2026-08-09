@@ -1,3 +1,8 @@
+#![expect(
+    unused_results,
+    reason = "Open Responses bridge code intentionally discards map replacement, stream-drain, and emitter results after updating state."
+)]
+
 //! Open Responses specification conformance layer.
 //!
 //! This module implements the [Open Responses](https://www.openresponses.org/) specification

@@ -386,9 +386,9 @@ async fn run_prompt(agent: Arc<ZedAgent>, args: PromptRequest) -> Result<PromptR
 
     let mut plan = PlanProgress::new(tools_allowed);
     if plan.has_entries() {
-        let _ = agent.send_plan_update(&args.session_id, &plan).await;
+        drop(agent.send_plan_update(&args.session_id, &plan).await);
         if plan.complete_analysis() {
-            let _ = agent.send_plan_update(&args.session_id, &plan).await;
+            drop(agent.send_plan_update(&args.session_id, &plan).await);
         }
     }
 
@@ -408,7 +408,7 @@ async fn run_prompt(agent: Arc<ZedAgent>, args: PromptRequest) -> Result<PromptR
             .await
             .map_err(|err| SdkError::internal_error().data(err.to_string()))?;
 
-        let _ = agent.advance_plan_to_response(&args.session_id, &mut plan).await;
+        drop(agent.advance_plan_to_response(&args.session_id, &mut plan).await);
 
         while let Some(event) = stream.next().await {
             let event = event.map_err(|err| SdkError::internal_error().data(err.to_string()))?;
@@ -423,17 +423,21 @@ async fn run_prompt(agent: Arc<ZedAgent>, args: PromptRequest) -> Result<PromptR
                     if !delta.is_empty() {
                         assistant_message.push_str(&delta);
                         let chunk = text_chunk(delta);
-                        let _ = agent
-                            .send_update(&args.session_id, acp::SessionUpdate::AgentMessageChunk(chunk))
-                            .await;
+                        drop(
+                            agent
+                                .send_update(&args.session_id, acp::SessionUpdate::AgentMessageChunk(chunk))
+                                .await,
+                        );
                     }
                 }
                 LLMStreamEvent::Reasoning { delta } => {
                     if !delta.is_empty() {
                         let chunk = text_chunk(delta);
-                        let _ = agent
-                            .send_update(&args.session_id, acp::SessionUpdate::AgentThoughtChunk(chunk))
-                            .await;
+                        drop(
+                            agent
+                                .send_update(&args.session_id, acp::SessionUpdate::AgentThoughtChunk(chunk))
+                                .await,
+                        );
                     }
                 }
                 LLMStreamEvent::ReasoningStage { .. } => {}
@@ -444,18 +448,22 @@ async fn run_prompt(agent: Arc<ZedAgent>, args: PromptRequest) -> Result<PromptR
                     {
                         if !content.is_empty() {
                             let chunk = text_chunk(content.clone());
-                            let _ = agent
-                                .send_update(&args.session_id, acp::SessionUpdate::AgentMessageChunk(chunk))
-                                .await;
+                            drop(
+                                agent
+                                    .send_update(&args.session_id, acp::SessionUpdate::AgentMessageChunk(chunk))
+                                    .await,
+                            );
                         }
                         assistant_message.push_str(&content);
                     }
 
                     if let Some(reasoning) = response.reasoning.filter(|reasoning| !reasoning.is_empty()) {
                         let chunk = text_chunk(reasoning);
-                        let _ = agent
-                            .send_update(&args.session_id, acp::SessionUpdate::AgentThoughtChunk(chunk))
-                            .await;
+                        drop(
+                            agent
+                                .send_update(&args.session_id, acp::SessionUpdate::AgentThoughtChunk(chunk))
+                                .await,
+                        );
                     }
 
                     stop_reason = ZedAgent::stop_reason_from_finish(response.finish_reason);
@@ -493,20 +501,22 @@ async fn run_prompt(agent: Arc<ZedAgent>, args: PromptRequest) -> Result<PromptR
             if tools_allowed && let Some(tool_calls) = response.tool_calls.clone().filter(|calls| !calls.is_empty()) {
                 if agent.tool_loop_limit_reached(tool_loop_count) {
                     let message = agent.tool_loop_limit_message();
-                    let _ = agent.advance_plan_to_response(&args.session_id, &mut plan).await;
-                    let _ = agent
-                        .send_update(
-                            &args.session_id,
-                            acp::SessionUpdate::AgentMessageChunk(text_chunk(message.clone())),
-                        )
-                        .await;
+                    drop(agent.advance_plan_to_response(&args.session_id, &mut plan).await);
+                    drop(
+                        agent
+                            .send_update(
+                                &args.session_id,
+                                acp::SessionUpdate::AgentMessageChunk(text_chunk(message.clone())),
+                            )
+                            .await,
+                    );
                     assistant_message = message;
                     stop_reason = acp::StopReason::EndTurn;
                     break;
                 }
                 tool_loop_count = tool_loop_count.saturating_add(1);
                 if plan.start_context() {
-                    let _ = agent.send_plan_update(&args.session_id, &plan).await;
+                    drop(agent.send_plan_update(&args.session_id, &plan).await);
                 }
                 agent.push_message(
                     &session,
@@ -520,7 +530,7 @@ async fn run_prompt(agent: Arc<ZedAgent>, args: PromptRequest) -> Result<PromptR
                     }
                 };
                 if plan.complete_context() {
-                    let _ = agent.send_plan_update(&args.session_id, &plan).await;
+                    drop(agent.send_plan_update(&args.session_id, &plan).await);
                 }
                 for result in tool_results {
                     agent.push_message(&session, Message::tool_response(result.tool_call_id, result.llm_response));
@@ -544,15 +554,17 @@ async fn run_prompt(agent: Arc<ZedAgent>, args: PromptRequest) -> Result<PromptR
 
             if let Some(content) = &response.content {
                 if !content.is_empty() {
-                    let _ = agent.advance_plan_to_response(&args.session_id, &mut plan).await;
+                    drop(agent.advance_plan_to_response(&args.session_id, &mut plan).await);
                     if session.cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
                         stop_reason = acp::StopReason::Cancelled;
                         break;
                     }
                     let chunk = text_chunk(content.clone());
-                    let _ = agent
-                        .send_update(&args.session_id, acp::SessionUpdate::AgentMessageChunk(chunk))
-                        .await;
+                    drop(
+                        agent
+                            .send_update(&args.session_id, acp::SessionUpdate::AgentMessageChunk(chunk))
+                            .await,
+                    );
                 }
                 assistant_message = content.clone();
             }
@@ -563,9 +575,11 @@ async fn run_prompt(agent: Arc<ZedAgent>, args: PromptRequest) -> Result<PromptR
                     break;
                 }
                 let chunk = text_chunk(reasoning);
-                let _ = agent
-                    .send_update(&args.session_id, acp::SessionUpdate::AgentThoughtChunk(chunk))
-                    .await;
+                drop(
+                    agent
+                        .send_update(&args.session_id, acp::SessionUpdate::AgentThoughtChunk(chunk))
+                        .await,
+                );
             }
 
             stop_reason = ZedAgent::stop_reason_from_finish(response.finish_reason);
@@ -579,10 +593,10 @@ async fn run_prompt(agent: Arc<ZedAgent>, args: PromptRequest) -> Result<PromptR
 
     if stop_reason != acp::StopReason::Cancelled {
         if plan.complete_context() {
-            let _ = agent.send_plan_update(&args.session_id, &plan).await;
+            drop(agent.send_plan_update(&args.session_id, &plan).await);
         }
         if plan.complete_response() {
-            let _ = agent.send_plan_update(&args.session_id, &plan).await;
+            drop(agent.send_plan_update(&args.session_id, &plan).await);
         }
     }
 

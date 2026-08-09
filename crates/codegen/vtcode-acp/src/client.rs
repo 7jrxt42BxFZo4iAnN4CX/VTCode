@@ -20,7 +20,7 @@ pub(crate) struct AcpClient {
     registry: AgentRegistry,
 
     /// Request timeout
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
     timeout: Duration,
 }
 
@@ -111,7 +111,7 @@ impl AcpClient {
         }
 
         // Async calls may not wait for response
-        let _ = self.send_request(&agent_info.base_url, &message).await;
+        drop(self.send_request(&agent_info.base_url, &message).await);
 
         trace!(
             remote_agent = remote_agent_id,
@@ -202,12 +202,12 @@ impl AcpClient {
             Ok(response) => {
                 let is_healthy = response.status().is_success();
                 if is_healthy {
-                    let _ = self.registry.update_status(remote_agent_id, true).await;
+                    drop(self.registry.update_status(remote_agent_id, true).await);
                 }
                 Ok(is_healthy)
             }
             Err(_) => {
-                let _ = self.registry.update_status(remote_agent_id, false).await;
+                drop(self.registry.update_status(remote_agent_id, false).await);
                 Ok(false)
             }
         }

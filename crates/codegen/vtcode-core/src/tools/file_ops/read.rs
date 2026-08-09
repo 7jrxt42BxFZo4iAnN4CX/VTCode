@@ -1062,7 +1062,10 @@ mod read_tests {
         // Should indicate truncation
         assert!(result["is_truncated"].as_bool().unwrap());
         // Should report applied token budget
-        #[allow(clippy::cast_sign_loss)]
+        #[allow(
+            clippy::cast_sign_loss,
+            reason = "Intentional compatibility, platform, or test-only suppression."
+        )]
         let expected_max_tokens = max_tokens as u64; // safe: max_tokens is positive literal
         assert_eq!(result["metadata"]["data"]["applied_max_tokens"].as_u64().unwrap(), expected_max_tokens,);
     }

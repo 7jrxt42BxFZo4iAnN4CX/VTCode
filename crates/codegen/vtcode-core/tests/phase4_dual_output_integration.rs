@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 //! Integration test for Phase 4: Split Tool Results
 //!
 //! Demonstrates dual-output execution with real tools showing token savings.
@@ -233,7 +236,7 @@ async fn test_apply_patch_dual_output() -> Result<()> {
         .expect("apply_patch execution should succeed");
 
     // Cleanup
-    let _ = fs::remove_file(&test_file);
+    drop(fs::remove_file(&test_file));
 
     // Verify: Dual output structure
     assert!(!result.llm_content.is_empty());

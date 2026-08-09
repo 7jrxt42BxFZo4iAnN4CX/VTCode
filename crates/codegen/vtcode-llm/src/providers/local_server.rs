@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use tokio::process::Child;
 
+use crate::process_env::{sanitize_std_command_environment, sanitize_tokio_command_environment};
 use vtcode_config::constants::{env_vars, urls};
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -452,6 +453,7 @@ async fn start_ollama() -> Result<String> {
 
     let binary = caps.binary_path.unwrap_or_else(|| "ollama".to_string());
     let mut cmd = tokio::process::Command::new(&binary);
+    sanitize_tokio_command_environment(&mut cmd, &[]);
     cmd.arg("serve")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -487,7 +489,9 @@ async fn start_lmstudio() -> Result<String> {
     }
 
     let binary = caps.binary_path.unwrap_or_else(|| "lms".to_string());
-    let output = tokio::process::Command::new(&binary)
+    let mut command = tokio::process::Command::new(&binary);
+    sanitize_tokio_command_environment(&mut command, &[]);
+    let output = command
         .args(["server", "start"])
         .output()
         .await
@@ -543,6 +547,7 @@ async fn start_llamacpp() -> Result<String> {
     }
 
     let mut cmd = tokio::process::Command::new(&binary);
+    sanitize_tokio_command_environment(&mut cmd, &[]);
     cmd.args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -595,7 +600,9 @@ async fn stop_lmstudio() -> Result<String> {
     }
 
     let binary = caps.binary_path.unwrap_or_else(|| "lms".to_string());
-    let output = tokio::process::Command::new(&binary)
+    let mut command = tokio::process::Command::new(&binary);
+    sanitize_tokio_command_environment(&mut command, &[]);
+    let output = command
         .args(["server", "stop"])
         .output()
         .await

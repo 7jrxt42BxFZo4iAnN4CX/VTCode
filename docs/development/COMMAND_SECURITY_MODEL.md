@@ -289,6 +289,44 @@ PATH = { append = ["$HOME/.cargo/bin"] }
 HOME = "$HOME"
 ```
 
+### Sandbox environment inheritance
+
+Restrictive policies apply to active pipe and PTY sessions as well as direct
+command launches. The sandbox environment builder removes credential, token,
+cloud-provider, linker, and dynamic-loader variables case-insensitively. Extra
+environment entries supplied by a command override are filtered through the
+same rule, so an override cannot restore a sensitive inherited variable.
+
+MCP stdio launches use the same `SandboxManager` transformation through
+`McpSandboxContext`; the context is inherited by initial connections, pool
+workers, and reconnects. `McpClient::new` remains a compatibility constructor
+for unsandboxed library callers. MCP stderr is capped and secret-redacted
+before logging.
+
+The platform contract is intentionally conservative. Linux restrictive
+policies require the configured helper. Windows restrictive policies return an
+explicit unsupported error because native restricted-token isolation is not
+implemented. macOS keeps full-network and blocked-network modes, but rejects
+hostname allowlists rather than widening them to port-wide access: Seatbelt is
+not a documented, reliable third-party domain-filtering contract.
+
+### Provider diagnostics
+
+All provider error metadata, user-facing messages, logs, OpenRouter fallback
+errors, OpenAI diagnostics, legacy provider errors, and custom auth-command
+stderr use the bounded provider diagnostic sanitizer. HTTP error streams are
+capped at 16 KiB before parsing; the sanitizer is UTF-8-safe, caps exposed
+diagnostics at 8 KiB, and redacts API keys, bearer tokens, cloud credentials,
+and generic secret assignments. Status codes, request IDs, retry metadata,
+classification, and 401 refresh behavior are preserved separately from the
+diagnostic text.
+
+Provider-owned child processes also receive a filtered inherited environment.
+Local model-server helpers and custom provider auth commands exclude unrelated
+API keys, cloud credentials, tokens, linker overrides, and dynamic-loader
+variables. Copilot and its optional `gh` probe receive only their documented
+GitHub authentication variables as explicit exceptions.
+
 ## Audit & Logging
 
 The permission system logs all decisions for security and debugging:

@@ -89,7 +89,10 @@ pub(super) struct CopilotRuntimeHost<'a> {
 }
 
 impl<'a> CopilotRuntimeHost<'a> {
-    #[expect(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     pub(super) fn new(
         tool_registry: &'a mut ToolRegistry,
         tool_result_cache: &'a Arc<RwLock<vtcode_core::tools::ToolResultCache>>,

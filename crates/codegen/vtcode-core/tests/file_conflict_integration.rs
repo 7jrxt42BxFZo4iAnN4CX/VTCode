@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use anyhow::Result;
 use serde_json::json;
 use tempfile::TempDir;
@@ -19,7 +22,7 @@ async fn write_file_returns_conflict_when_disk_changed_since_read() -> Result<()
     let path = workspace.path().join("sample.txt");
     std::fs::write(&path, "before\n")?;
 
-    registry.read_file(json!({ "path": "sample.txt" })).await?;
+    let _initial_read = registry.read_file(json!({ "path": "sample.txt" })).await?;
     std::fs::write(&path, "external\n")?;
 
     let result = registry
@@ -45,7 +48,7 @@ async fn edit_file_returns_conflict_with_intended_content() -> Result<()> {
     let path = workspace.path().join("sample.txt");
     std::fs::write(&path, "before\n")?;
 
-    registry.read_file(json!({ "path": "sample.txt" })).await?;
+    let _initial_read = registry.read_file(json!({ "path": "sample.txt" })).await?;
     std::fs::write(&path, "external\n")?;
 
     let result = registry
@@ -71,7 +74,7 @@ async fn apply_patch_returns_conflict_without_partial_write() -> Result<()> {
     let path = workspace.path().join("sample.txt");
     std::fs::write(&path, "before\n")?;
 
-    registry.read_file(json!({ "path": "sample.txt" })).await?;
+    let _initial_read = registry.read_file(json!({ "path": "sample.txt" })).await?;
     std::fs::write(&path, "external\n")?;
 
     let patch = "\
@@ -107,7 +110,7 @@ async fn override_snapshot_requires_latest_disk_state() -> Result<()> {
     let path = workspace.path().join("sample.txt");
     std::fs::write(&path, "before\n")?;
 
-    registry.read_file(json!({ "path": "sample.txt" })).await?;
+    let _initial_read = registry.read_file(json!({ "path": "sample.txt" })).await?;
     std::fs::write(&path, "external one\n")?;
 
     let initial_conflict = registry

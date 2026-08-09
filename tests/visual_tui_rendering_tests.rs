@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 //! TUI backend smoke tests.
 //!
 //! These tests exercise `TestBackend` sizing and session command plumbing.
@@ -43,7 +46,7 @@ async fn test_tui_backend_smoke_user_agent_exchange() {
     let mut terminal = Terminal::new(backend).unwrap();
 
     // Snapshot the initial clear terminal state.
-    terminal
+    let _frame = terminal
         .draw(|f| {
             let _area = f.area();
             // This smoke path verifies backend sizing only.
@@ -76,7 +79,7 @@ async fn test_tui_backend_smoke_user_agent_exchange() {
     assert_eq!(drain_append_lines(&mut command_rx).len(), 2);
 
     // Draw without the session widget; the backend should remain blank.
-    terminal
+    let _frame = terminal
         .draw(|f| {
             let _area = f.area();
         })
@@ -111,7 +114,7 @@ async fn test_tui_backend_smoke_code_content() {
     );
     assert_eq!(drain_append_lines(&mut command_rx).len(), 2);
 
-    terminal
+    let _frame = terminal
         .draw(|f| {
             let _area = f.area();
             assert!(_area.width == 100);
@@ -166,7 +169,7 @@ async fn test_tui_backend_smoke_tool_output() {
     );
     assert_eq!(drain_append_lines(&mut command_rx).len(), 4);
 
-    terminal
+    let _frame = terminal
         .draw(|f| {
             let _area = f.area();
             assert!(_area.width == 80);
@@ -221,7 +224,7 @@ async fn test_tui_backend_smoke_error_content() {
     );
     assert_eq!(drain_append_lines(&mut command_rx).len(), 4);
 
-    terminal
+    let _frame = terminal
         .draw(|f| {
             let _area = f.area();
             assert!(_area.width == 80);
@@ -282,7 +285,7 @@ async fn test_tui_backend_smoke_header_variations() {
         );
         assert_eq!(drain_append_lines(&mut command_rx).len(), 1);
 
-        terminal
+        let _frame = terminal
             .draw(|f| {
                 let _area = f.area();
                 assert!(_area.width == 80);

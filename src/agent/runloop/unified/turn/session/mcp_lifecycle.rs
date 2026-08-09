@@ -30,7 +30,10 @@ fn decide_refresh_action(pending_refresh: bool, tool_list_changed: bool) -> Refr
     }
 }
 
-#[expect(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 pub(crate) async fn handle_mcp_updates(
     mcp_manager: &AsyncMcpManager,
     tool_registry: &mut vtcode_core::tools::registry::ToolRegistry,

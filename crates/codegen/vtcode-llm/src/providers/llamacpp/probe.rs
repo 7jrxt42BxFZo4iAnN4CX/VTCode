@@ -83,7 +83,7 @@ pub(super) async fn probe_server(base_url: &str) -> ServerProbe {
     }
 
     let status = response.status();
-    let body = response.text().await.unwrap_or_default();
+    let body = crate::providers::common::read_provider_error_body(response).await;
     if status == reqwest::StatusCode::SERVICE_UNAVAILABLE && body.to_ascii_lowercase().contains("loading") {
         return ServerProbe::Loading;
     }

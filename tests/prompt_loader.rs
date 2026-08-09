@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 /// Integration tests for system prompt loading functionality
 /// This test ensures the prompt loading system works correctly and provides good error messages.
 use assert_fs::TempDir;

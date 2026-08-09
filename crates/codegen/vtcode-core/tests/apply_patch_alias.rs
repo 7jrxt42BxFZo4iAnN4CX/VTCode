@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use serde_json::json;
 use tempfile::TempDir;
 use vtcode_core::tools::ToolRegistry;

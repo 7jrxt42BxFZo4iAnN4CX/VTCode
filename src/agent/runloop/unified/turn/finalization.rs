@@ -1,4 +1,7 @@
-#![allow(clippy::too_many_arguments)]
+#![allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use anyhow::Result;
 use std::io;
 use std::path::PathBuf;

@@ -1,4 +1,8 @@
-#![allow(missing_docs, clippy::expect_used)]
+#![allow(
+    missing_docs,
+    clippy::expect_used,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 
 use std::hint::black_box;
 use std::num::NonZero;
@@ -81,7 +85,7 @@ fn request_plan_benchmark(c: &mut Criterion) {
     let tools = sample_tools(24);
     let messages = sample_messages(32);
 
-    c.bench_function("agent_harness_request_plan_with_tools", |b| {
+    let _benchmark = c.bench_function("agent_harness_request_plan_with_tools", |b| {
         b.iter(|| {
             black_box(build_harness_request_plan(HarnessRequestPlanInput {
                 messages: Arc::new(messages.clone()),
@@ -120,7 +124,7 @@ fn prepared_batch_planning_benchmark(c: &mut Criterion) {
         })
         .collect();
 
-    c.bench_function("agent_harness_prepared_batch_plan", |b| {
+    let _benchmark = c.bench_function("agent_harness_prepared_batch_plan", |b| {
         b.iter(|| black_box(PreparedToolBatch::plan(calls.clone(), true)))
     });
 }
@@ -134,7 +138,7 @@ fn tool_catalog_projection_benchmark(c: &mut Criterion) {
         let _ = state.filtered_snapshot_with_stats(&tools, true, false).await;
     });
 
-    c.bench_function("agent_harness_tool_catalog_cache_hit", |b| {
+    let _benchmark = c.bench_function("agent_harness_tool_catalog_cache_hit", |b| {
         b.iter(|| {
             let state = Arc::clone(&state);
             let tools = Arc::clone(&tools);
@@ -142,12 +146,12 @@ fn tool_catalog_projection_benchmark(c: &mut Criterion) {
         })
     });
 
-    c.bench_function("agent_harness_tool_catalog_cache_miss", |b| {
+    let _benchmark = c.bench_function("agent_harness_tool_catalog_cache_miss", |b| {
         b.iter(|| {
             let state = Arc::clone(&state);
             let tools = Arc::clone(&tools);
             runtime.block_on(async move {
-                state.note_explicit_refresh("benchmark");
+                let _refresh_count = state.note_explicit_refresh("benchmark");
                 black_box(state.filtered_snapshot_with_stats(&tools, true, false).await)
             })
         })
@@ -157,7 +161,7 @@ fn tool_catalog_projection_benchmark(c: &mut Criterion) {
     let catalog_config = benchmark_tool_catalog_config();
     let _ = catalog.schema_entries(catalog_config.clone());
     let _ = catalog.model_tools(catalog_config.clone());
-    c.bench_function("agent_harness_tool_catalog_projection_repeat", |b| {
+    let _benchmark = c.bench_function("agent_harness_tool_catalog_projection_repeat", |b| {
         b.iter(|| {
             let schemas = catalog.schema_entries(catalog_config.clone());
             let definitions = catalog.model_tools(catalog_config.clone());
@@ -178,13 +182,13 @@ fn prompt_resource_cache_hit_benchmark(c: &mut Criterion) {
 
     let first = FewShotStore::load(Some(workspace.path()), None);
     assert_eq!(first.len(), 1);
-    c.bench_function("prompt_resource_cache_hit_few_shot", |b| {
+    let _benchmark = c.bench_function("prompt_resource_cache_hit_few_shot", |b| {
         b.iter(|| black_box(FewShotStore::load(Some(workspace.path()), None)))
     });
 
     let runtime = Runtime::new().expect("criterion tokio runtime");
-    runtime.block_on(resolve_system_prompt_layers(workspace.path()));
-    c.bench_function("prompt_resource_cache_hit_system_layers", |b| {
+    let _warmup_layers = runtime.block_on(resolve_system_prompt_layers(workspace.path()));
+    let _benchmark = c.bench_function("prompt_resource_cache_hit_system_layers", |b| {
         b.iter(|| runtime.block_on(async { black_box(resolve_system_prompt_layers(workspace.path()).await) }))
     });
 }
@@ -202,7 +206,7 @@ fn few_shot_selection_benchmark(c: &mut Criterion) {
         .collect();
     let store = FewShotStore::from_examples(examples);
 
-    c.bench_function("few_shot_selection_normalized_query", |b| {
+    let _benchmark = c.bench_function("few_shot_selection_normalized_query", |b| {
         b.iter(|| black_box(store.select("please search topic-37 before editing", 800)))
     });
 }
@@ -213,7 +217,7 @@ fn tool_definition_sorting_benchmark(c: &mut Criterion) {
         .map(|index| sample_tool(&format!("catalog_tool_{index:03}")))
         .collect::<Vec<_>>();
 
-    c.bench_function("tool_definition_sorting_catalog_refresh", |b| {
+    let _benchmark = c.bench_function("tool_definition_sorting_catalog_refresh", |b| {
         b.iter(|| black_box(sort_tool_definitions(tools.clone())))
     });
 }
@@ -229,14 +233,14 @@ fn file_search_benchmarks(c: &mut Criterion) {
     }
 
     let runtime = Runtime::new().expect("criterion tokio runtime");
-    c.bench_function("agent_harness_file_search_uncached", |b| {
+    let _benchmark = c.bench_function("agent_harness_file_search_uncached", |b| {
         b.iter(|| {
             let result = run(indexed_search_config(workspace.path())).expect("uncached file search");
             black_box((result.matches.len(), result.total_match_count))
         })
     });
 
-    c.bench_function("agent_harness_file_index_build", |b| {
+    let _benchmark = c.bench_function("agent_harness_file_index_build", |b| {
         b.iter_batched(
             || FileIndexCache::new(workspace.path().to_path_buf(), Vec::new(), false, 4),
             |cache| {
@@ -250,11 +254,11 @@ fn file_search_benchmarks(c: &mut Criterion) {
     });
 
     let cache = FileIndexCache::new(workspace.path().to_path_buf(), Vec::new(), false, 4);
-    runtime
+    let _warmup_results = runtime
         .block_on(run_with_index(indexed_search_config(workspace.path()), &cache))
         .expect("warm indexed search");
 
-    c.bench_function("indexed_file_search_scoring_cache_hit", |b| {
+    let _benchmark = c.bench_function("indexed_file_search_scoring_cache_hit", |b| {
         b.iter(|| {
             let result = runtime
                 .block_on(run_with_index(indexed_search_config(workspace.path()), &cache))

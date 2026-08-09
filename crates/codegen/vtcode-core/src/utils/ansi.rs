@@ -1107,7 +1107,10 @@ impl InlineSink {
         self.handle.close_modal();
     }
 
-    #[expect(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     fn clear_screen(&self) {
         self.handle.clear_screen();
     }

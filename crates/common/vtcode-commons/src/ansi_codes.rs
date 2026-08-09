@@ -1,3 +1,8 @@
+#![expect(
+    clippy::let_underscore_must_use,
+    reason = "ANSI output cleanup intentionally ignores the best-effort flush result."
+)]
+
 //! Shared ANSI escape sequence constants and small builders for VT Code.
 //!
 //! See `docs/reference/ansi-in-vtcode.md` for the cross-crate integration map.

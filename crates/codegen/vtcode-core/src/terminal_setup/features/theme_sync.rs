@@ -211,7 +211,10 @@ fn lab_f_inv(value: f64) -> f64 {
 }
 
 fn to_u8(value: f64) -> u8 {
-    #[allow(clippy::cast_sign_loss)]
+    #[allow(
+        clippy::cast_sign_loss,
+        reason = "Intentional compatibility, platform, or test-only suppression."
+    )]
     {
         (value.clamp(0.0, 1.0) * 255.0).round() as u8
     }

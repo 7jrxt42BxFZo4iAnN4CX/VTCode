@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStderr, ChildStdout};
 use tokio::time::timeout;
+use vtcode_commons::sanitizer::sanitize_provider_diagnostic;
 use vtcode_config::auth::CopilotAuthConfig;
 
 use super::command::{resolve_copilot_command, spawn_copilot_server_process};
@@ -101,7 +102,8 @@ fn spawn_server_stderr(stderr: ChildStderr) {
         while let Ok(Some(line)) = lines.next_line().await {
             let trimmed = line.trim();
             if !trimmed.is_empty() {
-                tracing::debug!(target: "copilot.server.stderr", "{}", trimmed);
+                let safe_line = sanitize_provider_diagnostic(trimmed.as_bytes());
+                tracing::debug!(target: "copilot.server.stderr", "{}", safe_line);
             }
         }
     });

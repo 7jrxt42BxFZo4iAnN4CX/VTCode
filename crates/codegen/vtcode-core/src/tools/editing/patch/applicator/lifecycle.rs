@@ -18,7 +18,10 @@ impl OperationEffect {
     }
 }
 
-#[expect(clippy::enum_variant_names)]
+#[expect(
+    clippy::enum_variant_names,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 pub(crate) enum OperationState {
     AddedFile {
         path: PathBuf,

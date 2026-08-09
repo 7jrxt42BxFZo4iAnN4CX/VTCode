@@ -155,7 +155,10 @@ impl CacheLookupPhase {
 }
 
 #[cfg_attr(feature = "profiling", hotpath::measure)]
-#[allow(clippy::too_many_arguments)] // pipeline function, all params needed
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)] // pipeline function, all params needed
 pub(super) async fn execute_with_cache_and_streaming(
     registry: &mut ToolRegistry,
     tool_result_cache: &Arc<tokio::sync::RwLock<ToolResultCache>>,
@@ -194,7 +197,10 @@ pub(super) async fn execute_with_cache_and_streaming(
     .await
 }
 
-#[allow(clippy::too_many_arguments)] // internal pipeline function, all params needed
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)] // internal pipeline function, all params needed
 async fn execute_with_cache_and_streaming_inner(
     registry: &mut ToolRegistry,
     tool_result_cache: &Arc<tokio::sync::RwLock<ToolResultCache>>,

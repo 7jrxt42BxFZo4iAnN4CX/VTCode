@@ -1,4 +1,8 @@
-#![allow(missing_docs, clippy::expect_used)]
+#![allow(
+    missing_docs,
+    clippy::expect_used,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 use assert_cmd::Command;
 use predicates::str::contains;
 use tempfile::TempDir;
@@ -6,7 +10,8 @@ use tempfile::TempDir;
 fn isolated_vtcode_command() -> (TempDir, Command) {
     let home = tempfile::tempdir().expect("create temp home");
     let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("vtcode");
-    cmd.env("HOME", home.path())
+    let _configured_command = cmd
+        .env("HOME", home.path())
         .env("VTCODE_CONFIG", home.path())
         .env_remove("VTCODE_CONFIG_PATH")
         .current_dir(home.path())
@@ -17,22 +22,22 @@ fn isolated_vtcode_command() -> (TempDir, Command) {
 #[test]
 fn vtcode_help_command_succeeds() {
     let (_home, mut cmd) = isolated_vtcode_command();
-    cmd.arg("--help");
-    cmd.assert().success();
+    let _argument = cmd.arg("--help");
+    let _assertion = cmd.assert().success();
 }
 
 #[test]
 fn vtcode_tool_policy_status_succeeds() {
     let (_home, mut cmd) = isolated_vtcode_command();
-    cmd.arg("tool-policy").arg("status");
-    cmd.assert().success();
+    let _argument = cmd.arg("tool-policy").arg("status");
+    let _assertion = cmd.assert().success();
 }
 
 #[test]
 fn vtcode_tool_policy_help_succeeds() {
     let (_home, mut cmd) = isolated_vtcode_command();
-    cmd.arg("tool-policy").arg("--help");
-    cmd.assert().success();
+    let _argument = cmd.arg("tool-policy").arg("--help");
+    let _assertion = cmd.assert().success();
 }
 
 #[test]
@@ -41,13 +46,13 @@ fn vtcode_positional_workspace_with_tool_policy_status_succeeds() {
     let workspace = home.path().join("workspace");
     std::fs::create_dir(&workspace).expect("create workspace");
 
-    cmd.arg("workspace").arg("tool-policy").arg("status");
-    cmd.assert().success();
+    let _argument = cmd.arg("workspace").arg("tool-policy").arg("status");
+    let _assertion = cmd.assert().success();
 }
 
 #[test]
 fn vtcode_invalid_option_shows_usage_help() {
     let (_home, mut cmd) = isolated_vtcode_command();
-    cmd.arg("--definitely-invalid-option");
-    cmd.assert().failure().stderr(contains("Usage: vtcode"));
+    let _argument = cmd.arg("--definitely-invalid-option");
+    let _assertion = cmd.assert().failure().stderr(contains("Usage: vtcode"));
 }

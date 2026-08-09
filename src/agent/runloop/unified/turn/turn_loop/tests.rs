@@ -672,7 +672,10 @@ fn count_assistant_text_responses_in_turn_zero_for_empty_history() {
 }
 
 #[test]
-#[allow(clippy::vec_init_then_push)]
+#[allow(
+    clippy::vec_init_then_push,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 fn count_assistant_text_responses_in_turn_skips_tool_call_messages() {
     let mut history: Vec<uni::Message> = Vec::new();
     // First assistant message has a tool call -> not counted

@@ -1,6 +1,9 @@
 //! Timeline presentation helpers for share-log exports.
 
-#![allow(clippy::let_underscore_must_use)]
+#![allow(
+    clippy::let_underscore_must_use,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 
 use std::fmt::Write as _;
 
@@ -673,7 +676,10 @@ pub(super) fn render_session_timeline_html(export: &TimelineExport, session_log_
     Ok(html)
 }
 
-#[expect(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 fn timeline_row(
     sequence: u64,
     source: &str,

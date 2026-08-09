@@ -4,6 +4,7 @@
 //! code duplication across provider implementations.
 
 use crate::provider::{LLMError, LLMRequest, LLMResponse, Message, ToolDefinition};
+use crate::providers::common::read_provider_error_body;
 use async_trait::async_trait;
 use hashbrown::HashMap;
 use reqwest::{Client as HttpClient, StatusCode};
@@ -12,6 +13,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::{sleep, timeout};
+use vtcode_commons::sanitizer::sanitize_provider_diagnostic;
 
 const DEFAULT_MAX_INFLIGHT_PER_MODEL: usize = 4;
 const RATE_LIMIT_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -49,6 +51,7 @@ impl ProviderConfig {
 
 /// Common HTTP error handling for all providers
 fn handle_http_error(status: StatusCode, error_text: &str, _model: &str) -> LLMError {
+    let error_text = sanitize_provider_diagnostic(error_text.as_bytes());
     match status {
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => LLMError::Authentication {
             message: format!("Authentication failed ({status}): {error_text}"),
@@ -183,7 +186,13 @@ trait BaseProvider: Send + Sync {
                         Ok(response) => {
                             let status = response.status();
 
-                            match response.text().await {
+                            let response_text = if status.is_success() {
+                                response.text().await
+                            } else {
+                                Ok(read_provider_error_body(response).await)
+                            };
+
+                            match response_text {
                                 Ok(text) => {
                                     // Try to parse as JSON first
                                     match serde_json::from_str::<Value>(&text) {

@@ -65,7 +65,10 @@ mod memory_integration {
         }
 
         // Verify memory stayed bounded
-        #[allow(clippy::cast_sign_loss)]
+        #[allow(
+            clippy::cast_sign_loss,
+            reason = "Intentional compatibility, platform, or test-only suppression."
+        )]
         let max_with_overshoot = ((MAX_BUFFER_SIZE as f64 * 1.1).max(0.0)) as usize;
         assert!(
             total_bytes <= max_with_overshoot, // Allow 10% overshoot
@@ -101,7 +104,10 @@ mod memory_integration {
         let max_expected_memory = CACHE_SIZE * ENTRY_SIZE;
         let actual_memory = cache.stats().total_memory_bytes as usize;
 
-        #[allow(clippy::cast_sign_loss)]
+        #[allow(
+            clippy::cast_sign_loss,
+            reason = "Intentional compatibility, platform, or test-only suppression."
+        )]
         let max_with_overshoot = ((max_expected_memory as f64 * 1.1).max(0.0)) as usize;
         assert!(
             actual_memory <= max_with_overshoot,

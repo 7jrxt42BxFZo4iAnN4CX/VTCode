@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 //! Basic MCP Integration Tests
 //!
 //! These tests verify that MCP configuration and basic functionality work correctly.
@@ -102,8 +105,8 @@ mod tests {
     #[test]
     fn test_provider_environment_variables() {
         let mut env_vars = HashMap::new();
-        env_vars.insert("API_KEY".to_string(), "secret_key".to_string());
-        env_vars.insert("DEBUG".to_string(), "true".to_string());
+        drop(env_vars.insert("API_KEY".to_string(), "secret_key".to_string()));
+        drop(env_vars.insert("DEBUG".to_string(), "true".to_string()));
 
         let provider_config = McpProviderConfig {
             name: "test_provider".to_string(),

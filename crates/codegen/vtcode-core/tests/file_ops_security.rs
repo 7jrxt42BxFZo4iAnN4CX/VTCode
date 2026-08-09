@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use assert_fs::TempDir;
 use serde_json::json;
 use std::sync::Arc;
@@ -10,7 +13,7 @@ async fn create_file_rejects_workspace_escape() {
     let workspace = TempDir::new().expect("temp workspace");
     let outside = workspace.path().parent().expect("temp dir parent").join("outside.txt");
     if outside.exists() {
-        let _ = tokio::fs::remove_file(&outside).await;
+        drop(tokio::fs::remove_file(&outside).await);
     }
 
     let grep_manager = Arc::new(GrepSearchManager::new(workspace.path().to_path_buf()));
@@ -70,7 +73,7 @@ async fn copy_file_rejects_workspace_escape_destination() {
         .expect("temp dir parent")
         .join("outside-copy-destination.txt");
     if outside.exists() {
-        let _ = tokio::fs::remove_file(&outside).await;
+        drop(tokio::fs::remove_file(&outside).await);
     }
 
     let grep_manager = Arc::new(GrepSearchManager::new(workspace.path().to_path_buf()));
@@ -104,7 +107,7 @@ async fn move_file_rejects_workspace_escape_destination() {
         .expect("temp dir parent")
         .join("outside-move-destination.txt");
     if outside.exists() {
-        let _ = tokio::fs::remove_file(&outside).await;
+        drop(tokio::fs::remove_file(&outside).await);
     }
 
     let grep_manager = Arc::new(GrepSearchManager::new(workspace.path().to_path_buf()));
@@ -138,7 +141,7 @@ async fn copy_file_rejects_workspace_escape_source() {
         .expect("outside source file should be created");
     let inside_destination = workspace.path().join("inside-copy-destination.txt");
     if inside_destination.exists() {
-        let _ = tokio::fs::remove_file(&inside_destination).await;
+        drop(tokio::fs::remove_file(&inside_destination).await);
     }
 
     let grep_manager = Arc::new(GrepSearchManager::new(workspace.path().to_path_buf()));

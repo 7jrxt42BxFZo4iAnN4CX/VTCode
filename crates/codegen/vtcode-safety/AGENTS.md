@@ -23,3 +23,4 @@
 - `sandboxing/` uses tree-sitter for Bash AST analysis — pinned to specific versions.
 - `command_safety::shell_parser` must extract nested simple commands from loops/conditionals so safety checks and approval caching see loop bodies, not just top-level shell syntax.
 - `command_safety::shell_parser` owns dynamic-shell-syntax detection; `find` expansion must fail closed before preflight or learned approval.
+- Sandboxed pipe/PTy and MCP stdio launches filter sensitive environment names after overrides; macOS hostname allowlists reject unenforceable policies, and unsupported Windows restrictions fail closed.

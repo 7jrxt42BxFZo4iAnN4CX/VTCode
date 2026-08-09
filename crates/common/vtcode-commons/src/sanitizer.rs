@@ -13,7 +13,7 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 /// OpenAI API key pattern: sk- followed by alphanumeric characters
-static OPENAI_KEY_REGEX: LazyLock<Regex> = LazyLock::new(|| compile_regex(r"sk-[A-Za-z0-9]{20,}"));
+static OPENAI_KEY_REGEX: LazyLock<Regex> = LazyLock::new(|| compile_regex(r"sk-[A-Za-z0-9_-]{16,}"));
 
 /// AWS Access Key ID pattern: AKIA followed by 16 alphanumeric characters
 static AWS_ACCESS_KEY_ID_REGEX: LazyLock<Regex> = LazyLock::new(|| compile_regex(r"\bAKIA[0-9A-Z]{16}\b"));
@@ -23,8 +23,15 @@ static BEARER_TOKEN_REGEX: LazyLock<Regex> = LazyLock::new(|| compile_regex(r"(?
 
 /// Generic secret assignment pattern: key=value or key: value format
 /// Matches common secret key names like api_key, token, secret, password
-static SECRET_ASSIGNMENT_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| compile_regex(r#"(?i)\b(api[\-_]?key|token|secret|password)\b(\s*[:=]\s*)(["']?)[^\s"']{8,}"#));
+static SECRET_ASSIGNMENT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    compile_regex(
+        r#"(?i)\b((?:[a-z0-9][a-z0-9_-]*?)?(?:api[\-_]?key|access[\-_]?key|client[\-_]?secret|credential|private[\-_]?key|token|secret|password|auth)[a-z0-9_-]*)\b(\s*[:=]\s*)(["']?)[^\s"']{8,}"#,
+    )
+});
+
+/// Maximum serialized size of a provider diagnostic after redaction.
+pub const PROVIDER_DIAGNOSTIC_MAX_BYTES: usize = 8 * 1024;
+const PROVIDER_DIAGNOSTIC_TRUNCATION_MARKER: &str = "… [diagnostic truncated]";
 
 /// Redact secrets and sensitive keys from a string.
 ///
@@ -51,6 +58,24 @@ pub fn redact_secrets(input: String) -> String {
     // the final Cow is `Borrowed` whenever the *last* regex doesn't match,
     // even if earlier regexes did, which would silently discard redactions.
     r4.into_owned()
+}
+
+/// Redact secrets and return a bounded, UTF-8-safe provider diagnostic.
+///
+/// The input is sampled with a carry window so a secret beginning near the
+/// output boundary is still redacted before the final size limit is applied.
+pub fn sanitize_provider_diagnostic(input: impl AsRef<[u8]>) -> String {
+    let input = input.as_ref();
+    let sample_len = input.len().min(PROVIDER_DIAGNOSTIC_MAX_BYTES + STREAMING_REDACTION_CARRY_BYTES);
+    let sample = String::from_utf8_lossy(input.get(..sample_len).unwrap_or(input));
+    let redacted = redact_secrets(sample.into_owned());
+    if redacted.len() <= PROVIDER_DIAGNOSTIC_MAX_BYTES {
+        return redacted;
+    }
+
+    let content_limit = PROVIDER_DIAGNOSTIC_MAX_BYTES.saturating_sub(PROVIDER_DIAGNOSTIC_TRUNCATION_MARKER.len());
+    let end = redacted.floor_char_boundary(content_limit);
+    format!("{}{}", redacted.get(..end).unwrap_or(&redacted), PROVIDER_DIAGNOSTIC_TRUNCATION_MARKER)
 }
 
 /// Incrementally redact streamed output without retaining the full stream.
@@ -91,7 +116,10 @@ impl StreamingSecretRedactor {
     }
 }
 
-#[allow(clippy::panic)]
+#[allow(
+    clippy::panic,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 fn compile_regex(pattern: &str) -> Regex {
     match Regex::new(pattern) {
         Ok(regex) => regex,
@@ -187,5 +215,20 @@ mod tests {
 
         assert_eq!(output, "password=[REDACTED_SECRET]\n");
         assert!(!output.contains("supersecretvalue"));
+    }
+
+    #[test]
+    fn provider_diagnostic_is_bounded_utf8_safe_and_redacted() {
+        let mut input = b"api_key=diagnostic-secret-value Bearer abcdefghijklmnop ".to_vec();
+        input.extend(std::iter::repeat_n(b'x', 20_000));
+        input.extend_from_slice("終端".as_bytes());
+        input.push(0xff);
+
+        let output = sanitize_provider_diagnostic(input);
+
+        assert!(output.len() <= PROVIDER_DIAGNOSTIC_MAX_BYTES);
+        assert!(output.is_char_boundary(output.len()));
+        assert!(!output.contains("diagnostic-secret-value"));
+        assert!(!output.contains("abcdefghijklmnop"));
     }
 }

@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 //! MCP Integration Tests
 //!
 //! Tests for MCP (Model Context Protocol) functionality including
@@ -303,7 +306,7 @@ max_concurrent_requests = 1
             },
             ..Default::default()
         };
-        config.providers.insert("time".to_string(), provider_rules);
+        drop(config.providers.insert("time".to_string(), provider_rules));
 
         // Test default rules
         assert!(config.is_tool_allowed("other", "get_current_time"));
@@ -318,8 +321,8 @@ max_concurrent_requests = 1
     #[test]
     fn test_provider_environment_variables() {
         let mut env_vars = HashMap::new();
-        env_vars.insert("API_KEY".to_string(), "secret_key".to_string());
-        env_vars.insert("DEBUG".to_string(), "true".to_string());
+        drop(env_vars.insert("API_KEY".to_string(), "secret_key".to_string()));
+        drop(env_vars.insert("DEBUG".to_string(), "true".to_string()));
 
         let provider_config = McpProviderConfig {
             name: "test_provider".to_string(),

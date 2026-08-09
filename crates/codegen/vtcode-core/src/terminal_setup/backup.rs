@@ -15,7 +15,10 @@ const MAX_BACKUPS: usize = 5;
 
 /// Manages configuration file backups for terminal setup
 pub struct ConfigBackupManager {
-    #[expect(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     terminal_type: TerminalType,
 }
 

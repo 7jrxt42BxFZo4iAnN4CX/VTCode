@@ -17,7 +17,10 @@ pub(crate) use references::extract_file_reference;
 /// pairs with absolute paths. Supplied by the runloop (which owns the indexer) so
 /// the UI crate stays free of indexing logic and dependencies.
 #[derive(Clone)]
-#[allow(clippy::type_complexity)]
+#[allow(
+    clippy::type_complexity,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 pub struct DirLister(Arc<dyn Fn(&Path) -> Vec<(PathBuf, bool)> + Send + Sync>);
 
 impl DirLister {

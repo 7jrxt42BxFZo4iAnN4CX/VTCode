@@ -1,4 +1,9 @@
-#![allow(missing_docs, clippy::expect_used, clippy::unwrap_used)]
+#![allow(
+    missing_docs,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use serde_json::{Value, json};
 use std::fs;
 use tempfile::TempDir;
@@ -12,8 +17,15 @@ async fn setup_registry(root: &std::path::Path) -> ToolRegistry {
 }
 
 fn combined_error_message(result: &Value) -> String {
-    let message = result["error"]["message"].as_str().unwrap_or_default();
-    let original = result["error"]["original_error"].as_str().unwrap_or_default();
+    let error = result.get("error");
+    let message = error
+        .and_then(|error| error.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let original = error
+        .and_then(|error| error.get("original_error"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     if original.is_empty() {
         message.to_string()
     } else {

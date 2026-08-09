@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use assert_fs::TempDir;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;

@@ -36,7 +36,10 @@ pub(crate) struct InlineModalProcessor<'a> {
 }
 
 impl<'a> InlineModalProcessor<'a> {
-    #[expect(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     pub(crate) fn new(
         handle: &'a InlineHandle,
         header_context: &'a mut InlineHeaderContext,

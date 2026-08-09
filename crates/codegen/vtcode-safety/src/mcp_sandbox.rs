@@ -10,12 +10,13 @@
 //!
 //! This module composes a derived [`SandboxPolicy`] for each MCP server from
 //! the user-supplied parent policy and the per-server configuration. The
-//! [`McpSandboxWrapper`] type describes the platform-specific command
-//! prepending (Seatbelt on macOS, `sandbox-executable` on Linux) so the runloop
-//! can apply it at spawn time.
+//! The stdio wrapper delegates to the canonical sandbox manager so the runloop
+//! cannot accidentally launch an MCP server outside the requested boundary.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 use crate::sandboxing::{NetworkAllowlistEntry, ResourceLimits, SandboxPolicy, WritableRoot};
@@ -212,115 +213,62 @@ fn conservative_resource_limits(overrides: &McpSandboxOverrides) -> ResourceLimi
     }
 }
 
-/// Description of the per-MCP-server sandbox profile that will be applied at
-/// launch time.
-#[derive(Debug, Clone)]
-pub struct McpSandboxWrapper {
-    /// Platform-specific wrapper binary (e.g. `/usr/bin/sandbox-exec` on macOS).
-    wrapper_binary: PathBuf,
-    /// Argument(s) needed to point the wrapper at the policy (e.g. `-p
-    /// <profile>` on macOS or `--sandbox-policy <json>` on Linux).
-    policy_argv: Vec<String>,
-}
-
-impl McpSandboxWrapper {
-    /// Build the wrapper for the current platform.
-    ///
-    /// - **macOS**: uses `/usr/bin/sandbox-exec -p <profile>` with a serialized
-    ///   Seatbelt policy summary.
-    /// - **Linux**: emits `--sandbox-policy <json>` so the `sandbox-executable`
-    ///   helper can apply Landlock + seccomp from the same JSON shape the rest
-    ///   of VTCode uses (`ResourceLimits::to_json`).
-    /// - **Windows**: returns `None` (sandboxing is stubbed; see
-    ///   `crates/codegen/vtcode-safety/src/sandboxing/manager.rs`).
-    #[must_use]
-    fn for_current_platform(policy: &SandboxPolicy) -> Option<Self> {
-        #[cfg(target_os = "macos")]
-        {
-            // macOS Seatbelt profiles are out of scope for this helper — the
-            // caller is expected to call `crate::sandboxing::manager::SandboxManager`
-            // to render the full profile. We emit a summary token here so the
-            // wrapper still functions when the runloop hasn't built the full
-            // Seatbelt profile (tests, MCP dry-run mode).
-            let summary = match policy {
-                SandboxPolicy::ReadOnly { network_allowlist, .. } => format!(
-                    "(version 1) (allow default) (deny file-write*) (allow network* (remote ip {network_allowlist:?}))",
-                ),
-                SandboxPolicy::WorkspaceWrite { writable_roots, network_allowlist, .. } => format!(
-                    "(version 1) (allow default) (allow file-write* (subpath {writable_roots:?})) (allow network* (remote ip {network_allowlist:?}))",
-                ),
-                SandboxPolicy::DangerFullAccess => "(version 1) (allow default)".to_owned(),
-                SandboxPolicy::ExternalSandbox { description } => description.clone(),
-            };
-            Some(Self {
-                wrapper_binary: PathBuf::from("/usr/bin/sandbox-exec"),
-                policy_argv: vec!["-p".to_owned(), summary],
-            })
-        }
-        #[cfg(target_os = "linux")]
-        {
-            let payload = policy_to_json(policy);
-            Some(Self {
-                wrapper_binary: PathBuf::from("sandbox-executable"),
-                policy_argv: vec!["--sandbox-policy".to_owned(), payload],
-            })
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-        {
-            let _ = policy;
-            tracing::warn!("MCP server sandboxing is not supported on this platform");
-            None
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn policy_to_json(policy: &SandboxPolicy) -> String {
-    // The Linux helper consumes the same JSON shape the harness uses for
-    // SeccompProfile + ResourceLimits. Falling back to the Debug representation
-    // when serialization isn't available keeps the wrapper informative even if
-    // the helper can't fully parse it.
-    serde_json::to_string(policy).unwrap_or_else(|_| format!("{policy:?}"))
-}
-
 /// Apply the per-server sandbox wrapper to a stdio command.
 ///
-/// On macOS the wrapper invokes `/usr/bin/sandbox-exec -p <profile>`; on
-/// Linux it prepends `sandbox-executable --sandbox-policy <json>`; on Windows
-/// the wrapper is a no-op (with a `tracing::warn!`).
+/// This delegates to the same [`crate::sandboxing::SandboxManager`] used by
+/// command execution. Unsupported platforms, missing Linux helpers, external
+/// policies, and policies whose network rules cannot be enforced exactly all
+/// return an error; MCP is never silently launched without its requested
+/// boundary.
 ///
 /// stdio configuration is inherited by default — callers that need to
 /// redirect stdin/stdout/stderr should configure the returned command after
 /// this call.
-#[must_use]
-pub fn wrap_stdio_command(command: std::process::Command, sandbox_policy: &SandboxPolicy) -> std::process::Command {
-    let Some(wrapper) = McpSandboxWrapper::for_current_platform(sandbox_policy) else {
-        return command;
-    };
+#[expect(
+    unused_results,
+    reason = "MCP command builder methods configure the owned command and return a fluent mutable reference."
+)]
+pub fn wrap_stdio_command(
+    command: std::process::Command,
+    sandbox_policy: &SandboxPolicy,
+) -> Result<std::process::Command> {
+    if matches!(sandbox_policy, SandboxPolicy::DangerFullAccess) {
+        return Ok(command);
+    }
+    if matches!(sandbox_policy, SandboxPolicy::ExternalSandbox { .. }) {
+        return Err(anyhow!("MCP stdio cannot use an external sandbox policy without an external launcher"));
+    }
 
     let original_program = command.get_program().to_owned();
     let original_args: Vec<_> = command.get_args().map(|s| s.to_owned()).collect();
-    let current_dir = command.get_current_dir().map(|p| p.to_owned());
-    let envs: Vec<_> = command
+    let current_dir = command
+        .get_current_dir()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let envs: HashMap<_, _> = command
         .get_envs()
         .filter_map(|(k, v)| v.map(|val| (k.to_owned(), val.to_owned())))
         .collect();
 
-    let mut new_command = std::process::Command::new(&wrapper.wrapper_binary);
-    for arg in &wrapper.policy_argv {
-        new_command.arg(arg);
+    let sandbox_executable = std::env::var_os("VTCODE_LINUX_SANDBOX_EXECUTABLE").map(PathBuf::from);
+    let spec = crate::sandboxing::CommandSpec::new(original_program)
+        .with_args(original_args.into_iter().map(|arg| arg.to_string_lossy().into_owned()))
+        .with_cwd(current_dir.clone())
+        .with_env(
+            envs.into_iter()
+                .map(|(key, value)| (key.to_string_lossy().into_owned(), value.to_string_lossy().into_owned()))
+                .collect(),
+        );
+    let exec_env = crate::sandboxing::SandboxManager::new()
+        .transform(spec, sandbox_policy, &current_dir, sandbox_executable.as_deref())
+        .context("transform MCP stdio command with the sandbox policy")?;
+
+    let mut new_command = std::process::Command::new(exec_env.program);
+    new_command.args(exec_env.args).current_dir(exec_env.cwd).env_clear();
+    for (key, value) in exec_env.env {
+        new_command.env(key, value);
     }
-    new_command.arg(&original_program);
-    for arg in &original_args {
-        new_command.arg(arg);
-    }
-    if let Some(dir) = current_dir {
-        new_command.current_dir(dir);
-    }
-    for (key, val) in envs {
-        new_command.env(key, val);
-    }
-    new_command
+    Ok(new_command)
 }
 
 #[cfg(test)]
@@ -450,9 +398,10 @@ mod tests {
     #[test]
     fn wrapper_for_current_platform_handles_unsupported_targets() {
         let policy = workspace_parent();
-        // We can't predict the platform from here, but the function must
-        // either return Some wrapper (macOS / Linux) or None (Windows /
-        // others) without panicking.
-        let _ = McpSandboxWrapper::for_current_platform(&policy);
+        // A policy with a hostname allowlist must fail closed until the
+        // platform can enforce the destination exactly.
+        let command = std::process::Command::new("mcp-server");
+        let result = wrap_stdio_command(command, &policy);
+        assert!(result.is_err());
     }
 }

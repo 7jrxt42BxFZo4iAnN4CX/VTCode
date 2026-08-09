@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 
 use std::env;
 use std::fs;
@@ -52,7 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::copy(&source, &destination)?;
+        let _copied_bytes = fs::copy(&source, &destination)?;
     }
 
     Ok(())

@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 //! Integration tests for file search bridge integration with grep_file.rs
 //!
 //! Phase 2C: Tool Integration Testing

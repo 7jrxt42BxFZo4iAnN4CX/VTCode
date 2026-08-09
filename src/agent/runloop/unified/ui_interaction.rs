@@ -703,7 +703,10 @@ pub(crate) async fn stream_and_render_response_with_options(
 }
 
 #[cfg(test)]
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 pub(crate) async fn stream_and_render_response_with_options_and_progress(
     provider: &dyn uni::LLMProvider,
     request: uni::LLMRequest,

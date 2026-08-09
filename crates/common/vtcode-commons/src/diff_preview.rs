@@ -1,3 +1,9 @@
+#![expect(
+    clippy::string_slice,
+    clippy::cast_possible_truncation,
+    reason = "Preview offsets are derived from bounded diff lines and converted to the documented display width."
+)]
+
 //! Shared helpers for rendering diff previews.
 
 use crate::diff::{DiffHunk, DiffLineKind};

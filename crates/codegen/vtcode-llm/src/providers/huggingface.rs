@@ -1,4 +1,8 @@
-#![allow(clippy::bind_instead_of_map, clippy::collapsible_if)]
+#![allow(
+    clippy::bind_instead_of_map,
+    clippy::collapsible_if,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 
 use crate::error_display::format_llm_error;
 use crate::provider::{
@@ -13,6 +17,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::{Client as HttpClient, Response, StatusCode};
 use serde_json::{Value, json};
+use vtcode_commons::sanitizer::sanitize_provider_diagnostic;
 use vtcode_config::TimeoutsConfig;
 use vtcode_config::constants::{env_vars, models, urls};
 use vtcode_config::core::{AnthropicConfig, ModelConfig, PromptCachingConfig};
@@ -542,7 +547,7 @@ Enable that provider in your HuggingFace Inference Providers settings, or switch
                 None,
                 None,
                 None,
-                Some(body.to_string()),
+                Some(sanitize_provider_diagnostic(body.as_bytes())),
             )),
         }
     }
@@ -717,7 +722,7 @@ Enable that provider in your HuggingFace Inference Providers settings, or switch
         let status = response.status();
 
         if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
+            let body = crate::providers::common::read_provider_error_body(response).await;
             return Err(self.format_error(status, &body));
         }
 
@@ -858,7 +863,7 @@ impl LLMProvider for HuggingFaceProvider {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body = crate::providers::common::read_provider_error_body(response).await;
             return Err(self.format_error(status, &body));
         }
 

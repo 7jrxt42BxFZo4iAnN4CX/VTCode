@@ -244,11 +244,11 @@ pub fn migrate_custom_api_keys(
         match storage.store(api_key, mode) {
             Ok(()) => {
                 tracing::info!("Migrated API key for provider '{provider}' to secure storage");
-                results.insert(provider.clone(), true);
+                let _ignored = results.insert(provider.clone(), true);
             }
             Err(e) => {
                 tracing::warn!("Failed to migrate API key for provider '{provider}': {e}");
-                results.insert(provider.clone(), false);
+                let _ignored = results.insert(provider.clone(), false);
             }
         }
     }
@@ -265,7 +265,7 @@ pub fn load_custom_api_keys(providers: &[String], mode: AuthCredentialsStoreMode
     for provider in providers {
         let storage = CustomApiKeyStorage::new(provider);
         if let Some(key) = storage.load(mode)? {
-            api_keys.insert(provider.clone(), key);
+            drop(api_keys.insert(provider.clone(), key));
         }
     }
 

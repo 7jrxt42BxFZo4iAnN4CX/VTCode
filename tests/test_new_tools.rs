@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 use serde_json::json;
 use std::path::PathBuf;
 use vtcode_core::tools::ToolRegistry;

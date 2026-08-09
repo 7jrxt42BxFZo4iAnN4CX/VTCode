@@ -1,4 +1,7 @@
-#![allow(clippy::collapsible_if)]
+#![allow(
+    clippy::collapsible_if,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 
 use self::wire::function_calling::FunctionCall as GeminiFunctionCall;
 use self::wire::{

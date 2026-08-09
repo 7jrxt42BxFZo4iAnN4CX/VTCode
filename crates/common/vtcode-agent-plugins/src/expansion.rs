@@ -25,7 +25,7 @@ pub fn validate_plugin_relative(value: &str, root: &Path) -> Result<PathBuf, cra
     let canonical_root = vtcode_commons::canonicalize(root)
         .map_err(|e| crate::PluginError::PathEscape(format!("plugin root could not be resolved: {e}")))?;
 
-    let candidate = root.join(&value[2..]);
+    let candidate = root.join(value.get(2..).unwrap_or_default());
 
     // Reject obvious lexical escapes before touching the filesystem.
     let lexical_ok = candidate

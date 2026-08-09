@@ -32,7 +32,10 @@ fn service_tier_message_label(service_tier: Option<vtcode_config::OpenAIServiceT
     }
 }
 
-#[expect(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 pub(crate) async fn finalize_model_selection(
     renderer: &mut AnsiRenderer,
     picker: &ModelPickerState,

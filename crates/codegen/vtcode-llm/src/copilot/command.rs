@@ -7,6 +7,8 @@ use once_cell::sync::Lazy;
 use tokio::process::{Child, Command};
 use vtcode_config::auth::CopilotAuthConfig;
 
+use crate::process_env::{COPILOT_AUTH_ENV_VARS, sanitize_tokio_command_environment};
+
 static WHICH_CACHE: Lazy<std::sync::Mutex<std::collections::HashMap<String, bool>>> =
     Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
@@ -20,7 +22,7 @@ const ACP_FLAGS: &[&str] = &[
     "--disable-builtin-mcps",
 ];
 const SERVER_FLAGS: &[&str] = &["--headless", "--no-auto-update", "--log-level", "error", "--stdio"];
-const STRIPPED_RUNTIME_ENV_VARS: &[&str] = &[
+pub(super) const STRIPPED_RUNTIME_ENV_VARS: &[&str] = &[
     "COPILOT_ALLOW_ALL",
     "COPILOT_CUSTOM_INSTRUCTIONS_DIRS",
     "COPILOT_EXPERIMENTS",
@@ -54,6 +56,7 @@ impl ResolvedCopilotCommand {
         if let Some(cwd) = cwd {
             command.current_dir(cwd);
         }
+        sanitize_tokio_command_environment(&mut command, COPILOT_AUTH_ENV_VARS);
         command
     }
 }

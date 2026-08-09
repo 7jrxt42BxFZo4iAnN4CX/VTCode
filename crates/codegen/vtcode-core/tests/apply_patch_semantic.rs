@@ -1,4 +1,9 @@
-#![allow(missing_docs, clippy::expect_used, clippy::unwrap_used)]
+#![allow(
+    missing_docs,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use serde_json::{Value, json};
 use serial_test::serial;
 use std::fs;
@@ -15,7 +20,12 @@ async fn setup_registry(root: &Path) -> ToolRegistry {
 }
 
 fn error_message(result: &Value) -> String {
-    result["error"]["message"].as_str().unwrap_or_default().to_string()
+    result
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 fn create_ast_grep_stub(temp_dir: &TempDir, lines: &[&str]) -> PathBuf {

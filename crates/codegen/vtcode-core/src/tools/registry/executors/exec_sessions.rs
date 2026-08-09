@@ -54,7 +54,7 @@ impl ToolRegistry {
         session_env.extend(request.env_overrides);
         let session_metadata = self
             .exec_sessions
-            .create_pty_session(
+            .create_pty_session_with_sandbox(
                 request.session_id.clone().into(),
                 request.prepared_command.command,
                 request.working_dir_path,
@@ -66,6 +66,7 @@ impl ToolRegistry {
                 },
                 session_env,
                 zsh_exec_bridge,
+                request.sandbox_active,
             )
             .await
             .context("Maximum PTY sessions reached; cannot start new session")?;
@@ -102,11 +103,12 @@ impl ToolRegistry {
         let session_env = self.build_pipe_session_env(&request.shell_program, request.env_overrides);
         let session_metadata = self
             .exec_sessions
-            .create_pipe_session(
+            .create_pipe_session_with_sandbox(
                 request.session_id.clone().into(),
                 request.prepared_command.command,
                 request.working_dir_path,
                 session_env,
+                request.sandbox_active,
             )
             .await?;
 

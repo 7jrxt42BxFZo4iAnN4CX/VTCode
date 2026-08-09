@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 //! Open Responses Specification Compliance Tests.
 //!
 //! This test suite validates that VT Code's Open Responses implementation

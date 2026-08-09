@@ -1,3 +1,9 @@
+#![expect(
+    clippy::string_slice,
+    clippy::cast_possible_truncation,
+    reason = "Hex input is validated to six ASCII digits and RGB interpolation is clamped to byte range."
+)]
+
 //! Color utilities for VT Code
 //!
 //! This module provides color manipulation capabilities using anstyle,
@@ -20,7 +26,10 @@ pub fn color_from_hex(hex: &str) -> Option<Color> {
 }
 
 /// Blend two RGB colors
-#[allow(clippy::cast_sign_loss)]
+#[allow(
+    clippy::cast_sign_loss,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 pub fn blend_colors(color1: &Color, color2: &Color, ratio: f32) -> Option<Color> {
     let rgb1 = color_to_rgb(color1)?;
     let rgb2 = color_to_rgb(color2)?;
@@ -120,7 +129,10 @@ pub fn contrasting_color(color: &Color) -> Color {
 }
 
 /// Create a desaturated version of a color
-#[allow(clippy::cast_sign_loss)]
+#[allow(
+    clippy::cast_sign_loss,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 pub fn desaturate_color(color: &Color, amount: f32) -> Option<Color> {
     let rgb = color_to_rgb(color)?;
     let r = rgb.r() as f32;

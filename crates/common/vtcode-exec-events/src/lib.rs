@@ -1,4 +1,9 @@
-#![allow(missing_docs, dead_code, unused_imports)]
+#![allow(
+    missing_docs,
+    dead_code,
+    unused_imports,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 //! Structured execution telemetry events shared across VT Code crates.
 //!
 //! This crate exposes the serialized schema for thread lifecycle updates,
@@ -273,8 +278,14 @@ mod otel_support {
                     if let Some(ref cost) = e.total_cost_usd {
                         span.set_attribute(KeyValue::new("total_cost_usd", cost.as_f64().unwrap_or(0.0)));
                     }
-                    span.set_attribute(KeyValue::new("input_tokens", e.usage.input_tokens as i64));
-                    span.set_attribute(KeyValue::new("output_tokens", e.usage.output_tokens as i64));
+                    span.set_attribute(KeyValue::new(
+                        "input_tokens",
+                        i64::try_from(e.usage.input_tokens).unwrap_or(i64::MAX),
+                    ));
+                    span.set_attribute(KeyValue::new(
+                        "output_tokens",
+                        i64::try_from(e.usage.output_tokens).unwrap_or(i64::MAX),
+                    ));
                     span.set_attribute(KeyValue::new("completion_subtype", e.subtype.as_str().to_string()));
                 }
                 ThreadEvent::ContextReset(e) => {
@@ -288,8 +299,14 @@ mod otel_support {
                     span.set_attribute(KeyValue::new("tool_budget_reset", e.tool_budget_reset));
                 }
                 ThreadEvent::TurnCompleted(e) => {
-                    span.set_attribute(KeyValue::new("turn_input_tokens", e.usage.input_tokens as i64));
-                    span.set_attribute(KeyValue::new("turn_output_tokens", e.usage.output_tokens as i64));
+                    span.set_attribute(KeyValue::new(
+                        "turn_input_tokens",
+                        i64::try_from(e.usage.input_tokens).unwrap_or(i64::MAX),
+                    ));
+                    span.set_attribute(KeyValue::new(
+                        "turn_output_tokens",
+                        i64::try_from(e.usage.output_tokens).unwrap_or(i64::MAX),
+                    ));
                 }
                 ThreadEvent::ItemCompleted(e) => {
                     if let ThreadItemDetails::Harness(harness) = &e.item.details {
@@ -301,7 +318,7 @@ mod otel_support {
                             span.set_attribute(KeyValue::new("harness_path", path.clone()));
                         }
                         if let Some(dur) = harness.duration_ms {
-                            span.set_attribute(KeyValue::new("duration_ms", dur as i64));
+                            span.set_attribute(KeyValue::new("duration_ms", i64::try_from(dur).unwrap_or(i64::MAX)));
                         }
                         let mut event_attrs = vec![KeyValue::new("event_kind", format!("{:?}", harness.event))];
                         if let Some(ref msg) = harness.message {
@@ -933,7 +950,10 @@ impl ToolOutcome {
 /// Panics if `status` is [`ToolCallStatus::InProgress`], which is a non-terminal
 /// state and must never be passed to a completion-event emitter.
 #[must_use]
-#[allow(clippy::unreachable)]
+#[allow(
+    clippy::unreachable,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 pub fn tool_outcome_from_status(status: &ToolCallStatus) -> ToolOutcome {
     match status {
         ToolCallStatus::Completed => ToolOutcome::Success,

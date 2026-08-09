@@ -139,7 +139,10 @@ impl ToolHealthTracker {
         sorted.extend(stats.recent_history.iter().map(|r| r.latency_ms));
         sorted.sort_unstable_by(f64::total_cmp);
 
-        #[allow(clippy::cast_sign_loss)]
+        #[allow(
+            clippy::cast_sign_loss,
+            reason = "Intentional compatibility, platform, or test-only suppression."
+        )]
         let p95_idx = (((sorted.len() as f64 * 0.95).ceil()).max(0.0) as usize).saturating_sub(1);
         let p95 = sorted.get(p95_idx).copied().unwrap_or(avg);
 

@@ -1,4 +1,9 @@
-#![allow(missing_docs, dead_code, unused_imports)]
+#![allow(
+    missing_docs,
+    dead_code,
+    unused_imports,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 //! ACP (Agent Communication Protocol) support for VT Code.
 //!
 //! This crate exposes both the ACP client library and the VT Code Zed bridge.

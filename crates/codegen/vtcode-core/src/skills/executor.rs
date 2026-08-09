@@ -934,42 +934,42 @@ use futures::stream;
 use serde_json::json;
 use std::sync::Mutex;
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 struct FakeForkExecutor;
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 struct EchoFirstUserProvider;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 struct UnknownToolThenFinalizeProvider {
     calls: Mutex<usize>,
 }
-#[allow(dead_code)]
+#[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 struct RepeatToolThenFinalizeProvider {
     tool_name: &'static str,
     calls: Mutex<usize>,
 }
-#[allow(dead_code)]
+#[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 struct MaxIterationsThenFinalizeProvider {
     tool_names: Vec<String>,
     calls: Mutex<usize>,
 }
-#[allow(dead_code)]
+#[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 struct StreamingOnlySkillProvider {
     stream_calls: Mutex<usize>,
 }
-#[allow(dead_code)]
+#[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 struct EmptyFinalSkillProvider;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 struct ToolOnlyThenFinalizeProvider {
     tool_name: &'static str,
     calls: Mutex<usize>,
 }
-#[allow(dead_code)]
+#[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 struct StopWithToolCallsThenFinalizeProvider {
     tool_name: &'static str,
     calls: Mutex<usize>,
 }
-#[allow(dead_code)]
+#[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 struct CountingSkillTool {
     calls: Arc<Mutex<usize>>,
 }
@@ -1916,7 +1916,7 @@ fn test_skill_execution_context() {
     assert_eq!(ctx.available_tools.len(), 2);
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 fn test_skill_with_permissions(permission_profile: Option<SkillPermissionProfile>) -> Skill {
     let manifest = SkillManifest {
         name: "test-skill".to_string(),

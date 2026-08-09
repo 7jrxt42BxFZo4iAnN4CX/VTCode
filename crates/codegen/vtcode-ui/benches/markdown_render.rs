@@ -1,4 +1,11 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
+#![expect(
+    unused_results,
+    reason = "Benchmark setup and criterion group methods are invoked for their measurement side effects."
+)]
 
 use anstyle::Style;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};

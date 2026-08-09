@@ -1,5 +1,11 @@
-#![allow(invalid_from_utf8)]
-#![allow(missing_docs)]
+#![allow(
+    invalid_from_utf8,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 //! Unicode handling test for VT Code
 //!
 //! This test demonstrates unicode handling issues that can occur in PTY output processing.
@@ -14,18 +20,18 @@ mod tests {
 
         // Valid UTF-8 sequences
         let valid_ascii = b"Hello World";
-        str::from_utf8(valid_ascii).unwrap();
+        let _valid_ascii = str::from_utf8(valid_ascii).unwrap();
 
         let valid_unicode = "Hello 世界".as_bytes();
-        str::from_utf8(valid_unicode).unwrap();
+        let _valid_unicode = str::from_utf8(valid_unicode).unwrap();
 
         let valid_emoji = "🌍🚀✨".as_bytes();
-        str::from_utf8(valid_emoji).unwrap();
+        let _valid_emoji = str::from_utf8(valid_emoji).unwrap();
 
         // Invalid UTF-8 sequences that push_utf8 should handle
         let invalid_sequence = &[0xFF, 0xFE, b'X'];
         let result = str::from_utf8(invalid_sequence);
-        result.unwrap_err();
+        let _invalid_error = result.unwrap_err();
 
         // Test UTF-8 error handling similar to push_utf8
         match str::from_utf8(invalid_sequence) {
@@ -61,10 +67,10 @@ mod tests {
 
         // Test incomplete sequences
         let incomplete_1 = [0xC3]; // Missing second byte
-        str::from_utf8(&incomplete_1).unwrap_err();
+        let _incomplete_error = str::from_utf8(&incomplete_1).unwrap_err();
 
         let incomplete_2 = [0xA9]; // Second byte without first (would be different char)
-        str::from_utf8(&incomplete_2).unwrap_err();
+        let _incomplete_error = str::from_utf8(&incomplete_2).unwrap_err();
 
         // Emoji "🌍" is 4 bytes: 0xF0 0x9F 0x8C 0x8D
         let full_emoji = [0xF0, 0x9F, 0x8C, 0x8D];
@@ -72,10 +78,10 @@ mod tests {
 
         // Test incomplete emoji sequences
         let incomplete_emoji_1 = [0xF0, 0x9F]; // First 2 bytes
-        str::from_utf8(&incomplete_emoji_1).unwrap_err();
+        let _incomplete_error = str::from_utf8(&incomplete_emoji_1).unwrap_err();
 
         let incomplete_emoji_2 = [0xF0, 0x9F, 0x8C]; // First 3 bytes
-        str::from_utf8(&incomplete_emoji_2).unwrap_err();
+        let _incomplete_error = str::from_utf8(&incomplete_emoji_2).unwrap_err();
     }
 
     #[test]
@@ -117,11 +123,11 @@ mod tests {
 
         // High surrogate in UTF-8: 0xED 0xA0 0x80 to 0xED 0xAF 0xBF
         let high_surrogate = [0xED, 0xA0, 0x80];
-        str::from_utf8(&high_surrogate).unwrap_err();
+        let _surrogate_error = str::from_utf8(&high_surrogate).unwrap_err();
 
         // Low surrogate in UTF-8: 0xED 0xB0 0x80 to 0xED 0xBF 0xBF
         let low_surrogate = [0xED, 0xB0, 0x80];
-        str::from_utf8(&low_surrogate).unwrap_err();
+        let _surrogate_error = str::from_utf8(&low_surrogate).unwrap_err();
     }
 
     #[test]
@@ -148,13 +154,13 @@ mod tests {
                             {
                                 result.push_str(valid);
                             }
-                            buffer.drain(..valid_up_to);
+                            let _drained = buffer.drain(..valid_up_to);
                             continue;
                         }
 
                         if let Some(error_len) = error.error_len() {
                             result.push('\u{FFFD}'); // Replacement character
-                            buffer.drain(..error_len);
+                            let _drained = buffer.drain(..error_len);
                             continue;
                         }
 

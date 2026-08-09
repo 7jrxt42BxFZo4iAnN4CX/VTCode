@@ -3,6 +3,7 @@
 use std::ffi::OsString;
 use std::path::Path;
 
+use super::child_spawn::filter_sensitive_env;
 use super::exec_env::{CommandSpec, ExecEnv, SandboxType};
 #[cfg(target_os = "macos")]
 use super::policy::NetworkAllowlistEntry;
@@ -47,6 +48,18 @@ impl SandboxManager {
     ) -> Result<ExecEnv, SandboxTransformError> {
         // Determine the sandbox type based on policy and platform
         let sandbox_type = self.determine_sandbox_type(policy)?;
+
+        // A restrictive sandbox must not inherit secrets or dynamic-loader
+        // controls, including values supplied by a caller through `spec.env`.
+        // Full-access and externally managed policies intentionally preserve
+        // the caller's environment because this manager is not their boundary.
+        let spec = if sandbox_type == SandboxType::None {
+            spec
+        } else {
+            let mut spec = spec;
+            spec.env = filter_sensitive_env(&spec.env);
+            spec
+        };
 
         // If no sandbox needed or full access, return direct execution
         if sandbox_type == SandboxType::None {
@@ -98,7 +111,7 @@ impl SandboxManager {
         const SEATBELT_EXECUTABLE: &str = "/usr/bin/sandbox-exec";
 
         // Build the seatbelt profile
-        let profile = self.build_seatbelt_profile(policy, sandbox_cwd);
+        let profile = self.build_seatbelt_profile(policy, sandbox_cwd)?;
 
         let mut args = vec!["-p".to_string(), profile, os_string_to_arg(spec.program.clone())];
         args.extend(spec.args);
@@ -130,29 +143,31 @@ impl SandboxManager {
     /// - "Default-deny outbound network, then allowlist."
     /// - Block sensitive paths to prevent credential leakage.
     #[cfg(target_os = "macos")]
-    fn build_seatbelt_profile(&self, policy: &SandboxPolicy, sandbox_cwd: &Path) -> String {
+    fn build_seatbelt_profile(
+        &self,
+        policy: &SandboxPolicy,
+        sandbox_cwd: &Path,
+    ) -> Result<String, SandboxTransformError> {
         fn append_network_rules(
             profile: &mut String,
             network_access: bool,
             network_allowlist: &[NetworkAllowlistEntry],
-        ) {
-            let has_network_allowlist = !network_allowlist.is_empty();
-            if has_network_allowlist || !network_access {
+        ) -> Result<(), SandboxTransformError> {
+            if !network_allowlist.is_empty() {
+                return Err(SandboxTransformError::InvalidPolicy(
+                    "macOS Seatbelt cannot enforce hostname network allowlists exactly; refusing to widen access"
+                        .to_string(),
+                ));
+            }
+
+            if !network_access {
                 // Keep local unix sockets available even when outbound network is restricted.
                 profile.push_str("(allow network* (local unix))\n");
             }
-            if has_network_allowlist {
-                for entry in network_allowlist {
-                    profile.push_str(&format!(
-                        "(allow network-outbound (remote {} (require-any (port {}))))\n",
-                        entry.protocol, entry.port
-                    ));
-                }
-                profile.push_str("(allow network-outbound (remote udp (port 53)))\n");
-                profile.push_str("(allow network-outbound (remote tcp (port 53)))\n");
-            } else if network_access {
+            if network_access {
                 profile.push_str("(allow network*)\n");
             }
+            Ok(())
         }
 
         let mut profile = String::from("(version 1)\n");
@@ -186,19 +201,19 @@ impl SandboxManager {
             SandboxPolicy::ReadOnly { network_access, network_allowlist } => {
                 // Read-only: only allow writing to /dev/null
                 profile.push_str("(allow file-write* (literal \"/dev/null\"))\n");
-                append_network_rules(&mut profile, *network_access, network_allowlist);
+                append_network_rules(&mut profile, *network_access, network_allowlist)?;
             }
             SandboxPolicy::WorkspaceWrite { network_access, network_allowlist, .. } => {
                 for root in policy.get_writable_roots_with_cwd(sandbox_cwd) {
                     let path = root.root.display();
                     profile.push_str(&format!("(allow file-write* (subpath \"{path}\"))\n"));
                 }
-                append_network_rules(&mut profile, *network_access, network_allowlist);
+                append_network_rules(&mut profile, *network_access, network_allowlist)?;
             }
             _ => {}
         }
 
-        profile
+        Ok(profile)
     }
 
     /// Transform for Linux Landlock sandbox.
@@ -258,23 +273,19 @@ impl SandboxManager {
     }
 
     /// Transform for Windows restricted token sandbox.
+    ///
+    /// Not yet implemented. Returns `UnavailableSandboxType` so that callers
+    /// requesting a restrictive policy on Windows get an explicit error
+    /// instead of silently running unsandboxed. The `is_available()` check in
+    /// `transform()` normally catches this first, but this guard ensures
+    /// fail-closed behavior even if the availability check is bypassed.
     fn transform_windows(
         &self,
-        spec: CommandSpec,
+        _spec: CommandSpec,
         _policy: &SandboxPolicy,
         _sandbox_cwd: &Path,
     ) -> Result<ExecEnv, SandboxTransformError> {
-        // Windows sandbox uses restricted tokens - for now, pass through
-        // A full implementation would use Windows job objects and restricted tokens
-        Ok(ExecEnv {
-            program: spec.program.into(),
-            args: spec.args,
-            cwd: spec.cwd,
-            env: spec.env,
-            expiration: spec.expiration,
-            sandbox_active: false, // Windows sandboxing via Job Objects/Restricted Tokens is planned for a future release
-            sandbox_type: SandboxType::WindowsRestrictedToken,
-        })
+        Err(SandboxTransformError::UnavailableSandboxType(SandboxType::WindowsRestrictedToken))
     }
 }
 
@@ -315,12 +326,47 @@ mod tests {
     #[test]
     fn seatbelt_profile_includes_default_preferences_policy() {
         let manager = SandboxManager::new();
-        let profile = manager.build_seatbelt_profile(&SandboxPolicy::read_only(), Path::new("/tmp"));
+        let profile = manager
+            .build_seatbelt_profile(&SandboxPolicy::read_only(), Path::new("/tmp"))
+            .unwrap();
 
         assert!(profile.contains("(allow ipc-posix-shm-read* (ipc-posix-name-prefix \"apple.cfprefs.\"))"));
         assert!(profile.contains("(global-name \"com.apple.cfprefsd.daemon\")"));
         assert!(profile.contains("(global-name \"com.apple.cfprefsd.agent\")"));
         assert!(profile.contains("(local-name \"com.apple.cfprefsd.agent\")"));
         assert!(profile.contains("(allow user-preference-read)"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn seatbelt_rejects_hostname_allowlist_without_exact_enforcement() {
+        let manager = SandboxManager::new();
+        let policy = SandboxPolicy::read_only_with_network(vec![NetworkAllowlistEntry::https("api.example.com")]);
+
+        let result = manager.build_seatbelt_profile(&policy, Path::new("/tmp"));
+
+        assert!(matches!(result, Err(SandboxTransformError::InvalidPolicy(message)) if message.contains("hostname")));
+    }
+
+    /// Windows restricted-token sandbox is not yet implemented, so
+    /// `is_available()` must return `false` on **all** platforms. This
+    /// prevents silent pass-through when a restrictive policy is requested.
+    #[test]
+    fn windows_restricted_token_is_not_available() {
+        assert!(!SandboxType::WindowsRestrictedToken.is_available());
+    }
+
+    /// `transform_windows` must fail-closed with `UnavailableSandboxType`,
+    /// not silently pass the command through unsandboxed.
+    #[test]
+    fn transform_windows_fails_closed() {
+        let manager = SandboxManager::new();
+        let spec = CommandSpec::new("echo").with_args(vec!["hello"]);
+        let result = manager.transform_windows(spec, &SandboxPolicy::read_only(), Path::new("/tmp"));
+
+        assert!(matches!(
+            result,
+            Err(SandboxTransformError::UnavailableSandboxType(SandboxType::WindowsRestrictedToken))
+        ));
     }
 }

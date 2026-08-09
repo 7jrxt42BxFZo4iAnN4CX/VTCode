@@ -1,3 +1,8 @@
+#![expect(
+    clippy::let_underscore_must_use,
+    reason = "Project rendering intentionally ignores infallible writes into String buffers."
+)]
+
 //! Project-related utilities and structures
 
 use crate::utils::{extract_readme_excerpt, extract_toml_str};

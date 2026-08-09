@@ -269,7 +269,7 @@ pub(crate) enum SecretCommandAction {
     /// secure storage.
     Migrate { provider: Option<String> },
     /// `/secret help` — usage.
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
     Help,
 }
 

@@ -677,7 +677,7 @@ mod tests {
         assert_eq!(detect_planning_intent("yes", false), PlanningIntent::ExitAndImplement);
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
     fn tool_loop_hard_cap_scales_and_bounds() {
         assert_eq!(tool_loop_hard_cap(20, false), 60);
         assert_eq!(tool_loop_hard_cap(40, false), 120);

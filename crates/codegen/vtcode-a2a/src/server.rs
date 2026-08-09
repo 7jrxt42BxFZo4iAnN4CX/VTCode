@@ -146,11 +146,13 @@ async fn handle_stream(State(state): State<A2aServerState>, Json(request): Json<
     };
 
     // Add initial message
-    state
-        .task_manager
-        .add_message(&task_id, params.message.clone())
-        .await
-        .map_err(|e| A2aErrorResponse::from_error(e, request.id.clone()))?;
+    drop(
+        state
+            .task_manager
+            .add_message(&task_id, params.message.clone())
+            .await
+            .map_err(|e| A2aErrorResponse::from_error(e, request.id.clone()))?,
+    );
 
     // Subscribe to broadcast channel
     let mut rx = state.event_tx.subscribe();
@@ -178,11 +180,11 @@ async fn handle_stream(State(state): State<A2aServerState>, Json(request): Json<
                 let task_manager = task_manager.clone();
                 let task_id_for_hook = task_id_clone.clone();
                 let event_for_hook = event.clone();
-                tokio::spawn(async move {
+                drop(tokio::spawn(async move {
                     if let Some(cfg) = task_manager.get_webhook_config(&task_id_for_hook).await {
-                        let _ = notifier.send_event(&cfg, event_for_hook).await;
+                        drop(notifier.send_event(&cfg, event_for_hook).await);
                     }
-                });
+                }));
 
                 let is_final = event.is_final();
                 let json = serde_json::to_string(&SendStreamingMessageResponse { event })
@@ -199,15 +201,17 @@ async fn handle_stream(State(state): State<A2aServerState>, Json(request): Json<
     // Start background task to process and emit events
     let state_clone = state.clone();
     let task_id_clone = task_id.clone();
-    tokio::spawn(async move {
+    drop(tokio::spawn(async move {
         // Simulate agent processing
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Update task to working
-        let _ = state_clone
-            .task_manager
-            .update_status(&task_id_clone, TaskState::Working, None)
-            .await;
+        drop(
+            state_clone
+                .task_manager
+                .update_status(&task_id_clone, TaskState::Working, None)
+                .await,
+        );
 
         // Send status update event
         let status_event = StreamingEvent::TaskStatus {
@@ -217,17 +221,17 @@ async fn handle_stream(State(state): State<A2aServerState>, Json(request): Json<
             kind: "status-update".to_string(),
             r#final: false,
         };
-        let _ = state_clone.event_tx.send(status_event.clone());
+        drop(state_clone.event_tx.send(status_event.clone()));
 
         // Fire webhook if configured
         let notifier = state_clone.webhook_notifier.clone();
         let task_manager = state_clone.task_manager.clone();
         let task_id_for_hook = task_id_clone.clone();
-        tokio::spawn(async move {
+        drop(tokio::spawn(async move {
             if let Some(cfg) = task_manager.get_webhook_config(&task_id_for_hook).await {
-                let _ = notifier.send_event(&cfg, status_event).await;
+                drop(notifier.send_event(&cfg, status_event).await);
             }
-        });
+        }));
 
         // Simulate generating a response message
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -238,24 +242,26 @@ async fn handle_stream(State(state): State<A2aServerState>, Json(request): Json<
             kind: "streaming-response".to_string(),
             r#final: false,
         };
-        let _ = state_clone.event_tx.send(message_event.clone());
+        drop(state_clone.event_tx.send(message_event.clone()));
 
         // Fire webhook if configured
         let notifier = state_clone.webhook_notifier.clone();
         let task_manager = state_clone.task_manager.clone();
         let task_id_for_hook = task_id_clone.clone();
-        tokio::spawn(async move {
+        drop(tokio::spawn(async move {
             if let Some(cfg) = task_manager.get_webhook_config(&task_id_for_hook).await {
-                let _ = notifier.send_event(&cfg, message_event).await;
+                drop(notifier.send_event(&cfg, message_event).await);
             }
-        });
+        }));
 
         // Complete the task
         tokio::time::sleep(Duration::from_millis(300)).await;
-        let _ = state_clone
-            .task_manager
-            .update_status(&task_id_clone, TaskState::Completed, None)
-            .await;
+        drop(
+            state_clone
+                .task_manager
+                .update_status(&task_id_clone, TaskState::Completed, None)
+                .await,
+        );
 
         // Send final status event
         let final_status_event = StreamingEvent::TaskStatus {
@@ -265,18 +271,18 @@ async fn handle_stream(State(state): State<A2aServerState>, Json(request): Json<
             kind: "status-update".to_string(),
             r#final: true,
         };
-        let _ = state_clone.event_tx.send(final_status_event.clone());
+        drop(state_clone.event_tx.send(final_status_event.clone()));
 
         // Fire webhook if configured
         let notifier = state_clone.webhook_notifier.clone();
         let task_manager = state_clone.task_manager.clone();
         let task_id_for_hook = final_status_event.task_id().unwrap_or_default().to_string();
-        tokio::spawn(async move {
+        drop(tokio::spawn(async move {
             if let Some(cfg) = task_manager.get_webhook_config(&task_id_for_hook).await {
-                let _ = notifier.send_event(&cfg, final_status_event).await;
+                drop(notifier.send_event(&cfg, final_status_event).await);
             }
-        });
-    });
+        }));
+    }));
 
     Ok(Sse::new(Box::pin(stream)).keep_alive(
         axum::response::sse::KeepAlive::new()
@@ -303,7 +309,7 @@ async fn handle_message_send(state: &A2aServerState, params: Option<Value>, _id:
     };
 
     // Add message to history
-    state.task_manager.add_message(&task_id, params.message).await?;
+    drop(state.task_manager.add_message(&task_id, params.message).await?);
 
     // Update status to working
     let task = state.task_manager.update_status(&task_id, TaskState::Working, None).await?;
@@ -482,7 +488,7 @@ mod tests {
             r#final: false,
         };
 
-        state.event_tx.send(test_event.clone()).expect("send event");
+        let _ignored = state.event_tx.send(test_event.clone()).expect("send event");
 
         // Receive the event
         let received = rx.recv().await.expect("receive event");

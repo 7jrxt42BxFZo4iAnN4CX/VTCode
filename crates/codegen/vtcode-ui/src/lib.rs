@@ -1,4 +1,19 @@
-#![allow(missing_docs, clippy::expect_used, dead_code, unused_imports)]
+#![allow(
+    missing_docs,
+    clippy::expect_used,
+    dead_code,
+    unused_imports,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
+#![expect(
+    unused_results,
+    clippy::let_underscore_must_use,
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    reason = "UI rendering uses validated display offsets, bounded terminal dimensions, and best-effort terminal cleanup."
+)]
 //! Unified UI crate for VT Code: design system, theme registry, and TUI framework.
 //!
 //! # Module layout

@@ -110,7 +110,10 @@ impl Session {
         self.core.finalize_mouse_selection(frame, layout.viewport);
     }
 
-    #[expect(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     fn render_message_spans(&self, index: usize) -> Vec<Span<'static>> {
         let Some(line) = self.core.lines.get(index) else {
             return vec![Span::raw(String::new())];

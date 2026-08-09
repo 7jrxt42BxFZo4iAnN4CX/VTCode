@@ -498,7 +498,10 @@ pub(crate) fn update_thread_context(state: &mut InputStatusState, thread_label: 
 }
 
 /// Refresh account balance from the provider and update the status line.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 pub(crate) async fn refresh_balance_info(
     provider_client: &dyn LLMProvider,
     handle: &InlineHandle,

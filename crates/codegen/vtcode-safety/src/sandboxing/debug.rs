@@ -45,6 +45,10 @@ impl SandboxDebugResult {
 /// Debug sandbox configuration by running a test command.
 ///
 /// This allows testing sandbox restrictions without affecting production execution.
+#[expect(
+    unused_results,
+    reason = "Command builder methods configure the owned process command and return a fluent mutable reference."
+)]
 pub async fn debug_sandbox(
     sandbox_type: SandboxType,
     policy: &SandboxPolicy,
@@ -60,7 +64,9 @@ pub async fn debug_sandbox(
         anyhow::bail!("Command cannot be empty");
     }
 
-    let spec = CommandSpec::new(&command[0]).with_args(command[1..].to_vec()).with_cwd(cwd);
+    let program = command.first().context("Command cannot be empty")?;
+    let args = command.get(1..).unwrap_or_default().to_vec();
+    let spec = CommandSpec::new(program).with_args(args).with_cwd(cwd);
 
     let manager = SandboxManager::new();
     let exec_env = manager

@@ -115,7 +115,7 @@ impl ContinuationController {
 
     /// Borrow the progress monitor, if one is attached.
     #[must_use]
-    #[allow(dead_code)] // surfaced to the runloop via the persisted ledger; kept for diagnostics
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")] // surfaced to the runloop via the persisted ledger; kept for diagnostics
     pub(super) fn progress_monitor(&self) -> Option<&ProgressMonitor> {
         self.progress.as_ref()
     }

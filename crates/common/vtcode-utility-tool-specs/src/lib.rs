@@ -1,4 +1,9 @@
-#![allow(missing_docs, dead_code, unused_imports)]
+#![allow(
+    missing_docs,
+    dead_code,
+    unused_imports,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 
 //! Passive JSON schemas for utility, file, scheduling, and collaboration tool surfaces.
 
@@ -59,15 +64,17 @@ pub fn with_max_output_tokens_parameter(mut schema: Value) -> Value {
     let Some(properties_object) = properties.as_object_mut() else {
         return schema;
     };
-    properties_object.entry("max_output_tokens").or_insert_with(|| {
-        json!({
-            "type": "integer",
-            "minimum": MIN_MAX_OUTPUT_TOKENS,
-            "maximum": MAX_MAX_OUTPUT_TOKENS,
-            "default": DEFAULT_MAX_OUTPUT_TOKENS,
-            "description": "Maximum number of result tokens returned to the model. Full oversized output is spooled when available."
-        })
-    });
+    {
+        let _entry = properties_object.entry("max_output_tokens").or_insert_with(|| {
+            json!({
+                "type": "integer",
+                "minimum": MIN_MAX_OUTPUT_TOKENS,
+                "maximum": MAX_MAX_OUTPUT_TOKENS,
+                "default": DEFAULT_MAX_OUTPUT_TOKENS,
+                "description": "Maximum number of result tokens returned to the model. Full oversized output is spooled when available."
+            })
+        });
+    }
     schema
 }
 

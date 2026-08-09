@@ -15,6 +15,7 @@ use tokio::process::{Child, Command};
 use tokio::time::sleep;
 use url::Url;
 
+use crate::process_env::sanitize_tokio_command_environment;
 use crate::providers::ollama::base_url_to_host_root;
 
 use vtcode_config::constants::env_vars;
@@ -96,6 +97,7 @@ pub(super) async fn spawn_managed_server(base_url: &str, model_path: &str) -> Re
     let binary = resolve_binary_path()?;
     let args = build_command_args(base_url, model_path)?;
     let mut command = Command::new(&binary);
+    sanitize_tokio_command_environment(&mut command, &[]);
     command
         .args(&args)
         .stdin(Stdio::null())

@@ -46,7 +46,7 @@ pub(crate) fn auth_storage_dir() -> Result<PathBuf> {
     set_private_directory_permissions(&auth_dir)?;
 
     // Cache for subsequent calls. If another thread set it first, discard ours.
-    let _ = CACHED_PATH.set(auth_dir.clone());
+    drop(CACHED_PATH.set(auth_dir.clone()));
     DIR_CREATED.store(true, Ordering::Release);
 
     Ok(auth_dir)

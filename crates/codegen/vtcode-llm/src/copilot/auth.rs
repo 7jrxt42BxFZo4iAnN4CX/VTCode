@@ -1,4 +1,7 @@
-#![allow(clippy::let_underscore_must_use)]
+#![allow(
+    clippy::let_underscore_must_use,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -20,8 +23,14 @@ use vtcode_config::auth::CopilotAuthConfig;
 
 use vtcode_commons::ansi::strip_ansi;
 
-use super::command::{ResolvedCopilotCommand, cached_which, copilot_command_available, resolve_copilot_command};
+use super::command::{
+    ResolvedCopilotCommand, STRIPPED_RUNTIME_ENV_VARS, cached_which, copilot_command_available, resolve_copilot_command,
+};
 use super::types::{COPILOT_AUTH_DOC_PATH, CopilotAuthEvent, CopilotAuthStatus};
+use crate::process_env::{
+    COPILOT_AUTH_ENV_VARS, GITHUB_CLI_AUTH_ENV_VARS, sanitize_pty_command_environment,
+    sanitize_tokio_command_environment,
+};
 
 const DEFAULT_HOST_URL: &str = "https://github.com";
 const ENV_AUTH_VARS: &[&str] = &["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"];
@@ -482,6 +491,10 @@ fn blocking_interactive_logout_command(
         builder.arg(arg);
     }
     builder.cwd(workspace_root);
+    sanitize_pty_command_environment(&mut builder, COPILOT_AUTH_ENV_VARS);
+    for env_var in STRIPPED_RUNTIME_ENV_VARS {
+        builder.env_remove(env_var);
+    }
     builder.env("TERM", "xterm-256color");
     builder.env("COLUMNS", "80");
     builder.env("LINES", "24");
@@ -777,6 +790,7 @@ async fn github_cli_auth_available(host: &CopilotHost, workspace_root: Option<&P
     }
 
     let mut command = tokio::process::Command::new("gh");
+    sanitize_tokio_command_environment(&mut command, GITHUB_CLI_AUTH_ENV_VARS);
     command
         .arg("auth")
         .arg("status")

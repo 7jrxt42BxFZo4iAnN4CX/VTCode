@@ -576,7 +576,10 @@ impl ProgressTracker {
             if self.total_output_bytes > 0 {
                 let bytes_remaining = estimated.saturating_sub(self.total_output_bytes);
                 let bytes_per_ms = self.total_output_bytes as f32 / elapsed_ms as f32;
-                #[allow(clippy::cast_sign_loss)]
+                #[allow(
+                    clippy::cast_sign_loss,
+                    reason = "Intentional compatibility, platform, or test-only suppression."
+                )]
                 let remaining_ms = ((bytes_remaining as f32 / bytes_per_ms).max(0.0)) as u64;
                 Some(remaining_ms)
             } else {

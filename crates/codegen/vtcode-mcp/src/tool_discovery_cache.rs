@@ -26,8 +26,9 @@ pub struct BloomFilter {
 
 impl BloomFilter {
     fn new(expected_items: usize, false_positive_rate: f64) -> Self {
-        let size = Self::optimal_size(expected_items, false_positive_rate);
-        let num_hashes = Self::optimal_num_hashes(size, expected_items);
+        let expected_items = expected_items.max(1);
+        let size = Self::optimal_size(expected_items, false_positive_rate).max(1);
+        let num_hashes = Self::optimal_num_hashes(size, expected_items).max(1);
 
         Self { bits: vec![false; size], num_hashes, size }
     }
@@ -37,7 +38,9 @@ impl BloomFilter {
         for i in 0..self.num_hashes {
             let hash = self.hash(item, i);
             let index = hash % self.size;
-            self.bits[index] = true;
+            if let Some(bit) = self.bits.get_mut(index) {
+                *bit = true;
+            }
         }
     }
 
@@ -46,7 +49,7 @@ impl BloomFilter {
         for i in 0..self.num_hashes {
             let hash = self.hash(item, i);
             let index = hash % self.size;
-            if !self.bits[index] {
+            if !self.bits.get(index).copied().unwrap_or(false) {
                 return false;
             }
         }
@@ -59,14 +62,28 @@ impl BloomFilter {
     }
 
     /// Calculate optimal size for bloom filter
-    #[allow(clippy::cast_sign_loss)] // bloom filter sizes are always positive
+    #[allow(
+        clippy::cast_sign_loss,
+        reason = "Intentional compatibility, platform, or test-only suppression."
+    )]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "The calculated Bloom filter size is bounded by the target usize range before conversion."
+    )]
     fn optimal_size(expected_items: usize, false_positive_rate: f64) -> usize {
         let size = -(expected_items as f64 * false_positive_rate.ln() / (2.0_f64.ln().powi(2)));
         size.max(0.0).ceil() as usize
     }
 
     /// Calculate optimal number of hash functions
-    #[allow(clippy::cast_sign_loss)] // hash counts are always positive
+    #[allow(
+        clippy::cast_sign_loss,
+        reason = "Intentional compatibility, platform, or test-only suppression."
+    )]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "The calculated Bloom filter hash count is bounded by the target usize range before conversion."
+    )]
     fn optimal_num_hashes(size: usize, expected_items: usize) -> usize {
         let num_hashes = (size as f64 / expected_items as f64) * 2.0_f64.ln();
         num_hashes.max(0.0).ceil() as usize
@@ -80,7 +97,7 @@ impl BloomFilter {
         let mut hasher = DefaultHasher::new();
         item.hash(&mut hasher);
         seed.hash(&mut hasher);
-        hasher.finish() as usize
+        usize::try_from(hasher.finish()).unwrap_or(usize::MAX)
     }
 }
 
@@ -196,7 +213,7 @@ impl ToolDiscoveryCache {
                 return Some(Arc::clone(&cached.results));
             } else {
                 // Entry is stale, remove it
-                inner.detailed_cache.pop(&key);
+                drop(inner.detailed_cache.pop(&key));
             }
         }
 
@@ -239,7 +256,7 @@ impl ToolDiscoveryCache {
             return;
         };
 
-        inner.detailed_cache.put(key, cached);
+        drop(inner.detailed_cache.put(key, cached));
 
         for result in results.iter() {
             inner.bloom_filter.insert(&result.tool.name);
@@ -279,8 +296,8 @@ impl ToolDiscoveryCache {
             }
         };
 
-        inner.all_tools_cache.insert(provider_name.to_owned(), tools.clone());
-        inner.last_refresh.insert(provider_name.to_owned(), Instant::now());
+        drop(inner.all_tools_cache.insert(provider_name.to_owned(), tools.clone()));
+        let _previous = inner.last_refresh.insert(provider_name.to_owned(), Instant::now());
 
         // Update bloom filter with all tool names
         inner.bloom_filter.clear(); // Clear and rebuild for accuracy

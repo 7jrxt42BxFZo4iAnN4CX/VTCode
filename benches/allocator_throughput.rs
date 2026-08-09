@@ -40,12 +40,12 @@ fn make_payload(n: usize) -> Vec<u8> {
 fn bench_small_churn(c: &mut Criterion) {
     let mut group = c.benchmark_group("alloc_small_churn");
     let count = 200_000usize;
-    group.throughput(Throughput::Elements(count as u64));
-    group.bench_function("alloc_free_64B", |b| {
+    let _throughput = group.throughput(Throughput::Elements(count as u64));
+    let _benchmark = group.bench_function("alloc_free_64B", |b| {
         b.iter(|| {
             for _ in 0..count {
                 let v: Vec<u8> = Vec::with_capacity(64);
-                std::hint::black_box(&v);
+                let _black_boxed = std::hint::black_box(&v);
             }
         });
     });
@@ -55,12 +55,12 @@ fn bench_small_churn(c: &mut Criterion) {
 fn bench_large_churn(c: &mut Criterion) {
     let mut group = c.benchmark_group("alloc_large_churn");
     let count = 20_000usize;
-    group.throughput(Throughput::Bytes((count * 4096) as u64));
-    group.bench_function("alloc_free_4KB", |b| {
+    let _throughput = group.throughput(Throughput::Bytes((count * 4096) as u64));
+    let _benchmark = group.bench_function("alloc_free_4KB", |b| {
         b.iter(|| {
             for _ in 0..count {
                 let v = make_payload(4096);
-                std::hint::black_box(&v);
+                let _black_boxed = std::hint::black_box(&v);
             }
         });
     });
@@ -73,13 +73,13 @@ fn bench_event_burst(c: &mut Criterion) {
     let mut group = c.benchmark_group("alloc_event_burst");
     let events = 200usize;
     let tokens = 1000usize;
-    group.throughput(Throughput::Elements((events * tokens) as u64));
-    group.bench_function(BenchmarkId::new("payload_and_tokens", "{events}x{tokens}"), |b| {
+    let _throughput = group.throughput(Throughput::Elements((events * tokens) as u64));
+    let _benchmark = group.bench_function(BenchmarkId::new("payload_and_tokens", "{events}x{tokens}"), |b| {
         b.iter(|| {
             for _ in 0..events {
                 let payload = make_payload(4096);
                 let tokens_vec: Vec<String> = (0..tokens).map(|i| format!("token-{i}-{i:064}")).collect();
-                std::hint::black_box((&payload, &tokens_vec));
+                let _black_boxed = std::hint::black_box((&payload, &tokens_vec));
             }
         });
     });

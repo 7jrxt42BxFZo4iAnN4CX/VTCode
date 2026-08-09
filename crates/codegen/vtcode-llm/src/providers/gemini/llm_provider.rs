@@ -63,7 +63,7 @@ impl LLMProvider for GeminiProvider {
 
             if !response.status().is_success() {
                 let status = response.status();
-                let error_text = response.text().await.unwrap_or_default();
+                let error_text = crate::providers::common::read_provider_error_body(response).await;
                 return Err(Self::handle_http_error(status, &error_text));
             }
 
@@ -88,7 +88,7 @@ impl LLMProvider for GeminiProvider {
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text = crate::providers::common::read_provider_error_body(response).await;
             return Err(Self::handle_http_error(status, &error_text));
         }
 
@@ -114,7 +114,7 @@ impl LLMProvider for GeminiProvider {
 
             if !response.status().is_success() {
                 let status = response.status();
-                let error_text = response.text().await.unwrap_or_default();
+                let error_text = crate::providers::common::read_provider_error_body(response).await;
                 return Err(Self::handle_http_error(status, &error_text));
             }
 
@@ -201,7 +201,7 @@ impl LLMProvider for GeminiProvider {
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text = crate::providers::common::read_provider_error_body(response).await;
             return Err(Self::handle_http_error(status, &error_text));
         }
 

@@ -202,7 +202,7 @@ impl AuthCodeCallbackServer {
             .with_context(|| format!("failed to bind localhost callback server on port {port}"))?;
 
         let server = axum::serve(listener, app).with_graceful_shutdown(async move {
-            let _ = shutdown_rx.await;
+            drop(shutdown_rx.await);
         });
         let server_handle = tokio::spawn(async move {
             if let Err(err) = server.await {
@@ -235,10 +235,10 @@ impl AuthCodeCallbackServer {
 
     async fn shutdown(&mut self) {
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
-            let _ = shutdown_tx.send(());
+            let _ignored = shutdown_tx.send(());
         }
         if let Some(server_handle) = self.server_handle.take() {
-            let _ = server_handle.await;
+            drop(server_handle.await);
         }
     }
 }
@@ -246,7 +246,7 @@ impl AuthCodeCallbackServer {
 impl Drop for AuthCodeCallbackServer {
     fn drop(&mut self) {
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
-            let _ = shutdown_tx.send(());
+            let _ignored = shutdown_tx.send(());
         }
         if let Some(server_handle) = self.server_handle.take() {
             server_handle.abort();
@@ -304,7 +304,7 @@ async fn handle_callback(
             Some(actual_state) if actual_state == expected_state => {}
             _ => {
                 let message = "OAuth error: state mismatch".to_string();
-                let _ = state.result_tx.send(AuthCallbackOutcome::Error(message.clone())).await;
+                drop(state.result_tx.send(AuthCallbackOutcome::Error(message.clone())).await);
                 return Html(error_html(state.page, &message));
             }
         }
@@ -317,22 +317,22 @@ async fn handle_callback(
             }
             _ => format!("OAuth error: {error}"),
         };
-        let _ = state.result_tx.send(AuthCallbackOutcome::Error(message.clone())).await;
+        drop(state.result_tx.send(AuthCallbackOutcome::Error(message.clone())).await);
         return Html(error_html(state.page, &message));
     }
 
     let Some(code) = params.code else {
         let message = "Missing authorization code".to_string();
-        let _ = state.result_tx.send(AuthCallbackOutcome::Error(message.clone())).await;
+        drop(state.result_tx.send(AuthCallbackOutcome::Error(message.clone())).await);
         return Html(error_html(state.page, &message));
     };
 
-    let _ = state.result_tx.send(AuthCallbackOutcome::Code(code)).await;
+    drop(state.result_tx.send(AuthCallbackOutcome::Code(code)).await);
     Html(success_html(state.page))
 }
 
 async fn handle_cancel(State(state): State<Arc<AuthCallbackState>>) -> Html<String> {
-    let _ = state.result_tx.send(AuthCallbackOutcome::Cancelled).await;
+    drop(state.result_tx.send(AuthCallbackOutcome::Cancelled).await);
     Html(cancelled_html(state.page))
 }
 

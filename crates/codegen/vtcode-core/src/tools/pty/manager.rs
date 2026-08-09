@@ -23,7 +23,7 @@ use super::command_utils::{
     is_long_running_command, is_long_running_command_string, is_sandbox_wrapper_program, is_shell_program,
 };
 use super::formatting::sanitize_session_id;
-use super::manager_utils::{clamp_timeout, exit_status_code, set_command_environment};
+use super::manager_utils::{clamp_timeout, exit_status_code, set_command_environment_with_sandbox};
 
 use super::screen_backend::PtyScreenState;
 use super::scrollback::PtyScrollback;
@@ -192,7 +192,16 @@ impl PtyManager {
             }
             builder.cwd(&work_dir);
             let extra_env = HashMap::new();
-            set_command_environment(&mut builder, &display_program, size, &workspace_root, &extra_paths, &extra_env);
+            let sandbox_active = is_sandbox_wrapper_program(&program, &args);
+            set_command_environment_with_sandbox(
+                &mut builder,
+                &display_program,
+                size,
+                &workspace_root,
+                &extra_paths,
+                &extra_env,
+                sandbox_active,
+            );
 
             let pty_system = native_pty_system();
             let pair = pty_system.openpty(size).context("failed to allocate PTY pair")?;
@@ -457,6 +466,27 @@ impl PtyManager {
         extra_env: HashMap<String, String>,
         zsh_exec_bridge: Option<crate::zsh_exec_bridge::ZshExecBridgeSession>,
     ) -> Result<VTCodePtySession> {
+        self.create_session_with_bridge_sandboxed(
+            session_id,
+            command,
+            working_dir,
+            size,
+            extra_env,
+            zsh_exec_bridge,
+            false,
+        )
+    }
+
+    pub(crate) fn create_session_with_bridge_sandboxed(
+        &self,
+        session_id: String,
+        command: Vec<String>,
+        working_dir: PathBuf,
+        size: PtySize,
+        extra_env: HashMap<String, String>,
+        zsh_exec_bridge: Option<crate::zsh_exec_bridge::ZshExecBridgeSession>,
+        sandbox_active: bool,
+    ) -> Result<VTCodePtySession> {
         if command.is_empty() {
             return Err(anyhow!(
                 "PTY session command cannot be empty.\n\
@@ -510,7 +540,15 @@ impl PtyManager {
         }
         builder.cwd(&working_dir);
         self.ensure_within_workspace(&working_dir)?;
-        set_command_environment(&mut builder, &display_program, size, &self.workspace_root, &extra_paths, &extra_env);
+        set_command_environment_with_sandbox(
+            &mut builder,
+            &display_program,
+            size,
+            &self.workspace_root,
+            &extra_paths,
+            &extra_env,
+            sandbox_active,
+        );
 
         let child = pair
             .slave

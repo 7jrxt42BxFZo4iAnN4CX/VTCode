@@ -298,7 +298,10 @@ impl ResponseStreamEvent {
 }
 
 /// Callback type for streaming events.
-#[expect(dead_code)]
+#[expect(
+    dead_code,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 pub type StreamEventCallback = Arc<Mutex<Box<dyn FnMut(&ResponseStreamEvent) + Send>>>;
 
 /// Trait for emitting Open Responses streaming events.

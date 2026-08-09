@@ -1,3 +1,8 @@
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "The 256-color conversion clamps channel values to the palette range before narrowing."
+)]
+
 //! Theme-aware 256-color helpers.
 //!
 //! The terminal 256-color palette can be "non-harmonious" on light themes when
@@ -53,7 +58,10 @@ fn gray_index(level: u8) -> u8 {
 }
 
 /// Reflected cube index (maps `r,g,b` in `0..=5` onto `16..=231`).
-#[allow(clippy::cast_sign_loss)]
+#[allow(
+    clippy::cast_sign_loss,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 fn cube_index(r: u8, g: u8, b: u8) -> u8 {
     let r = r.min(5);
     let g = g.min(5);

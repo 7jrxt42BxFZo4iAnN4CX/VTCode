@@ -285,7 +285,13 @@ impl AgentRunner {
 
     /// Internal tool execution, skipping validation.
     /// Use when `is_valid_tool` has already been called by the caller.
-    #[cfg_attr(not(test), expect(dead_code))]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Internal validation-bypassing path is exercised only by tests and trusted callers."
+        )
+    )]
     pub(super) async fn execute_tool_internal(
         &self,
         tool_name: &str,

@@ -1,5 +1,8 @@
 #!/usr/bin/env rust-script
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 //! Test script for the consolidated search functionality
 
 use serde_json::json;

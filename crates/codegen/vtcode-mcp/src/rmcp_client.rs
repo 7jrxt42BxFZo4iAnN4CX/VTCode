@@ -1,11 +1,14 @@
 use super::rmcp_transport::create_stdio_transport_with_stderr;
-use super::{McpElicitationHandler, convert_to_rmcp, create_env_for_mcp_server};
+use super::{McpElicitationHandler, McpSandboxContext, convert_to_rmcp, create_env_for_mcp_server};
 use anyhow::{Context, Result, anyhow};
 use futures::FutureExt;
 use hashbrown::HashMap;
 use jsonschema::Validator;
 use rmcp::handler::client::ClientHandler;
-#[allow(deprecated)]
+#[allow(
+    deprecated,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, CancelledNotificationParam, ClientResult, CustomResult, ElicitRequestParams,
     ElicitationAction, GetPromptRequestParams, GetPromptResult, InitializeRequestParams, ListRootsResult, LoggingLevel,
@@ -23,13 +26,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 use tokio::time;
 use tracing::{debug, error, info, warn};
 use url::Url;
+use vtcode_commons::sanitizer::sanitize_provider_diagnostic;
 
 const MCP_PROGRESS_TOKEN_META_KEY: &str = "progressToken";
+const MCP_STDERR_MAX_BYTES: usize = 8 * 1024;
 
 /// High level MCP client responsible for managing multiple providers and
 /// enforcing VT Code specific policies like tool allow lists.
@@ -102,8 +107,15 @@ impl RmcpClient {
         working_dir: Option<PathBuf>,
         env: Option<HashMap<OsString, OsString>>,
         elicitation_handler: Option<Arc<dyn McpElicitationHandler>>,
+        sandbox_context: Option<McpSandboxContext>,
     ) -> Result<Self> {
         let env = create_env_for_mcp_server(env);
+        let (program, args, working_dir, env) = if let Some(context) = sandbox_context {
+            let transformed = context.transform_stdio(program, args, working_dir.as_deref(), env)?;
+            (transformed.program, transformed.args, Some(transformed.working_dir), transformed.env)
+        } else {
+            (program, args, working_dir, env)
+        };
 
         // Use rmcp_transport helper to create transport with stderr capture
         let (transport, stderr) = create_stdio_transport_with_stderr(&program, &args, working_dir.as_ref(), &env)?;
@@ -113,26 +125,39 @@ impl RmcpClient {
             let program_name = program.to_string_lossy().into_owned();
             let provider_label = provider_name.clone();
             Some(tokio::spawn(async move {
-                let mut reader = BufReader::new(stderr);
-                let mut line = String::new();
+                let mut reader = stderr;
+                let mut chunk = [0_u8; 1024];
+                let mut line = Vec::with_capacity(MCP_STDERR_MAX_BYTES);
+                let mut truncated = false;
+
+                let log_line = |line: &[u8], truncated: bool| {
+                    let message = sanitize_provider_diagnostic(line);
+                    info!(
+                        provider = provider_label.as_str(),
+                        program = program_name.as_str(),
+                        message = message.as_str(),
+                        truncated,
+                        "MCP server stderr"
+                    );
+                };
+
                 loop {
-                    line.clear();
-                    match reader.read_line(&mut line).await {
+                    match reader.read(&mut chunk).await {
                         Ok(0) => break,
-                        Ok(_) => {
-                            let mut trimmed = line.as_str();
-                            if let Some(stripped) = trimmed.strip_suffix('\n') {
-                                trimmed = stripped;
+                        Ok(bytes_read) => {
+                            for byte in chunk.get(..bytes_read).unwrap_or_default() {
+                                if *byte == b'\n' {
+                                    if !line.is_empty() || truncated {
+                                        log_line(&line, truncated);
+                                    }
+                                    line.clear();
+                                    truncated = false;
+                                } else if line.len() < MCP_STDERR_MAX_BYTES {
+                                    line.push(*byte);
+                                } else {
+                                    truncated = true;
+                                }
                             }
-                            if let Some(stripped) = trimmed.strip_suffix('\r') {
-                                trimmed = stripped;
-                            }
-                            info!(
-                                provider = provider_label.as_str(),
-                                program = program_name.as_str(),
-                                message = trimmed,
-                                "MCP server stderr"
-                            );
                         }
                         Err(error) => {
                             warn!(
@@ -144,6 +169,9 @@ impl RmcpClient {
                             break;
                         }
                     }
+                }
+                if !line.is_empty() || truncated {
+                    log_line(&line, truncated);
                 }
             }))
         } else {
@@ -281,7 +309,10 @@ impl RmcpClient {
         Ok(resources)
     }
 
-    #[expect(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     async fn list_all_resource_templates(&self, timeout: Option<Duration>) -> Result<Vec<ResourceTemplate>> {
         let service = self.service().await?;
         let rmcp_future = service.peer().list_all_resource_templates();
@@ -558,7 +589,10 @@ impl LoggingClientHandler {
         Ok(default_response)
     }
 
-    #[allow(deprecated)]
+    #[allow(
+        deprecated,
+        reason = "Intentional compatibility, platform, or test-only suppression."
+    )]
     fn handle_logging(&self, params: LoggingMessageNotificationParam) {
         let logger = params.logger.unwrap_or_default();
         let summary = params
@@ -629,7 +663,10 @@ impl ClientHandler for LoggingClientHandler {
         }
     }
 
-    #[allow(deprecated)]
+    #[allow(
+        deprecated,
+        reason = "Intentional compatibility, platform, or test-only suppression."
+    )]
     fn list_roots(
         &self,
         _context: RequestContext<RoleClient>,
@@ -692,7 +729,10 @@ impl ClientHandler for LoggingClientHandler {
         async move {}
     }
 
-    #[allow(deprecated)]
+    #[allow(
+        deprecated,
+        reason = "Intentional compatibility, platform, or test-only suppression."
+    )]
     fn on_logging_message(
         &self,
         params: LoggingMessageNotificationParam,
@@ -748,7 +788,7 @@ impl ClientHandler for LoggingClientHandler {
 }
 
 fn restore_context_meta(mut request: ElicitRequestParams, mut context_meta: RequestMetaObject) -> ElicitRequestParams {
-    context_meta.remove(MCP_PROGRESS_TOKEN_META_KEY);
+    drop(context_meta.remove(MCP_PROGRESS_TOKEN_META_KEY));
     if context_meta.is_empty() {
         return request;
     }

@@ -87,7 +87,10 @@ pub(super) fn emit_tool_catalog_cache_metrics(ctx: &TurnProcessingContext<'_>, m
     });
 }
 
-#[expect(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 pub(super) fn emit_llm_retry_metrics(
     ctx: &TurnProcessingContext<'_>,
     step_count: usize,

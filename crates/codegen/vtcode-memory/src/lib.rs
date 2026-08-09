@@ -1,4 +1,16 @@
-#![allow(dead_code, unused_imports)]
+#![allow(
+    dead_code,
+    unused_imports,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
+#![expect(
+    unused_results,
+    clippy::let_underscore_must_use,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::string_slice,
+    reason = "The memory store uses compact persisted counters, bounded timestamp conversions, and side-effect-only index maintenance."
+)]
 //! Unified per-session state store for VT Code.
 //!
 //! This crate is the single source of truth for an agent session's state,

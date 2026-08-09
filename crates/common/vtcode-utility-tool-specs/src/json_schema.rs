@@ -64,7 +64,7 @@ fn sanitize_schema_object(map: &mut Map<String, Value>) {
     }
 
     if let Some(const_value) = map.remove("const") {
-        map.insert("enum".to_string(), Value::Array(vec![const_value]));
+        drop(map.insert("enum".to_string(), Value::Array(vec![const_value])));
     }
 
     let mut schema_types = normalized_schema_types(map);
@@ -114,19 +114,21 @@ fn normalized_schema_types(map: &Map<String, Value>) -> Vec<&'static str> {
 fn write_schema_types(map: &mut Map<String, Value>, schema_types: &[&'static str]) {
     match schema_types {
         [] => {
-            map.remove("type");
+            drop(map.remove("type"));
         }
         [schema_type] => {
-            map.insert("type".to_string(), Value::String((*schema_type).to_string()));
+            drop(map.insert("type".to_string(), Value::String((*schema_type).to_string())));
         }
         _ => {
-            map.insert(
-                "type".to_string(),
-                Value::Array(
-                    schema_types
-                        .iter()
-                        .map(|schema_type| Value::String((*schema_type).to_string()))
-                        .collect(),
+            drop(
+                map.insert(
+                    "type".to_string(),
+                    Value::Array(
+                        schema_types
+                            .iter()
+                            .map(|schema_type| Value::String((*schema_type).to_string()))
+                            .collect(),
+                    ),
                 ),
             );
         }
@@ -135,11 +137,11 @@ fn write_schema_types(map: &mut Map<String, Value>, schema_types: &[&'static str
 
 fn ensure_default_children_for_schema_types(map: &mut Map<String, Value>, schema_types: &[&str]) {
     if schema_types.contains(&"object") && !map.contains_key("properties") {
-        map.insert("properties".to_string(), Value::Object(Map::new()));
+        drop(map.insert("properties".to_string(), Value::Object(Map::new())));
     }
 
     if schema_types.contains(&"array") && !map.contains_key("items") {
-        map.insert("items".to_string(), json!({ "type": "string" }));
+        drop(map.insert("items".to_string(), json!({ "type": "string" })));
     }
 }
 

@@ -1,3 +1,8 @@
+#![expect(
+    unused_results,
+    reason = "WalkBuilder configuration uses fluent setters only for their mutation side effects."
+)]
+
 //! Shared directory walker helpers built on the `ignore` crate.
 //!
 //! All file traversal in vtcode should go through these builders so that

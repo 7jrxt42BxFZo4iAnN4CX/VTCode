@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use serde_json::json;
 use vtcode_core::tools::traits::Tool;
 use vtcode_core::tools::web_fetch::WebFetchTool;

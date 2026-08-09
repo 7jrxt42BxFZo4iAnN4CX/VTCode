@@ -1,5 +1,14 @@
-#![allow(clippy::unreachable, clippy::map_err_ignore)]
-#![allow(missing_docs, dead_code, unused_imports)]
+#![allow(
+    clippy::unreachable,
+    clippy::map_err_ignore,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
+#![allow(
+    missing_docs,
+    dead_code,
+    unused_imports,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 //! Shared authentication and OAuth flows for VT Code.
 
 mod auth_service;

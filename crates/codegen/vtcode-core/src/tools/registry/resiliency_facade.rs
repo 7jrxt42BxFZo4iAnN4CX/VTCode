@@ -37,14 +37,20 @@ impl ToolRegistry {
             let before = *adaptive;
             if let Some(base) = self.timeout_policy.read().ceiling_for(category) {
                 if *adaptive < base {
-                    #[allow(clippy::cast_sign_loss)]
+                    #[allow(
+                        clippy::cast_sign_loss,
+                        reason = "Intentional compatibility, platform, or test-only suppression."
+                    )]
                     let relaxed_ms = (((*adaptive).as_millis() as f64 * (1.0 / tuning.decay_ratio)).max(0.0)) as u128;
                     let relaxed = Duration::from_millis(relaxed_ms as u64);
                     *adaptive = std::cmp::min(relaxed, base);
                 }
             } else {
                 // If no base, relax upward modestly
-                #[allow(clippy::cast_sign_loss)]
+                #[allow(
+                    clippy::cast_sign_loss,
+                    reason = "Intentional compatibility, platform, or test-only suppression."
+                )]
                 let relaxed = Duration::from_millis(
                     (((*adaptive).as_millis() as f64 * (1.0 / tuning.decay_ratio)).max(0.0)) as u64,
                 );

@@ -12,6 +12,7 @@ use tracing::{info, warn};
 use vtcode_commons::fs::{ensure_dir_exists, write_file_with_context};
 use vtcode_config::mcp::{McpAllowListConfig, McpClientConfig, McpProviderConfig, McpTransportConfig};
 
+use super::McpSandboxContext;
 use super::{
     McpClientStatus, McpElicitationHandler, McpPromptDetail, McpPromptInfo, McpProvider, McpResourceData,
     McpResourceInfo, McpToolExecutor, McpToolInfo, format_tool_markdown, sanitize_filename,
@@ -30,11 +31,17 @@ pub struct McpClient {
     config: McpClientConfig,
     state: RwLock<McpClientState>,
     elicitation_handler: Option<Arc<dyn McpElicitationHandler>>,
+    sandbox_context: Option<McpSandboxContext>,
 }
 
 impl McpClient {
     /// Create a new MCP client from the configuration.
     pub fn new(config: McpClientConfig) -> Self {
+        Self::with_sandbox_context(config, None)
+    }
+
+    /// Create an MCP client with an optional inherited stdio sandbox context.
+    pub fn with_sandbox_context(config: McpClientConfig, sandbox_context: Option<McpSandboxContext>) -> Self {
         let allowlist = config.allowlist.clone();
 
         Self {
@@ -47,6 +54,7 @@ impl McpClient {
                 prompt_provider_index: FxHashMap::default(),
             }),
             elicitation_handler: None,
+            sandbox_context,
         }
     }
 
@@ -77,6 +85,7 @@ impl McpClient {
             .initialize_providers_parallel(
                 provider_configs,
                 self.elicitation_handler.clone(),
+                self.sandbox_context.clone(),
                 tool_timeout,
                 &allowlist_snapshot,
             )
@@ -85,7 +94,7 @@ impl McpClient {
 
         let mut initialized = FxHashMap::default();
         for (name, provider) in results {
-            initialized.insert(name, provider);
+            drop(initialized.insert(name, provider));
         }
 
         self.state.write().providers = initialized;
@@ -98,7 +107,7 @@ impl McpClient {
     fn validate_tool_arguments(&self, _tool_name: &str, args: &Value) -> Result<()> {
         // Check argument size
         if self.config.security.validation.max_argument_size > 0 {
-            let args_size = serde_json::to_string(args).map_or(0, |s| s.len()) as u32;
+            let args_size = serde_json::to_string(args).map_or(0, |s| u32::try_from(s.len()).unwrap_or(u32::MAX));
 
             if args_size > self.config.security.validation.max_argument_size {
                 return Err(anyhow::anyhow!(
@@ -217,7 +226,7 @@ impl McpClient {
         let provider_name = provider.name.clone();
         let allowlist_snapshot = self.state.read().allowlist.clone();
         let data = provider.read_resource(uri, self.request_timeout(), &allowlist_snapshot).await?;
-        self.state.write().resource_provider_index.insert(uri.into(), provider_name);
+        drop(self.state.write().resource_provider_index.insert(uri.into(), provider_name));
         Ok(data)
     }
 
@@ -233,10 +242,12 @@ impl McpClient {
         let prompt = provider
             .get_prompt(prompt_name, arguments.unwrap_or_default(), self.request_timeout(), &allowlist_snapshot)
             .await?;
-        self.state
-            .write()
-            .prompt_provider_index
-            .insert(prompt_name.into(), provider_name);
+        drop(
+            self.state
+                .write()
+                .prompt_provider_index
+                .insert(prompt_name.into(), provider_name),
+        );
         Ok(prompt)
     }
 
@@ -356,7 +367,7 @@ impl McpClient {
             self.record_tool_provider(&provider.name, &cache);
         }
 
-        self.state.write().providers.insert(provider.name.clone(), Arc::new(provider));
+        drop(self.state.write().providers.insert(provider.name.clone(), Arc::new(provider)));
         Ok(())
     }
 
@@ -543,7 +554,7 @@ impl McpClient {
             match tools {
                 Ok(tools) => {
                     for tool in &tools {
-                        index_updates.insert(tool.name.clone(), provider_name.clone());
+                        drop(index_updates.insert(tool.name.clone(), provider_name.clone()));
                     }
                     all_tools.extend(tools);
                 }
@@ -601,7 +612,7 @@ impl McpClient {
         let index = &mut state.resource_provider_index;
         index.clear();
         for resource in &all_resources {
-            index.insert(resource.uri.clone(), resource.provider.clone());
+            drop(index.insert(resource.uri.clone(), resource.provider.clone()));
         }
 
         Ok(all_resources)
@@ -643,7 +654,7 @@ impl McpClient {
         let index = &mut state.prompt_provider_index;
         index.clear();
         for prompt in &all_prompts {
-            index.insert(prompt.name.clone(), prompt.provider.clone());
+            drop(index.insert(prompt.name.clone(), prompt.provider.clone()));
         }
 
         Ok(all_prompts)
@@ -681,10 +692,12 @@ impl McpClient {
         for provider in providers {
             match provider.has_tool(tool_name, &allowlist, timeout).await {
                 Ok(true) => {
-                    self.state
-                        .write()
-                        .tool_provider_index
-                        .insert(tool_name.into(), provider.name.clone());
+                    drop(
+                        self.state
+                            .write()
+                            .tool_provider_index
+                            .insert(tool_name.into(), provider.name.clone()),
+                    );
                     return Ok(provider);
                 }
                 Ok(false) => continue,
@@ -737,10 +750,12 @@ impl McpClient {
         for provider in providers {
             match provider.has_resource(uri, &allowlist, timeout).await {
                 Ok(true) => {
-                    self.state
-                        .write()
-                        .resource_provider_index
-                        .insert(uri.into(), provider.name.clone());
+                    drop(
+                        self.state
+                            .write()
+                            .resource_provider_index
+                            .insert(uri.into(), provider.name.clone()),
+                    );
                     return Ok(provider);
                 }
                 Ok(false) => continue,
@@ -769,10 +784,12 @@ impl McpClient {
         for provider in providers {
             match provider.has_prompt(prompt_name, &allowlist, timeout).await {
                 Ok(true) => {
-                    self.state
-                        .write()
-                        .prompt_provider_index
-                        .insert(prompt_name.into(), provider.name.clone());
+                    drop(
+                        self.state
+                            .write()
+                            .prompt_provider_index
+                            .insert(prompt_name.into(), provider.name.clone()),
+                    );
                     return Ok(provider);
                 }
                 Ok(false) => continue,
@@ -789,7 +806,7 @@ impl McpClient {
         let mut state = self.state.write();
         let index = &mut state.tool_provider_index;
         for tool in tools {
-            index.insert(tool.name.clone(), provider.to_string());
+            drop(index.insert(tool.name.clone(), provider.to_string()));
         }
     }
 
@@ -837,9 +854,13 @@ impl McpClient {
         allowlist_snapshot: &McpAllowListConfig,
         tool_timeout: Option<Duration>,
     ) -> Result<McpProvider> {
-        let provider = McpProvider::connect(provider_config.clone(), self.elicitation_handler.clone())
-            .await
-            .with_context(|| format!("Failed to connect to MCP provider '{}'", provider_config.name))?;
+        let provider = McpProvider::connect(
+            provider_config.clone(),
+            self.elicitation_handler.clone(),
+            self.sandbox_context.clone(),
+        )
+        .await
+        .with_context(|| format!("Failed to connect to MCP provider '{}'", provider_config.name))?;
         let provider_startup_timeout = self.resolve_startup_timeout(provider_config);
         provider
             .initialize(
@@ -912,7 +933,7 @@ impl McpClient {
     fn provider_retry_delay(attempt_idx: usize) -> Duration {
         let base_ms = 250u64;
         let max_ms = 5000u64;
-        let exp = base_ms.saturating_mul(2u64.saturating_pow(attempt_idx as u32));
+        let exp = base_ms.saturating_mul(2u64.saturating_pow(u32::try_from(attempt_idx).unwrap_or(u32::MAX)));
         let delay = exp.min(max_ms);
         Duration::from_millis(delay)
     }
@@ -959,7 +980,7 @@ impl McpClient {
             Value::Object(map) => map.clone(),
             other => {
                 let mut map = Map::new();
-                map.insert("value".to_owned(), other.clone());
+                drop(map.insert("value".to_owned(), other.clone()));
                 map
             }
         }
@@ -999,8 +1020,8 @@ impl McpClient {
         }
 
         let mut payload = Map::new();
-        payload.insert("provider".into(), Value::String(provider_name.to_string()));
-        payload.insert("tool".into(), Value::String(tool_name.to_string()));
+        drop(payload.insert("provider".into(), Value::String(provider_name.to_string())));
+        drop(payload.insert("tool".into(), Value::String(tool_name.to_string())));
 
         // Add meta if present
         if let Some(meta) = result_obj
@@ -1009,7 +1030,7 @@ impl McpClient {
             .and_then(Value::as_object)
             && !meta.is_empty()
         {
-            payload.insert("meta".into(), Value::Object(meta.clone()));
+            drop(payload.insert("meta".into(), Value::Object(meta.clone())));
         }
 
         // Add content if present
@@ -1017,7 +1038,7 @@ impl McpClient {
             && !content.is_null()
             && !content.as_array().map(|a| a.is_empty()).unwrap_or(true)
         {
-            payload.insert("content".into(), content.clone());
+            drop(payload.insert("content".into(), content.clone()));
         }
 
         Ok(Value::Object(payload))

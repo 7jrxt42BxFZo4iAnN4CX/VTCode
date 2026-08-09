@@ -740,7 +740,7 @@ impl OllamaProvider {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body = crate::providers::common::read_provider_error_body(response).await;
             let error_message =
                 Self::extract_error(&body).unwrap_or_else(|| format!("Ollama request failed ({status}): {body}"));
             return Err(LLMError::Provider { message: error_message, metadata: None });
@@ -834,7 +834,10 @@ struct OllamaChatResponse {
 #[derive(Debug, Deserialize)]
 struct OllamaResponseMessage {
     #[serde(default)]
-    #[expect(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     role: Option<String>,
     #[serde(default)]
     content: Option<String>,
@@ -947,7 +950,7 @@ impl LLMProvider for OllamaProvider {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body = crate::providers::common::read_provider_error_body(response).await;
             let error_message = Self::extract_error(&body)
                 .unwrap_or_else(|| format!("Ollama streaming request failed ({status}): {body}"));
             return Err(LLMError::Provider { message: error_message, metadata: None });

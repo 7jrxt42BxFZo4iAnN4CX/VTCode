@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 
 use anyhow::Result;
 use serde_json::json;
@@ -55,7 +58,7 @@ async fn code_search_rejects_every_former_public_field() -> Result<()> {
         "builtin_rules",
     ] {
         let mut payload = json!({"query": "ReasoningStage"});
-        payload
+        let _previous = payload
             .as_object_mut()
             .expect("request object")
             .insert(field.to_string(), json!(true));

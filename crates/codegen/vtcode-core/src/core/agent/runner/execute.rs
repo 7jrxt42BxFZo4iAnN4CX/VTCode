@@ -277,7 +277,10 @@ impl AgentRunner {
     /// Note: `SkipAccept` intentionally bypasses the evaluator gate (mirroring
     /// the original pre-verification path) regardless of which controller call
     /// produced it.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Intentional compatibility, platform, or test-only suppression."
+    )]
     async fn resolve_completion_assessment(
         &mut self,
         assessment: CompletionAssessment,
@@ -470,7 +473,10 @@ impl AgentRunner {
                     );
                     if !fits {
                         warn!(estimated, budget, "Pre-flight token check failed: prompt exceeds context budget");
-                        #[allow(clippy::cast_sign_loss)]
+                        #[allow(
+                            clippy::cast_sign_loss,
+                            reason = "Intentional compatibility, platform, or test-only suppression."
+                        )]
                         let pct = (estimated as f64 / budget as f64 * 100.0) as u32;
                         runtime
                             .state
@@ -491,7 +497,10 @@ impl AgentRunner {
                 let utilization = runtime.state.utilization();
                 if utilization > 0.90 {
                     warn!("Context at {:.1}% - approaching limit", utilization * 100.0);
-                    #[allow(clippy::cast_sign_loss)]
+                    #[allow(
+                        clippy::cast_sign_loss,
+                        reason = "Intentional compatibility, platform, or test-only suppression."
+                    )]
                     let warning_pct = (utilization * 100.0) as u32;
                     runtime
                         .state
@@ -814,7 +823,10 @@ impl AgentRunner {
                 // results.  (Steps 1–2 already exist at the tool-exec level:
                 // auto-retry and alternative-tool fallback are handled in
                 // tool_exec.rs and execution_facade.rs.)
-                #[allow(unused_assignments)] // compiler keeps flags but this is clear
+                #[allow(
+                    unused_assignments,
+                    reason = "Intentional compatibility, platform, or test-only suppression."
+                )] // compiler keeps flags but this is clear
                 if self.config().agent.harness.confidence_escalation.enabled
                     && !runtime.state.is_completed
                     && let Some(tool_calls) = effective_tool_calls.as_ref()

@@ -575,7 +575,10 @@ impl StreamingProcessor {
                         .and_then(Value::as_str)
                         .unwrap_or("Gemini streaming error")
                         .to_owned();
-                    #[allow(clippy::cast_sign_loss)]
+                    #[allow(
+                        clippy::cast_sign_loss,
+                        reason = "Intentional compatibility, platform, or test-only suppression."
+                    )]
                     let code = error_value.get("code").and_then(Value::as_i64).unwrap_or(500) as u16;
                     return Err(StreamingError::ApiError {
                         status_code: code,

@@ -185,12 +185,20 @@ impl ToolRiskScorer {
         }
 
         // Apply source multiplier
-        #[allow(clippy::cast_sign_loss, clippy::let_and_return)]
+        #[allow(
+            clippy::cast_sign_loss,
+            clippy::let_and_return,
+            reason = "Intentional compatibility, platform, or test-only suppression."
+        )]
         let adjusted = ((base_score as f32 * ctx.source.risk_multiplier()).max(0.0)) as u32;
         base_score = adjusted;
 
         // Apply trust reduction
-        #[allow(clippy::cast_sign_loss, clippy::let_and_return)]
+        #[allow(
+            clippy::cast_sign_loss,
+            clippy::let_and_return,
+            reason = "Intentional compatibility, platform, or test-only suppression."
+        )]
         let adjusted = ((base_score as f32 * ctx.workspace_trust.risk_reduction()).max(0.0)) as u32;
         base_score = adjusted;
 

@@ -94,9 +94,12 @@ fn derive_key(salt: Option<&str>) -> Result<LessSafeKey> {
     }
 
     let hash = digest(&SHA256, &key_material);
-    let key_bytes: &[u8; 32] = hash.as_ref()[..32]
+    let key_bytes: &[u8; 32] = hash
+        .as_ref()
+        .get(..32)
+        .context("credential encryption key was too short")?
         .try_into()
-        .context("credential encryption key was too short")?;
+        .context("credential encryption key had an invalid length")?;
     let unbound =
         UnboundKey::new(&aead::AES_256_GCM, key_bytes).map_err(|_| anyhow!("invalid credential encryption key"))?;
     Ok(LessSafeKey::new(unbound))

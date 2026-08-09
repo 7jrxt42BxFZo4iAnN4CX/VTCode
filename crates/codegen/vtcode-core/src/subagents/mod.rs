@@ -1,4 +1,7 @@
-#![allow(unused_imports)]
+#![allow(
+    unused_imports,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 // ─── Module Structure ───────────────────────────────────────────────────────
 
 mod background;
@@ -237,7 +240,10 @@ mod controller_helpers;
 mod controller_spawn_run;
 mod controller_verify;
 
-#[allow(unused_imports)]
+#[allow(
+    unused_imports,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 pub(super) use controller_helpers::*;
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

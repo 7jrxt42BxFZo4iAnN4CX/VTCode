@@ -1,3 +1,8 @@
+#![expect(
+    clippy::let_underscore_must_use,
+    reason = "The trace flush hook is registered once and duplicate registration is intentionally ignored."
+)]
+
 //! Global trace log flush hook.
 //!
 //! Allows any crate (including `vtcode-ui`) to trigger a trace log flush

@@ -98,7 +98,13 @@ impl CommandTool {
             path_env::compute_extra_search_paths(&commands_config.extra_path_entries, &self.workspace_root);
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Legacy invocation preparation remains available to test-only compatibility paths."
+        )
+    )]
     async fn prepare_invocation(&self, input: &EnhancedTerminalInput) -> Result<CommandInvocation> {
         let command = &input.command;
         if command.is_empty() {
@@ -202,7 +208,7 @@ impl CommandTool {
 // CommandTool is kept for internal command preparation in the PTY system.
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 pub(crate) struct CommandInvocation {
     pub(crate) program: String,
     pub(crate) args: Vec<String>,

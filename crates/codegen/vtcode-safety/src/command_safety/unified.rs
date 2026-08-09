@@ -316,10 +316,12 @@ mod tests {
     #[tokio::test]
     async fn dangerous_command_is_audited() {
         let evaluator = UnifiedCommandEvaluator::new();
-        evaluator
-            .evaluate(&["rm".to_string(), "-rf".to_string(), "/".to_string()])
-            .await
-            .unwrap();
+        drop(
+            evaluator
+                .evaluate(&["rm".to_string(), "-rf".to_string(), "/".to_string()])
+                .await
+                .unwrap(),
+        );
 
         let entries = evaluator.audit_logger().entries().await;
         assert_eq!(entries.len(), 1);
@@ -330,7 +332,7 @@ mod tests {
     #[tokio::test]
     async fn safe_command_is_audited() {
         let evaluator = UnifiedCommandEvaluator::new();
-        evaluator.evaluate(&["git".to_string(), "status".to_string()]).await.unwrap();
+        drop(evaluator.evaluate(&["git".to_string(), "status".to_string()]).await.unwrap());
 
         let entries = evaluator.audit_logger().entries().await;
         assert_eq!(entries.len(), 1);

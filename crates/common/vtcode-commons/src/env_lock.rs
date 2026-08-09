@@ -43,7 +43,13 @@ fn raw_lock() -> MutexGuard<'static, ()> {
 /// Obtain one with [`lock`]; while it is alive, no other thread can enter the
 /// safe mutation methods on this type. Dropping the guard releases the lock.
 #[must_use = "EnvGuard releases the lock when dropped; bind it to a local"]
-pub struct EnvGuard(#[allow(dead_code)] MutexGuard<'static, ()>);
+pub struct EnvGuard(
+    #[allow(
+        dead_code,
+        reason = "The guard field is held solely to keep the process-wide lock alive."
+    )]
+    MutexGuard<'static, ()>,
+);
 
 impl EnvGuard {
     /// Set a process environment variable.

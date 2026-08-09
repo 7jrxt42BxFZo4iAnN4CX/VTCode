@@ -263,7 +263,10 @@ pub fn generate_item_id() -> String {
 }
 
 /// Generates a unique content part ID.
-#[expect(dead_code)]
+#[expect(
+    dead_code,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 pub fn generate_content_part_id() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);

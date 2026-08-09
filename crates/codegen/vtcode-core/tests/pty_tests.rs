@@ -1,4 +1,8 @@
-#![allow(missing_docs, clippy::panic_in_result_fn)]
+#![allow(
+    missing_docs,
+    clippy::panic_in_result_fn,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use std::time::Duration;
 
 use anyhow::Result;
@@ -62,7 +66,7 @@ async fn create_list_and_close_session_preserves_screen_contents() -> Result<()>
     };
 
     let session_id = "session-test".to_string();
-    manager.create_session(
+    drop(manager.create_session(
         session_id.clone(),
         vec![
             "sh".to_string(),
@@ -71,7 +75,7 @@ async fn create_list_and_close_session_preserves_screen_contents() -> Result<()>
         ],
         working_dir,
         size,
-    )?;
+    )?);
 
     std::thread::sleep(Duration::from_millis(150));
 
@@ -118,7 +122,7 @@ async fn session_input_roundtrip_and_resize() -> Result<()> {
     let size = PtySize { rows: 3, cols: 80, pixel_width: 0, pixel_height: 0 };
 
     let session_id = "roundtrip".to_string();
-    manager.create_session(
+    drop(manager.create_session(
         session_id.clone(),
         vec![
             "sh".to_string(),
@@ -128,11 +132,11 @@ async fn session_input_roundtrip_and_resize() -> Result<()> {
         ],
         working_dir,
         size,
-    )?;
+    )?);
 
     std::thread::sleep(Duration::from_millis(150));
 
-    manager.send_input_to_session(&session_id, b"hello", true)?;
+    let _bytes_written = manager.send_input_to_session(&session_id, b"hello", true)?;
     std::thread::sleep(Duration::from_millis(150));
 
     let drained = manager.read_session_output(&session_id, true)?;
@@ -141,7 +145,7 @@ async fn session_input_roundtrip_and_resize() -> Result<()> {
 
     assert!(manager.read_session_output(&session_id, false)?.is_none());
 
-    manager.send_input_to_session(&session_id, b"world", true)?;
+    let _bytes_written = manager.send_input_to_session(&session_id, b"world", true)?;
     std::thread::sleep(Duration::from_millis(150));
 
     let peek = manager.read_session_output(&session_id, false)?;
@@ -174,7 +178,7 @@ async fn session_input_roundtrip_and_resize() -> Result<()> {
         "screen should contain echoed output, got: {screen:?}"
     );
 
-    manager.close_session(&session_id)?;
+    drop(manager.close_session(&session_id)?);
 
     Ok(())
 }
@@ -264,7 +268,7 @@ async fn pty_terminate_kills_background_children_in_same_process_group() -> Resu
     };
 
     let session_id = "background-test".to_string();
-    manager.create_session(
+    drop(manager.create_session(
         session_id.clone(),
         vec![
             "sh".to_string(),
@@ -273,7 +277,7 @@ async fn pty_terminate_kills_background_children_in_same_process_group() -> Resu
         ],
         working_dir,
         size,
-    )?;
+    )?);
 
     // Wait for the background process to be spawned and its PID to be printed
     let mut bg_pid: Option<i32> = None;
@@ -296,7 +300,7 @@ async fn pty_terminate_kills_background_children_in_same_process_group() -> Resu
     assert!(kill(pid, None).is_ok(), "Background process should be running");
 
     // Close session, which should kill the process group
-    manager.close_session(&session_id)?;
+    drop(manager.close_session(&session_id)?);
 
     // Verify background process is killed (may need a short wait for signal to propagate)
     let mut killed = false;

@@ -296,7 +296,7 @@ impl PtyScrollback {
         validation_context.complete(processed_bytes);
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
     pub(super) fn snapshot(&self) -> String {
         let mut output = String::with_capacity(self.current_bytes.min(self.max_bytes));
         for line in &self.lines {
@@ -332,12 +332,12 @@ impl PtyScrollback {
         !self.pending_lines.is_empty() || !self.pending_partial.is_empty()
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
     fn has_overflow(&self) -> bool {
         self.overflow_detected
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
     fn current_size_bytes(&self) -> usize {
         self.current_bytes
     }
@@ -369,7 +369,10 @@ impl PtyScrollback {
 }
 
 #[derive(Debug, Clone)]
-#[expect(dead_code)]
+#[expect(
+    dead_code,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 pub(super) struct ScrollbackMetrics {
     current_bytes: usize,
     max_bytes: usize,

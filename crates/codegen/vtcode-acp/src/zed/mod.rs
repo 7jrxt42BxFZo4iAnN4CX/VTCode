@@ -32,7 +32,10 @@ impl AcpClientAdapter for StandardAcpAdapter {
 }
 
 #[cfg(test)]
-#[allow(unused_imports)]
+#[allow(
+    unused_imports,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 mod tests {
     use super::agent::ZedAgent;
     use super::*;

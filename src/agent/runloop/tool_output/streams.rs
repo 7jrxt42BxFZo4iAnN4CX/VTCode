@@ -104,7 +104,10 @@ fn hidden_lines_notice(hidden: usize, kind: HiddenLinesNoticeKind) -> String {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 fn render_preview_line(
     renderer: &mut AnsiRenderer,
     display_line: &str,
@@ -304,7 +307,10 @@ async fn render_run_command_preview(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 pub(crate) fn render_diff_content_block(
     renderer: &mut AnsiRenderer,
     diff_content: &str,
@@ -398,7 +404,10 @@ pub(crate) fn render_diff_content_block(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 #[cfg_attr(
     feature = "profiling",
     tracing::instrument(skip(renderer, content, git_styles, ls_styles, config), level = "debug")

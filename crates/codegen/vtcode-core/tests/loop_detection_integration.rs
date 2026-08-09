@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use anyhow::Result;
 use hashbrown::HashMap;
 use serde_json::json;
@@ -13,8 +16,8 @@ async fn test_adaptive_loop_detection_integration() -> Result<()> {
 
     // 2. Configure Limits
     let mut limits = HashMap::new();
-    limits.insert("read_file".to_string(), 3); // Strict limit for read_file
-    limits.insert(tools::LIST_FILES.to_string(), 5); // Relaxed limit for list_files
+    let _previous = limits.insert("read_file".to_string(), 3); // Strict limit for read_file
+    let _previous = limits.insert(tools::LIST_FILES.to_string(), 5); // Relaxed limit for list_files
     executor.configure_loop_limits(&limits);
 
     // 3. Test "read_file" limit (Should trigger on 3rd attempt)
@@ -49,8 +52,8 @@ async fn test_adaptive_loop_detection_integration() -> Result<()> {
     // 4. Test "list_files" limit (Should NOT trigger on 3rd attempt)
     let list_tool = tools::LIST_FILES;
     // Call 1-3 with different paths to avoid identical-call hard-stop behavior.
-    executor.record_tool_call(list_tool, &json!({ "path": "/tmp/a" }));
-    executor.record_tool_call(list_tool, &json!({ "path": "/tmp/b" }));
+    let _warning = executor.record_tool_call(list_tool, &json!({ "path": "/tmp/a" }));
+    let _warning = executor.record_tool_call(list_tool, &json!({ "path": "/tmp/b" }));
     let warning_list = executor.record_tool_call(list_tool, &json!({ "path": "/tmp/c" }));
     assert!(warning_list.is_none(), "Call 3 for list_files should NOT warn (limit is 5)");
 

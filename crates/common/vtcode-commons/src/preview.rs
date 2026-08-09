@@ -1,3 +1,9 @@
+#![expect(
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    reason = "Preview counts and UTF-8 offsets are computed from source lengths and boundary helpers."
+)]
+
 //! Shared preview formatting helpers.
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};

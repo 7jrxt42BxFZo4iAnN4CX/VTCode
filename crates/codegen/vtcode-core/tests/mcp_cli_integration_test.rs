@@ -1,4 +1,8 @@
-#![allow(missing_docs, clippy::expect_used)]
+#![allow(
+    missing_docs,
+    clippy::expect_used,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use assert_fs::TempDir;
 use std::fs;
 use vtcode_core::mcp::cli::{

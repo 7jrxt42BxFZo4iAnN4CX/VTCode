@@ -40,7 +40,7 @@ struct Diagnostics {
 
 /// Internal snapshot of best-effort trajectory writer health.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[allow(dead_code)]
+#[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 pub(crate) struct AsyncLineWriterDiagnostics {
     pub dropped_lines: usize,
     pub dropped_bytes: usize,
@@ -198,7 +198,7 @@ impl AsyncLineWriter {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
     pub(crate) fn diagnostics(&self) -> AsyncLineWriterDiagnostics {
         AsyncLineWriterDiagnostics {
             dropped_lines: self.diagnostics.dropped_lines.load(Ordering::Relaxed),

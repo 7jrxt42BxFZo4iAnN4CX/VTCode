@@ -59,10 +59,10 @@ impl SafetyDecisionCache {
                 .min_by_key(|(_, decision)| decision.access_count)
                 .map(|(k, _)| k.clone())
         {
-            cache.remove(&least_used);
+            drop(cache.remove(&least_used));
         }
 
-        cache.insert(command, CachedDecision { is_safe, reason, access_count: 1 });
+        drop(cache.insert(command, CachedDecision { is_safe, reason, access_count: 1 }));
     }
 
     /// Clears all cached entries

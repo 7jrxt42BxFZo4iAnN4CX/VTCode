@@ -41,7 +41,10 @@ pub(crate) struct InlineEventContext<'a> {
 }
 
 impl<'a> InlineEventContext<'a> {
-    #[expect(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     pub(crate) fn new(
         renderer: &'a mut AnsiRenderer,
         handle: &'a InlineHandle,

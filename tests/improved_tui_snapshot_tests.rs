@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 //! Comprehensive Ratatui snapshot tests for VT Code TUI
 //!
 //! These tests use the `insta` crate to capture visual snapshots of the actual terminal UI.
@@ -22,7 +25,7 @@ fn test_actual_tui_rendering() {
     let mut terminal = Terminal::new(backend).unwrap();
 
     // This test verifies that the TestBackend works correctly with the TUI system
-    terminal
+    let _frame = terminal
         .draw(|f| {
             // Draw a basic UI representation
             let area = f.area();

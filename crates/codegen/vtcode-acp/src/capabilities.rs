@@ -533,7 +533,7 @@ mod tests {
     #[test]
     fn test_auth_method_terminal() {
         let mut env = HashMap::new();
-        env.insert("VAR1".to_string(), "value1".to_string());
+        drop(env.insert("VAR1".to_string(), "value1".to_string()));
 
         let method = AuthMethod::Terminal {
             id: "terminal_login".to_string(),

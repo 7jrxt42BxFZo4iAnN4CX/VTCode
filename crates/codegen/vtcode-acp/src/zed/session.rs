@@ -101,7 +101,7 @@ pub async fn run_acp_agent(config: &CoreAgentConfig, vt_cfg: &VTCodeConfig, titl
                     }
                     attach_agent.attach_client(Arc::clone(&handle));
                     // Park the main task so the connection stays alive.
-                    let _ = pending::<agent_client_protocol::Result<()>>().await;
+                    drop(pending::<agent_client_protocol::Result<()>>().await);
                     Ok(())
                 })
                 .await

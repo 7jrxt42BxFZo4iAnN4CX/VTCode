@@ -19,7 +19,10 @@ pub struct ScrollManager {
     metrics_dirty: bool,
 }
 
-#[expect(dead_code)]
+#[expect(
+    dead_code,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 impl ScrollManager {
     /// Creates a new scroll manager with given viewport height
     pub fn new(viewport_rows: u16) -> Self {

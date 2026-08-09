@@ -305,7 +305,7 @@ impl RequestProcessor {
         let status = response.status();
 
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text = crate::providers::common::read_provider_error_body(response).await;
             let error_handler = ErrorHandler::new(self.provider_name);
             return Err(error_handler.handle_http_error(status, &error_text).into());
         }
@@ -323,7 +323,7 @@ impl RequestProcessor {
         let status = response.status();
 
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text = crate::providers::common::read_provider_error_body(response).await;
             let error_handler = ErrorHandler::new(self.provider_name);
             return Err(error_handler.handle_http_error(status, &error_text).into());
         }

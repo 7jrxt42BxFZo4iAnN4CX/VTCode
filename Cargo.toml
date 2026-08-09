@@ -196,7 +196,7 @@ rust.unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)', 'cfg(fea
 rust.unused_extern_crates = "warn"
 rust.unused_import_braces = "warn"
 rust.unused_qualifications = "warn"
-rust.unused_results = "allow"  # Too verbose for development
+rust.unused_results = "warn"
 rust.trivial_numeric_casts = "warn"
 rust.unsafe_code = "warn"
 rust.unstable_features = "warn"
@@ -204,9 +204,9 @@ rust.missing_docs = "warn"
 
 [workspace.lints.clippy]
 # Don't Panic - prevent panics from unwraps and unsafe slicing or indexing
-# Note: string_slice and indexing_slicing are phased in; high-noise on existing codebase.
-string_slice = "allow"  # TODO: Phase in after cleanup pass
-indexing_slicing = "allow"  # TODO: Phase in after cleanup pass
+# Slice and indexing operations must make their safety assumptions explicit.
+string_slice = "warn"
+indexing_slicing = "warn"
 collapsible_if = "allow"  # Widespread across codebase, fix on-demand
 unwrap_used = "warn"
 expect_used = "warn"
@@ -221,7 +221,7 @@ panic_in_result_fn = "allow"
 
 # Don't Fail Silently - prevent dropped futures and swallowed errors
 let_underscore_future = "warn"
-let_underscore_must_use = "allow"  # TODO: Audit intentional drops (mostly safe write! calls & cleanup)
+let_underscore_must_use = "warn"
 unused_result_ok = "allow"
 map_err_ignore = "warn"
 assertions_on_result_states = "allow"
@@ -251,8 +251,8 @@ float_cmp_const = "warn"
 lossy_float_literal = "warn"
 cast_sign_loss = "warn"
 invalid_upcast_comparisons = "warn"
-cast_possible_truncation = "allow"  # TODO: Phase in after overflow audit
-cast_possible_wrap = "allow"  # TODO: Phase in after overflow audit
+cast_possible_truncation = "warn"
+cast_possible_wrap = "warn"
 
 # Don't Do Bad Things That are Easy to Avoid
 rc_mutex = "warn"
@@ -265,7 +265,7 @@ dbg_macro = "warn"
 # Don't `allow` Your Way Around These Lints
 # Note: These require manual curation of all existing suppressions.
 allow_attributes = "allow"  # TODO: Phase in after suppression audit
-allow_attributes_without_reason = "allow"  # TODO: Phase in after suppression audit
+allow_attributes_without_reason = "warn"
 
 
 [dependencies]

@@ -1,3 +1,8 @@
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "The macOS Mach message count is defined as the platform ABI's bounded integer type."
+)]
+
 //! Resident Set Size (RSS) sampling for memory diagnostics.
 //!
 //! Used by the allocator benchmark (`vtcode bench-allocator`) to measure whether
@@ -9,7 +14,12 @@ use std::time::Duration;
 /// Returns the current process Resident Set Size in **megabytes**, or `None` if
 /// it cannot be determined on the current platform.
 #[cfg(target_os = "macos")]
-#[allow(deprecated, unsafe_code, unused_qualifications)] // libc::mach_task_self is deprecated; qualification is required here
+#[allow(
+    deprecated,
+    unsafe_code,
+    unused_qualifications,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)] // libc::mach_task_self is deprecated; qualification is required here
 fn resident_set_size_mb() -> Option<f64> {
     // SAFETY: `mach_task_basic_info` is a plain old data struct; zeroing it
     // produces a valid (all-zero) starting value before `task_info` fills it.
@@ -34,7 +44,10 @@ fn resident_set_size_mb() -> Option<f64> {
 /// Returns the current process Resident Set Size in **megabytes**, or `None` if
 /// it cannot be determined on the current platform.
 #[cfg(target_os = "linux")]
-#[allow(unsafe_code)]
+#[allow(
+    unsafe_code,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 pub fn resident_set_size_mb() -> Option<f64> {
     let contents = std::fs::read_to_string("/proc/self/statm").ok()?;
     let field = contents.split_whitespace().nth(1)?;

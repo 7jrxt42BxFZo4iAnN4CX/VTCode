@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 /// Test that PtySessionGuard automatically decrements session count when dropped
 #[test]
 fn pty_session_guard_auto_cleanup() {
@@ -123,7 +126,7 @@ fn pty_session_guard_max_sessions_under_concurrency() {
         let result_tx = result_tx.clone();
 
         handles.push(thread::spawn(move || {
-            start.wait();
+            let _wait = start.wait();
             let result = manager.start_session();
             let started = result.is_ok();
             result_tx.send(started).expect("send start result");
@@ -137,7 +140,7 @@ fn pty_session_guard_max_sessions_under_concurrency() {
     }
     drop(result_tx);
 
-    start.wait();
+    let _wait = start.wait();
     let started = (0..attempts)
         .filter(|_| result_rx.recv().expect("receive start result"))
         .count();

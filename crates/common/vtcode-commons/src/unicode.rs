@@ -1,3 +1,8 @@
+#![expect(
+    unused_results,
+    reason = "Atomic metric updates are performed for their side effects; the previous counters are not needed."
+)]
+
 //! Unicode monitoring and validation utilities
 
 use hashbrown::HashMap;

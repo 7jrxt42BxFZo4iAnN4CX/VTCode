@@ -1,4 +1,8 @@
-#![allow(missing_docs, clippy::expect_used)]
+#![allow(
+    missing_docs,
+    clippy::expect_used,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use serde_json::json;
 use std::fs;
 use tempfile::TempDir;
@@ -15,7 +19,7 @@ async fn temp_registry_with_config(vtcode_toml: Option<&str>) -> (TempDir, ToolR
         fs::write(temp.path().join("vtcode.toml"), config).expect("write fixture vtcode.toml");
     }
     let registry = ToolRegistry::new(temp.path().to_path_buf()).await;
-    registry.allow_all_tools().await.ok();
+    let _allow_result = registry.allow_all_tools().await.ok();
     (temp, registry)
 }
 
@@ -49,8 +53,8 @@ async fn read_session_until_exit(
             .await
             .expect("read pty session");
 
-        output.push_str(read["output"].as_str().unwrap_or_default());
-        if read["is_exited"].as_bool().unwrap_or(false) || read.get("error").is_some() {
+        output.push_str(read.get("output").and_then(|value| value.as_str()).unwrap_or_default());
+        if read.get("is_exited").and_then(|value| value.as_bool()).unwrap_or(false) || read.get("error").is_some() {
             return (output, read);
         }
         last = read;
@@ -304,7 +308,7 @@ async fn test_read_pty_session_includes_command_context_fields() {
     assert!(read["cols"].is_number());
     assert!(read["is_exited"].is_boolean());
 
-    let _ = registry
+    let _closed = registry
         .execute_tool(
             "close_pty_session",
             json!({
@@ -353,7 +357,7 @@ async fn test_inspect_does_not_drain_session_output() {
     assert_eq!(read["success"], true);
     assert!(read["output"].as_str().unwrap_or_default().contains("<alpha>"));
 
-    let _ = registry
+    let _closed = registry
         .execute_tool(
             "close_pty_session",
             json!({
@@ -501,7 +505,7 @@ async fn test_exec_command_write_stdin_continues_session() {
         "write_stdin output was: {write:?}"
     );
 
-    let _ = registry
+    let _closed = registry
         .execute_tool(
             "close_pty_session",
             json!({
@@ -616,7 +620,7 @@ spool_max_age_secs = 12
         "spool file should contain full polled output: {spooled:?}"
     );
 
-    let _ = registry
+    let _closed = registry
         .execute_tool(
             "close_pty_session",
             json!({
@@ -879,7 +883,7 @@ spool_max_age_secs = 12
         "spool file should contain full continuation output: {spooled:?}"
     );
 
-    let _ = registry
+    let _closed = registry
         .execute_tool(
             "close_pty_session",
             json!({

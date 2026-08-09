@@ -1,3 +1,8 @@
+#![expect(
+    clippy::indexing_slicing,
+    reason = "Random indices are generated from the exact lengths of the static slug tables."
+)]
+
 //! Human-readable slug generator for plan file names
 //!
 //! Generates memorable identifiers by combining random adjectives and nouns,

@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 //! Integration tests for the permission system (CommandResolver, Cache, Audit)
 
 #[cfg(test)]
@@ -26,13 +29,13 @@ mod integration_tests {
         let mut resolver = CommandResolver::new();
 
         // First resolution (cache miss)
-        resolver.resolve("cargo");
+        let _resolution = resolver.resolve("cargo");
         let (hits1, misses1) = resolver.cache_stats();
         assert_eq!(hits1, 0, "First resolve should be a miss");
         assert_eq!(misses1, 1, "Should have 1 miss");
 
         // Second resolution (cache hit)
-        resolver.resolve("cargo");
+        let _resolution = resolver.resolve("cargo");
         let (hits2, misses2) = resolver.cache_stats();
         assert_eq!(hits2, 1, "Second resolve should be a hit");
         assert_eq!(misses2, 1, "Should still have 1 miss");
@@ -213,11 +216,11 @@ mod integration_tests {
     async fn test_resolver_stats() {
         let mut resolver = CommandResolver::new();
 
-        resolver.resolve("ls");
-        resolver.resolve("ls");
-        resolver.resolve("pwd");
-        resolver.resolve("pwd");
-        resolver.resolve("pwd");
+        let _resolution = resolver.resolve("ls");
+        let _resolution = resolver.resolve("ls");
+        let _resolution = resolver.resolve("pwd");
+        let _resolution = resolver.resolve("pwd");
+        let _resolution = resolver.resolve("pwd");
 
         let (hits, misses) = resolver.cache_stats();
         assert_eq!(hits, 3, "Should have 3 cache hits");

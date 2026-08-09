@@ -76,8 +76,9 @@ impl NetworkAllowlistEntry {
             return false;
         }
         if self.domain.starts_with("*.") {
-            let suffix = &self.domain[1..]; // Keep the dot
-            domain.ends_with(suffix) || domain == &self.domain[2..]
+            let suffix = self.domain.get(1..).unwrap_or_default();
+            let exact = self.domain.get(2..).unwrap_or_default();
+            domain.ends_with(suffix) || domain == exact
         } else {
             domain == self.domain
         }
@@ -182,7 +183,7 @@ impl SensitivePath {
         if self.path.starts_with("~/")
             && let Some(home) = dirs::home_dir()
         {
-            return home.join(&self.path[2..]);
+            return home.join(self.path.get(2..).unwrap_or_default());
         } else if self.path == "~"
             && let Some(home) = dirs::home_dir()
         {

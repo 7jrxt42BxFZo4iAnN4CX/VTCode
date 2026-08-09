@@ -66,7 +66,10 @@ impl MarketplaceSource {
 /// Registry for managing marketplaces
 pub struct MarketplaceRegistry {
     /// Base directory for marketplace data
-    #[expect(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     base_dir: PathBuf,
 
     /// Registered marketplaces

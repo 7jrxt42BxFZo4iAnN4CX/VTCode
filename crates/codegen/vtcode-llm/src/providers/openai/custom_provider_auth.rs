@@ -7,7 +7,10 @@ use anyhow::{Context, Result, anyhow, bail};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
+use vtcode_commons::sanitizer::sanitize_provider_diagnostic;
 use vtcode_config::core::CustomProviderCommandAuthConfig;
+
+use crate::process_env::sanitize_tokio_command_environment;
 
 // Retained custom auth transport for OpenAI-compatible providers.
 // Rig does not model VT Code's configured command-token provider, refresh
@@ -96,6 +99,7 @@ impl CustomProviderAuthHandle {
 
     async fn fetch_token(&self) -> Result<String> {
         let mut command = Command::new(&self.config.command);
+        sanitize_tokio_command_environment(&mut command, &[]);
         command
             .args(&self.config.args)
             .stdin(Stdio::null())
@@ -112,7 +116,7 @@ impl CustomProviderAuthHandle {
             .with_context(|| format!("failed to execute provider auth command `{}`", self.config.command))?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = sanitize_provider_diagnostic(&output.stderr);
             let stderr = stderr.trim();
             if stderr.is_empty() {
                 bail!("provider auth command `{}` exited with status {}", self.config.command, output.status);

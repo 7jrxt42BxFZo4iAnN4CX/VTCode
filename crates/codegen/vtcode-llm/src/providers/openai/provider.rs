@@ -3,7 +3,8 @@
     clippy::manual_contains,
     clippy::nonminimal_bool,
     clippy::single_match,
-    unused_imports
+    unused_imports,
+    reason = "The OpenAI provider keeps compatibility imports and provider-specific branches for feature-gated request paths."
 )]
 
 use crate::error_display;
@@ -232,7 +233,10 @@ impl OpenAIProvider {
     }
 
     /// Create a custom OpenAI-compatible provider with overridden identity.
-    #[expect(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     pub fn from_custom_config(
         provider_key: String,
         display_name: String,

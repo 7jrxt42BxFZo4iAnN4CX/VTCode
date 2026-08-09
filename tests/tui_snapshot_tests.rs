@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 //! Snapshot tests for the Ratatui TUI components
 //!
 //! These tests use the `insta` crate to capture snapshots of the UI components and logic.

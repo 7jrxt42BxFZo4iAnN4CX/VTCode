@@ -26,3 +26,4 @@
 - `ConnectionHandle` wraps `agent_client_protocol::ConnectionTo<Client>`. The `block_task()` future returned by `cx.send_request(...).block_task()` is **only safe in a `cx.spawn` task**; calling it from a request handler deadlocks.
 - The `acp` module re-exports `agent_client_protocol::schema::v1::*` plus `ProtocolVersion` from `schema::*`. `Client` and `Agent` (role structs) are at the crate root.
 - `SessionUpdateNotification` decodes through a direct wire shape for SSE performance; new update variants must update that shape and its regression tests.
+- Permission-flow tests use the duplex SACP connection harness; preserve allow, deny, cancel, unknown-option, and request-failure coverage.

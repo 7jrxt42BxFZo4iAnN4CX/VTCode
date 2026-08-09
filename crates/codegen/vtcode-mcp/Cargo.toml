@@ -44,13 +44,14 @@ url = { workspace = true }
 vtcode-commons = { workspace = true }
 vtcode-config = { workspace = true }
 vtcode-llm = { workspace = true }
+vtcode-safety = { workspace = true }
 vtcode-utility-tool-specs = { workspace = true, features = ["mcp"] }
 schemars = { workspace = true, optional = true }
 strsim = { workspace = true }
 
 [features]
 default = []
-schema = ["dep:schemars"]
+schema = ["dep:schemars", "vtcode-config/schema"]
 
 [dev-dependencies]
 serial_test = { workspace = true }

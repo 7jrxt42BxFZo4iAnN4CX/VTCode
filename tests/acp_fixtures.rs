@@ -1,9 +1,16 @@
-#![allow(missing_docs, clippy::expect_used)]
+#![allow(
+    missing_docs,
+    clippy::expect_used,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 use serde::Deserialize;
 use serde_json::Value;
 
 #[derive(Debug, Deserialize, Clone)]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 pub struct PermissionFixture {
     #[serde(rename = "sessionId")]
     pub session_id: Value,

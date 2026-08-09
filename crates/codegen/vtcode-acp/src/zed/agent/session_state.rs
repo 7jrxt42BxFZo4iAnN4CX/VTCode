@@ -127,7 +127,7 @@ impl ZedAgent {
             .start_thread_with_identifier(session_id.0.to_string(), ThreadBootstrap::new(Some(metadata)));
         let handle = self.build_session_handle(session_id.clone(), thread);
         if let Ok(mut guard) = self.sessions.lock() {
-            guard.insert(session_id.clone(), handle);
+            drop(guard.insert(session_id.clone(), handle));
         }
         session_id
     }
@@ -142,7 +142,7 @@ impl ZedAgent {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
     pub(super) fn should_send_tool_notice(&self, session: &SessionHandle) -> bool {
         session
             .data
@@ -151,7 +151,7 @@ impl ZedAgent {
             .unwrap_or(false)
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
     pub(super) fn mark_tool_notice_sent(&self, session: &SessionHandle) {
         if let Ok(data) = session.data.lock() {
             data.tool_notice_sent.store(true, Ordering::Relaxed);
@@ -344,7 +344,7 @@ impl ZedAgent {
             .start_thread_with_identifier(listing.identifier(), ThreadBootstrap::from_listing(listing));
         let handle = self.build_session_handle(session_id.clone(), thread);
         if let Ok(mut guard) = self.sessions.lock() {
-            guard.insert(session_id.clone(), handle.clone());
+            drop(guard.insert(session_id.clone(), handle.clone()));
         }
         Ok(handle)
     }
@@ -515,9 +515,10 @@ impl ZedAgent {
         if updated {
             let config_options = self.current_session_config_options(&session);
             let update = acp::ConfigOptionUpdate::new(config_options);
-            let _ = self
-                .send_update(&args.session_id, acp::SessionUpdate::ConfigOptionUpdate(update))
-                .await;
+            drop(
+                self.send_update(&args.session_id, acp::SessionUpdate::ConfigOptionUpdate(update))
+                    .await,
+            );
         }
 
         let config_options = self.current_session_config_options(&session);

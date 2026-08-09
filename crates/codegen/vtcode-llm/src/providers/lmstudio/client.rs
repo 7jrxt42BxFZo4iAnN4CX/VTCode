@@ -11,6 +11,8 @@ use std::time::Duration;
 
 use serde_json::Value as JsonValue;
 
+use crate::process_env::sanitize_std_command_environment;
+
 pub(crate) const LMSTUDIO_CONNECTION_ERROR: &str =
     "LM Studio is not responding. Install from https://lmstudio.ai/download and run 'lms server start'.";
 
@@ -244,7 +246,9 @@ impl LMStudioClient {
         let lms_for_task = lms.clone();
         let model_for_task = model.clone();
         let status = tokio::task::spawn_blocking(move || {
-            std::process::Command::new(&lms_for_task)
+            let mut command = std::process::Command::new(&lms_for_task);
+            sanitize_std_command_environment(&mut command, &[]);
+            command
                 .args(["get", "--yes", &model_for_task])
                 .stdout(std::process::Stdio::inherit())
                 .stderr(std::process::Stdio::null())

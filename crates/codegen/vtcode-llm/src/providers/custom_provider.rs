@@ -24,7 +24,10 @@ pub struct CustomProviderBackendRouter {
 }
 
 impl CustomProviderBackendRouter {
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Intentional compatibility, platform, or test-only suppression."
+    )]
     pub fn from_config(
         custom_config: CustomProviderConfig,
         api_key: Option<String>,

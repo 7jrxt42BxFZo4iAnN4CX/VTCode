@@ -1,3 +1,8 @@
+#![expect(
+    unused_results,
+    reason = "Copilot protocol adapters intentionally discard replacement and background-task results after dispatching them."
+)]
+
 mod acp_client;
 mod auth;
 mod command;

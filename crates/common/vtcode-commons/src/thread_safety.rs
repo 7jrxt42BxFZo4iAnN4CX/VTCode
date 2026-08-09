@@ -1,3 +1,8 @@
+#![expect(
+    clippy::let_underscore_must_use,
+    reason = "The one-time thread ID registration is intentionally best effort during initialization."
+)]
+
 //! # Thread Safety Primitives
 //!
 //! Based on "Formal methods for the unsafe side of the Force" (Antithesis, 2026).

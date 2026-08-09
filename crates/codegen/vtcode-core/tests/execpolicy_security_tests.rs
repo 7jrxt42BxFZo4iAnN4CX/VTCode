@@ -1,4 +1,8 @@
-#![allow(missing_docs, clippy::expect_used)]
+#![allow(
+    missing_docs,
+    clippy::expect_used,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 //! Security tests for execution policy argument injection protection
 
 use std::path::PathBuf;
@@ -86,7 +90,7 @@ async fn test_sed_execution_flag_blocked() {
     let result = validate_command(&command, &root, &working_dir, false).await;
 
     // Cleanup
-    let _ = std::fs::remove_file(&test_file);
+    drop(std::fs::remove_file(&test_file));
 
     assert!(result.is_err(), "sed execution flag should be blocked");
     assert!(result.unwrap_err().to_string().contains("execution flags"), "error should mention execution flags");
@@ -162,7 +166,7 @@ async fn test_cp_without_recursive_flag_for_directory() {
     let result = validate_command(&command, &root, &working_dir, false).await;
 
     // Cleanup
-    let _ = std::fs::remove_dir_all(&test_dir);
+    drop(std::fs::remove_dir_all(&test_dir));
 
     assert!(result.is_err(), "copying directory without -r should be blocked");
     assert!(result.unwrap_err().to_string().contains("recursive"), "error should mention recursive flag");
@@ -266,7 +270,7 @@ async fn test_head_with_line_count() {
     let result = validate_command(&command, &root, &working_dir, false).await;
 
     // Cleanup
-    let _ = std::fs::remove_file(&test_file);
+    drop(std::fs::remove_file(&test_file));
 
     assert!(result.is_ok(), "head with line count should be allowed");
 }

@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 #[cfg(test)]
 mod minimax_integration_tests {
     use vtcode_core::config::constants::{model_helpers, models, urls};

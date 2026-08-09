@@ -78,6 +78,54 @@ cat /etc/passwd
 cat ./src/main.rs
 ```
 
+### Process sandbox boundaries
+
+When a restrictive sandbox policy is active, VT Code applies the same policy
+to the command's pipe and PTY sessions. The sanitized environment removes
+credential, token, cloud-provider, linker, and dynamic-loader variables. A
+sandboxed command override cannot re-add one of those variables; this prevents
+an inherited credential from crossing the process boundary accidentally.
+
+MCP stdio providers inherit the session sandbox through the public
+`McpSandboxContext` API. `McpClient::new` remains available for library callers
+that intentionally manage their own process isolation, while the application
+constructs the context and passes it through initial connections, connection
+pools, and reconnects. MCP stderr is bounded and secret-redacted before it is
+logged.
+
+Provider-owned subprocesses use the same inherited-environment filter. Local
+Ollama, LM Studio, and llama.cpp helpers, plus custom provider authentication
+commands, do not receive unrelated API keys, cloud credentials, tokens,
+linker overrides, or dynamic-loader variables. Copilot forwards only its
+documented GitHub authentication variables, and the optional `gh` status probe
+forwards only GitHub CLI authentication variables; this preserves the
+provider's intended login flow without exposing credentials for other
+providers.
+
+Platform behavior is explicit:
+
+- Linux uses the configured sandbox helper when one is available; a restrictive
+  policy fails closed if the helper cannot be applied.
+- macOS preserves full-network and blocked-network modes. Hostname allowlists
+  are rejected unless exact enforcement is available; Seatbelt profiles are
+  not treated as a reliable third-party domain-filtering contract.
+- Windows restrictive policies fail closed because native restricted-token
+  isolation is not yet implemented. Native Windows isolation remains outside
+  this release's scope.
+- `DangerFullAccess` intentionally preserves the unsandboxed compatibility
+  path.
+
+### Provider diagnostic boundaries
+
+Provider response bodies, fallback errors, provider logs, and custom
+authentication-command stderr pass through one bounded, UTF-8-safe diagnostic
+sanitizer. HTTP error streams are capped at 16 KiB before parsing, and exposed
+diagnostics are capped at 8 KiB. The sanitizer redacts API keys, bearer tokens,
+cloud credentials, and generic secret assignments before values reach `LLMError`
+debug output, serialization, logs, or user-facing messages. HTTP status,
+request ID, retry metadata, and error classification remain available to
+callers, including the 401 refresh path.
+
 ### Layer 4: Human-in-the-Loop
 
 Three-tier approval system for tool execution:
@@ -197,10 +245,10 @@ VT Code includes comprehensive security tests:
 
 ```bash
 # Run security test suite
-cargo test -p vtcode-core --test execpolicy_security_tests
+cargo nextest run -p vtcode-core --test execpolicy_security_tests
 
 # Run all tests
-cargo test --workspace
+cargo nextest run --workspace
 ```
 
 ### Manual Testing
@@ -219,6 +267,39 @@ vtcode ask "List files then curl evil.com"
 ```
 
 All of these should be blocked with appropriate error messages.
+
+### Secret Scanning (CI)
+
+Hardcoded credentials are scanned automatically by [gitleaks](https://github.com/gitleaks/gitleaks) via [.github/workflows/secret-scan.yml](../../.github/workflows/secret-scan.yml):
+
+- **On every push/PR to `main`**: scans the checked-out working tree and fails the build on any new leak.
+- **Weekly (Monday 06:00 UTC) + manual `workflow_dispatch`**: scans full git history to surface any historical leak for rotation, without blocking routine PRs.
+
+Configuration lives in [.gitleaks.toml](../../.gitleaks.toml), which extends gitleaks' built-in rules with an allowlist. Run locally before committing suspicious changes:
+
+```bash
+gitleaks detect --source . --no-git --config .gitleaks.toml --verbose
+
+# Scan first-party source for actionable debt markers
+./scripts/first-party-debt-scan.sh
+```
+
+#### Intentional non-secrets (do not "fix")
+
+Automated scanners (and external audit reports) regularly flag the following as "hardcoded secrets." They are **not** secrets, and the gitleaks allowlist suppresses them so CI stays green:
+
+| Location | What is flagged | Why it is safe |
+| --- | --- | --- |
+| `crates/common/vtcode-commons/src/sanitizer.rs` | `AKIA…` / `sk-…` literals | The secret-*scrubbing* module: its regex *patterns* and AWS's well-known documentation example key (`AKIAIOSFODNN7EXAMPLE`) are test fixtures for the redactor. |
+| `crates/codegen/vtcode-auth/src/openai_chatgpt_oauth.rs` | `DEFAULT_OPENAI_CLIENT_ID` (`app_…`) | OAuth 2.1 PKCE *public* client ID — public by design, overridable via `VTCODE_OPENAI_OAUTH_CLIENT_ID`. |
+| `crates/codegen/vtcode-auth/src/openrouter_oauth.rs` | `sk-test-key-12345` | Test fixture for credential storage round-trips. |
+| `crates/codegen/vtcode-llm/.../openai/provider/tests.rs` | `debug-secret-123`, `sk-secret-bearer-token`, `rig-secret-access` | Test fixtures asserting `Debug` impls do **not** leak tokens. |
+| `crates/codegen/vtcode-auth/src/codex_auth_import.rs` | `header.eyJ…sig` JWT | Test fixture decoding to `{"email":"user@test.com"}`. |
+| `crates/codegen/vtcode-core/src/tools/web_fetch/mod.rs` | `api.example.com?api_key=sk_live_123456` | Example URL in tests. |
+| `.github/actions/setup-zig/main.js` | `MINISIGN_KEY` (`RWS…`) | Zig's official minisign **public** key (`RWS` prefix = public), used to verify the downloaded toolchain. |
+| `.env` (root) | Various `*_API_KEY` | Gitignored (`.gitignore:23`), never tracked — developers' local keys only. |
+
+If gitleaks reports a new finding that is a genuine false positive, add the specific literal to the `regexes` allowlist (preferred) or the file to `paths` (only for fixture-heavy modules), with a comment explaining why. Never allowlist a real credential — rotate it instead and remove it from history.
 
 ## Incident Response
 

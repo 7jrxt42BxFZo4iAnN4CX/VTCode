@@ -42,7 +42,7 @@ impl ExecExpiration {
     /// Get the timeout in milliseconds, if applicable.
     pub fn timeout_ms(&self) -> Option<u64> {
         match self {
-            Self::Timeout(d) => Some(d.as_millis() as u64),
+            Self::Timeout(d) => Some(u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
             Self::DefaultTimeout => Some(30_000), // 30 second default
             Self::Cancellation(_) => None,
         }
@@ -211,12 +211,23 @@ impl SandboxType {
     }
 
     /// Check if this sandbox type is available on the current platform.
+    ///
+    /// "Available" means the sandbox is **actually enforced**, not just that
+    /// the type compiles on this platform. `WindowsRestrictedToken` is not
+    /// yet implemented (the transform is a no-op pass-through), so it reports
+    /// `false` on all platforms — callers who request a restrictive policy on
+    /// Windows get an `UnavailableSandboxType` error instead of silently
+    /// running unsandboxed.
     pub(crate) fn is_available(&self) -> bool {
         match self {
             Self::None => true,
             Self::MacosSeatbelt => cfg!(target_os = "macos"),
             Self::LinuxLandlock => cfg!(target_os = "linux"),
-            Self::WindowsRestrictedToken => cfg!(target_os = "windows"),
+            // Not yet implemented — `transform_windows` is a pass-through.
+            // Returning `false` here causes fail-closed behavior: requesting
+            // a ReadOnly/WorkspaceWrite policy on Windows yields an explicit
+            // error rather than silently running without a sandbox.
+            Self::WindowsRestrictedToken => false,
         }
     }
 }

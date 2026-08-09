@@ -68,17 +68,26 @@ impl PlanProgress {
         !self.entries.is_empty()
     }
 
+    fn has_status(&self, index: usize, status: &acp::PlanEntryStatus) -> bool {
+        self.entries
+            .get(index)
+            .is_some_and(|entry| discriminant(&entry.status) == discriminant(status))
+    }
+
     fn update_status(&mut self, index: usize, status: acp::PlanEntryStatus) -> bool {
-        if discriminant(&self.entries[index].status) == discriminant(&status) {
+        let Some(entry) = self.entries.get_mut(index) else {
+            return false;
+        };
+        if discriminant(&entry.status) == discriminant(&status) {
             return false;
         }
 
-        self.entries[index].status = status;
+        entry.status = status;
         true
     }
 
     pub(crate) fn complete_analysis(&mut self) -> bool {
-        if discriminant(&self.entries[self.analyze_index].status) != discriminant(&acp::PlanEntryStatus::Completed) {
+        if !self.has_status(self.analyze_index, &acp::PlanEntryStatus::Completed) {
             return self.update_status(self.analyze_index, acp::PlanEntryStatus::Completed);
         }
         false
@@ -86,7 +95,7 @@ impl PlanProgress {
 
     pub(crate) fn start_context(&mut self) -> bool {
         if let Some(index) = self.gather_index
-            && discriminant(&self.entries[index].status) == discriminant(&acp::PlanEntryStatus::Pending)
+            && self.has_status(index, &acp::PlanEntryStatus::Pending)
         {
             return self.update_status(index, acp::PlanEntryStatus::InProgress);
         }
@@ -95,7 +104,7 @@ impl PlanProgress {
 
     pub(crate) fn complete_context(&mut self) -> bool {
         if let Some(index) = self.gather_index
-            && discriminant(&self.entries[index].status) != discriminant(&acp::PlanEntryStatus::Completed)
+            && !self.has_status(index, &acp::PlanEntryStatus::Completed)
         {
             return self.update_status(index, acp::PlanEntryStatus::Completed);
         }
@@ -108,19 +117,19 @@ impl PlanProgress {
 
     pub(crate) fn context_completed(&self) -> bool {
         self.gather_index
-            .map(|index| discriminant(&self.entries[index].status) == discriminant(&acp::PlanEntryStatus::Completed))
+            .map(|index| self.has_status(index, &acp::PlanEntryStatus::Completed))
             .unwrap_or(true)
     }
 
     pub(crate) fn start_response(&mut self) -> bool {
-        if discriminant(&self.entries[self.respond_index].status) == discriminant(&acp::PlanEntryStatus::Pending) {
+        if self.has_status(self.respond_index, &acp::PlanEntryStatus::Pending) {
             return self.update_status(self.respond_index, acp::PlanEntryStatus::InProgress);
         }
         false
     }
 
     pub(crate) fn complete_response(&mut self) -> bool {
-        if discriminant(&self.entries[self.respond_index].status) != discriminant(&acp::PlanEntryStatus::Completed) {
+        if !self.has_status(self.respond_index, &acp::PlanEntryStatus::Completed) {
             return self.update_status(self.respond_index, acp::PlanEntryStatus::Completed);
         }
         false
@@ -149,7 +158,7 @@ pub(crate) struct SessionHandle {
 pub(crate) struct SessionData {
     pub(crate) _session_id: acp::SessionId,
     pub(crate) thread: ThreadRuntimeHandle,
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
     pub(crate) tool_notice_sent: AtomicBool,
     pub(crate) primary_agent: String,
     pub(crate) reasoning_effort: ReasoningEffortLevel,

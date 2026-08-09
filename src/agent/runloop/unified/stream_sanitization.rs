@@ -170,7 +170,7 @@ impl StreamSanitizer {
     }
 
     /// Whether any sanitization mode is currently active.
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
     pub(crate) fn mode_active(&self) -> bool {
         self.harmony_mode || self.noise_mode
     }

@@ -88,7 +88,10 @@ pub struct ExecPolicyManager {
     config: ExecPolicyConfig,
 
     /// Workspace root for path validation.
-    #[expect(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "The workspace root is retained for the policy-manager constructor ABI and future path-aware policy checks."
+    )]
     workspace_root: PathBuf,
 
     /// Commands that have been pre-approved this session.
@@ -223,7 +226,7 @@ impl ExecPolicyManager {
     async fn approve_command(&self, command: &[String]) {
         let command_key = command.join(" ");
         let mut approved = self.session_approved.write().await;
-        approved.insert(command_key);
+        let _inserted = approved.insert(command_key);
     }
 
     /// Clear all session approvals.
@@ -251,7 +254,9 @@ impl ExecPolicyManager {
             return Decision::Prompt;
         }
 
-        let cmd = &command[0];
+        let Some(cmd) = command.first() else {
+            return Decision::Prompt;
+        };
 
         // Known safe read-only commands that can proceed without approval
         let safe_commands = [

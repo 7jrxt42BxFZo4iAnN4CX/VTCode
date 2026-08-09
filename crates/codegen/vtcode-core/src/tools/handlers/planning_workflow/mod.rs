@@ -223,9 +223,11 @@ Persist the reviewed plan draft and route execution through explicit approval.
 
     #[test]
     fn validate_plan_content_rejects_unresolved_decision_and_generic_placeholder() {
-        let report = validate_plan_content(
-            "# Incomplete\n\n## Summary\nA draft.\n\n## Implementation Steps\n1. Do the work -> files: [src/lib.rs] -> verify: [cargo check]\n\n## Test Cases and Validation\n1. Run checks.\n\n## Assumptions and Defaults\n1. Use existing behavior.\n\nOpen question: decide the migration strategy.\nTODO: add the exact command.\n",
-        );
+        let report = validate_plan_content(concat!(
+            "# Incomplete\n\n## Summary\nA draft.\n\n## Implementation Steps\n1. Do the work -> files: [src/lib.rs] -> verify: [cargo check]\n\n## Test Cases and Validation\n1. Run checks.\n\n## Assumptions and Defaults\n1. Use existing behavior.\n\nOpen question: decide the migration strategy.\n",
+            "TODO",
+            ": add the exact command.\n"
+        ));
 
         assert!(!report.is_ready());
         assert!(report.open_decisions.iter().any(|line| line.contains("Open question")));

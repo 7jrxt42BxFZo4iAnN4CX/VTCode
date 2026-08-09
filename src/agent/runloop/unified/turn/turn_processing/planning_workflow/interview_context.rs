@@ -1,6 +1,6 @@
 //! Planning workflow open-decision detection helpers.
 
-#![allow(dead_code)]
+#![allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
 
 pub(super) fn has_open_decision_markers(text: &str) -> bool {
     text.lines().any(line_has_open_decision_marker)

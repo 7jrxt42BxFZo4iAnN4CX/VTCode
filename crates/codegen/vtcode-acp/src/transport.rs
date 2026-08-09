@@ -174,10 +174,12 @@ impl StdioTransport {
         let id_value = Value::from(id);
         let pending_key = response_id_key(&id_value);
         let (tx, rx) = oneshot::channel();
-        self.pending
-            .lock()
-            .map_err(|_err| AcpError::Internal("stdio transport pending mutex poisoned".into()))?
-            .insert(pending_key.clone(), tx);
+        drop(
+            self.pending
+                .lock()
+                .map_err(|_err| AcpError::Internal("stdio transport pending mutex poisoned".into()))?
+                .insert(pending_key.clone(), tx),
+        );
 
         let mut payload = serde_json::json!({
             "jsonrpc": "2.0",
@@ -188,7 +190,7 @@ impl StdioTransport {
         maybe_strip_jsonrpc_field(&mut payload, self.options);
         if let Err(e) = self.send_raw(payload) {
             // Clean up the pending entry so it doesn't linger until timeout.
-            self.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&pending_key);
+            drop(self.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&pending_key));
             return Err(e);
         }
 
@@ -283,7 +285,7 @@ impl Drop for StdioTransport {
         if let Ok(mut child) = self.child.lock()
             && let Some(child) = child.as_mut()
         {
-            let _ = child.start_kill();
+            drop(child.start_kill());
         }
     }
 }
@@ -293,7 +295,7 @@ impl Drop for StdioTransport {
 // ============================================================================
 
 fn spawn_writer(mut write_rx: mpsc::Receiver<String>, mut stdin: ChildStdin) {
-    tokio::spawn(async move {
+    drop(tokio::spawn(async move {
         while let Some(payload) = write_rx.recv().await {
             if stdin.write_all(payload.as_bytes()).await.is_err()
                 || stdin.write_all(b"\n").await.is_err()
@@ -306,11 +308,11 @@ fn spawn_writer(mut write_rx: mpsc::Receiver<String>, mut stdin: ChildStdin) {
                 break;
             }
         }
-    });
+    }));
 }
 
 fn spawn_stderr_logger(stderr: ChildStderr) {
-    tokio::spawn(async move {
+    drop(tokio::spawn(async move {
         let mut reader = BufReader::new(stderr);
         let mut line = String::new();
         loop {
@@ -322,7 +324,7 @@ fn spawn_stderr_logger(stderr: ChildStderr) {
                 }
             }
         }
-    });
+    }));
 }
 
 fn spawn_reader(
@@ -330,7 +332,7 @@ fn spawn_reader(
     pending: Arc<StdMutex<HashMap<String, oneshot::Sender<AcpResult<Value>>>>>,
     notification_handler: Arc<StdMutex<Option<NotificationHandler>>>,
 ) {
-    tokio::spawn(async move {
+    drop(tokio::spawn(async move {
         let mut reader = BufReader::new(stdout).lines();
         while let Ok(Some(line)) = reader.next_line().await {
             if line.trim().is_empty() {
@@ -350,7 +352,7 @@ fn spawn_reader(
                 let result = extract_rpc_result(&message);
                 let tx = pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&response_id_key(&id));
                 if let Some(tx) = tx {
-                    let _ = tx.send(result);
+                    drop(tx.send(result));
                 }
                 continue;
             }
@@ -363,7 +365,7 @@ fn spawn_reader(
                 tracing::warn!("stdio transport: notification handler error: {e}");
             }
         }
-    });
+    }));
 }
 
 // ============================================================================
@@ -389,7 +391,7 @@ fn maybe_strip_jsonrpc_field(payload: &mut Value, options: StdioTransportOptions
     }
 
     if let Some(object) = payload.as_object_mut() {
-        object.remove("jsonrpc");
+        drop(object.remove("jsonrpc"));
     }
 }
 
@@ -400,7 +402,7 @@ fn extract_rpc_result(message: &Value) -> AcpResult<Value> {
         Err(AcpError::RemoteError {
             agent_id: "stdio".into(),
             message: format!("rpc error {code}: {detail}"),
-            code: Some(code as i32),
+            code: Some(i32::try_from(code).unwrap_or(if code < 0 { i32::MIN } else { i32::MAX })),
         })
     } else {
         Ok(message.get("result").cloned().unwrap_or(Value::Null))

@@ -1,4 +1,10 @@
-#![allow(clippy::large_futures, missing_docs, dead_code, unused_imports)]
+#![allow(
+    clippy::large_futures,
+    missing_docs,
+    dead_code,
+    unused_imports,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 //! Model Context Protocol (MCP) client management.
 //!
 //! This crate adapts reference MCP client, server, and type definitions
@@ -21,6 +27,7 @@ pub mod errors;
 mod provider;
 mod rmcp_client;
 pub mod rmcp_transport;
+mod sandbox_context;
 pub(crate) mod schema;
 pub mod tool_discovery;
 pub mod tool_discovery_cache;
@@ -42,6 +49,7 @@ pub(crate) use rmcp_client::RmcpClient;
 pub use rmcp_transport::{
     HttpTransport, create_http_transport, create_stdio_transport, create_stdio_transport_with_stderr,
 };
+pub use sandbox_context::McpSandboxContext;
 pub(crate) use schema::{validate_against_schema, validate_tool_input};
 pub use tool_discovery::{DetailLevel, ToolDiscovery, ToolDiscoveryResult};
 pub use traits::{McpElicitationHandler, McpToolExecutor};
@@ -200,8 +208,8 @@ pub(crate) fn sanitize_filename(name: &str) -> String {
 /// Format a tool description as Markdown
 pub(crate) fn format_tool_markdown(tool: &McpToolInfo) -> String {
     let mut content = String::new();
-    let _ = write!(content, "# {}\n\n", tool.name);
-    let _ = write!(content, "**Provider**: {}\n\n", tool.provider);
+    let _format_result = write!(content, "# {}\n\n", tool.name);
+    let _format_result = write!(content, "**Provider**: {}\n\n", tool.provider);
     content.push_str("## Description\n\n");
     content.push_str(&tool.description);
     content.push_str("\n\n");
@@ -220,7 +228,7 @@ pub(crate) fn format_tool_markdown(tool: &McpToolInfo) -> String {
             content.push_str("## Required Parameters\n\n");
             for req in required {
                 if let Some(name) = req.as_str() {
-                    let _ = writeln!(content, "- `{name}`");
+                    let _format_result = writeln!(content, "- `{name}`");
                 }
             }
             content.push('\n');
@@ -234,10 +242,10 @@ pub(crate) fn format_tool_markdown(tool: &McpToolInfo) -> String {
             for (param_name, param_schema) in props {
                 let param_type = param_schema.get("type").and_then(|t| t.as_str()).unwrap_or("any");
                 let param_desc = param_schema.get("description").and_then(|d| d.as_str()).unwrap_or("");
-                let _ = write!(content, "### `{param_name}`\n\n");
-                let _ = writeln!(content, "- **Type**: {param_type}");
+                let _format_result = write!(content, "### `{param_name}`\n\n");
+                let _format_result = writeln!(content, "- **Type**: {param_type}");
                 if !param_desc.is_empty() {
-                    let _ = writeln!(content, "- **Description**: {param_desc}");
+                    let _format_result = writeln!(content, "- **Description**: {param_desc}");
                 }
                 content.push('\n');
             }
@@ -308,7 +316,7 @@ mod tests {
     #[test]
     fn ensure_timezone_does_not_override_existing_value() {
         let mut arguments = Map::new();
-        arguments.insert(TIMEZONE_ARGUMENT.to_string(), Value::String("America/New_York".to_owned()));
+        drop(arguments.insert(TIMEZONE_ARGUMENT.to_string(), Value::String("America/New_York".to_owned())));
 
         ensure_timezone_argument(&mut arguments, true).unwrap();
 
@@ -318,8 +326,8 @@ mod tests {
     #[test]
     fn create_env_merges_configured_values() {
         let mut extra_env = HashMap::new();
-        extra_env.insert(OsString::from("A"), OsString::from("1"));
-        extra_env.insert(OsString::from("B"), OsString::from("2"));
+        drop(extra_env.insert(OsString::from("A"), OsString::from("1")));
+        drop(extra_env.insert(OsString::from("B"), OsString::from("2")));
 
         let env = create_env_for_mcp_server(Some(extra_env));
 
@@ -425,7 +433,7 @@ mod tests {
             startup_timeout_ms: None,
         };
 
-        let provider = McpProvider::connect(config, None).await.unwrap();
+        let provider = McpProvider::connect(config, None, None).await.unwrap();
         assert_eq!(provider.semaphore.available_permits(), 1);
     }
 

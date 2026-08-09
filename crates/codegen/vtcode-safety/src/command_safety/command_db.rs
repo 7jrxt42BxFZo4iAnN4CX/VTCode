@@ -26,35 +26,35 @@ impl CommandDatabase {
 
         // File operations (read-only)
         for cmd in Self::file_operations() {
-            rules.insert(cmd, CommandRule::safe_readonly());
+            drop(rules.insert(cmd, CommandRule::safe_readonly()));
         }
 
         // Source control (read-only safe + dangerous operations)
         for cmd in Self::source_control() {
-            rules.insert(
+            drop(rules.insert(
                 cmd,
                 CommandRule::with_allowed_subcommands(vec!["branch", "status", "log", "diff", "show", "rev-parse"]),
-            );
+            ));
         }
 
         // Build systems
         for cmd in Self::build_systems() {
-            rules.insert(cmd, CommandRule::safe_readonly());
+            drop(rules.insert(cmd, CommandRule::safe_readonly()));
         }
 
         // Version managers (read-only)
         for cmd in Self::version_managers() {
-            rules.insert(cmd, CommandRule::safe_readonly());
+            drop(rules.insert(cmd, CommandRule::safe_readonly()));
         }
 
         // Development tools
         for cmd in Self::development_tools() {
-            rules.insert(cmd, CommandRule::safe_readonly());
+            drop(rules.insert(cmd, CommandRule::safe_readonly()));
         }
 
         // Text processing
         for cmd in Self::text_processing() {
-            rules.insert(cmd, CommandRule::safe_readonly());
+            drop(rules.insert(cmd, CommandRule::safe_readonly()));
         }
 
         rules

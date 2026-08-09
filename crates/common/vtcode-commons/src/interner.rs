@@ -1,3 +1,9 @@
+#![expect(
+    clippy::indexing_slicing,
+    clippy::cast_possible_truncation,
+    reason = "Arena offsets are bounded by the compact interner representation and IDs are range-checked by construction."
+)]
+
 //! Arena-based string interner for memory-efficient string deduplication.
 //!
 //! Stores all strings in a single contiguous buffer to minimize allocations

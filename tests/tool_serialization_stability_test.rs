@@ -1,4 +1,7 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, test, or API-shape suppression."
+)]
 //! Tool serialization stability tests
 //!
 //! These tests ensure that tool descriptions and schemas remain consistent
@@ -99,13 +102,13 @@ fn snapshot_current_tool_schemas() -> Result<BTreeMap<String, Value>> {
 
         for tool_name in tool_names {
             if let Some(schema) = registry.get_tool_schema(&tool_name).await {
-                schemas.insert(tool_name, schema);
+                let _previous = schemas.insert(tool_name, schema);
             }
         }
 
         // If no tools were found in the registry, fall back to current public schemas.
         if schemas.is_empty() {
-            schemas.insert(
+            let _previous = schemas.insert(
                 "exec_command".to_string(),
                 json!({
                     "name": "exec_command",
@@ -123,7 +126,7 @@ fn snapshot_current_tool_schemas() -> Result<BTreeMap<String, Value>> {
                 }),
             );
 
-            schemas.insert(
+            let _previous = schemas.insert(
                 "write_stdin".to_string(),
                 json!({
                     "name": "write_stdin",
@@ -145,7 +148,7 @@ fn snapshot_current_tool_schemas() -> Result<BTreeMap<String, Value>> {
                 }),
             );
 
-            schemas.insert(
+            let _previous = schemas.insert(
                 "apply_patch".to_string(),
                 json!({
                     "name": "apply_patch",
@@ -163,7 +166,7 @@ fn snapshot_current_tool_schemas() -> Result<BTreeMap<String, Value>> {
                 }),
             );
 
-            schemas.insert(
+            let _previous = schemas.insert(
                 "code_search".to_string(),
                 json!({
                     "name": "code_search",
@@ -313,18 +316,18 @@ mod tests {
         });
 
         let mut reversed_properties = Map::new();
-        reversed_properties.insert("action".to_string(), json!({"type": "string"}));
-        reversed_properties.insert("path".to_string(), json!({"type": "string"}));
+        let _previous = reversed_properties.insert("action".to_string(), json!({"type": "string"}));
+        let _previous = reversed_properties.insert("path".to_string(), json!({"type": "string"}));
 
         let mut reversed_parameters = Map::new();
-        reversed_parameters.insert("properties".to_string(), Value::Object(reversed_properties));
-        reversed_parameters.insert("required".to_string(), json!(["path", "action"]));
-        reversed_parameters.insert("type".to_string(), json!("object"));
+        let _previous = reversed_parameters.insert("properties".to_string(), Value::Object(reversed_properties));
+        let _previous = reversed_parameters.insert("required".to_string(), json!(["path", "action"]));
+        let _previous = reversed_parameters.insert("type".to_string(), json!("object"));
 
         let mut second_map = Map::new();
-        second_map.insert("parameters".to_string(), Value::Object(reversed_parameters));
-        second_map.insert("description".to_string(), json!("Test tool"));
-        second_map.insert("name".to_string(), json!("test"));
+        let _previous = second_map.insert("parameters".to_string(), Value::Object(reversed_parameters));
+        let _previous = second_map.insert("description".to_string(), json!("Test tool"));
+        let _previous = second_map.insert("name".to_string(), json!("test"));
         let second = Value::Object(second_map);
 
         assert_eq!(

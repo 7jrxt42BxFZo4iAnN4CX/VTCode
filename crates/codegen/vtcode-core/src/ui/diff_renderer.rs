@@ -1,4 +1,7 @@
-#![allow(clippy::let_underscore_must_use)]
+#![allow(
+    clippy::let_underscore_must_use,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 
 use crate::config::constants::diff as diff_constants;
 use crate::ui::git_config::GitColorConfig;

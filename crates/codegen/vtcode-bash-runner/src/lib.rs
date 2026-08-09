@@ -1,4 +1,16 @@
-#![allow(missing_docs, dead_code, unused_imports)]
+#![allow(
+    missing_docs,
+    dead_code,
+    unused_imports,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
+#![expect(
+    unused_results,
+    clippy::let_underscore_must_use,
+    clippy::cast_possible_wrap,
+    clippy::indexing_slicing,
+    reason = "Process wrappers intentionally detach best-effort tasks, use OS process IDs, and configure commands through bounded builder APIs."
+)]
 //! Cross-platform command runner modeled after VT Code's original bash
 //! wrapper. The crate exposes a trait-based executor so downstream
 //! applications can swap the underlying process strategy (system shell,

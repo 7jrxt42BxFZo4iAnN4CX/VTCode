@@ -1,5 +1,26 @@
-#![allow(clippy::expect_used, clippy::unreachable, missing_docs, dead_code, unused_imports)]
-#![cfg_attr(not(test), allow(clippy::map_err_ignore))]
+#![allow(
+    clippy::expect_used,
+    clippy::unreachable,
+    missing_docs,
+    dead_code,
+    unused_imports,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
+#![cfg_attr(
+    not(test),
+    allow(
+        clippy::map_err_ignore,
+        reason = "Configuration compatibility paths preserve legacy error mapping semantics."
+    )
+)]
+#![expect(
+    unused_results,
+    clippy::let_underscore_must_use,
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    clippy::cast_possible_truncation,
+    reason = "Configuration loading mutates layered maps, parses validated text boundaries, and converts bounded persistence timestamps."
+)]
 //! Shared configuration loader utilities for VT Code and downstream integrations.
 //!
 //! This crate exposes [`VTCodeConfig`] and [`ConfigManager`] for reading and

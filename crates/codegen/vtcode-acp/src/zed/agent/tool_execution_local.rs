@@ -170,7 +170,7 @@ impl ZedAgent {
             Value::Object(map) => map,
             _ => serde_json::Map::new(),
         };
-        normalized_args.insert(TOOL_LIST_FILES_PATH_ARG.to_string(), Value::String(resolved_path));
+        drop(normalized_args.insert(TOOL_LIST_FILES_PATH_ARG.to_string(), Value::String(resolved_path)));
         let normalized_args = Value::Object(normalized_args);
 
         let listing = tool.execute(normalized_args).await.map_err(|error| {

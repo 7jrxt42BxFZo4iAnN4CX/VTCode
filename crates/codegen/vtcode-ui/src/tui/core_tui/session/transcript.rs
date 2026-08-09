@@ -141,12 +141,18 @@ impl TranscriptReflowCache {
         result
     }
 
-    #[expect(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     pub fn message_start_row(&self, index: usize) -> Option<usize> {
         self.row_offsets.get(index).copied()
     }
 
-    #[expect(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Intentional compatibility, platform, test, or API-shape suppression."
+    )]
     pub fn message_row_count(&self, index: usize) -> Option<usize> {
         self.messages.get(index).map(|m| m.lines.len())
     }

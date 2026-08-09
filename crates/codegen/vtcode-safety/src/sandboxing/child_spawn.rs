@@ -129,6 +129,10 @@ pub const VTCODE_SANDBOX_WRITABLE_ROOTS: &str = "VTCODE_SANDBOX_WRITABLE_ROOTS";
 ///
 /// Implements the Codex pattern: "Completely clear the environment and rebuild it
 /// with only the variables you actually want."
+#[expect(
+    unused_results,
+    reason = "Environment construction intentionally ignores prior values while writing the sanitized snapshot."
+)]
 pub fn build_sanitized_env(
     current_env: &HashMap<String, String>,
     sandbox_active: bool,
@@ -165,13 +169,16 @@ pub fn build_sanitized_env(
 
 /// Check if an environment variable should be filtered.
 pub fn should_filter_env_var(key: &str) -> bool {
-    FILTERED_ENV_VARS.contains(&key)
+    let key = key.to_ascii_uppercase();
+    FILTERED_ENV_VARS.contains(&key.as_str())
         || key.starts_with("AWS_")
         || key.starts_with("AZURE_")
         || key.starts_with("GOOGLE_")
         || key.starts_with("GCP_")
+        || key.starts_with("CLOUDSDK_")
         || key.starts_with("LD_")
         || key.starts_with("DYLD_")
+        || matches!(key.as_str(), "TOKEN" | "SECRET" | "PASSWORD" | "PASS" | "PWD" | "CREDENTIALS")
         || key.ends_with("_TOKEN")
         || key.ends_with("_KEY")
         || key.ends_with("_SECRET")
@@ -245,6 +252,8 @@ mod tests {
         assert!(should_filter_env_var("LD_PRELOAD"));
         assert!(should_filter_env_var("DYLD_INSERT_LIBRARIES"));
         assert!(should_filter_env_var("MY_CUSTOM_TOKEN"));
+        assert!(should_filter_env_var("token"));
+        assert!(should_filter_env_var("CloudSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"));
         assert!(should_filter_env_var("MY_CUSTOM_PASS"));
         assert!(should_filter_env_var("MYSQL_PWD"));
         assert!(should_filter_env_var("DATABASE_PASSWORD"));
@@ -255,12 +264,21 @@ mod tests {
     }
 
     #[test]
+    fn filters_sensitive_names_case_insensitively() {
+        assert!(should_filter_env_var("openai_api_key"));
+        assert!(should_filter_env_var("Aws_SECRET_ACCESS_KEY"));
+        assert!(should_filter_env_var("custom_access_token"));
+        assert!(should_filter_env_var("dyld_insert_libraries"));
+        assert!(!should_filter_env_var("PROJECT_NAME"));
+    }
+
+    #[test]
     fn test_build_sanitized_env() {
         let mut current = HashMap::new();
-        current.insert("PATH".to_string(), "/usr/bin".to_string());
-        current.insert("HOME".to_string(), "/home/user".to_string());
-        current.insert("OPENAI_API_KEY".to_string(), TEST_API_KEY_VALUE.to_string());
-        current.insert("RANDOM_VAR".to_string(), "value".to_string());
+        drop(current.insert("PATH".to_string(), "/usr/bin".to_string()));
+        drop(current.insert("HOME".to_string(), "/home/user".to_string()));
+        drop(current.insert("OPENAI_API_KEY".to_string(), TEST_API_KEY_VALUE.to_string()));
+        drop(current.insert("RANDOM_VAR".to_string(), "value".to_string()));
 
         let sanitized = build_sanitized_env(&current, true, true, "MacosSeatbelt", &[]);
 
@@ -283,12 +301,12 @@ mod tests {
     #[test]
     fn test_filter_sensitive_env() {
         let mut env = HashMap::new();
-        env.insert("PATH".to_string(), "/usr/bin".to_string());
-        env.insert("OPENAI_API_KEY".to_string(), TEST_API_KEY_VALUE.to_string());
-        env.insert("MY_VAR".to_string(), "value".to_string());
-        env.insert("AWS_ACCESS_KEY_ID".to_string(), "AKIA...".to_string());
-        env.insert("CUSTOM_PASS".to_string(), "let-me-in".to_string());
-        env.insert("SERVICE_PWD".to_string(), "super-secret".to_string());
+        drop(env.insert("PATH".to_string(), "/usr/bin".to_string()));
+        drop(env.insert("OPENAI_API_KEY".to_string(), TEST_API_KEY_VALUE.to_string()));
+        drop(env.insert("MY_VAR".to_string(), "value".to_string()));
+        drop(env.insert("AWS_ACCESS_KEY_ID".to_string(), "AKIA...".to_string()));
+        drop(env.insert("CUSTOM_PASS".to_string(), "let-me-in".to_string()));
+        drop(env.insert("SERVICE_PWD".to_string(), "super-secret".to_string()));
 
         let filtered = filter_sensitive_env(&env);
 

@@ -1,7 +1,13 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 //! Test that verifies the REAL optimizations are integrated into the actual ToolRegistry
 
-#![allow(clippy::panic_in_result_fn)]
+#![allow(
+    clippy::panic_in_result_fn,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)]
 use anyhow::Result;
 use vtcode_config::OptimizationConfig;
 use vtcode_core::tools::registry::ToolRegistry;
