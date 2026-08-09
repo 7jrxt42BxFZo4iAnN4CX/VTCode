@@ -6,7 +6,7 @@ Detailed runloop recovery and allocator notes live in the [vtcode binary gotchas
 
 ## Modules
 
-`main.rs` binary entry | `agent/` runloop + subagent dispatch | `cli/` handlers | `startup/` onboarding | `updater/` downloads and self-replacement | `codex_app_server/` bridge | `main_helpers/` tracing and runtime init
+`main.rs` binary entry | `agent/` runloop + subagent dispatch | `cli/` handlers | `startup/` onboarding | `updater/` downloads and self-replacement | `codex_app_server/` bridge | `main_helpers/` tracing and runtime init | `agent/runloop/unified/turn/session/interaction_loop_runner/status_refresh.rs` status/IDE/title cadence
 
 ## Rules
 
@@ -27,4 +27,4 @@ Detailed runloop recovery and allocator notes live in the [vtcode binary gotchas
 - Completed turns must publish a non-empty final response through both renderer and harness paths; blocked recovery remains visible. Async checkpointing acknowledges consumed steering intents only after a `Persisted` history result, never after a throttled checkpoint; archive-disabled sessions release in-flight intents without marking them durable.
 ## Gotchas
 
-The detailed maintainer notes are in [vtcode-binary-gotchas.md](../docs/development/vtcode-binary-gotchas.md); startup timing must initialize before tracing and remain opt-in; keep this file focused and under 30 lines.
+The detailed maintainer notes are in [vtcode-binary-gotchas.md](../docs/development/vtcode-binary-gotchas.md); startup timing must initialize before tracing and remain opt-in; live status config reloads must invalidate Git/command refresh gates; keep this file focused and under 30 lines.

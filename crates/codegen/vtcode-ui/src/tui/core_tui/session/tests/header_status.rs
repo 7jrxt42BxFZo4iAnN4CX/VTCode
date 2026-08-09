@@ -252,6 +252,27 @@ fn status_requires_shimmer_for_input_required_states() {
 }
 
 #[test]
+fn status_requires_shimmer_preserves_case_and_spinner_matching() {
+    assert!(status_requires_shimmer("  RUNNING TOOL: cargo check  "));
+    assert!(status_requires_shimmer("WAITING FOR INPUT"));
+    assert!(status_requires_shimmer("- Compiling workspace"));
+    assert!(!status_requires_shimmer("Completed successfully"));
+}
+
+#[test]
+fn unchanged_terminal_title_commands_do_not_request_redraw() {
+    let mut session = fresh_session();
+    assert!(session.take_redraw(), "fresh sessions start dirty");
+
+    let command = InlineCommand::SetTerminalTitleThreadLabel { label: Some("main".to_string()) };
+    session.handle_command(command);
+    assert!(session.take_redraw(), "changed title state should request a redraw");
+
+    session.handle_command(InlineCommand::SetTerminalTitleThreadLabel { label: Some("main".to_string()) });
+    assert!(!session.take_redraw(), "unchanged title state should not request a redraw");
+}
+
+#[test]
 fn bang_prefix_input_shows_shell_mode_status_hint() {
     let mut session = fresh_session();
     session.set_input("!echo hello".to_string());

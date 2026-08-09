@@ -211,6 +211,42 @@ fn custom_provider_picker_uses_exact_profile_metadata() {
 }
 
 #[test]
+fn custom_provider_picker_shows_each_model_with_provider_identity() {
+    let config = CustomProviderConfig {
+        name: "mycorp".to_string(),
+        display_name: "MyCorporateName".to_string(),
+        base_url: "https://llm.corp.example/v1".to_string(),
+        api_key_env: "MYCORP_API_KEY".to_string(),
+        model: "gpt-5-mini".to_string(),
+        models: vec!["gpt-5-mini", "reasoning-model"].into_iter().map(String::from).collect(),
+        ..CustomProviderConfig::default()
+    };
+    let selections = selections_from_custom_provider(&config);
+
+    assert_eq!(selections.len(), 2);
+    assert_eq!(rendering::custom_provider_picker_title(&selections[0]), "gpt-5-mini");
+    assert_eq!(rendering::custom_provider_picker_title(&selections[1]), "reasoning-model");
+    assert_eq!(rendering::custom_provider_picker_subtitle(&selections[0], "", ""), "MyCorporateName");
+    assert_eq!(rendering::custom_provider_picker_subtitle(&selections[1], "", ""), "MyCorporateName");
+    assert_eq!(interaction::custom_provider_description(&selections[0]), "MyCorporateName • gpt-5-mini");
+    assert_eq!(interaction::custom_provider_description(&selections[1]), "MyCorporateName • reasoning-model");
+}
+
+#[test]
+fn custom_provider_picker_keeps_single_model_field() {
+    let config = CustomProviderConfig {
+        name: "mycorp".to_string(),
+        display_name: "MyCorporateName".to_string(),
+        model: "gpt-5-mini".to_string(),
+        ..CustomProviderConfig::default()
+    };
+    let selections = selections_from_custom_provider(&config);
+
+    assert_eq!(selections.len(), 1);
+    assert_eq!(rendering::custom_provider_picker_title(&selections[0]), "gpt-5-mini");
+}
+
+#[test]
 fn parse_model_selection_marks_command_auth_custom_provider_as_keyless() {
     let mut cfg = VTCodeConfig::default();
     cfg.custom_providers.push(CustomProviderConfig {

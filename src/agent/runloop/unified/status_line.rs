@@ -48,6 +48,24 @@ pub(crate) struct InputStatusState {
     /// the `HH:MM:SS` display would actually change (once per second) so the
     /// status rebuild can be skipped between ticks.
     pub(crate) last_clock_second: Option<u64>,
+    /// Cached model display name. `ModelId::from_str` is only re-run when the
+    /// raw model string changes (e.g. user switches models), not every tick.
+    pub(crate) cached_model_input: Option<String>,
+    pub(crate) cached_model_display: Option<String>,
+    /// Cached cleaned reasoning text. `clean_reasoning_text` is only re-run
+    /// when the raw reasoning string changes, not every tick.
+    pub(crate) cached_reasoning_input: Option<String>,
+    pub(crate) cached_reasoning_cleaned: String,
+    /// The Unix-second for which `state.clock` was last formatted. When a
+    /// dirty-only status update runs (no clock tick), the clock string is
+    /// reused instead of calling `chrono::Local::now()` again.
+    pub(crate) clock_string_second: Option<u64>,
+    /// Last values sent to the terminal-title setters. The interaction loop
+    /// compares against these before enqueuing `InlineCommand`s so idle ticks
+    /// don't produce 3 channel sends + `needs_redraw` for unchanged titles.
+    pub(crate) last_title_items: Option<Vec<String>>,
+    pub(crate) last_title_thread_label: Option<String>,
+    pub(crate) last_title_git_branch: Option<String>,
 }
 
 const GIT_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
@@ -126,6 +144,41 @@ fn current_second() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
+fn cached_model_display<'a>(state: &'a mut InputStatusState, model: &str) -> &'a str {
+    let trimmed_model = model.trim();
+    if state.cached_model_input.as_deref() != Some(trimmed_model) {
+        let display = ModelId::from_str(trimmed_model)
+            .map(|id| id.display_name().to_string())
+            .unwrap_or_else(|_| trimmed_model.to_string());
+        state.cached_model_input = Some(trimmed_model.to_string());
+        state.cached_model_display = Some(display);
+    }
+    state.cached_model_display.as_deref().unwrap_or_default()
+}
+
+fn cached_cleaned_reasoning<'a>(state: &'a mut InputStatusState, reasoning: &str) -> &'a str {
+    let trimmed_reasoning = reasoning.trim();
+    if state.cached_reasoning_input.as_deref() != Some(trimmed_reasoning) {
+        state.cached_reasoning_input = Some(trimmed_reasoning.to_string());
+        state.cached_reasoning_cleaned = clean_reasoning_text(trimmed_reasoning);
+    }
+    &state.cached_reasoning_cleaned
+}
+
+fn update_clock(state: &mut InputStatusState, show_clock: bool) {
+    if !show_clock {
+        state.clock = None;
+        state.clock_string_second = None;
+        return;
+    }
+
+    let now_sec = current_second();
+    if state.clock.is_none() || state.clock_string_second != Some(now_sec) {
+        state.clock_string_second = Some(now_sec);
+        state.clock = Some(now_statusline_clock());
+    }
+}
+
 /// Returns `true` when the clock display (HH:MM:SS) would change since the
 /// last recorded second, updating the tracked second in the process.
 pub(crate) fn clock_second_ticked(state: &mut InputStatusState) -> bool {
@@ -133,6 +186,44 @@ pub(crate) fn clock_second_ticked(state: &mut InputStatusState) -> bool {
     let changed = state.last_clock_second.is_none_or(|prev| prev != now);
     state.last_clock_second = Some(now);
     changed
+}
+
+/// Invalidate state that depends on the live status-line configuration.
+///
+/// Configuration reloads can change the status mode, command, clock, or
+/// visibility of Git data without changing any runtime counters. Reset the
+/// refresh gates so the next scheduled update observes the new configuration
+/// immediately rather than waiting for an old interval to expire.
+pub(crate) fn invalidate_for_config_reload(state: &mut InputStatusState) {
+    state.status_dirty = true;
+    state.last_git_refresh = None;
+    state.last_command_refresh = None;
+    state.command_value = None;
+}
+
+pub(crate) fn sync_terminal_title(handle: &InlineHandle, state: &mut InputStatusState, title_items: Option<&[String]>) {
+    if state.last_title_items.as_deref() != title_items {
+        let next = title_items.map(<[String]>::to_vec);
+        handle.set_terminal_title_items(next.clone());
+        state.last_title_items = next;
+    }
+
+    if state.last_title_thread_label.as_deref() != state.thread_context.as_deref() {
+        let next = state.thread_context.clone();
+        handle.set_terminal_title_thread_label(next.clone());
+        state.last_title_thread_label = next;
+    }
+
+    let git_branch = state
+        .git_summary
+        .as_ref()
+        .map(|summary| summary.branch.as_str())
+        .filter(|branch| !branch.trim().is_empty());
+    if state.last_title_git_branch.as_deref() != git_branch {
+        let next = git_branch.map(str::to_owned);
+        handle.set_terminal_title_git_branch(next.clone());
+        state.last_title_git_branch = next;
+    }
 }
 
 pub(crate) async fn update_input_status_if_changed(
@@ -193,15 +284,13 @@ pub(crate) async fn update_input_status_if_changed(
     }
 
     let trimmed_model = model.trim();
-    let cleaned_reasoning = clean_reasoning_text(reasoning.trim());
-    let trimmed_reasoning = cleaned_reasoning.as_str();
-    let model_display = ModelId::from_str(trimmed_model)
-        .map(|id| id.display_name().to_string())
-        .unwrap_or_else(|_| trimmed_model.to_string());
 
     let mut command_error: Option<anyhow::Error> = None;
 
-    state.clock = status_line_shows_clock(status_config).then(now_statusline_clock);
+    // Reuse the formatted clock string when the displayed second hasn't
+    // changed (dirty-only update without a clock tick). Avoids a
+    // chrono::Local::now() + format call and String clone on every rebuild.
+    update_clock(state, status_line_shows_clock(status_config));
 
     let (left, right) = match mode {
         StatusLineMode::Hidden => {
@@ -232,11 +321,15 @@ pub(crate) async fn update_input_status_if_changed(
 
                     if should_refresh_command {
                         state.last_command_refresh = Some(Instant::now());
+                        cached_model_display(state, trimmed_model);
+                        cached_cleaned_reasoning(state, reasoning);
+                        let model_display = state.cached_model_display.as_deref().unwrap_or_default();
+                        let trimmed_reasoning = &state.cached_reasoning_cleaned;
                         match run_status_line_command(
                             &command,
                             workspace,
                             trimmed_model,
-                            &model_display,
+                            model_display,
                             trimmed_reasoning,
                             state.git_summary.as_ref(),
                             cfg,
@@ -460,9 +553,19 @@ pub(crate) async fn refresh_balance_info(
 #[cfg(test)]
 mod tests {
     use super::{
-        InputStatusState, build_model_status_with_context_and_spooled, status_line_shows_clock, update_thread_context,
+        InputStatusState, build_model_status_with_context_and_spooled, cached_cleaned_reasoning, cached_model_display,
+        invalidate_for_config_reload, status_line_shows_clock, sync_terminal_title, update_thread_context,
     };
     use vtcode_core::config::StatusLineConfig;
+    use vtcode_ui::tui::app::{InlineCommand, InlineHandle};
+
+    fn drain_commands(receiver: &mut tokio::sync::mpsc::UnboundedReceiver<InlineCommand>) -> Vec<InlineCommand> {
+        let mut commands = Vec::new();
+        while let Ok(command) = receiver.try_recv() {
+            commands.push(command);
+        }
+        commands
+    }
 
     #[test]
     fn status_line_shows_thread_context() {
@@ -558,5 +661,127 @@ mod tests {
 
         super::update_context_budget(&mut state, 2000, 10_000);
         assert!(state.status_dirty, "changed used tokens must mark dirty");
+    }
+
+    #[test]
+    fn clock_string_second_cleared_when_clock_hidden() {
+        // Simulate a prior formatted clock.
+        let mut state = InputStatusState {
+            clock: Some("14:30:05".to_string()),
+            clock_string_second: Some(1234567890),
+            ..Default::default()
+        };
+
+        // When show_clock is false, the clock and its tracking second must clear.
+        let off = StatusLineConfig { show_clock: false, ..StatusLineConfig::default() };
+        super::update_clock(&mut state, status_line_shows_clock(Some(&off)));
+
+        assert!(state.clock.is_none(), "clock must clear when disabled");
+        assert!(state.clock_string_second.is_none(), "clock second must clear when disabled");
+    }
+
+    #[test]
+    fn model_cache_invalidates_on_change() {
+        let mut state = InputStatusState::default();
+        let model_a = "claude-sonnet-4-20250514";
+        let model_b = "gpt-4o";
+
+        let display_a = cached_model_display(&mut state, model_a).to_string();
+
+        assert_eq!(state.cached_model_input.as_deref(), Some(model_a), "input must be cached");
+        assert!(state.cached_model_display.is_some(), "display must be cached");
+
+        let display_a_again = cached_model_display(&mut state, model_a);
+        assert_eq!(display_a, display_a_again, "same model must produce same display");
+
+        let display_b = cached_model_display(&mut state, model_b).to_string();
+
+        assert_eq!(state.cached_model_input.as_deref(), Some(model_b), "cache must update to new model");
+        assert_ne!(display_a, display_b, "different models must produce different display names");
+    }
+
+    #[test]
+    fn reasoning_cache_invalidates_on_change() {
+        let mut state = InputStatusState::default();
+        let reasoning_a = "high";
+        let reasoning_b = "low";
+
+        let cleaned_a = cached_cleaned_reasoning(&mut state, reasoning_a).to_string();
+
+        assert_eq!(state.cached_reasoning_input.as_deref(), Some(reasoning_a), "input must be cached");
+
+        let cleaned_a_again = cached_cleaned_reasoning(&mut state, reasoning_a);
+        assert_eq!(cleaned_a, cleaned_a_again, "same reasoning must produce same cleaned text");
+
+        let cleaned_b = cached_cleaned_reasoning(&mut state, reasoning_b).to_string();
+
+        assert_eq!(state.cached_reasoning_input.as_deref(), Some(reasoning_b), "cache must update");
+        assert_ne!(cleaned_a, cleaned_b, "different reasoning must produce different cleaned text");
+    }
+
+    #[test]
+    fn title_dedup_fields_start_empty() {
+        let state = InputStatusState::default();
+        assert!(state.last_title_items.is_none(), "title items cache must start empty");
+        assert!(state.last_title_thread_label.is_none(), "title thread label cache must start empty");
+        assert!(state.last_title_git_branch.is_none(), "title git branch cache must start empty");
+    }
+
+    #[test]
+    fn config_reload_invalidates_status_refresh_gates() {
+        let mut state = InputStatusState {
+            last_git_refresh: Some(std::time::Instant::now()),
+            last_command_refresh: Some(std::time::Instant::now()),
+            command_value: Some("stale status".to_string()),
+            ..Default::default()
+        };
+
+        invalidate_for_config_reload(&mut state);
+
+        assert!(state.status_dirty, "configuration changes must force a status refresh");
+        assert!(state.last_git_refresh.is_none(), "Git visibility may have changed");
+        assert!(state.last_command_refresh.is_none(), "a command/config change must run immediately");
+        assert!(state.command_value.is_none(), "stale command output must not survive reload");
+    }
+
+    #[test]
+    fn terminal_title_sync_only_sends_changed_values() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let handle = InlineHandle::new_for_tests(sender);
+        let mut state = InputStatusState::default();
+        let title_items = vec!["directory".to_string(), "model".to_string()];
+
+        state.thread_context = Some("main".to_string());
+        state.git_summary =
+            Some(crate::agent::runloop::git::GitStatusSummary { branch: "feature/login".to_string(), dirty: false });
+
+        sync_terminal_title(&handle, &mut state, Some(&title_items));
+
+        let initial_commands = drain_commands(&mut receiver);
+        assert_eq!(initial_commands.len(), 3, "each initial title field should be sent once");
+        for command in initial_commands {
+            match command {
+                InlineCommand::SetTerminalTitleItems { items } => assert_eq!(items, Some(title_items.clone())),
+                InlineCommand::SetTerminalTitleThreadLabel { label } => assert_eq!(label.as_deref(), Some("main")),
+                InlineCommand::SetTerminalTitleGitBranch { branch } => {
+                    assert_eq!(branch.as_deref(), Some("feature/login"));
+                }
+                _ => panic!("unexpected command in terminal title sync"),
+            }
+        }
+
+        sync_terminal_title(&handle, &mut state, Some(&title_items));
+        assert!(receiver.try_recv().is_err(), "unchanged title fields must not enqueue commands");
+
+        state.git_summary.as_mut().expect("git summary set above").branch = "develop".to_string();
+        sync_terminal_title(&handle, &mut state, Some(&title_items));
+        match receiver.try_recv() {
+            Ok(InlineCommand::SetTerminalTitleGitBranch { branch }) => {
+                assert_eq!(branch.as_deref(), Some("develop"));
+            }
+            Ok(_) => panic!("only the changed branch should be sent"),
+            Err(error) => panic!("changed branch was not sent: {error}"),
+        }
+        assert!(receiver.try_recv().is_err(), "only changed title fields should enqueue commands");
     }
 }

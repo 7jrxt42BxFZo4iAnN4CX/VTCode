@@ -237,6 +237,18 @@ fn custom_provider_subtitle(
     )
 }
 
+pub(super) fn custom_provider_picker_title(selection: &SelectionDetail) -> &str {
+    &selection.model_display
+}
+
+pub(super) fn custom_provider_picker_subtitle(
+    selection: &SelectionDetail,
+    current_provider: &str,
+    current_model: &str,
+) -> String {
+    join_with_label(&selection.provider_label, custom_provider_subtitle(selection, current_provider, current_model))
+}
+
 fn custom_provider_search_value(selection: &SelectionDetail) -> String {
     let mut value = format!(
         "{} {} {} {} custom provider openai compatible",
@@ -391,8 +403,8 @@ pub(super) fn render_step_one_inline(
     if !custom_providers.is_empty() {
         for (index, selection) in custom_providers.iter().enumerate() {
             items.push(InlineListItem {
-                title: selection.provider_label.clone(),
-                subtitle: custom_provider_subtitle(selection, current_provider, current_model),
+                title: custom_provider_picker_title(selection).to_string(),
+                subtitle: Some(custom_provider_picker_subtitle(selection, current_provider, current_model)),
                 badge: Some("Custom".to_string()),
                 indent: 0,
                 selection: Some(InlineListSelection::CustomProvider(index)),
@@ -542,10 +554,9 @@ pub(super) fn render_step_one_plain(
         }
         renderer.line(MessageStyle::Info, "[Custom providers]")?;
         for selection in custom_providers {
-            renderer.line(MessageStyle::Info, &format!("  {}", selection.provider_label))?;
-            if let Some(subtitle) = custom_provider_subtitle(selection, "", "") {
-                renderer.line(MessageStyle::Info, &format!("      {subtitle}"))?;
-            }
+            renderer.line(MessageStyle::Info, &format!("  {}", custom_provider_picker_title(selection)))?;
+            let subtitle = custom_provider_picker_subtitle(selection, "", "");
+            renderer.line(MessageStyle::Info, &format!("      {subtitle}"))?;
         }
     }
 

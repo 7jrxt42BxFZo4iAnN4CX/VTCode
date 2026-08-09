@@ -21,6 +21,8 @@ impl Session {
     }
 
     pub fn handle_command(&mut self, command: InlineCommand) {
+        let mut command_needs_redraw = true;
+
         // Track streaming state: set when agent starts responding
         if matches!(
             &command,
@@ -121,16 +123,30 @@ impl Session {
                 self.needs_redraw = true;
             }
             InlineCommand::SetTerminalTitleItems { items } => {
-                self.terminal_title_items = items;
-                self.needs_redraw = true;
+                if self.terminal_title_items != items {
+                    self.terminal_title_items = items;
+                    self.needs_redraw = true;
+                } else {
+                    command_needs_redraw = false;
+                }
             }
             InlineCommand::SetTerminalTitleThreadLabel { label } => {
-                self.terminal_title_thread_label = label.filter(|value| !value.trim().is_empty());
-                self.needs_redraw = true;
+                let label = label.filter(|value| !value.trim().is_empty());
+                if self.terminal_title_thread_label != label {
+                    self.terminal_title_thread_label = label;
+                    self.needs_redraw = true;
+                } else {
+                    command_needs_redraw = false;
+                }
             }
             InlineCommand::SetTerminalTitleGitBranch { branch } => {
-                self.terminal_title_git_branch = branch.filter(|value| !value.trim().is_empty());
-                self.needs_redraw = true;
+                let branch = branch.filter(|value| !value.trim().is_empty());
+                if self.terminal_title_git_branch != branch {
+                    self.terminal_title_git_branch = branch;
+                    self.needs_redraw = true;
+                } else {
+                    command_needs_redraw = false;
+                }
             }
             InlineCommand::SetTheme { theme } => {
                 let previous_theme = self.theme.clone();
@@ -245,6 +261,8 @@ impl Session {
                 self.invalidate_header_cache();
             }
         }
-        self.needs_redraw = true;
+        if command_needs_redraw {
+            self.needs_redraw = true;
+        }
     }
 }

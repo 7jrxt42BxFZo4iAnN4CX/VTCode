@@ -1171,31 +1171,53 @@ fn is_spinner_frame(indicator: &str) -> bool {
 }
 
 pub(crate) fn status_requires_shimmer(text: &str) -> bool {
-    let normalized = text.trim().to_ascii_lowercase();
-
-    if normalized.contains("running command:")
-        || normalized.contains("running tool:")
-        || normalized.contains("running:")
-        || normalized.contains("running ")
-        || normalized.contains("executing ")
-        || normalized.contains("approval required")
-        || normalized.contains("permission required")
-        || normalized.contains("action required")
-        || normalized.contains("input required")
-        || normalized.contains("waiting for approval")
-        || normalized.contains("waiting for input")
-        || normalized.contains("ctrl+c")
-        || normalized.contains("/stop to stop")
-    {
+    // Case-insensitive contains without allocating a lowercased String.
+    // This function is called up to 3× per TUI tick (10 Hz idle, 60 Hz active)
+    // from is_running_activity / has_status_spinner / is_shimmer_active, so
+    // avoiding the per-call String allocation matters.
+    let trimmed = text.trim();
+    let needles = [
+        "running command:",
+        "running tool:",
+        "running:",
+        "running ",
+        "executing ",
+        "approval required",
+        "permission required",
+        "action required",
+        "input required",
+        "waiting for approval",
+        "waiting for input",
+        "ctrl+c",
+        "/stop to stop",
+    ];
+    if needles.iter().any(|needle| contains_ascii_ci(trimmed, needle)) {
         return true;
     }
-    let Some((indicator, rest)) = text.split_once(' ') else {
+    let Some((indicator, rest)) = trimmed.split_once(' ') else {
         return false;
     };
     if indicator.chars().count() != 1 || rest.trim().is_empty() {
         return false;
     }
     is_spinner_frame(indicator)
+}
+
+/// Case-insensitive ASCII substring search without allocation.
+/// Compares byte windows of `haystack` against `needle` using
+/// `eq_ignore_ascii_case`, avoiding the `to_ascii_lowercase()` String.
+fn contains_ascii_ci(haystack: &str, needle: &str) -> bool {
+    let haystack_bytes = haystack.as_bytes();
+    let needle_bytes = needle.as_bytes();
+    if needle_bytes.is_empty() {
+        return true;
+    }
+    if needle_bytes.len() > haystack_bytes.len() {
+        return false;
+    }
+    haystack_bytes
+        .windows(needle_bytes.len())
+        .any(|window| window.eq_ignore_ascii_case(needle_bytes))
 }
 
 /// Data structure for input widget rendering

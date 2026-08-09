@@ -1,3 +1,4 @@
+mod status_refresh;
 mod support;
 
 use anyhow::Result;
@@ -17,17 +18,17 @@ use crate::agent::runloop::unified::inline_events::{
     InlineEventLoopResources, InlineInterruptCoordinator, poll_inline_loop_action,
 };
 use crate::agent::runloop::unified::model_selection::{ModelSwitchCompactionTargets, finalize_model_selection};
-use crate::agent::runloop::unified::session_setup::apply_ide_context_snapshot;
 use crate::agent::runloop::unified::state::is_follow_up_prompt_like;
 use crate::agent::runloop::unified::turn::session::{
     mcp_lifecycle, memory_prompt, slash_command_handler, tool_dispatch,
 };
+use status_refresh::{StatusRefreshContext, StatusRefreshReason, StatusRefreshRequest, refresh_interaction_ui};
 use support::{
     InlineLoopActionResolution, apply_live_theme_and_appearance, build_durable_scheduler_daemon,
     build_user_message_content, extract_recent_follow_up_hint, fallback_args_preview,
-    refresh_ide_context_before_user_turn, refresh_live_ide_context_update, replace_submitted_input_text,
-    resolve_inline_loop_action, scheduler_enabled, selected_model_supports_image_input,
-    stalled_follow_up_recovery_prompt, submitted_images_are_unsupported, sync_mcp_approval_policy_for_context,
+    refresh_ide_context_before_user_turn, replace_submitted_input_text, resolve_inline_loop_action, scheduler_enabled,
+    selected_model_supports_image_input, stalled_follow_up_recovery_prompt, submitted_images_are_unsupported,
+    sync_mcp_approval_policy_for_context,
 };
 pub(crate) use support::{handle_select_primary_agent, try_resume_latest_session};
 use vtcode_config::loader::SimpleConfigWatcher;
@@ -88,139 +89,17 @@ pub(super) async fn run_interaction_loop_impl(
         }
 
         if should_refresh_status {
-            let provider_supports_vision = ctx.provider_client.supports_vision(&ctx.config.model);
-            let model_supports_image_input =
-                selected_model_supports_image_input(&ctx.config.provider, &ctx.config.model, provider_supports_vision);
-            ctx.handle.set_image_input_enabled(model_supports_image_input);
-
-            let live_ide_context = refresh_live_ide_context_update(ctx.ide_context_bridge);
-            if live_ide_context.changed || workspace_config_reloaded {
-                apply_ide_context_snapshot(
-                    ctx.context_manager,
-                    ctx.header_context,
-                    ctx.handle,
-                    ctx.config.workspace.as_path(),
-                    ctx.vt_cfg.as_ref(),
-                    live_ide_context.snapshot.clone(),
-                );
-            }
-            let spooled_count = ctx.tool_registry.spooled_files_count().await;
-            crate::agent::runloop::unified::status_line::update_spooled_files_count(
-                state.input_status_state,
-                spooled_count,
-            );
-            let local_agent_count = if let Some(controller) = ctx.tool_registry.subagent_controller() {
-                let entries = controller.status_entries().await;
-                crate::agent::runloop::ui::sync_active_subagent_badges(ctx.header_context, ctx.handle, &entries);
-                let delegated_count = entries.iter().filter(|entry| !entry.status.is_terminal()).count();
-                let background_count = controller
-                    .background_status_entries()
-                    .await
-                    .into_iter()
-                    .filter(|entry| {
-                        matches!(
-                            entry.status,
-                            vtcode_core::subagents::BackgroundSubprocessStatus::Starting
-                                | vtcode_core::subagents::BackgroundSubprocessStatus::Running
-                        ) || (entry.desired_enabled
-                            && matches!(entry.status, vtcode_core::subagents::BackgroundSubprocessStatus::Error))
-                    })
-                    .count();
-                delegated_count + background_count
-            } else {
-                crate::agent::runloop::ui::sync_active_subagent_badges(ctx.header_context, ctx.handle, &[]);
-                0
+            let status_refresh_request = StatusRefreshRequest {
+                reason: if workspace_config_reloaded {
+                    StatusRefreshReason::ConfigurationReloaded
+                } else {
+                    StatusRefreshReason::Cadence
+                },
             };
-            crate::agent::runloop::unified::status_line::update_thread_context(
-                state.input_status_state,
-                ctx.active_thread_label,
-                local_agent_count,
-            );
-            let context_limit_tokens = ctx.provider_client.effective_context_size(&ctx.config.model);
-            let context_used_tokens = ctx.context_manager.current_token_usage();
-            crate::agent::runloop::unified::status_line::update_context_budget(
-                state.input_status_state,
-                context_used_tokens,
-                context_limit_tokens,
-            );
-
-            // Track running cost, cache hit, and balance for visible auto status components.
-            let model = &ctx.config.model;
-            let status = &mut state.input_status_state;
-            let status_config = ctx.vt_cfg.as_ref().map(|cfg| &cfg.ui.status_line);
-            let new_show_costs =
-                crate::agent::runloop::unified::status_line::status_line_shows_auto_components(status_config)
-                    && matches!(ctx.provider_client.name(), "deepseek" | "openai");
-            if status.show_costs != new_show_costs {
-                status.show_costs = new_show_costs;
-                status.status_dirty = true;
+            {
+                let status_refresh_context = StatusRefreshContext::from_loop(ctx);
+                refresh_interaction_ui(status_refresh_context, state, status_refresh_request).await;
             }
-            let new_cost = ctx.session_stats.total_cost_usd();
-            if status.cost_usd != new_cost {
-                status.cost_usd = new_cost;
-                status.status_dirty = true;
-            }
-            let usage = ctx.session_stats.total_usage();
-            let total_cache = usage.cached_input_tokens + usage.cache_creation_tokens;
-            let new_cache_pct =
-                (total_cache > 0).then(|| (usage.cached_input_tokens as f64 / total_cache as f64) * 100.0);
-            if status.cache_hit_pct != new_cache_pct {
-                status.cache_hit_pct = new_cache_pct;
-                status.status_dirty = true;
-            }
-
-            // Only rebuild the status line when something actually changed or
-            // the clock's displayed second ticked. When idle, 4 out of 5 ticks
-            // (200 ms interval, 1 s clock) produce an identical status and can
-            // be skipped entirely — avoiding the chrono call, model-string
-            // parse, git check, layout build, and dedup normalization.
-            let clock_ticked = crate::agent::runloop::unified::status_line::clock_second_ticked(status);
-            if status.status_dirty || clock_ticked {
-                if let Err(error) = crate::agent::runloop::unified::status_line::update_input_status_if_changed(
-                    ctx.handle,
-                    &ctx.config.workspace,
-                    model,
-                    ctx.config.reasoning_effort.as_str(),
-                    status_config,
-                    status,
-                )
-                .await
-                {
-                    tracing::warn!("Failed to refresh status line: {}", error);
-                }
-                status.status_dirty = false;
-            }
-
-            // Periodically fetch account balance for providers that support it
-            if status.show_costs {
-                crate::agent::runloop::unified::status_line::refresh_balance_info(
-                    ctx.provider_client.as_ref(),
-                    ctx.handle,
-                    &ctx.config.workspace,
-                    model,
-                    ctx.config.reasoning_effort.as_str(),
-                    status_config,
-                    status,
-                )
-                .await;
-            } else {
-                if status.balance.take().is_some() {
-                    status.status_dirty = true;
-                }
-                status.last_balance_refresh = None;
-            }
-            ctx.handle
-                .set_terminal_title_items(ctx.vt_cfg.as_ref().and_then(|cfg| cfg.ui.terminal_title.items.clone()));
-            ctx.handle
-                .set_terminal_title_thread_label(state.input_status_state.thread_context.clone());
-            ctx.handle.set_terminal_title_git_branch(
-                state
-                    .input_status_state
-                    .git_summary
-                    .as_ref()
-                    .map(|summary| summary.branch.clone())
-                    .filter(|branch| !branch.trim().is_empty()),
-            );
 
             if let Some(mcp_manager) = ctx.async_mcp_manager {
                 mcp_lifecycle::handle_mcp_updates(

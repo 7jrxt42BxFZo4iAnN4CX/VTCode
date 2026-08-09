@@ -20,6 +20,14 @@ use super::selection::{
 
 pub(super) const REFRESH_ENTRY_LABEL: &str = "Refresh dynamic model lists";
 
+pub(super) fn custom_provider_description(selection: &SelectionDetail) -> String {
+    if selection.model_id.trim().is_empty() {
+        format!("{} • Configure a model in vtcode.toml", selection.provider_label)
+    } else {
+        format!("{} • {}", selection.provider_label, selection.model_id)
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct ModelSelectionChoice {
     pub(super) entry: SelectionEntry,
@@ -119,14 +127,10 @@ pub(super) fn select_model_with_ratatui_list(
     }
 
     for selection in custom_providers {
-        let description = if selection.model_id.trim().is_empty() {
-            format!("{} • Configure a model in vtcode.toml", selection.provider_label)
-        } else {
-            format!("{} • {}", selection.provider_label, selection.model_id)
-        };
+        let description = custom_provider_description(selection);
         choices.push(ModelSelectionChoice {
             entry: SelectionEntry::new(
-                selection.provider_label.clone(),
+                super::rendering::custom_provider_picker_title(selection),
                 Some(format!("{description}\nConfigured custom OpenAI-compatible endpoint")),
             ),
             outcome: ModelSelectionChoiceOutcome::Predefined(selection.clone()),
