@@ -46,7 +46,7 @@ impl PromptTemplates {
     pub fn tool_usage_prompt_for_profile(profile: ResolvedShellPromptProfile) -> String {
         match profile {
             ResolvedShellPromptProfile::UnixLike => {
-                "Tools: use exec_command.cmd for Unix-like shell commands, including `ls`, `rg`, `find`, `cat`, `sed`, `awk`, build tools, test tools, and validation; use write_stdin for active command sessions and action `wait` for long builds instead of repeated polls; use apply_patch for file edits when exposed by the model. VT Code does not rewrite GNU flags for macOS BSD tools.".to_string()
+                "Tools: use exec_command.cmd for Unix-like shell commands, including `ls`, `rg`, `find`, `cat`, `sed`, `awk`, build tools, test tools, and validation; do not rely on shell history expansion such as `!!`, `!$`, `!ssh`, or `fc` in one-shot exec_command calls; write full command arguments explicitly from the conversation or tool results; use write_stdin with the existing session_id for a live process and action `wait` for long builds instead of repeated polls; when advising users about interactive Bash or zsh shells, suggest review-safe history expansion with Bash histverify or zsh HIST_VERIFY; use apply_patch for file edits when exposed by the model. VT Code does not rewrite GNU flags for macOS BSD tools.".to_string()
             }
             ResolvedShellPromptProfile::PowerShell => {
                 "Tools: use exec_command.cmd for native PowerShell commands, including `Get-ChildItem`, `Select-String`, `Get-Content`, `Where-Object`, build tools, test tools, and validation; use write_stdin for active command sessions and action `wait` for long builds instead of repeated polls; use apply_patch for file edits when exposed by the model. Use WSL for Unix-like workflows on Windows; VT Code does not translate Unix command flags to PowerShell.".to_string()
@@ -102,6 +102,13 @@ mod tests {
         }
         assert!(prompt.contains("build tools"));
         assert!(prompt.contains("test tools"));
+        assert!(prompt.contains("shell history expansion"));
+        assert!(prompt.contains("`!!`, `!$`, `!ssh`, or `fc`"));
+        assert!(prompt.contains("one-shot exec_command calls"));
+        assert!(prompt.contains("full command arguments explicitly"));
+        assert!(prompt.contains("existing session_id"));
+        assert!(prompt.contains("Bash histverify"));
+        assert!(prompt.contains("zsh HIST_VERIFY"));
         assert!(!prompt.contains("command_session"));
         assert!(!prompt.contains("file_operation"));
         assert!(!prompt.contains("search_dispatch"));
@@ -121,5 +128,8 @@ mod tests {
         assert!(prompt.contains("write_stdin"));
         assert!(prompt.contains("apply_patch"));
         assert!(!prompt.contains("command_session"));
+        assert!(!prompt.contains("shell history expansion"));
+        assert!(!prompt.contains("histverify"));
+        assert!(!prompt.contains("HIST_VERIFY"));
     }
 }

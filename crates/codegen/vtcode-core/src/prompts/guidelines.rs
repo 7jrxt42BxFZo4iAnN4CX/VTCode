@@ -57,7 +57,7 @@ pub fn generate_tool_guidelines_for_profile(
         lines.push(shell_task_guidance(shell_profile).to_string());
     }
     if has_stdin {
-        lines.push("- Use `write_stdin` only with an active exec_command session; when a run response is still running it includes `next_wait_args` (a pre-filled `action:\"wait\"` call) — prefer it over polling with `next_continue_args` to avoid burning tokens on short polls; call `wait` again after an in-progress deadline, and treat an active `spool_complete: false` reference as readable partial output; an exited pending spool is withheld until a later wait.".to_string());
+        lines.push("- Use `write_stdin` only with the existing `session_id` of an active exec_command session; when a run response is still running it includes `next_wait_args` (a pre-filled `action:\"wait\"` call) — prefer it over polling with `next_continue_args` to avoid burning tokens on short polls; call `wait` again after an in-progress deadline, and treat an active `spool_complete: false` reference as readable partial output; an exited pending spool is withheld until a later wait.".to_string());
     }
     if has_exec || has_apply_patch {
         lines.push("- Completion is a checkpoint: keep verification resolved.".to_string());
@@ -284,7 +284,7 @@ fn shell_browse_guidance(shell_profile: ResolvedShellPromptProfile) -> &'static 
 fn shell_task_guidance(shell_profile: ResolvedShellPromptProfile) -> &'static str {
     match shell_profile {
         ResolvedShellPromptProfile::UnixLike => {
-            "- Use `exec_command.cmd` for build tools, test tools, `git diff -- <path>`, and shell-only tasks."
+            "- Use `exec_command.cmd` for build tools, test tools, `git diff -- <path>`, and shell-only tasks. In one-shot `exec_command` calls, do not use `!!`, `!$`, `!ssh`, or `fc`; write full command arguments explicitly from conversation or tool results. Interactive shells: suggest review-safe history expansion: Bash `histverify`, zsh `HIST_VERIFY`."
         }
         ResolvedShellPromptProfile::PowerShell => {
             "- Use `exec_command.cmd` for build tools, test tools, `git diff -- <path>`, and shell-only tasks using native PowerShell syntax."
@@ -408,6 +408,20 @@ mod tests {
     }
 
     #[test]
+    fn unix_like_guidance_makes_command_reuse_explicit() {
+        let tools = vec![TOOL_EXEC_COMMAND.to_string(), TOOL_WRITE_STDIN.to_string()];
+        let guidelines = generate_tool_guidelines_for_profile(&tools, None, ResolvedShellPromptProfile::UnixLike);
+
+        assert!(guidelines.contains("one-shot `exec_command` calls"));
+        assert!(guidelines.contains("`!!`, `!$`, `!ssh`, or `fc`"));
+        assert!(guidelines.contains("write full command arguments explicitly"));
+        assert!(guidelines.contains("conversation or tool results"));
+        assert!(guidelines.contains("existing `session_id`"));
+        assert!(guidelines.contains("Bash `histverify`"));
+        assert!(guidelines.contains("zsh `HIST_VERIFY`"));
+    }
+
+    #[test]
     fn powershell_guidance_uses_native_command_examples() {
         let tools = vec![
             TOOL_EXEC_COMMAND.to_string(),
@@ -423,6 +437,9 @@ mod tests {
         assert!(guidelines.contains("Advanced `code_search` takes `query`"));
         assert!(guidelines.contains("literal smart-case"));
         assert!(!guidelines.contains("`ls`, `rg`, `find`, `cat`, `sed`, and `awk`"));
+        assert!(!guidelines.contains("shell history expansion"));
+        assert!(!guidelines.contains("histverify"));
+        assert!(!guidelines.contains("HIST_VERIFY"));
     }
 
     #[test]
@@ -561,7 +578,7 @@ mod tests {
         assert!(!guidelines.contains("list_files"));
         assert!(guidelines.contains("code_search"));
         let approx_tokens = guidelines.len() / 4;
-        assert!(approx_tokens < 240, "got ~{approx_tokens} tokens");
+        assert!(approx_tokens < 310, "got ~{approx_tokens} tokens");
     }
 
     #[test]
