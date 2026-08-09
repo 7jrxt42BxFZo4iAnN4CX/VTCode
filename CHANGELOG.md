@@ -2,6 +2,13 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.142.3 - 2026-08-09
+
+### Highlights
+#### Features
+
+- Refine shell tool prompts for session reuse and history safety (197be97a) 
+### Other Changes
 ## 0.142.2 - 2026-08-09
 
 ### Highlights
