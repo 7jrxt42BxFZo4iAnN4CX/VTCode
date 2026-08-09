@@ -2,6 +2,20 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.142.4 - 2026-08-09
+
+### Highlights
+#### Bug Fixes
+
+- Accept plural models slash command  (f365b5fa) (@Sanjays2402)
+#### Documentation
+
+- Add @Sanjays2402 as latest contributor (e743d824) 
+- Sort contributor list by tier and commit count (78d8f5ff) 
+#### Features
+
+- Add evidence-bounded self-improvement safeguards (e6890ef9) 
+### Other Changes
 ## 0.142.3 - 2026-08-09
 
 ### Highlights
