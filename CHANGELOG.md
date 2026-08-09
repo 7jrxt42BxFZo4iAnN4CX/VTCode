@@ -2,6 +2,17 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.142.5 - 2026-08-09
+
+### Highlights
+#### Bug Fixes
+
+- Complete audit hardening and lint migration (ac9da169) 
+### Other Changes
+#### Other
+
+- Update TODO (01b57ecf) 
+- Update README (2fc6f8ee) 
 ## 0.142.4 - 2026-08-09
 
 ### Highlights
