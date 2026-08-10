@@ -2,6 +2,22 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.142.7 - 2026-08-10
+
+### Highlights
+#### Bug Fixes
+
+- Wait for crates.io index before publishing (76c1b733) 
+### Other Changes
+#### CI
+
+- Install ripgrep for debt scan (b310a4d2) 
+#### Other
+
+- Update TODO (efa3265b) (@vinhnx)
+- Update TODO (fd5708b6) (@vinhnx)
+- Update TODO (519b896a) (@vinhnx)
+- Update TODO (2c61bb19) 
 ## 0.142.6 - 2026-08-10
 
 ### Highlights
