@@ -248,8 +248,10 @@ impl Session {
                 // Handled by drive_terminal
             }
             InlineCommand::SetSkipConfirmations(skip) => {
-                self.skip_confirmations = skip;
                 if skip {
+                    // Permission bypass is handled by the runtime. Close only
+                    // an approval overlay that was already open; user-started
+                    // selection modals must remain interactive after this.
                     self.close_overlay();
                 }
             }

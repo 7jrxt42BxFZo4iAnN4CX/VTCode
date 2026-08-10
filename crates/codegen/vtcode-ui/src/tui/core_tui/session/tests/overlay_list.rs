@@ -79,6 +79,17 @@ fn show_list_modal_renders_as_floating_transient_without_bottom_panel() {
 }
 
 #[test]
+fn skip_confirmations_does_not_dismiss_user_selection_modals() {
+    let mut session = Session::new(InlineTheme::default(), None, 30);
+    session.handle_command(InlineCommand::SetSkipConfirmations(true));
+    show_overlay(&mut session, "Pick one", vec!["Choose an option"], vec![make_list_item("Option A", "a")], None);
+
+    let _terminal = render_session_to_terminal_app(&mut session, 30);
+
+    assert!(session.has_active_overlay(), "skip confirmations must not dismiss user selection modals");
+}
+
+#[test]
 fn show_list_modal_uses_bottom_half_of_terminal() {
     let mut session = AppSession::new(InlineTheme::default(), None, 30);
     show_list_modal(&mut session, "Pick one", vec!["Choose an option"], vec![make_list_item("Option A", "a")]);

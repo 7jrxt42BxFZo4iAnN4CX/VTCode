@@ -319,8 +319,6 @@ pub struct Session {
     pub(crate) mouse_drag_target: MouseDragTarget,
     pub(crate) fullscreen: FullscreenSessionState,
 
-    skip_confirmations: bool,
-
     // --- Performance Caching ---
     header_lines_cache: Option<Vec<Line<'static>>>,
     header_height_cache: hashbrown::HashMap<u16, u16>,

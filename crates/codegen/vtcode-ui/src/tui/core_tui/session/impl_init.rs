@@ -182,8 +182,6 @@ impl Session {
             mouse_drag_target: MouseDragTarget::None,
             fullscreen: FullscreenSessionState::default(),
 
-            skip_confirmations: false,
-
             // --- Performance Caching ---
             header_lines_cache: None,
             header_height_cache: hashbrown::HashMap::new(),

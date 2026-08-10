@@ -227,28 +227,6 @@ pub fn render_modal(session: &mut Session, frame: &mut Frame<'_>, area: Rect) {
         return;
     }
 
-    // Auto-approve modals when skip_confirmations is set (for tests and headless mode)
-    if session.skip_confirmations
-        && let Some(mut modal) = session.take_modal_state()
-    {
-        if let Some(list) = &mut modal.list
-            && let Some(_selection) = list.current_selection()
-        {
-            // Note: We can't easily emit an event from here without access to the sender.
-            // Instead, we just clear the modal and assume the tool execution logic
-            // or whatever triggered the modal will check skip_confirmations as well.
-            // This is handled in ensure_tool_permission.
-        }
-        session.input_enabled = modal.restore_input;
-        session.cursor_visible = modal.restore_cursor;
-        session.needs_full_clear = true;
-        session.needs_redraw = true;
-        session.set_modal_list_area(None);
-        session.set_modal_text_areas(Vec::new());
-        session.set_modal_link_targets(Vec::new());
-        return;
-    }
-
     let styles = modal_render_styles(session);
     let input_styles = input_styles_from_theme(&session.theme);
     render_modal_background(frame, area, styles.selectable);
