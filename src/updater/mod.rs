@@ -5,6 +5,7 @@ mod github;
 mod install_source;
 mod interactive;
 mod preflight;
+mod progress;
 mod release_notes;
 mod types;
 
@@ -19,6 +20,7 @@ pub(crate) use interactive::{
     run_inline_update_prompt,
 };
 pub(crate) use preflight::{get_preflight_notice, run_preflight_check};
+pub(crate) use progress::UpdateProgress;
 pub(crate) use release_notes::parse_highlights as parse_release_highlights;
 pub(crate) use types::{
     InstallOutcome, StartupUpdateCheck, StartupUpdateNotice, UpdateExecutionStrategy, UpdateGuidance, UpdateInfo,
@@ -154,6 +156,21 @@ impl Updater {
         force: bool,
         show_progress: bool,
     ) -> Result<InstallOutcome> {
+        self.install_update_reported(force, show_progress, |_| {}).await
+    }
+
+    /// Install the latest release with per-phase progress reporting.
+    ///
+    /// `on_progress` is called with [`UpdateProgress`] events as the pipeline
+    /// advances through download, checksum verification, extraction, and binary
+    /// replacement. The download callback is throttled internally so callers can
+    /// forward each event directly to the UI without flooding the render channel.
+    pub(crate) async fn install_update_reported(
+        &self,
+        force: bool,
+        show_progress: bool,
+        mut on_progress: impl FnMut(UpdateProgress) + Send,
+    ) -> Result<InstallOutcome> {
         let guidance = self.update_guidance();
         if guidance.source.is_managed() {
             bail!("VT Code was installed via {}. Update with: {}", guidance.source.label(), guidance.command());
@@ -172,16 +189,23 @@ impl Updater {
         // Keep remote asset names out of filesystem paths; GitHub metadata is
         // untrusted even though the selected URL and format were validated.
         let archive_path = temporary_directory.path().join("downloaded-update-archive");
-        download::download_asset(
-            asset,
-            &archive_path,
-            std::time::Duration::from_secs(self.config.download_timeout_secs.max(1)),
-            show_progress,
-        )
-        .await
-        .context("Failed to download update archive")?;
+        {
+            let mut report_download = |downloaded: u64, total: Option<u64>| {
+                on_progress(UpdateProgress::Downloading { downloaded, total });
+            };
+            download::download_asset(
+                asset,
+                &archive_path,
+                std::time::Duration::from_secs(self.config.download_timeout_secs.max(1)),
+                show_progress,
+                Some(&mut report_download),
+            )
+            .await
+            .context("Failed to download update archive")?;
+        }
 
         if let Some(checksum_asset) = download::checksum_asset(&release.assets, &asset.name) {
+            on_progress(UpdateProgress::VerifyingChecksum);
             match download::download_checksum(
                 checksum_asset,
                 std::time::Duration::from_secs(self.config.download_timeout_secs.max(1)),
@@ -203,6 +227,7 @@ impl Updater {
             tracing::warn!(asset = %asset.name, "No checksum metadata was published for the selected update archive; continuing without checksum verification");
         }
 
+        on_progress(UpdateProgress::Extracting);
         let extraction_directory = temporary_directory.path().join("extracted");
         let archive_path_for_extraction = archive_path.clone();
         let extracted_binary = tokio::task::spawn_blocking(move || {
@@ -211,6 +236,7 @@ impl Updater {
         .await
         .context("Update extraction task join failed")??;
 
+        on_progress(UpdateProgress::ReplacingBinary);
         self_replace::self_replace(&extracted_binary).context("Failed to replace the current VT Code binary")?;
         Ok(InstallOutcome::Updated(release.version.to_string()))
     }

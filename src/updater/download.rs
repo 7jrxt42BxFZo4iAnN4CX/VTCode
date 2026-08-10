@@ -8,12 +8,16 @@ use tokio::io::AsyncWriteExt;
 
 use super::github::{self, ReleaseAsset};
 
-pub(super) async fn download_asset(
+pub(super) async fn download_asset<F>(
     asset: &ReleaseAsset,
     destination: &Path,
     timeout: Duration,
     show_progress: bool,
-) -> Result<()> {
+    mut on_progress: Option<&mut F>,
+) -> Result<()>
+where
+    F: FnMut(u64, Option<u64>) + Send,
+{
     let response = response_for_url(&asset.download_url, timeout).await?;
     let response = response
         .error_for_status()
@@ -24,6 +28,8 @@ pub(super) async fn download_asset(
         .await
         .with_context(|| format!("failed to create downloaded archive {}", destination.display()))?;
     let mut downloaded = 0_u64;
+    let mut last_percent: Option<u8> = None;
+    let mut last_report = std::time::Instant::now();
 
     while let Some(chunk) = stream
         .chunk()
@@ -37,10 +43,19 @@ pub(super) async fn download_asset(
         if show_progress {
             print_progress(&asset.name, downloaded, total);
         }
+        if let Some(progress) = on_progress.as_mut()
+            && should_report_download(downloaded, total, &mut last_percent, &mut last_report)
+        {
+            progress(downloaded, total);
+        }
     }
     file.flush().await.context("failed to flush downloaded archive")?;
     if show_progress {
         println!();
+    }
+    // Final report so callers see the completed byte count / 100%.
+    if let Some(progress) = on_progress.as_mut() {
+        progress(downloaded, total);
     }
     Ok(())
 }
@@ -170,6 +185,45 @@ fn print_progress(name: &str, downloaded: u64, total: Option<u64>) {
         }
     }
     let _ = output.flush();
+}
+
+/// Throttle download progress callbacks so the UI is not flooded with one event
+/// per network chunk. Reports at most every whole-percent change or 100 ms
+/// (200 ms when no `Content-Length` is available).
+fn should_report_download(
+    downloaded: u64,
+    total: Option<u64>,
+    last_percent: &mut Option<u8>,
+    last_report: &mut std::time::Instant,
+) -> bool {
+    const PERCENT_INTERVAL: Duration = Duration::from_millis(100);
+    const BYTE_INTERVAL: Duration = Duration::from_millis(200);
+    match total {
+        Some(t) if t > 0 => {
+            let percent = ((downloaded * 100) / t).min(100) as u8;
+            let first_report = last_percent.is_none();
+            let percent_changed = last_percent.is_some_and(|p| p != percent);
+            let interval_elapsed = last_report.elapsed() >= PERCENT_INTERVAL;
+            if first_report || percent_changed || interval_elapsed {
+                *last_percent = Some(percent);
+                *last_report = std::time::Instant::now();
+                true
+            } else {
+                false
+            }
+        }
+        _ => {
+            if last_percent.is_none() || last_report.elapsed() >= BYTE_INTERVAL {
+                // Mark first-report as done; the value is not used as a
+                // percentage in this branch (total is unknown).
+                *last_percent = Some(0);
+                *last_report = std::time::Instant::now();
+                true
+            } else {
+                false
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -308,9 +362,15 @@ b9362df9124a6180c5cf0787d6159ff525e7caee6ceb51a0987fb827205df91e  vtcode-0.141.7
             download_url: format!("http://{address}/missing"),
         };
         let temp = tempfile::tempdir().expect("temp");
-        let error = download_asset(&asset, &temp.path().join("archive"), Duration::from_secs(1), false)
-            .await
-            .expect_err("http error");
+        let error = download_asset(
+            &asset,
+            &temp.path().join("archive"),
+            Duration::from_secs(1),
+            false,
+            None::<&mut fn(u64, Option<u64>)>,
+        )
+        .await
+        .expect_err("http error");
 
         assert!(error.to_string().contains("vtcode.tar.gz"));
     }
@@ -329,5 +389,32 @@ b9362df9124a6180c5cf0787d6159ff525e7caee6ceb51a0987fb827205df91e  vtcode-0.141.7
             .expect_err("timeout");
 
         assert!(error.to_string().contains("failed to download update asset"));
+    }
+
+    #[test]
+    fn should_report_emits_on_percent_change() {
+        let mut last_percent = None;
+        let mut last_report = std::time::Instant::now();
+        // First call always reports (percent goes from None to 0).
+        assert!(should_report_download(0, Some(1000), &mut last_percent, &mut last_report));
+        // Same percent, no time elapsed → suppressed.
+        assert!(!should_report_download(5, Some(1000), &mut last_percent, &mut last_report));
+        // Percent changes 0 → 1 → reports.
+        assert!(should_report_download(10, Some(1000), &mut last_percent, &mut last_report));
+    }
+
+    #[test]
+    fn should_report_suppresses_without_total_until_interval() {
+        let mut last_percent = None;
+        let mut last_report = std::time::Instant::now();
+        // First call with no total reports (first-report guard).
+        assert!(should_report_download(100, None, &mut last_percent, &mut last_report));
+        // Immediately after: suppressed (interval not elapsed).
+        assert!(!should_report_download(200, None, &mut last_percent, &mut last_report));
+        // Simulate interval elapse by backdating the last report.
+        last_report = std::time::Instant::now()
+            .checked_sub(Duration::from_millis(250))
+            .expect("now minus 250ms is representable");
+        assert!(should_report_download(300, None, &mut last_percent, &mut last_report));
     }
 }

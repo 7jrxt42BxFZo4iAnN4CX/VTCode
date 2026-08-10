@@ -14,7 +14,11 @@ VT Code includes a built-in update system that can check for and install updates
 Standalone updates use VT Code's native replacement pipeline: the updater selects the
 exact target archive, streams it with the configured timeout, verifies published
 SHA-256 metadata when available, rejects unsafe archive paths, and replaces only the
-`vtcode`/`vtcode.exe` executable. Binaries built with the former `self_update`-based
+`vtcode`/`vtcode.exe` executable. When an update is triggered from the TUI (`/update`
+or the startup update prompt), the pipeline reports per-phase progress — a live
+download progress bar with byte count and percentage, plus `Verifying checksum`,
+`Extracting archive`, and `Installing new binary` phase messages — so the update
+never appears to hang. Binaries built with the former `self_update`-based
 updater (v0.141.0–v0.141.4) cannot use this flow directly, but the [legacy updater
 compatibility bridge](#legacy-updater-compatibility-bridge-v01410v01414) lets them
 self-update to v0.141.6+ without a manual bootstrap install.

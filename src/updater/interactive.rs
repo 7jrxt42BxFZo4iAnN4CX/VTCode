@@ -7,14 +7,14 @@ use vtcode_core::tools::terminal_app::{TerminalAppLauncher, TerminalCommandStrat
 use vtcode_core::utils::ansi::{AnsiRenderer, MessageStyle};
 use vtcode_ui::tui::app::{
     InlineHandle, InlineHeaderContext, InlineHeaderHighlight, InlineListItem, InlineListSelection, InlineMessageKind,
-    InlineSession, ListOverlayRequest, TransientRequest, TransientSubmission,
+    InlineSegment, InlineSession, InlineTextStyle, ListOverlayRequest, TransientRequest, TransientSubmission,
 };
 
 use crate::agent::runloop::unified::overlay_prompt::{OverlayWaitOutcome, show_overlay_and_wait};
 use crate::agent::runloop::unified::state::CtrlCState;
 use crate::main_helpers::{RelaunchPreference, queue_runtime_relaunch};
 
-use super::{InstallOutcome, StartupUpdateNotice, UpdateExecutionStrategy, Updater};
+use super::{InstallOutcome, StartupUpdateNotice, UpdateExecutionStrategy, UpdateProgress, Updater};
 
 const UPDATE_AND_RESTART_ACTION: &str = "update:install_and_restart";
 const STAY_CURRENT_ACTION: &str = "update:stay_current";
@@ -214,6 +214,33 @@ pub(crate) async fn run_inline_update_prompt(
     }
 }
 
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * 1024;
+    match bytes {
+        b if b >= MB => format!("{:.1} MB", b as f64 / MB as f64),
+        b if b >= KB => format!("{:.1} KB", b as f64 / KB as f64),
+        b => format!("{} B", b),
+    }
+}
+
+fn progress_bar(percent: u8, width: usize) -> String {
+    let filled = (percent as usize * width / 100).min(width);
+    let empty = width - filled;
+    format!("{}{}", "█".repeat(filled), "░".repeat(empty))
+}
+
+fn format_download_progress(downloaded: u64, total: Option<u64>) -> String {
+    match total {
+        Some(t) if t > 0 => {
+            let percent = ((downloaded * 100) / t).min(100) as u8;
+            let bar = progress_bar(percent, 20);
+            format!("Downloading update  {bar}  {percent}%  {}/{}", format_bytes(downloaded), format_bytes(t))
+        }
+        _ => format!("Downloading update  {}", format_bytes(downloaded)),
+    }
+}
+
 pub(crate) async fn execute_inline_update(
     renderer: &mut AnsiRenderer,
     handle: &InlineHandle,
@@ -230,9 +257,38 @@ pub(crate) async fn execute_inline_update(
     )?;
 
     let updater = Updater::new(&notice.current_version.to_string())?;
-    // Keep download progress disabled while the TUI owns the alternate screen.
-    // The CLI `vtcode update` path uses `install_update` and shows progress.
-    match updater.install_update_with_progress(false, false).await {
+    let progress_style = Arc::new(InlineTextStyle::default());
+    let mut download_progress_emitted = false;
+    // Drive real-time TUI feedback through the update pipeline. Download byte
+    // progress updates the last transcript line in place (via `replace_last`)
+    // so the scrollback is not flooded; phase transitions append new lines.
+    // `show_progress` stays false so raw `\r` byte counters do not leak into
+    // the alternate screen — this callback is the sole progress channel.
+    let on_progress = move |event: UpdateProgress| match event {
+        UpdateProgress::Downloading { downloaded, total } => {
+            let text = format_download_progress(downloaded, total);
+            let segment = InlineSegment { text, style: progress_style.clone() };
+            if download_progress_emitted {
+                handle.replace_last(1, InlineMessageKind::Info, vec![vec![segment]]);
+            } else {
+                handle.append_line(InlineMessageKind::Info, vec![segment]);
+                download_progress_emitted = true;
+            }
+        }
+        UpdateProgress::VerifyingChecksum => {
+            handle.append_pasted_message(InlineMessageKind::Info, "Verifying checksum...".to_string(), 1);
+            download_progress_emitted = false;
+        }
+        UpdateProgress::Extracting => {
+            handle.append_pasted_message(InlineMessageKind::Info, "Extracting archive...".to_string(), 1);
+            download_progress_emitted = false;
+        }
+        UpdateProgress::ReplacingBinary => {
+            handle.append_pasted_message(InlineMessageKind::Info, "Installing new binary...".to_string(), 1);
+            download_progress_emitted = false;
+        }
+    };
+    match updater.install_update_reported(false, false, on_progress).await {
         Ok(InstallOutcome::Updated(version)) => {
             let _ = super::cache::clear_dismissed_version();
             queue_runtime_relaunch(relaunch_preference(notice));
@@ -339,5 +395,76 @@ mod tests {
         assert!(should_dismiss_update_prompt(&OverlayWaitOutcome::Interrupted));
         assert!(should_dismiss_update_prompt(&OverlayWaitOutcome::Exit));
         assert!(!should_dismiss_update_prompt(&OverlayWaitOutcome::Submitted(UpdatePromptChoice::UpdateAndRestart,)));
+    }
+
+    #[test]
+    fn format_bytes_uses_appropriate_units() {
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(1024), "1.0 KB");
+        assert_eq!(format_bytes(1024 * 1024), "1.0 MB");
+        assert_eq!(format_bytes(1024 * 1024 * 27 + 1024 * 100), "27.1 MB");
+    }
+
+    #[test]
+    fn progress_bar_fills_proportionally() {
+        assert_eq!(progress_bar(0, 20), "░░░░░░░░░░░░░░░░░░░░");
+        assert_eq!(progress_bar(50, 20), "██████████░░░░░░░░░░");
+        assert_eq!(progress_bar(100, 20), "████████████████████");
+    }
+
+    #[test]
+    fn format_download_progress_shows_bar_and_bytes() {
+        let total = 1024 * 1024 * 27; // 27 MB
+        let text = format_download_progress(total / 2, Some(total));
+        assert!(text.contains("50%"));
+        assert!(text.contains("13.5 MB"));
+        assert!(text.contains("27.0 MB"));
+        assert!(text.contains("Downloading update"));
+
+        // No Content-Length: byte count only, no bar/percent.
+        let text = format_download_progress(1024 * 10, None);
+        assert!(text.contains("10.0 KB"));
+        assert!(!text.contains("%"));
+    }
+
+    #[test]
+    fn download_progress_callback_replaces_last_line_after_first_event() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let handle = InlineHandle::new_for_tests(tx);
+        let progress_style = Arc::new(InlineTextStyle::default());
+        let mut emitted = false;
+        let mut on_progress = move |event: UpdateProgress| match event {
+            UpdateProgress::Downloading { downloaded, total } => {
+                let text = format_download_progress(downloaded, total);
+                let segment = InlineSegment { text, style: progress_style.clone() };
+                if emitted {
+                    handle.replace_last(1, InlineMessageKind::Info, vec![vec![segment]]);
+                } else {
+                    handle.append_line(InlineMessageKind::Info, vec![segment]);
+                    emitted = true;
+                }
+            }
+            UpdateProgress::VerifyingChecksum | UpdateProgress::Extracting | UpdateProgress::ReplacingBinary => {
+                handle.append_pasted_message(InlineMessageKind::Info, "phase".to_string(), 1);
+                emitted = false;
+            }
+        };
+
+        // First download event appends a new transcript line.
+        on_progress(UpdateProgress::Downloading { downloaded: 0, total: Some(100) });
+        assert!(matches!(rx.try_recv().expect("first command"), InlineCommand::AppendLine { .. }));
+
+        // Second download event replaces the last line in place.
+        on_progress(UpdateProgress::Downloading { downloaded: 50, total: Some(100) });
+        assert!(matches!(rx.try_recv().expect("second command"), InlineCommand::ReplaceLast { .. }));
+
+        // A phase transition appends a new line and resets the flag.
+        on_progress(UpdateProgress::VerifyingChecksum);
+        assert!(matches!(rx.try_recv().expect("third command"), InlineCommand::AppendPastedMessage { .. }));
+
+        // After reset, the next download event appends again (not replaces).
+        on_progress(UpdateProgress::Downloading { downloaded: 10, total: Some(100) });
+        assert!(matches!(rx.try_recv().expect("fourth command"), InlineCommand::AppendLine { .. }));
     }
 }
