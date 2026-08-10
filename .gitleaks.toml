@@ -61,6 +61,7 @@ regexes = [
     '''eyJlbWFpbCI6InVzZXJAdGVzdC5jb20ifQ''',
     '''sk_live_123456''',
     '''sk-test-key-12345''',
+    '''sk-test1234567890abcdefghij''',
     '''debug-secret-123''',
     '''sk-secret-bearer-token''',
     '''rig-secret-access''',
