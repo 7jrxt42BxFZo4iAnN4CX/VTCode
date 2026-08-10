@@ -225,15 +225,20 @@ auto_refresh = true
 
 #### Token Storage
 
-**Default (Keyring)**:
+**Default storage mode**:
+- **macOS**: Encrypted file (avoids repeated Keychain authorization prompts)
+- **Linux / Windows / other supported platforms**: Auto (keyring when functional,
+  otherwise encrypted file)
+
+When keyring is selected:
 - **macOS**: Keychain
 - **Windows**: Credential Manager
 - **Linux**: Secret Service API / libsecret
 
-**Fallback (Encrypted Files)**:
-- Location: `~/.vtcode/auth/openai_chatgpt.json`
-- Encryption: AES-256-GCM with machine-derived key
-- Automatic migration from file-based to keyring storage
+**Encrypted file storage**:
+- Location: `~/.vtcode/auth/credential_<derived-name>.json`
+- Encryption: AES-256-GCM with machine-derived key and per-file salt
+- Existing `openai_chatgpt.json` files are migrated automatically when loaded
 
 #### Codex auth.json Fallback
 
@@ -317,9 +322,10 @@ credentials_store_mode = "keyring"
 
 #### Token Storage
 
-Same as OpenAI:
-- **Keyring**: Platform-native credential store (default)
-- **Fallback**: `~/.vtcode/auth/openrouter.json` (AES-256-GCM encrypted)
+Same shared storage as OpenAI:
+- **Keyring**: Platform-native credential store when selected
+- **Encrypted file**: `~/.vtcode/auth/credential_<derived-name>.json`
+- Existing `openrouter.json` files are migrated automatically when loaded
 
 #### Refresh Tokens
 

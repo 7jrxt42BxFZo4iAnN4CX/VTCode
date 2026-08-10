@@ -369,4 +369,42 @@ mod tests {
             Err(SandboxTransformError::UnavailableSandboxType(SandboxType::WindowsRestrictedToken))
         ));
     }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn restrictive_linux_policy_requires_sandbox_helper() {
+        let manager = SandboxManager::new();
+        let spec = CommandSpec::new("echo").with_args(vec!["hello"]);
+
+        let result = manager.transform(spec, &SandboxPolicy::read_only(), Path::new("/tmp"), None);
+
+        assert!(matches!(result, Err(SandboxTransformError::MissingSandboxExecutable)));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn restrictive_policy_filters_sensitive_environment_overrides() {
+        use hashbrown::HashMap;
+
+        let manager = SandboxManager::new();
+        let mut env = HashMap::new();
+        drop(env.insert("OPENAI_API_KEY".to_string(), "secret-value".to_string()));
+        drop(env.insert("LD_PRELOAD".to_string(), "injected.so".to_string()));
+        drop(env.insert("SAFE_PROJECT_NAME".to_string(), "vtcode".to_string()));
+        let spec = CommandSpec::new("echo").with_env(env);
+        let sandbox_helper = if cfg!(target_os = "linux") {
+            Some(Path::new("/tmp/vtcode-test-sandbox-helper"))
+        } else {
+            None
+        };
+
+        let transformed = manager
+            .transform(spec, &SandboxPolicy::read_only(), Path::new("/tmp"), sandbox_helper)
+            .unwrap();
+
+        assert!(transformed.sandbox_active);
+        assert!(!transformed.env.contains_key("OPENAI_API_KEY"));
+        assert!(!transformed.env.contains_key("LD_PRELOAD"));
+        assert_eq!(transformed.env.get("SAFE_PROJECT_NAME"), Some(&"vtcode".to_string()));
+    }
 }

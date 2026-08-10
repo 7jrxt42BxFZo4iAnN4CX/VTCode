@@ -23,25 +23,31 @@
 
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
-use base64::{Engine, engine::general_purpose::STANDARD, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use fs2::FileExt;
 use reqwest::Client;
-use ring::aead::{self, Aad, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;
 use std::fs::OpenOptions;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as AsyncMutex;
 
-use crate::storage_paths::{auth_storage_dir, write_private_file};
+use crate::storage_paths::auth_storage_dir;
 use crate::{OpenAIAuthConfig, OpenAIPreferredMethod};
 
 pub use super::credentials::AuthCredentialsStoreMode;
-use super::credentials::keyring;
 use super::pkce::PkceChallenge;
+#[cfg(test)]
+use crate::openai_refresh_policy::extract_error_code;
+use crate::openai_refresh_policy::{RefreshFailureAction, classify_refresh_failure};
+use crate::openai_session_storage::OpenAiSessionStorage;
+#[cfg(test)]
+use crate::openai_session_storage::{
+    decrypt_legacy_session as decrypt_session, encrypt_legacy_session as encrypt_session,
+    legacy_session_path as get_session_path,
+};
 
 const OPENAI_AUTH_URL: &str = "https://auth.openai.com/oauth/authorize";
 const OPENAI_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
@@ -72,9 +78,6 @@ const DEFAULT_OPENAI_ORIGINATOR: &str = "codex_cli_rs";
 /// endpoint while still capturing standard OAuth 2.0 error JSON.
 const MAX_ERROR_BODY_BYTES: usize = 8 * 1024;
 const OPENAI_CALLBACK_PATH: &str = "/auth/callback";
-const OPENAI_STORAGE_SERVICE: &str = "vtcode";
-const OPENAI_STORAGE_USER: &str = "openai_chatgpt_session";
-const OPENAI_SESSION_FILE: &str = "openai_chatgpt.json";
 const OPENAI_REFRESH_LOCK_FILE: &str = "openai_chatgpt.refresh.lock";
 const REFRESH_INTERVAL_SECS: u64 = 8 * 60;
 const REFRESH_SKEW_SECS: u64 = 60;
@@ -546,33 +549,23 @@ pub fn save_openai_chatgpt_session_with_mode(
     session: &OpenAIChatGptSession,
     mode: AuthCredentialsStoreMode,
 ) -> Result<()> {
-    let serialized = serde_json::to_string(session).context("failed to serialize openai session")?;
-    match mode.effective_mode() {
-        AuthCredentialsStoreMode::Keyring => persist_session_to_keyring_or_file(session, &serialized)?,
-        AuthCredentialsStoreMode::File => save_session_to_file(session)?,
-        AuthCredentialsStoreMode::Auto => unreachable!(),
-    }
-    Ok(())
+    OpenAiSessionStorage::new().save(session, mode)
 }
 
 pub fn load_openai_chatgpt_session() -> Result<Option<OpenAIChatGptSession>> {
-    load_preferred_openai_chatgpt_session(AuthCredentialsStoreMode::Keyring)
+    OpenAiSessionStorage::new().load(AuthCredentialsStoreMode::Keyring)
 }
 
 pub fn load_openai_chatgpt_session_with_mode(mode: AuthCredentialsStoreMode) -> Result<Option<OpenAIChatGptSession>> {
-    load_preferred_openai_chatgpt_session(mode.effective_mode())
+    OpenAiSessionStorage::new().load(mode)
 }
 
 pub fn clear_openai_chatgpt_session() -> Result<()> {
-    clear_session_from_all_stores()
+    OpenAiSessionStorage::new().clear_all()
 }
 
 pub fn clear_openai_chatgpt_session_with_mode(mode: AuthCredentialsStoreMode) -> Result<()> {
-    match mode.effective_mode() {
-        AuthCredentialsStoreMode::Keyring => clear_session_from_keyring(),
-        AuthCredentialsStoreMode::File => clear_session_from_file(),
-        AuthCredentialsStoreMode::Auto => unreachable!(),
-    }
+    OpenAiSessionStorage::new().clear(mode)
 }
 
 pub fn get_openai_chatgpt_auth_status() -> Result<OpenAIChatGptAuthStatus> {
@@ -593,36 +586,6 @@ pub fn get_openai_chatgpt_auth_status_with_mode(mode: AuthCredentialsStoreMode) 
         age_seconds: now.saturating_sub(session.obtained_at),
         expires_in: session.expires_at.map(|expires_at| expires_at.saturating_sub(now)),
     })
-}
-
-/// Refresh a ChatGPT session using only a refresh token.
-///
-/// **Deprecated/unused:** This helper constructs a minimal session with blank
-/// token fields and relies on the refresh endpoint returning a complete
-/// response. It has no internal callers and is kept private to prevent
-/// external code from persisting sessions with blank sentinel values.
-/// Use `refresh_openai_chatgpt_session_with_mode` instead, which loads the
-/// full stored session first.
-async fn refresh_openai_chatgpt_session_from_refresh_token(
-    refresh_token: &str,
-    storage_mode: AuthCredentialsStoreMode,
-) -> Result<OpenAIChatGptSession> {
-    let _lock = acquire_refresh_lock().await?;
-    // Construct a minimal session from just the refresh token — used when
-    // the caller only has the refresh token (e.g. external integrations).
-    let minimal = OpenAIChatGptSession {
-        openai_api_key: String::new(),
-        id_token: String::new(),
-        access_token: String::new(),
-        refresh_token: refresh_token.to_string(),
-        account_id: None,
-        email: None,
-        plan: None,
-        obtained_at: 0,
-        refreshed_at: 0,
-        expires_at: None,
-    };
-    refresh_openai_chatgpt_session_without_lock(&minimal, storage_mode).await
 }
 
 pub async fn refresh_openai_chatgpt_session_with_mode(mode: AuthCredentialsStoreMode) -> Result<OpenAIChatGptSession> {
@@ -1020,362 +983,18 @@ async fn read_bounded_text(mut response: reqwest::Response, max_bytes: usize) ->
     String::from_utf8_lossy(&buf).into_owned()
 }
 
-/// Extract the OAuth 2.0 error code from a token-endpoint error body.
-///
-/// Handles multiple JSON shapes that authorization servers use:
-///
-/// 1. **Flat form** (RFC 6749 §5.2): `{"error": "invalid_grant"}`
-/// 2. **Nested object form**: `{"error": {"code": "invalid_grant", "message": "..."}}`
-/// 3. **Nested with `type`** (some providers): `{"error": {"type": "invalid_grant", "message": "..."}}`
-/// 4. **Top-level `code`** (some providers): `{"code": "invalid_grant", "message": "..."}`
-///
-/// Returns the matched error code (lowercased for case-insensitive matching)
-/// or an empty string when the body cannot be parsed. Matching is exact
-/// (normalized to lowercase) — never a substring match on free-text messages.
-fn extract_error_code(body: &str) -> String {
-    // Flat form: { "error": "invalid_grant" }
-    #[derive(Deserialize)]
-    struct FlatErrorResponse {
-        #[serde(default)]
-        error: Option<serde_json::Value>,
-        // Some providers put the code at the top level instead of under "error".
-        #[serde(default)]
-        code: Option<String>,
-    }
-
-    if let Ok(parsed) = serde_json::from_str::<FlatErrorResponse>(body) {
-        // If "error" is a string, use it directly.
-        if let Some(serde_json::Value::String(s)) = &parsed.error
-            && !s.trim().is_empty()
-        {
-            return s.to_lowercase();
-        }
-
-        // If "error" is an object, extract the code from the structured
-        // "code" or "type" field only. We deliberately do NOT fall back to
-        // the free-text "message" field — a descriptive message that happens
-        // to contain a terminal code string (e.g. "invalid_grant") must not
-        // be treated as a structured terminal code, per the exact-match
-        // contract.
-        if let Some(serde_json::Value::Object(obj)) = &parsed.error {
-            let code = obj
-                .get("code")
-                .or_else(|| obj.get("type"))
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.trim().is_empty());
-            if let Some(c) = code {
-                return c.to_lowercase();
-            }
-        }
-
-        // Top-level "code" field (not under "error").
-        if let Some(code) = &parsed.code
-            && !code.trim().is_empty()
-        {
-            return code.to_lowercase();
-        }
-    }
-
-    String::new()
-}
-
-/// Classify a non-success response from the OpenAI token endpoint during a
-/// refresh-token grant.
-///
-/// ## Terminal vs. transient classification
-///
-/// **Terminal** — the refresh token itself is no longer usable. Stored
-/// credentials are cleared so the user sees a clear "re-login" message rather
-/// than repeated silent failures.
-///
-/// Confirmed terminal grant error codes (matched exactly, across both 400 and
-/// 401 token-endpoint responses):
-///
-/// | Code                        | Meaning                                         |
-/// |-----------------------------|-------------------------------------------------|
-/// | `invalid_grant`             | Refresh token expired, revoked, or invalid      |
-/// | `invalid_token`             | Token is malformed or no longer valid           |
-/// | `refresh_token_expired`     | Explicit refresh-token expiry (OpenAI variant)   |
-/// | `refresh_token_revoked`     | Explicit refresh-token revocation                |
-/// | `refresh_token_reused`      | Refresh token was used concurrently (single-use) |
-/// | `refresh_token_invalidated` | Refresh token was explicitly invalidated         |
-///
-/// **Transient / configuration** — the session is preserved so the user can
-/// retry or fix configuration without re-authenticating:
-///
-/// - `invalid_client` — bad custom client ID; the refresh token may still be
-///   valid once the client ID is corrected.
-/// - HTTP 5xx — server-side error, likely temporary.
-/// - HTTP 429 — throttling; retry with backoff.
-/// - Ambiguous 401 without a confirmed terminal code — could be a transient
-///   auth issue or client-configuration problem.
-///
-/// The raw response body is never included in the returned error to avoid
-/// leaking sensitive endpoint diagnostics.
-#[cold]
 fn classify_refresh_status_error(status: reqwest::StatusCode, body: &str) -> anyhow::Error {
-    let error_code = extract_error_code(body);
-
-    // Only these exact codes indicate the refresh token itself is no longer
-    // usable. We match exactly (not substring) to avoid false positives from
-    // descriptive messages that happen to contain these words.
-    const TERMINAL_GRANT_CODES: &[&str] = &[
-        "invalid_grant",
-        "invalid_token",
-        "refresh_token_expired",
-        "refresh_token_revoked",
-        "refresh_token_reused",
-        "refresh_token_invalidated",
-    ];
-
-    // Terminal grant errors can appear on both 400 and 401 token-endpoint
-    // responses. We do NOT clear for `invalid_client` (client config issue),
-    // server errors, throttling, or ambiguous 401s without a confirmed code.
-    let is_client_error = status == reqwest::StatusCode::BAD_REQUEST || status == reqwest::StatusCode::UNAUTHORIZED;
-    let is_terminal_grant =
-        is_client_error && error_code != String::new() && TERMINAL_GRANT_CODES.iter().any(|code| error_code == *code);
-
-    if is_terminal_grant {
+    let failure = classify_refresh_failure(status, body);
+    if failure.action() == RefreshFailureAction::ClearStoredSession {
         if let Err(clear_err) = clear_session_from_all_stores() {
             tracing::warn!("failed to clear expired openai chatgpt session across all stores: {clear_err}");
         }
-        anyhow!("Your ChatGPT session expired. Run `vtcode login openai` again.")
-    } else if error_code == "invalid_client" {
-        // Client configuration error — the refresh token may still be valid
-        // once the OAuth client ID/originator is corrected. Preserve the session.
-        anyhow!(
-            "openai token refresh failed (HTTP {status}, invalid_client) — \
-             check your VTCODE_OPENAI_OAUTH_CLIENT_ID / VTCODE_OPENAI_OAUTH_ORIGINATOR configuration"
-        )
-    } else if status == reqwest::StatusCode::UNAUTHORIZED {
-        // 401 without a confirmed terminal code is ambiguous — it could be
-        // a transient auth issue or a client-configuration problem. Preserve
-        // the session so the user can retry or fix config without losing auth.
-        anyhow!("openai token refresh failed (HTTP {status}) — check your OAuth client configuration and retry")
-    } else if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        // Throttling — transient, preserve session for retry with backoff.
-        anyhow!("openai token refresh was rate-limited (HTTP {status}) — retry later")
-    } else {
-        // Server errors (5xx) and other non-terminal 4xx — transient.
-        anyhow!("openai token refresh failed (HTTP {status})")
     }
+    failure.into_error()
 }
 
 fn clear_session_from_all_stores() -> Result<()> {
-    let mut errors = Vec::new();
-
-    if let Err(err) = clear_session_from_keyring() {
-        errors.push(err.to_string());
-    }
-    if let Err(err) = clear_session_from_file() {
-        errors.push(err.to_string());
-    }
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(anyhow!("failed to clear openai session from all stores: {}", errors.join("; ")))
-    }
-}
-
-fn save_session_to_keyring(serialized: &str) -> Result<()> {
-    let entry = keyring::entry(OPENAI_STORAGE_SERVICE, OPENAI_STORAGE_USER)
-        .context("failed to access keyring for openai session")?;
-    entry
-        .set_password(serialized)
-        .context("failed to store openai session in keyring")?;
-    Ok(())
-}
-
-fn persist_session_to_keyring_or_file(session: &OpenAIChatGptSession, serialized: &str) -> Result<()> {
-    match save_session_to_keyring(serialized) {
-        Ok(()) => match load_session_from_keyring_decoded() {
-            Ok(Some(_)) => Ok(()),
-            Ok(None) => {
-                tracing::warn!(
-                    "openai session keyring write did not round-trip; falling back to encrypted file storage"
-                );
-                save_session_to_file(session)
-            }
-            Err(err) => {
-                tracing::warn!(
-                    "openai session keyring verification failed, falling back to encrypted file storage: {err}"
-                );
-                save_session_to_file(session)
-            }
-        },
-        Err(err) => {
-            tracing::warn!(
-                "failed to persist openai session in keyring, falling back to encrypted file storage: {err}"
-            );
-            save_session_to_file(session).context("failed to persist openai session after keyring fallback")
-        }
-    }
-}
-
-fn decode_session_from_keyring(serialized: String) -> Result<OpenAIChatGptSession> {
-    serde_json::from_str(&serialized).context("failed to decode openai session")
-}
-
-fn load_session_from_keyring_decoded() -> Result<Option<OpenAIChatGptSession>> {
-    load_session_from_keyring()?.map(decode_session_from_keyring).transpose()
-}
-
-fn load_preferred_openai_chatgpt_session(mode: AuthCredentialsStoreMode) -> Result<Option<OpenAIChatGptSession>> {
-    match mode {
-        AuthCredentialsStoreMode::Keyring => match load_session_from_keyring_decoded() {
-            Ok(Some(session)) => Ok(Some(session)),
-            Ok(None) => load_session_from_file(),
-            Err(err) => {
-                tracing::warn!("failed to load openai session from keyring, falling back to encrypted file: {err}");
-                load_session_from_file()
-            }
-        },
-        AuthCredentialsStoreMode::File => {
-            if let Some(session) = load_session_from_file()? {
-                return Ok(Some(session));
-            }
-            load_session_from_keyring_decoded()
-        }
-        AuthCredentialsStoreMode::Auto => unreachable!(),
-    }
-}
-
-fn load_session_from_keyring() -> Result<Option<String>> {
-    let entry = match keyring::entry(OPENAI_STORAGE_SERVICE, OPENAI_STORAGE_USER) {
-        Ok(entry) => entry,
-        Err(_) => return Ok(None),
-    };
-
-    match entry.get_password() {
-        Ok(value) => Ok(Some(value)),
-        Err(keyring_core::Error::NoEntry) => Ok(None),
-        Err(err) => Err(anyhow!("failed to read openai session from keyring: {err}")),
-    }
-}
-
-fn clear_session_from_keyring() -> Result<()> {
-    let entry = match keyring::entry(OPENAI_STORAGE_SERVICE, OPENAI_STORAGE_USER) {
-        Ok(entry) => entry,
-        Err(_) => return Ok(()),
-    };
-
-    match entry.delete_credential() {
-        Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
-        Err(err) => Err(anyhow!("failed to clear openai session keyring entry: {err}")),
-    }
-}
-
-fn save_session_to_file(session: &OpenAIChatGptSession) -> Result<()> {
-    let encrypted = encrypt_session(session)?;
-    let path = get_session_path()?;
-    let payload = serde_json::to_vec_pretty(&encrypted)?;
-    write_private_file(&path, &payload).context("failed to persist openai session file")?;
-    Ok(())
-}
-
-fn load_session_from_file() -> Result<Option<OpenAIChatGptSession>> {
-    let path = get_session_path()?;
-    let data = match fs::read(path) {
-        Ok(data) => data,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(anyhow!("failed to read openai session file: {err}")),
-    };
-
-    let encrypted: EncryptedSession = serde_json::from_slice(&data).context("failed to decode openai session file")?;
-    Ok(Some(decrypt_session(&encrypted)?))
-}
-
-fn clear_session_from_file() -> Result<()> {
-    let path = get_session_path()?;
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(anyhow!("failed to delete openai session file: {err}")),
-    }
-}
-
-fn get_session_path() -> Result<PathBuf> {
-    Ok(auth_storage_dir()?.join(OPENAI_SESSION_FILE))
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct EncryptedSession {
-    nonce: String,
-    ciphertext: String,
-    version: u8,
-}
-
-fn encrypt_session(session: &OpenAIChatGptSession) -> Result<EncryptedSession> {
-    let key = derive_encryption_key()?;
-    let rng = SystemRandom::new();
-    let mut nonce_bytes = [0u8; NONCE_LEN];
-    rng.fill(&mut nonce_bytes).map_err(|_| anyhow!("failed to generate nonce"))?;
-
-    let mut ciphertext = serde_json::to_vec(session).context("failed to serialize openai session for encryption")?;
-    let nonce = Nonce::assume_unique_for_key(nonce_bytes);
-    key.seal_in_place_append_tag(nonce, Aad::empty(), &mut ciphertext)
-        .map_err(|_| anyhow!("failed to encrypt openai session"))?;
-
-    Ok(EncryptedSession {
-        nonce: STANDARD.encode(nonce_bytes),
-        ciphertext: STANDARD.encode(ciphertext),
-        version: 1,
-    })
-}
-
-fn decrypt_session(encrypted: &EncryptedSession) -> Result<OpenAIChatGptSession> {
-    if encrypted.version != 1 {
-        bail!("unsupported openai session encryption format");
-    }
-
-    let nonce_bytes = STANDARD
-        .decode(&encrypted.nonce)
-        .context("failed to decode openai session nonce")?;
-    let nonce_array: [u8; NONCE_LEN] = nonce_bytes
-        .try_into()
-        .map_err(|_| anyhow!("invalid openai session nonce length"))?;
-    let mut ciphertext = STANDARD
-        .decode(&encrypted.ciphertext)
-        .context("failed to decode openai session ciphertext")?;
-
-    let key = derive_encryption_key()?;
-    let plaintext = key
-        .open_in_place(Nonce::assume_unique_for_key(nonce_array), Aad::empty(), &mut ciphertext)
-        .map_err(|_| anyhow!("failed to decrypt openai session"))?;
-    serde_json::from_slice(plaintext).context("failed to parse decrypted openai session")
-}
-
-fn derive_encryption_key() -> Result<LessSafeKey> {
-    use ring::digest::{SHA256, digest};
-
-    let mut key_material = Vec::new();
-    if let Ok(hostname) = hostname::get() {
-        key_material.extend_from_slice(hostname.as_encoded_bytes());
-    }
-
-    #[cfg(unix)]
-    {
-        key_material.extend_from_slice(&nix::unistd::getuid().as_raw().to_le_bytes());
-    }
-    #[cfg(not(unix))]
-    {
-        if let Ok(user) = std::env::var("USER").or_else(|_| std::env::var("USERNAME")) {
-            key_material.extend_from_slice(user.as_bytes());
-        }
-    }
-
-    key_material.extend_from_slice(b"vtcode-openai-chatgpt-oauth-v1");
-    let hash = digest(&SHA256, &key_material);
-    let key_bytes: &[u8; 32] = hash
-        .as_ref()
-        .get(..32)
-        .context("openai session encryption key was too short")?
-        .try_into()
-        .context("openai session encryption key had an invalid length")?;
-    let unbound =
-        UnboundKey::new(&aead::AES_256_GCM, key_bytes).map_err(|_| anyhow!("invalid openai session encryption key"))?;
-    Ok(LessSafeKey::new(unbound))
+    OpenAiSessionStorage::new().clear_all()
 }
 
 fn now_secs() -> u64 {
@@ -1392,6 +1011,7 @@ mod tests {
     use crate::generate_pkce_challenge;
     use assert_fs::TempDir;
     use serial_test::serial;
+    use std::path::PathBuf;
     use std::sync::Arc;
 
     struct ExternalRefresher;
@@ -1728,8 +1348,35 @@ mod tests {
 
         save_openai_chatgpt_session_with_mode(&session, AuthCredentialsStoreMode::File).expect("save session");
 
-        let metadata = fs::metadata(get_session_path().expect("session path")).expect("read session metadata");
+        let metadata = fs::metadata(OpenAiSessionStorage::new().current_file_path().expect("session path"))
+            .expect("read session metadata");
         assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    #[serial]
+    fn legacy_file_session_migrates_to_shared_storage() {
+        use std::fs;
+
+        let _guard = TestAuthDirGuard::new();
+        let session = sample_session();
+        let encrypted = encrypt_session(&session).expect("encrypt legacy session");
+        let legacy_path = get_session_path().expect("legacy session path");
+        fs::write(&legacy_path, serde_json::to_vec(&encrypted).expect("serialize legacy session"))
+            .expect("write legacy session");
+
+        let loaded = load_openai_chatgpt_session_with_mode(AuthCredentialsStoreMode::File)
+            .expect("load migrated session")
+            .expect("session should be present");
+
+        assert_eq!(loaded.account_id, session.account_id);
+        assert!(!legacy_path.exists(), "legacy session should be removed after migration");
+        assert!(
+            OpenAiSessionStorage::new()
+                .current_file_path()
+                .expect("shared session path")
+                .exists()
+        );
     }
 
     #[test]

@@ -1067,6 +1067,7 @@ async fn validate_node(args: &[String], workspace_root: &Path, working_dir: &Pat
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn test_validate_echo() {
@@ -1187,6 +1188,35 @@ mod tests {
         assert!(validate_git(&["rebase".to_owned()], &workspace, &working, false).await.is_err());
         assert!(
             validate_git(&["cherry-pick".to_owned()], &workspace, &working, false)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_command_rejects_workspace_traversal() {
+        let workspace = tempdir().unwrap();
+        let root = workspace.path();
+        let command = vec!["cat".to_owned(), "../outside-secret".to_owned()];
+
+        assert!(validate_command(&command, root, root, false).await.is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn validate_command_rejects_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let secret = outside.path().join("secret.txt");
+        fs::write(&secret, b"outside workspace").await.unwrap();
+        symlink(outside.path(), workspace.path().join("linked-outside")).unwrap();
+
+        let command = vec!["cat".to_owned(), "linked-outside/secret.txt".to_owned()];
+
+        assert!(
+            validate_command(&command, workspace.path(), workspace.path(), false)
                 .await
                 .is_err()
         );

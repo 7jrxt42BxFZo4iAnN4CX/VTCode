@@ -317,4 +317,34 @@ mod tests {
         assert!(!filtered.contains_key("CUSTOM_PASS"));
         assert!(!filtered.contains_key("SERVICE_PWD"));
     }
+
+    #[test]
+    fn filters_adversarial_credential_and_loader_names() {
+        let mut env = HashMap::new();
+        for (name, value) in [
+            ("MODEL_API_KEY", "model-secret"),
+            ("INSTRUCTION_SECRET", "prompt-secret"),
+            ("AWS_PROFILE", "production"),
+            ("LD_AUDIT", "audit.so"),
+            ("DYLD_LIBRARY_PATH", "/tmp/injected"),
+            ("SAFE_PROJECT_NAME", "vtcode"),
+        ] {
+            drop(env.insert(name.to_string(), value.to_string()));
+        }
+
+        let filtered = filter_sensitive_env(&env);
+        let rebuilt = build_sanitized_env(&env, true, false, "test", &[]);
+
+        for sensitive in [
+            "MODEL_API_KEY",
+            "INSTRUCTION_SECRET",
+            "AWS_PROFILE",
+            "LD_AUDIT",
+            "DYLD_LIBRARY_PATH",
+        ] {
+            assert!(!filtered.contains_key(sensitive), "sensitive variable survived filtering: {sensitive}");
+            assert!(!rebuilt.contains_key(sensitive), "sensitive variable survived rebuilding: {sensitive}");
+        }
+        assert_eq!(filtered.get("SAFE_PROJECT_NAME"), Some(&"vtcode".to_string()));
+    }
 }

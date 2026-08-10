@@ -5,8 +5,8 @@
 //!
 //! ## Security Model
 //!
-//! Tokens are stored using OS-specific secure storage (keyring) by default,
-//! with fallback to AES-256-GCM encrypted files if the keyring is unavailable.
+//! Tokens use the shared credential storage boundary: OS keyring when selected
+//! and AES-256-GCM encrypted files as the fallback backend.
 //!
 //! ### Keyring Storage (Default)
 //! Uses the platform-native credential store:
@@ -14,31 +14,19 @@
 //! - **Windows**: Credential Manager (encrypted with user's credentials)
 //! - **Linux**: Secret Service API / libsecret (requires a keyring daemon)
 //!
-//! ### File Storage (Fallback)
-//! When keyring is unavailable, tokens are stored in:
-//! `~/.vtcode/auth/openrouter.json`
-//!
-//! The file is encrypted with AES-256-GCM using a machine-derived key:
-//! - Machine hostname
-//! - User ID (where available)
-//! - A static salt
-//!
-//! ### Migration
-//! When loading tokens, the system checks the keyring first, then falls back
-//! to file storage for backward compatibility. This allows seamless migration
-//! from file-based to keyring-based storage.
+//! Existing `openrouter.json` files are decrypted and migrated when loaded.
 
 use anyhow::{Context, Result, anyhow};
-use ring::aead::{self, Aad, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
-use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::PathBuf;
+use std::fmt;
 
 pub use super::credentials::AuthCredentialsStoreMode;
-use super::credentials::keyring;
 use super::pkce::PkceChallenge;
-use crate::storage_paths::{auth_storage_dir, write_private_file};
+use crate::openrouter_token_storage::OpenRouterTokenStorage;
+#[cfg(test)]
+use crate::openrouter_token_storage::{
+    decrypt_legacy_token as decrypt_token, encrypt_legacy_token as encrypt_token, legacy_token_path as get_token_path,
+};
 
 /// OpenRouter API endpoints
 const OPENROUTER_AUTH_URL: &str = "https://openrouter.ai/auth";
@@ -74,7 +62,7 @@ impl Default for OpenRouterOAuthConfig {
 }
 
 /// Stored OAuth token with metadata.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OpenRouterToken {
     /// The API key obtained via OAuth
     pub api_key: String,
@@ -84,6 +72,17 @@ pub struct OpenRouterToken {
     pub expires_at: Option<u64>,
     /// User-friendly label for the token
     pub label: Option<String>,
+}
+
+impl fmt::Debug for OpenRouterToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OpenRouterToken")
+            .field("api_key", &"<redacted>")
+            .field("obtained_at", &self.obtained_at)
+            .field("expires_at", &self.expires_at)
+            .field("label", &self.label)
+            .finish()
+    }
 }
 
 impl OpenRouterToken {
@@ -99,17 +98,6 @@ impl OpenRouterToken {
             false
         }
     }
-}
-
-/// Encrypted token wrapper for storage.
-#[derive(Debug, Serialize, Deserialize)]
-struct EncryptedToken {
-    /// Base64-encoded nonce
-    nonce: String,
-    /// Base64-encoded ciphertext (includes auth tag)
-    ciphertext: String,
-    /// Version for future format changes
-    version: u8,
 }
 
 /// Generate the OAuth authorization URL.
@@ -160,23 +148,14 @@ pub async fn exchange_code_for_token(code: &str, challenge: &PkceChallenge) -> R
         .context("Failed to send token exchange request")?;
 
     let status = response.status();
-    let body = response.text().await.context("Failed to read response body")?;
-
     if !status.is_success() {
-        // Parse error response for better messages
-        if status.as_u16() == 400 {
-            return Err(anyhow!(
-                "Invalid code_challenge_method. Ensure you're using the same method (S256) in both steps."
-            ));
-        } else if status.as_u16() == 403 {
-            return Err(anyhow!("Invalid code or code_verifier. The authorization code may have expired."));
-        } else if status.as_u16() == 405 {
-            return Err(anyhow!("Method not allowed. Ensure you're using POST over HTTPS."));
-        }
-        return Err(anyhow!("Token exchange failed (HTTP {status}): {body}"));
+        // Never expose the raw response body: OAuth providers may echo codes,
+        // tokens, or other sensitive diagnostics in an error payload.
+        return Err(token_exchange_error(status));
     }
 
     // Parse the response to extract the key
+    let body = response.text().await.context("Failed to read response body")?;
     let response_json: serde_json::Value = serde_json::from_str(&body).context("Failed to parse token response")?;
 
     let api_key = response_json
@@ -188,148 +167,27 @@ pub async fn exchange_code_for_token(code: &str, challenge: &PkceChallenge) -> R
     Ok(api_key)
 }
 
-/// Get the path to the token storage file.
-fn get_token_path() -> Result<PathBuf> {
-    Ok(auth_storage_dir()?.join("openrouter.json"))
-}
-
-/// Derive encryption key from machine-specific data.
-fn derive_encryption_key() -> Result<LessSafeKey> {
-    use ring::digest::{SHA256, digest};
-
-    // Collect machine-specific entropy
-    let mut key_material = Vec::new();
-
-    // Hostname
-    if let Ok(hostname) = hostname::get() {
-        key_material.extend_from_slice(hostname.as_encoded_bytes());
+fn token_exchange_error(status: reqwest::StatusCode) -> anyhow::Error {
+    match status.as_u16() {
+        400 => anyhow!("Invalid code_challenge_method. Ensure you're using the same method (S256) in both steps."),
+        403 => anyhow!("Invalid code or code_verifier. The authorization code may have expired."),
+        405 => anyhow!("Method not allowed. Ensure you're using POST over HTTPS."),
+        _ => anyhow!("Token exchange failed (HTTP {status})"),
     }
-
-    // User ID (Unix) or username (cross-platform fallback)
-    #[cfg(unix)]
-    {
-        key_material.extend_from_slice(&nix::unistd::getuid().as_raw().to_le_bytes());
-    }
-    #[cfg(not(unix))]
-    {
-        if let Ok(user) = std::env::var("USER").or_else(|_| std::env::var("USERNAME")) {
-            key_material.extend_from_slice(user.as_bytes());
-        }
-    }
-
-    // Static salt (not secret, just ensures consistent key derivation)
-    key_material.extend_from_slice(b"vtcode-openrouter-oauth-v1");
-
-    // Hash to get 32-byte key
-    let hash = digest(&SHA256, &key_material);
-    let key_bytes: &[u8; 32] = hash
-        .as_ref()
-        .get(..32)
-        .context("Hash too short")?
-        .try_into()
-        .context("Hash had an invalid length")?;
-
-    let unbound_key = UnboundKey::new(&aead::AES_256_GCM, key_bytes).map_err(|_| anyhow!("Invalid key length"))?;
-
-    Ok(LessSafeKey::new(unbound_key))
-}
-
-/// Encrypt token data for storage.
-fn encrypt_token(token: &OpenRouterToken) -> Result<EncryptedToken> {
-    let key = derive_encryption_key()?;
-    let rng = SystemRandom::new();
-
-    // Generate random nonce
-    let mut nonce_bytes = [0u8; NONCE_LEN];
-    rng.fill(&mut nonce_bytes).map_err(|_| anyhow!("Failed to generate nonce"))?;
-
-    // Serialize token to JSON
-    let plaintext = serde_json::to_vec(token).context("Failed to serialize token")?;
-
-    // Encrypt (includes authentication tag)
-    let mut ciphertext = plaintext;
-    let nonce = Nonce::assume_unique_for_key(nonce_bytes);
-    key.seal_in_place_append_tag(nonce, Aad::empty(), &mut ciphertext)
-        .map_err(|_| anyhow!("Encryption failed"))?;
-
-    use base64::{Engine, engine::general_purpose::STANDARD};
-
-    Ok(EncryptedToken {
-        nonce: STANDARD.encode(nonce_bytes),
-        ciphertext: STANDARD.encode(&ciphertext),
-        version: 1,
-    })
-}
-
-/// Decrypt stored token data.
-fn decrypt_token(encrypted: &EncryptedToken) -> Result<OpenRouterToken> {
-    if encrypted.version != 1 {
-        return Err(anyhow!("Unsupported token format version: {}", encrypted.version));
-    }
-
-    use base64::{Engine, engine::general_purpose::STANDARD};
-
-    let key = derive_encryption_key()?;
-
-    let nonce_bytes: [u8; NONCE_LEN] = STANDARD
-        .decode(&encrypted.nonce)
-        .context("Invalid nonce encoding")?
-        .try_into()
-        .map_err(|_| anyhow!("Invalid nonce length"))?;
-
-    let mut ciphertext = STANDARD.decode(&encrypted.ciphertext).context("Invalid ciphertext encoding")?;
-
-    let nonce = Nonce::assume_unique_for_key(nonce_bytes);
-    let plaintext = key
-        .open_in_place(nonce, Aad::empty(), &mut ciphertext)
-        .map_err(|_| anyhow!("Decryption failed - token may be corrupted or from different machine"))?;
-
-    serde_json::from_slice(plaintext).context("Failed to deserialize token")
 }
 
 /// Save an OAuth token to encrypted storage with specified mode.
 ///
 /// # Arguments
 /// * `token` - The OAuth token to save
-/// * `mode` - The storage mode to use (defaults to Keyring on macOS)
+/// * `mode` - The storage mode to use
 pub fn save_oauth_token_with_mode(token: &OpenRouterToken, mode: AuthCredentialsStoreMode) -> Result<()> {
-    let effective_mode = mode.effective_mode();
-
-    match effective_mode {
-        AuthCredentialsStoreMode::Keyring => save_oauth_token_keyring(token),
-        AuthCredentialsStoreMode::File => save_oauth_token_file(token),
-        _ => unreachable!(),
-    }
-}
-
-/// Save token to OS keyring.
-fn save_oauth_token_keyring(token: &OpenRouterToken) -> Result<()> {
-    let entry = keyring::entry("vtcode", "openrouter_oauth").context("Failed to access OS keyring")?;
-
-    // Serialize the entire token to JSON for storage
-    let token_json = serde_json::to_string(token).context("Failed to serialize token for keyring")?;
-
-    entry.set_password(&token_json).context("Failed to store token in OS keyring")?;
-
-    tracing::info!("OAuth token saved to OS keyring");
-    Ok(())
-}
-
-/// Save token to encrypted file.
-fn save_oauth_token_file(token: &OpenRouterToken) -> Result<()> {
-    let path = get_token_path()?;
-    let encrypted = encrypt_token(token)?;
-    let json = serde_json::to_string_pretty(&encrypted).context("Failed to serialize encrypted token")?;
-    write_private_file(&path, json.as_bytes()).context("Failed to write token file")?;
-
-    tracing::info!("OAuth token saved to {}", path.display());
-    Ok(())
+    OpenRouterTokenStorage::new().save(token, mode)
 }
 
 /// Save an OAuth token to encrypted storage using the default mode.
 ///
-/// Defaults to Keyring on macOS, falls back to file-based storage on other platforms
-/// or when keyring is unavailable.
+/// Uses the configured default credential storage mode.
 pub fn save_oauth_token(token: &OpenRouterToken) -> Result<()> {
     save_oauth_token_with_mode(token, AuthCredentialsStoreMode::default())
 }
@@ -338,57 +196,14 @@ pub fn save_oauth_token(token: &OpenRouterToken) -> Result<()> {
 ///
 /// Returns `None` if no token exists or the token has expired.
 pub fn load_oauth_token_with_mode(mode: AuthCredentialsStoreMode) -> Result<Option<OpenRouterToken>> {
-    let effective_mode = mode.effective_mode();
-
-    match effective_mode {
-        AuthCredentialsStoreMode::Keyring => load_oauth_token_keyring(),
-        AuthCredentialsStoreMode::File => load_oauth_token_file(),
-        _ => unreachable!(),
-    }
-}
-
-/// Load token from OS keyring.
-fn load_oauth_token_keyring() -> Result<Option<OpenRouterToken>> {
-    let entry = match keyring::entry("vtcode", "openrouter_oauth") {
-        Ok(e) => e,
-        Err(_) => return Ok(None),
+    let storage = OpenRouterTokenStorage::new();
+    let Some(token) = storage.load(mode)? else {
+        return Ok(None);
     };
 
-    let token_json = match entry.get_password() {
-        Ok(json) => json,
-        Err(keyring_core::Error::NoEntry) => return Ok(None),
-        Err(e) => return Err(anyhow!("Failed to read from keyring: {e}")),
-    };
-
-    let token: OpenRouterToken = serde_json::from_str(&token_json).context("Failed to parse token from keyring")?;
-
-    // Check expiry
     if token.is_expired() {
-        tracing::warn!("OAuth token has expired, removing...");
-        clear_oauth_token_keyring()?;
-        return Ok(None);
-    }
-
-    Ok(Some(token))
-}
-
-/// Load token from encrypted file.
-fn load_oauth_token_file() -> Result<Option<OpenRouterToken>> {
-    let path = get_token_path()?;
-
-    if !path.exists() {
-        return Ok(None);
-    }
-
-    let json = fs::read_to_string(&path).context("Failed to read token file")?;
-    let encrypted: EncryptedToken = serde_json::from_str(&json).context("Failed to parse token file")?;
-
-    let token = decrypt_token(&encrypted)?;
-
-    // Check expiry
-    if token.is_expired() {
-        tracing::warn!("OAuth token has expired, removing...");
-        clear_oauth_token_file()?;
+        tracing::warn!("OpenRouter OAuth token has expired, removing it");
+        storage.clear(mode)?;
         return Ok(None);
     }
 
@@ -397,87 +212,35 @@ fn load_oauth_token_file() -> Result<Option<OpenRouterToken>> {
 
 /// Load an OAuth token from storage using the default mode.
 ///
-/// This function attempts to load from the OS keyring first (the default).
-/// If no entry exists in the keyring, it falls back to file-based storage
-/// for backward compatibility. This allows seamless migration from file
-/// to keyring storage.
-///
-/// # Errors
-/// Returns an error if:
-/// - Keyring access fails with an error other than "no entry found"
-/// - File access fails (and keyring had no entry)
+/// This function checks the selected secure backend and migrates the legacy
+/// encrypted file format when necessary.
 pub fn load_oauth_token() -> Result<Option<OpenRouterToken>> {
-    match load_oauth_token_keyring() {
-        Ok(Some(token)) => return Ok(Some(token)),
-        Ok(None) => {
-            // No entry in keyring, try file for backward compatibility
-            tracing::debug!("No token in keyring, checking file storage");
+    let storage = OpenRouterTokenStorage::new();
+    for mode in [AuthCredentialsStoreMode::Keyring, AuthCredentialsStoreMode::File] {
+        let Some(token) = storage.load(mode)? else {
+            continue;
+        };
+
+        if token.is_expired() {
+            tracing::warn!("OpenRouter OAuth token has expired, removing it");
+            storage.clear(mode)?;
+            continue;
         }
-        Err(e) => {
-            // Keyring error - only fall back to file for "no entry" errors
-            let error_str = e.to_string().to_lowercase();
-            if error_str.contains("no entry") || error_str.contains("not found") {
-                tracing::debug!("Keyring entry not found, checking file storage");
-            } else {
-                // Actual keyring error - propagate it unless we're in Auto mode
-                // where we can try file as fallback
-                return Err(e);
-            }
-        }
+
+        return Ok(Some(token));
     }
 
-    // Fall back to file-based storage
-    load_oauth_token_file()
+    Ok(None)
 }
 
-/// Clear token from OS keyring.
-fn clear_oauth_token_keyring() -> Result<()> {
-    let entry = match keyring::entry("vtcode", "openrouter_oauth") {
-        Ok(e) => e,
-        Err(_) => return Ok(()),
-    };
-
-    match entry.delete_credential() {
-        Ok(_) => tracing::info!("OAuth token cleared from keyring"),
-        Err(keyring_core::Error::NoEntry) => {}
-        Err(e) => return Err(anyhow!("Failed to clear keyring entry: {e}")),
-    }
-
-    Ok(())
-}
-
-/// Clear token from file.
-fn clear_oauth_token_file() -> Result<()> {
-    let path = get_token_path()?;
-
-    if path.exists() {
-        fs::remove_file(&path).context("Failed to remove token file")?;
-        tracing::info!("OAuth token cleared from file");
-    }
-
-    Ok(())
-}
-
-/// Clear the stored OAuth token from all storage locations.
+/// Clear the stored OAuth token using the selected storage mode.
 pub fn clear_oauth_token_with_mode(mode: AuthCredentialsStoreMode) -> Result<()> {
-    match mode.effective_mode() {
-        AuthCredentialsStoreMode::Keyring => clear_oauth_token_keyring(),
-        AuthCredentialsStoreMode::File => clear_oauth_token_file(),
-        AuthCredentialsStoreMode::Auto => {
-            drop(clear_oauth_token_keyring());
-            drop(clear_oauth_token_file());
-            Ok(())
-        }
-    }
+    OpenRouterTokenStorage::new().clear(mode)
 }
 
+/// Clear the token from both shared backends and the legacy file format.
 pub fn clear_oauth_token() -> Result<()> {
-    // Clear from both keyring and file to ensure complete removal
-    drop(clear_oauth_token_keyring());
-    drop(clear_oauth_token_file());
-
-    tracing::info!("OAuth token cleared from all storage");
-    Ok(())
+    OpenRouterTokenStorage::new().clear_all()
 }
 
 /// Get the current OAuth authentication status.
@@ -577,6 +340,8 @@ mod tests {
     use super::*;
     use assert_fs::TempDir;
     use serial_test::serial;
+    use std::fs;
+    use std::path::PathBuf;
 
     struct TestAuthDirGuard {
         temp_dir: Option<TempDir>,
@@ -617,6 +382,31 @@ mod tests {
         assert!(url.contains("callback_url="));
         assert!(url.contains("code_challenge=test_challenge"));
         assert!(url.contains("code_challenge_method=S256"));
+    }
+
+    #[test]
+    fn debug_impl_redacts_api_key() {
+        let token = OpenRouterToken {
+            api_key: "sk-openrouter-secret".to_string(),
+            obtained_at: 123,
+            expires_at: Some(456),
+            label: Some("test token".to_string()),
+        };
+
+        let debug = format!("{token:?}");
+
+        assert!(!debug.contains("sk-openrouter-secret"), "api key leaked: {debug}");
+        assert!(debug.contains("<redacted>"), "api key should be redacted: {debug}");
+        assert!(debug.contains("test token"), "non-secret metadata should remain visible: {debug}");
+    }
+
+    #[test]
+    fn token_exchange_errors_do_not_include_response_bodies() {
+        let error = token_exchange_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR);
+        let message = error.to_string();
+
+        assert_eq!(message, "Token exchange failed (HTTP 500 Internal Server Error)");
+        assert!(!message.contains("sk-openrouter-secret"));
     }
 
     #[test]
@@ -704,8 +494,57 @@ mod tests {
         let loaded = load_oauth_token_with_mode(AuthCredentialsStoreMode::File).expect("load token");
         assert_eq!(loaded.as_ref().map(|value| &value.api_key), Some(&token.api_key));
 
-        let stored = fs::read_to_string(get_token_path().expect("token path")).expect("read token file");
+        let stored = fs::read_to_string(OpenRouterTokenStorage::new().current_file_path().expect("token path"))
+            .expect("read token file");
         assert!(!stored.contains(&token.api_key));
+    }
+
+    #[test]
+    #[serial]
+    fn default_loader_falls_back_to_shared_file_storage() {
+        let _guard = TestAuthDirGuard::new();
+        let token = OpenRouterToken {
+            api_key: "sk-default-file-token".to_string(),
+            obtained_at: 1,
+            expires_at: None,
+            label: Some("default file fallback".to_string()),
+        };
+
+        save_oauth_token_with_mode(&token, AuthCredentialsStoreMode::File).expect("save token");
+
+        let loaded = load_oauth_token()
+            .expect("load default token")
+            .expect("token should be present");
+        assert_eq!(loaded.api_key, token.api_key);
+    }
+
+    #[test]
+    #[serial]
+    fn legacy_file_token_migrates_to_shared_storage() {
+        let _guard = TestAuthDirGuard::new();
+        let token = OpenRouterToken {
+            api_key: "sk-legacy-token".to_string(),
+            obtained_at: 1,
+            expires_at: None,
+            label: Some("legacy".to_string()),
+        };
+        let encrypted = encrypt_token(&token).expect("encrypt legacy token");
+        let legacy_path = get_token_path().expect("legacy token path");
+        fs::write(&legacy_path, serde_json::to_vec(&encrypted).expect("serialize legacy token"))
+            .expect("write legacy token");
+
+        let loaded = load_oauth_token_with_mode(AuthCredentialsStoreMode::File)
+            .expect("load migrated token")
+            .expect("token should be present");
+
+        assert_eq!(loaded.api_key, token.api_key);
+        assert!(!legacy_path.exists(), "legacy token should be removed after migration");
+        assert!(
+            OpenRouterTokenStorage::new()
+                .current_file_path()
+                .expect("shared token path")
+                .exists()
+        );
     }
 
     #[test]
@@ -728,7 +567,8 @@ mod tests {
 
         save_oauth_token_with_mode(&token, AuthCredentialsStoreMode::File).expect("save token");
 
-        let metadata = fs::metadata(get_token_path().expect("token path")).expect("read token metadata");
+        let metadata = fs::metadata(OpenRouterTokenStorage::new().current_file_path().expect("token path"))
+            .expect("read token metadata");
         assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
     }
 }

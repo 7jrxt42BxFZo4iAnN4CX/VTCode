@@ -94,6 +94,9 @@ if [ $# -eq 0 ] || [ "$1" = "--cargo-fuzz" ] || [ "$1" = "--all" ]; then
 
         run_test "cargo-fuzz: dangerous_commands (30s)" \
             bash -c "cd fuzz && RUSTC_WRAPPER='' CARGO_INCREMENTAL=1 cargo +nightly fuzz run dangerous_commands -- -max_total_time=30 -runs=50000 2>&1"
+
+        run_test "cargo-fuzz: exec_policy_command_validation (30s)" \
+            bash -c "cd fuzz && RUSTC_WRAPPER='' CARGO_INCREMENTAL=1 cargo +nightly fuzz run exec_policy_command_validation -- -max_total_time=30 -runs=50000 2>&1"
     else
         echo ""
         echo -e "${YELLOW}[skip] cargo-fuzz: nightly toolchain or cargo-fuzz not available${NC}"

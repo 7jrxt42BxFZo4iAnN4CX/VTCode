@@ -27,6 +27,10 @@ Complete guide to VT Code's security documentation.
 - Adding new commands safely
 - Security testing procedures
 
+**[Unsafe Code Inventory](./UNSAFE_INVENTORY.md)**
+- Maintainer inventory of intentional unsafe and FFI boundaries
+- Safety invariants and review rules for new sites
+
 **[Web Fetch Security](./SECURITY_WEB_FETCH.md)**
 - Web fetch security policies
 

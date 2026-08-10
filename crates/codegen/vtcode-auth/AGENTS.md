@@ -4,7 +4,7 @@
 
 ## Modules
 
-`openai_chatgpt_oauth/` OpenAI ChatGPT OAuth | `openrouter_oauth/` OpenRouter OAuth | `mcp_oauth/` MCP server OAuth | `oauth_server/` local callback server | `pkce/` PKCE challenge generation | `credentials/` credential storage (keyring + file) | `auth_service/` OpenAIAccountAuthService | `config/` AuthConfig types | `storage_paths/` path resolution
+`openai_chatgpt_oauth/` OpenAI ChatGPT OAuth | `openai_refresh_policy/` pure refresh classification | `openai_session_storage/` typed session persistence | `openrouter_oauth/` OpenRouter OAuth | `openrouter_token_storage/` typed token persistence | `mcp_oauth/` MCP server OAuth | `oauth_server/` local callback server | `pkce/` PKCE challenge generation | `credentials/` credential storage (keyring + file) | `auth_service/` OpenAIAccountAuthService | `config/` AuthConfig types | `storage_paths/` path resolution
 
 ## Rules
 
@@ -20,3 +20,5 @@
 - `credentials::keyring_entry` short-circuits when `keyring_disabled()` is true (`cfg!(debug_assertions)`, `cfg!(test)`, `VTCODE_DISABLE_KEYRING`, or `CI`), so debug builds, tests, and CI fall back to file storage and never trigger macOS Keychain prompts. Debug-keyring can be re-enabled with `VTCODE_DISABLE_KEYRING=0`. `is_keyring_functional()` caches its result to avoid repeated Keychain round trips.
 - API-key writes verify a secure-storage read-back; keep the configured `AuthCredentialsStoreMode` consistent between writes and runtime resolution. Encrypted auth directories are private (`0700`) and credential files are private (`0600`).
 - API-key storage is scoped by normalized `(provider, key_name)`; `key_name` is normally the resolved environment variable. Provider-only entries are legacy fallbacks and may be migrated only for the provider default key, never for an ambiguous non-default profile.
+- `OpenRouterToken` has a redacted `Debug` implementation, and token-exchange errors must not include response bodies that could echo secrets.
+- `openai_refresh_policy` returns a clear/preserve action only; storage deletion stays in the orchestration layer.

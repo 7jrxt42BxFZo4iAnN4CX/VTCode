@@ -44,3 +44,10 @@ path = "fuzz_targets/dangerous_commands.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "exec_policy_command_validation"
+path = "fuzz_targets/exec_policy_command_validation.rs"
+test = false
+doc = false
+bench = false

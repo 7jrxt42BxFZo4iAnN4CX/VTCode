@@ -721,6 +721,11 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Completed fixes, Decomposition: `core/loop_detector.rs` → `core/loop_detector/mod.rs` + `normalization.rs`, Intentionally not changed, Verification summary, Status
   - **User Questions**: "What can you tell me about Code Review + Fixes — 2026-08-07?", "How does Completed fixes work?", "How does Decomposition: `core/loop_detector.rs` → `core/loop_detector/mod.rs` + `normalization.rs` work?"
 
+- **File**: `docs/audits/code-review-2026-08-10.md`
+  - **Content**: Code Review + Fixes — 2026-08-10
+  - **Topics**: Findings and disposition, Compatibility and false-positive filtering, Refactoring guard rails, Verification
+  - **User Questions**: "What can you tell me about Code Review + Fixes — 2026-08-10?", "How does Findings and disposition work?", "How does Compatibility and false-positive filtering work?"
+
 - **File**: `docs/project/code-review-action-plan.md`
   - **Content**: Code Review Action Plan
   - **Topics**: MEDIUM SEVERITY, LOW SEVERITY, STYLE / QUALITY (bulk fixes), PRIORITY ORDER
@@ -1028,6 +1033,11 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Content**: Security Documentation Index
   - **Topics**: Core Documentation, Security Features by Layer, Configuration, Reporting Security Issues
   - **User Questions**: "What can you tell me about Security Documentation Index?", "How does Core Documentation work?", "How does Security Features by Layer work?"
+
+- **File**: `docs/security/UNSAFE_INVENTORY.md`
+  - **Content**: Unsafe Code Inventory
+  - **Topics**: Snapshot: 2026-08-10, Native-plugin site breakdown, Change rule
+  - **User Questions**: "What can you tell me about Unsafe Code Inventory?", "How does Snapshot: 2026-08-10 work?", "How does Native-plugin site breakdown work?"
 
 - **File**: `docs/security/SECURITY_MODEL.md`
   - **Content**: VT Code Security Model
