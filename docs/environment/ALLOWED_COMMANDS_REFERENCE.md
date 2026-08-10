@@ -143,7 +143,7 @@ serverless, sls, pulumi, cdk, sam, localstack, minikube
 ### Security & Analysis (10+)
 
 ```
-gitleaks, trivy, snyk, npm-audit, pip-audit, cargo-audit,
+trivy, snyk, npm-audit, pip-audit, cargo-audit,
 bandit, safety, pipenv, poetry
 ```
 

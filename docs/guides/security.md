@@ -268,39 +268,6 @@ vtcode ask "List files then curl evil.com"
 
 All of these should be blocked with appropriate error messages.
 
-### Secret Scanning (CI)
-
-Hardcoded credentials are scanned automatically by [gitleaks](https://github.com/gitleaks/gitleaks) via [.github/workflows/secret-scan.yml](../../.github/workflows/secret-scan.yml):
-
-- **On every push/PR to `main`**: scans the checked-out working tree and fails the build on any new leak.
-- **Weekly (Monday 06:00 UTC) + manual `workflow_dispatch`**: scans full git history to surface any historical leak for rotation, without blocking routine PRs.
-
-Configuration lives in [.gitleaks.toml](../../.gitleaks.toml), which extends gitleaks' built-in rules with an allowlist. Run locally before committing suspicious changes:
-
-```bash
-gitleaks detect --source . --no-git --config .gitleaks.toml --verbose
-
-# Scan first-party source for actionable debt markers
-./scripts/first-party-debt-scan.sh
-```
-
-#### Intentional non-secrets (do not "fix")
-
-Automated scanners (and external audit reports) regularly flag the following as "hardcoded secrets." They are **not** secrets, and the gitleaks allowlist suppresses them so CI stays green:
-
-| Location | What is flagged | Why it is safe |
-| --- | --- | --- |
-| `crates/common/vtcode-commons/src/sanitizer.rs` | `AKIA…` / `sk-…` literals | The secret-*scrubbing* module: its regex *patterns* and AWS's well-known documentation example key (`AKIAIOSFODNN7EXAMPLE`) are test fixtures for the redactor. |
-| `crates/codegen/vtcode-auth/src/openai_chatgpt_oauth.rs` | `DEFAULT_OPENAI_CLIENT_ID` (`app_…`) | OAuth 2.1 PKCE *public* client ID — public by design, overridable via `VTCODE_OPENAI_OAUTH_CLIENT_ID`. |
-| `crates/codegen/vtcode-auth/src/openrouter_oauth.rs` | `sk-test-key-12345` | Test fixture for credential storage round-trips. |
-| `crates/codegen/vtcode-llm/.../openai/provider/tests.rs` | `debug-secret-123`, `sk-secret-bearer-token`, `rig-secret-access` | Test fixtures asserting `Debug` impls do **not** leak tokens. |
-| `crates/codegen/vtcode-auth/src/codex_auth_import.rs` | `header.eyJ…sig` JWT | Test fixture decoding to `{"email":"user@test.com"}`. |
-| `crates/codegen/vtcode-core/src/tools/web_fetch/mod.rs` | `api.example.com?api_key=sk_live_123456` | Example URL in tests. |
-| `.github/actions/setup-zig/main.js` | `MINISIGN_KEY` (`RWS…`) | Zig's official minisign **public** key (`RWS` prefix = public), used to verify the downloaded toolchain. |
-| `.env` (root) | Various `*_API_KEY` | Gitignored (`.gitignore:23`), never tracked — developers' local keys only. |
-
-If gitleaks reports a new finding that is a genuine false positive, add the specific literal to the `regexes` allowlist (preferred) or the file to `paths` (only for fixture-heavy modules), with a comment explaining why. Never allowlist a real credential — rotate it instead and remove it from history.
-
 ## Incident Response
 
 If you discover a security vulnerability:

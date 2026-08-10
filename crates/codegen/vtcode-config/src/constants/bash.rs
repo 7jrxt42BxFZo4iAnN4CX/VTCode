@@ -355,7 +355,6 @@ pub const ALLOWED_COMMANDS: &[&str] = &[
     "localstack",
     "minikube",
     // Security and analysis tools
-    "gitleaks",
     "trivy",
     "snyk",
     "npm-audit",

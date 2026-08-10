@@ -9,3 +9,7 @@ The genuinely useful bits are in the report: your sandbox/exec boundary is the c
 If any of it's useful, feel free to share the link anywhere. And if you spot something in the report you think is wrong, tell me — I'd rather be corrected than believed.
 
 check: https://quinn.inkboxwire.com/deep-audit-vtcode
+
+---
+
+check /update and self update inside the vtcode TUI program seems hangs and doesn't have real time feedback when downloading and extracting the update. It would be nice to have a progress bar or some kind of feedback to indicate that the update is in progress and not just hanging. check how CLI implementations handle this and see if we can improve the user experience in the TUI.
