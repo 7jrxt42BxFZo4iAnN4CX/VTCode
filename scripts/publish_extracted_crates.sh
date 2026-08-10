@@ -197,11 +197,37 @@ wait_for_crates_io_version() {
 	local endpoint="https://crates.io/api/v1/crates/${crate}/${version}"
 	local attempt=1
 	local max_attempts=36
+	local api_available=0
 
 	print_info "Waiting for ${crate} ${version} to be indexed on crates.io..."
 	while [[ $attempt -le $max_attempts ]]; do
 		if curl --silent --show-error --fail --location --user-agent "vtcode-publish-script" "$endpoint" >/dev/null; then
 			print_success "${crate} ${version} is available on crates.io"
+			api_available=1
+			break
+		fi
+
+		if [[ $attempt -lt $max_attempts ]]; then
+			sleep 5
+		fi
+
+		attempt=$((attempt + 1))
+	done
+
+	if [[ $api_available -eq 0 ]]; then
+		print_warning "Timed out waiting for ${crate} ${version} to appear on the crates.io API; checking Cargo's registry index directly."
+	fi
+
+	# The crates.io API and Cargo's local index are updated independently. The
+	# API can report a release before Cargo sees it, which makes the next
+	# `cargo publish` fail while resolving a just-published dependency. Querying
+	# the registry explicitly refreshes Cargo's index and validates the exact
+	# version that downstream packaging will require.
+	attempt=1
+	print_info "Waiting for Cargo to resolve ${crate} ${version} from crates.io..."
+	while [[ $attempt -le $max_attempts ]]; do
+		if cargo info --registry crates-io --quiet "${crate}@${version}" >/dev/null 2>&1; then
+			print_success "Cargo can resolve ${crate} ${version} from crates.io"
 			return 0
 		fi
 
@@ -212,8 +238,8 @@ wait_for_crates_io_version() {
 		attempt=$((attempt + 1))
 	done
 
-	print_warning "Timed out waiting for ${crate} ${version} to appear on crates.io API (likely rate-limited). Continuing anyway — cargo publish for downstream crates will fail fast if the index hasn't synced yet."
-	return 0
+	print_error "Timed out waiting for Cargo to resolve ${crate} ${version} from crates.io."
+	return 1
 }
 
 generate_docs() {
