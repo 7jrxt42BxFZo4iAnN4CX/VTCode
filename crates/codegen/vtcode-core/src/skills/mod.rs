@@ -75,6 +75,7 @@ pub mod executor;
 pub mod loader;
 pub mod manager;
 pub mod skill_file_tracker;
+mod skill_policy;
 pub mod streaming;
 pub mod validation;
 

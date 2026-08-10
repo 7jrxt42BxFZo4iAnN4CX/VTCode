@@ -5,7 +5,7 @@
 - `tools/`: handlers, registry, policy, execution; `read_file/batch.rs` owns batch admission while `read_file.rs` owns single-file semantics; `registry/executors/` is split into `exec_command.rs`, `exec_output.rs`, `exec_sessions.rs`, `exec_support.rs`; `grep_file.rs` delegates to `grep_backend.rs`.
 - `llm/`: re-export facade; providers live in `vtcode-llm`. `exec/events.rs` re-exports canonical `vtcode-exec-events::ThreadEvent`; `prompts/` owns cached static profiles, compiled runtime guidance, and bounded resource caches.
 - `mcp/plugin_providers.rs`: discovers Agent Plugin MCP servers and maps them to `McpProviderConfig`. `./`-prefixed stdio `command`/`cwd` are canonicalized at discovery so symlink escapes cannot bypass the plugin-root sandbox.
-- `skills/loader.rs`: loads `SKILL.md` manifests from plugin `skills/*/` directories into the session skill catalog.
+- `skills/skill_policy.rs` owns skill-scoped tool/network/sandbox policy; `skills/executor.rs` owns sub-LLM/fork execution. `skills/loader.rs` loads `SKILL.md` manifests from plugin `skills/*/` directories into the session skill catalog.
 ## Rules
 - Re-export public APIs from `lib.rs`; consumers must not reach into submodules, and keep constants in `config::constants` rather than inline.
 - `exec_policy` and `command_safety` are separate policy layers.
