@@ -2,6 +2,18 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.142.6 - 2026-08-10
+
+### Highlights
+#### Bug Fixes
+
+- Repair secret scan workflow (6752348f) 
+- Keep model picker visible when skipping confirmations (ee36df24) 
+### Other Changes
+#### Other
+
+- Update TODO (20bb4868) 
+- Update TODO (0a5428e2) 
 ## 0.142.5 - 2026-08-09
 
 ### Highlights
