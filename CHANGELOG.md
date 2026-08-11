@@ -2,6 +2,17 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.142.9 - 2026-08-11
+
+### Highlights
+#### Bug Fixes
+
+- Harden sandbox and OAuth boundaries (21843857) 
+- Enforce skill tool scopes (446ea318) 
+#### Features
+
+- Add throttled download progress callbacks (9a7ab7f6) 
+### Other Changes
 ## 0.142.8 - 2026-08-10
 
 ### Highlights
