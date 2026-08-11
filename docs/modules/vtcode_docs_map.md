@@ -152,6 +152,10 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Table of Contents, Core Insight: Rust Is Not Faster Than C/C++ — It Is *Safer While Being Equally Fast*, Destructive Move Semantics, Aliasing Guarantees (`noalias`), Immutable by Default & `const` Semantics
   - **User Questions**: "What can you tell me about Rust-Specific Performance Principles for VT Code?", "How does Table of Contents work?", "How does Core Insight: Rust Is Not Faster Than C/C++ — It Is *Safer While Being Equally Fast* work?"
 
+- **File**: `docs/development/session-persistence.md`
+  - **Content**: Session Event Persistence
+  - **User Questions**: "What can you tell me about Session Event Persistence?"
+
 - **File**: `docs/development/TUI_ONLY_REFACTORING.md`
   - **Content**: TUI-Only Tool Permission Refactoring
   - **Topics**: Overview, Problem Statement, Solution, Usage, Backward Compatibility
@@ -303,7 +307,7 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/guides/agent-loop-contract.md`
   - **Content**: Agent Loop Contract
-  - **Topics**: Message and Event Mapping, Terminal Thread Result, Compaction Boundary, Fresh Plan Execution Context, Budget and Limits
+  - **Topics**: Message and Event Mapping, Terminal Thread Result, Canonical event persistence, Compaction Boundary, Fresh Plan Execution Context
   - **User Questions**: "What can you tell me about Agent Loop Contract?", "How does Message and Event Mapping work?", "How does Terminal Thread Result work?"
 
 - **File**: `docs/guides/agent-plugins.md`

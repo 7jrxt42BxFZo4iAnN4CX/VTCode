@@ -41,7 +41,7 @@ impl ManPageGenerator {
                 roman("VT Code is an advanced coding agent with single-agent architecture and Decision Ledger that provides"),
                 roman(" intelligent code generation, analysis, and modification capabilities. It supports"),
                 roman(" multiple LLM providers including Gemini, OpenAI, Anthropic, DeepSeek, Meta AI, Z.AI,"),
-                roman(" Moonshot AI, OpenRouter, and Ollama, and includes LLM-native semantic code understanding."),
+                roman(" Moonshot AI, OpenRouter, NVIDIA NIM, and Ollama, and includes LLM-native semantic code understanding."),
                 roman(" Rust, Python, JavaScript, TypeScript, Go, and Java."),
             ])
             .control("SH", ["OPTIONS"])
@@ -52,7 +52,7 @@ impl ManPageGenerator {
             .text([bold("-p"), roman(", "), bold("--provider"), roman(" "), italic("PROVIDER")])
             .text([
                 roman(
-                    "Specify the LLM provider (gemini, openai, anthropic, deepseek, meta, zai, moonshot, openrouter, ollama, lmstudio)",
+                    "Specify the LLM provider (gemini, openai, anthropic, deepseek, meta, zai, moonshot, openrouter, nvidia, ollama, lmstudio)",
                 ),
             ])
             .control("TP", [])
@@ -187,6 +187,9 @@ impl ManPageGenerator {
             .control("TP", [])
             .text([bold("OPENROUTER_API_KEY")])
             .text([roman("API key for OpenRouter models")])
+            .control("TP", [])
+            .text([bold("NVIDIA_API_KEY")])
+            .text([roman("API key for NVIDIA NIM models")])
             .control("SH", ["FILES"])
             .control("TP", [])
             .text([bold("vtcode.toml")])
