@@ -33,18 +33,19 @@ VT Code is a Rust coding agent built for long-running autonomous workflows. It h
 
 ## Quick start
 
-Install via homebrew
-
-```yaml
-brew trust vinhnx/tap
-brew install vinhnx/tap/vtcode
-```
-
-One-liner for macOS/Linux (also installs ripgrep + ast-grep)
+Recommended: use one-liner for macOS/Linux (also installs ripgrep + ast-grep).
 
 ```yaml
 curl -fsSL https://raw.githubusercontent.com/vinhnx/vtcode/main/scripts/install.sh | bash
 ```
+
+> Optional:
+> Install via homebrew
+>
+> ```yaml
+> brew trust vinhnx/tap
+> brew install vinhnx/tap/vtcode
+> ```
 
 Scaffolds `vtcode.toml`, `.vtcode/`, and `AGENTS.md` in your project
 
