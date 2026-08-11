@@ -23,6 +23,7 @@
     clippy::cast_possible_wrap,
     reason = "CLI startup and compatibility modules retain established builder, parser, and best-effort I/O patterns while they are migrated incrementally."
 )]
+#![recursion_limit = "256"]
 
 use anyhow::{Context, Result};
 
