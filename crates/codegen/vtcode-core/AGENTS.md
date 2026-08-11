@@ -6,6 +6,7 @@
 - `llm/`: re-export facade; providers live in `vtcode-llm`. `exec/events.rs` re-exports canonical `vtcode-exec-events::ThreadEvent`; `prompts/` owns cached static profiles, compiled runtime guidance, and bounded resource caches.
 - `mcp/plugin_providers.rs`: discovers Agent Plugin MCP servers and maps them to `McpProviderConfig`. `./`-prefixed stdio `command`/`cwd` are canonicalized at discovery so symlink escapes cannot bypass the plugin-root sandbox.
 - `skills/skill_policy.rs` owns skill-scoped tool/network/sandbox policy; `skills/executor.rs` owns sub-LLM/fork execution. `skills/loader.rs` loads `SKILL.md` manifests from plugin `skills/*/` directories into the session skill catalog.
+- `notifications/`: maps important runtime events to OS/desktop alerts via dedicated call-site helpers (`send_global_notification`). Session completion is surfaced at session finalization in the binary (`session_loop_runner/notifications.rs`); turn completion in `turn_loop/notifications.rs`. No central `ThreadEvent`→notification bridge — each domain outcome owns its own call site to avoid duplicates.
 ## Rules
 - Re-export public APIs from `lib.rs`; consumers must not reach into submodules, and keep constants in `config::constants` rather than inline.
 - `exec_policy` and `command_safety` are separate policy layers.
@@ -14,7 +15,6 @@
 ## Workflows
 - Add tools under `tools/`, register/classify them, wire them into `core/agent/`; approved-plan task trackers deduplicate normalized step descriptions while preserving first-seen order, approval must fail closed if the tracker cannot be persisted, and plan artifacts must validate concrete targets and verification markers before writing. Add providers with `adding-llm-providers` and update model enumeration, presets, and the `llm/providers` facade. NVIDIA-style first-class providers also need startup defaults, the secret enum, lightweight routing, and generated docs metadata.
 - Custom provider registration stays in the factory and delegates protocol selection to the profile-aware router; do not add arbitrary custom names to the finite `Provider` enum.
-
 ## Gotchas
 
 - Import `RetryPolicyCoreExt` for domain retry methods; budget decisions belong to `llm/usage_cost.rs` and `BudgetStatus::classify`, not call sites.

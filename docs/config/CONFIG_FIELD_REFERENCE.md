@@ -758,7 +758,7 @@ python3 scripts/generate_config_field_reference.py
 | `tui.animations` | `boolean \| null` | no | `null` | - |
 | `tui.notification_condition` | `NotificationCondition \| null` | no | `null` | When to deliver desktop notifications relative to terminal focus. Defaults to `unfocused` (only deliver when terminal is not focused). Set to `always` to deliver notifications even when the terminal is focused. |
 | `tui.notification_method` | `TerminalNotificationMethod \| null` | no | `null` | - |
-| `tui.notifications` | `TuiNotificationsConfig \| null` | no | `null` | - |
+| `tui.notifications` | `TuiNotificationsConfig \| null` | no | `null` | TUI notification filter. `true`/`false` toggles all terminal notifications, or an allowlist of event names: `agent-turn-complete`, `session-complete`, `approval-requested`. `session-complete` enables whole-session (task-finished) alerts without per-turn noise. |
 | `tui.show_tooltips` | `boolean \| null` | no | `null` | - |
 | `ui.allow_tool_ansi` | `boolean` | no | `false` | Allow ANSI escape sequences in tool output (enables colors but may cause layout issues) |
 | `ui.bold_is_bright` | `boolean` | no | `false` | Compatibility mode for legacy terminals that map bold to bright colors. When enabled, avoids using bold styling on text that would become bright colors, preventing visibility issues in terminals with "bold is bright" behavior. |

@@ -4,6 +4,7 @@ mod archive;
 mod handoff;
 mod harness;
 mod metrics;
+mod notifications;
 mod orchestration;
 mod plan_seed;
 mod support;

@@ -1397,6 +1397,10 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
             if let Err(err) = emitter.emit(event) {
                 tracing::debug!(error = %err, "harness thread.completed event emission failed");
             }
+            // Fire one best-effort session-completion notification, mirroring the
+            // per-turn outcome helper. Reuses the same completion_success/failure
+            // gates as turn completion (no separate session config).
+            super::notifications::emit_session_completion_notification(subtype, session_stats.total_turns()).await;
         }
         // `finish_atif` is retained for its side effect of writing the ATIF
         // trajectory JSON file to disk; its returned token counts are no

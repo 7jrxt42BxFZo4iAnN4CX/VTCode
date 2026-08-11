@@ -61,7 +61,7 @@ pub enum NotificationEvent {
 }
 
 /// Status of a completed task
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CompletionStatus {
     Success,
     PartialSuccess,
@@ -464,6 +464,8 @@ impl NotificationManager {
                 let details_str = details.as_ref().map(|d| format!(" - {d}")).unwrap_or_default();
                 if task == "turn" {
                     format!("Agent turn ended: {status_str}{details_str}")
+                } else if task == "session" {
+                    format!("Agent session ended: {status_str}{details_str}")
                 } else {
                     format!("Task '{task}' {status_str}{details_str}")
                 }
@@ -1008,5 +1010,19 @@ end run
 "#;
         assert!(script.contains("display notification"));
         assert!(script.contains("with title"));
+    }
+
+    #[test]
+    fn session_completion_format_message_reads_naturally() {
+        let manager = NotificationManager::new();
+        let event = NotificationEvent::Completion {
+            task: "session".to_string(),
+            status: CompletionStatus::Success,
+            details: Some("7 turn(s)".to_string()),
+        };
+        assert_eq!(
+            manager.format_notification_message(&event),
+            "Agent session ended: completed successfully - 7 turn(s)"
+        );
     }
 }
