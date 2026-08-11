@@ -92,28 +92,59 @@ pub fn parse_skill_file(skill_path: &Path) -> anyhow::Result<(SkillManifest, Str
     Ok((manifest, instructions))
 }
 
-/// Validate that all YAML frontmatter keys are in the supported set.
-/// Unknown keys are logged as warnings but do not fail parsing, preserving
-/// forward compatibility when newer vtcode versions add new fields.
-fn validate_frontmatter_keys(yaml_str: &str) {
-    // Quick line-based scan for top-level keys. This avoids a full YAML
-    // parse just for validation and handles the common case of flat keys.
+/// Collect unknown top-level frontmatter keys from a YAML string.
+///
+/// Only keys at column 0 are examined; nested keys indented under a supported
+/// parent (e.g. `metadata:`) are not flagged. Returns keys in first-seen
+/// order, deduplicated. This is a pure helper extracted so the filtering logic
+/// is independently testable without capturing `tracing` output.
+fn collect_unknown_frontmatter_keys(yaml_str: &str) -> Vec<&str> {
+    let mut unknown_keys: Vec<&str> = Vec::new();
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for line in yaml_str.lines() {
+        // Only top-level keys begin at column 0; indented lines are nested
+        // under a parent (e.g. `metadata:`) and must not be flagged.
+        match line.as_bytes().first() {
+            None => continue,
+            Some(&b) if b == b' ' || b == b'\t' => continue,
+            _ => {}
+        }
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        // Only check top-level keys (no leading whitespace).
         if let Some(colon_pos) = trimmed.find(':') {
             let key = trimmed[..colon_pos].trim();
-            if !key.is_empty() && !key.starts_with('#') && !SUPPORTED_FRONTMATTER_KEYS.contains(&key) {
-                tracing::warn!(
-                    key = key,
-                    "Unknown SKILL.md frontmatter key (supported: {:?})",
-                    SUPPORTED_FRONTMATTER_KEYS
-                );
+            if !key.is_empty()
+                && !key.starts_with('#')
+                && !SUPPORTED_FRONTMATTER_KEYS.contains(&key)
+                && seen.insert(key)
+            {
+                unknown_keys.push(key);
             }
         }
+    }
+    unknown_keys
+}
+
+/// Validate that all YAML frontmatter keys are in the supported set.
+///
+/// Unknown **top-level** keys are logged as a single consolidated warning but
+/// do not fail parsing, preserving forward compatibility when newer vtcode
+/// versions add new fields. Nested keys under a supported parent (e.g.
+/// `metadata:`) are not flagged. Consolidating to one warning per skill (with
+/// all unknown keys listed once) avoids the per-key log spam that previously
+/// produced ~180 warning lines per startup, each repeating the full
+/// supported-keys list.
+fn validate_frontmatter_keys(yaml_str: &str) {
+    let unknown_keys = collect_unknown_frontmatter_keys(yaml_str);
+    if !unknown_keys.is_empty() {
+        tracing::warn!(
+            unknown_keys = ?unknown_keys,
+            supported = ?SUPPORTED_FRONTMATTER_KEYS,
+            "SKILL.md frontmatter has {} unknown top-level key(s); they are ignored but may indicate a typo or a field this vtcode version does not recognize yet",
+            unknown_keys.len()
+        );
     }
 }
 
@@ -390,5 +421,47 @@ disable-model-invocation: true
         assert!(template.contains("license: Apache-2.0"));
         assert!(template.contains("## Workflow"));
         assert!(template.contains("assets/`: reusable output skeletons"));
+    }
+
+    #[test]
+    fn collect_unknown_frontmatter_keys_ignores_nested_keys() {
+        // Nested keys under `metadata:` (a supported key) must NOT be flagged.
+        // This is the regression that produced ~180 false-positive warning
+        // lines per startup: author/version/sources/category are nested under
+        // metadata in well-formed third-party skills, not top-level.
+        let yaml = "name: test\ndescription: test\nmetadata:\n  author: leo\n  version: \"1.0\"\n  sources:\n    - a\n    - b\n  category: foo\n  backend: bar\n";
+        let unknown = collect_unknown_frontmatter_keys(yaml);
+        assert!(unknown.is_empty(), "nested keys under a supported parent must not be flagged, got {unknown:?}");
+    }
+
+    #[test]
+    fn collect_unknown_frontmatter_keys_flags_top_level_only() {
+        // `permissions` and `backend` are top-level unknown keys; `file_system`
+        // and `write` are nested under `permissions` and must be skipped.
+        let yaml =
+            "name: test\ndescription: test\npermissions:\n  file_system:\n    write:\n      - outputs\nbackend: foo\n";
+        let unknown = collect_unknown_frontmatter_keys(yaml);
+        assert_eq!(unknown, vec!["permissions", "backend"]);
+    }
+
+    #[test]
+    fn collect_unknown_frontmatter_keys_deduplicates() {
+        let yaml = "name: test\ndescription: test\nbackend: foo\nbackend: bar\n";
+        let unknown = collect_unknown_frontmatter_keys(yaml);
+        assert_eq!(unknown, vec!["backend"]);
+    }
+
+    #[test]
+    fn collect_unknown_frontmatter_keys_skips_comments_and_blank_lines() {
+        let yaml = "# a comment\nname: test\n\ndescription: test\n# another\n";
+        let unknown = collect_unknown_frontmatter_keys(yaml);
+        assert!(unknown.is_empty());
+    }
+
+    #[test]
+    fn collect_unknown_frontmatter_keys_preserves_first_seen_order() {
+        let yaml = "name: test\ndescription: test\nzee: 1\nalpha: 2\nmid: 3\n";
+        let unknown = collect_unknown_frontmatter_keys(yaml);
+        assert_eq!(unknown, vec!["zee", "alpha", "mid"]);
     }
 }

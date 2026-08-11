@@ -104,13 +104,37 @@ async fn code_search_validates_five_property_contract() -> Result<()> {
         json!({"query": "Widget", "result_types": "text"}),
         json!({"query": "Widget", "max_results": 0}),
         json!({"query": "Widget", "max_results": 101}),
-        json!({"query": "Widget", "max_results": "20"}),
+        // Note: `max_results: "20"` (string) is intentionally accepted via
+        // schema-aware coercion — see `preflight_coerces_stringified_max_results`.
+        json!({"query": "Widget", "max_results": "20.5"}),
+        json!({"query": "Widget", "max_results": "not-a-number"}),
     ] {
         let error = registry
             .preflight_validate_call(tools::CODE_SEARCH, &invalid)
             .expect_err("invalid request must fail preflight");
         assert!(error.to_string().contains("Invalid arguments for tool 'code_search'"), "{invalid}: {error}");
     }
+    Ok(())
+}
+
+/// A JSON-encoded string for an integer/array field is coerced to the typed
+/// value so the model does not waste retries on a serialization mistake. This
+/// is the compatibility counterpart to the strict rejections above: only
+/// unambiguous JSON parses are accepted, and bounds/enum still apply.
+#[tokio::test]
+async fn preflight_coerces_stringified_max_results() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
+
+    let outcome =
+        registry.preflight_validate_call(tools::CODE_SEARCH, &json!({"query": "Widget", "max_results": "20"}))?;
+    assert_eq!(outcome.effective_args["max_results"], json!(20));
+
+    // Bounds still enforced after coercion.
+    let over_max = registry
+        .preflight_validate_call(tools::CODE_SEARCH, &json!({"query": "Widget", "max_results": "101"}))
+        .expect_err("coerced integer must still be bounds-checked");
+    assert!(over_max.to_string().contains("Invalid arguments for tool 'code_search'"));
     Ok(())
 }
 

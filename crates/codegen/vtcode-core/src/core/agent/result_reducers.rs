@@ -5,6 +5,8 @@
 //! engineering principle: "return only summaries or a small number of results
 //! to the model."
 
+use std::borrow::Cow;
+
 use serde_json::Value;
 
 use crate::config::constants::tools;
@@ -20,6 +22,39 @@ pub fn reduce_tool_result(tool_name: &str, result: Value) -> Value {
         tools::UNIFIED_EXEC => reduce_command_result(result),
         _ => result,
     }
+}
+
+/// Strip TUI-only display fields from a tool result before it enters model
+/// context.
+///
+/// The `view` field produced by `task_tracker` (and its planning-workflow
+/// variant) is rendered only by the TUI — branch symbols, status icons, and
+/// per-item display lines that duplicate the structured `checklist` already
+/// present in the same payload. Sending it to the model wastes tokens on every
+/// tracker call, and the waste grows as items accumulate `outcome`/`verify`
+/// metadata (observed growing from ~5 KB to ~12 KB per call in session logs,
+/// with `view` accounting for ~3 KB of each).
+///
+/// The TUI reads `view` from the original tool-output `Value` via the
+/// pipeline-output / event path, not from the model-facing string this is
+/// applied to, so removing it here is display-safe.
+///
+/// Returns a borrowed value when no stripping is needed (non-tracker tools or
+/// results without a `view` field) so the common path pays zero allocation.
+pub fn strip_tui_display_fields<'a>(tool_name: &str, value: &'a Value) -> Cow<'a, Value> {
+    let canonical = tool_intent::canonical_command_session_tool_name(tool_name).unwrap_or(tool_name);
+    if canonical != tools::TASK_TRACKER {
+        return Cow::Borrowed(value);
+    }
+    let Some(obj) = value.as_object() else {
+        return Cow::Borrowed(value);
+    };
+    if !obj.contains_key("view") {
+        return Cow::Borrowed(value);
+    }
+    let mut stripped = obj.clone();
+    stripped.remove("view");
+    Cow::Owned(Value::Object(stripped))
 }
 
 fn reduce_read_file_result(result: Value) -> Value {
@@ -108,4 +143,73 @@ pub fn truncate_lines(text: &str, max_lines: usize) -> Option<(String, usize)> {
         return Some((out, total));
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn strip_view_removes_view_from_task_tracker_result() {
+        let result = json!({
+            "status": "updated",
+            "message": "Item 1 status changed: pending → completed",
+            "checklist": { "title": "Demo", "total": 2, "completed": 1, "items": [] },
+            "view": { "title": "Demo", "lines": [{ "display": "└ [x] step one" }] },
+        });
+        let stripped = strip_tui_display_fields("task_tracker", &result);
+        assert!(stripped.get("view").is_none(), "view should be removed");
+        assert!(stripped.get("checklist").is_some(), "checklist must remain for the model");
+        assert_eq!(stripped["status"], "updated");
+    }
+
+    #[test]
+    fn strip_view_borrows_non_tracker_tools_unchanged() {
+        let result = json!({ "status": "ok", "output": "hello" });
+        let stripped = strip_tui_display_fields("exec_command", &result);
+        assert!(matches!(stripped, Cow::Borrowed(_)), "non-tracker tools should borrow without allocation");
+        assert_eq!(stripped.as_ref(), &result);
+    }
+
+    #[test]
+    fn strip_view_borrows_tracker_result_without_view_field() {
+        let result = json!({ "status": "empty", "message": "No active checklist." });
+        let stripped = strip_tui_display_fields("task_tracker", &result);
+        assert!(
+            matches!(stripped, Cow::Borrowed(_)),
+            "tracker results without `view` should borrow without allocation"
+        );
+        assert_eq!(stripped.as_ref(), &result);
+    }
+
+    #[test]
+    fn strip_view_preserves_checklist_items_and_metadata() {
+        let result = json!({
+            "status": "ok",
+            "checklist": {
+                "title": "Plan",
+                "total": 2,
+                "completed": 0,
+                "items": [
+                    { "index": 1, "description": "Step A", "status": "pending", "files": ["a.rs"], "outcome": null, "verify": ["cargo check"] },
+                    { "index": 2, "description": "Step B", "status": "pending" },
+                ],
+            },
+            "view": { "title": "Plan", "lines": [{ "display": "├ [ ] Step A" }] },
+        });
+        let stripped = strip_tui_display_fields("task_tracker", &result);
+        let items = stripped["checklist"]["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["verify"][0], "cargo check");
+        assert_eq!(items[1]["description"], "Step B");
+        assert!(stripped.get("view").is_none());
+    }
+
+    #[test]
+    fn strip_view_handles_non_object_result() {
+        let result = json!("not an object");
+        let stripped = strip_tui_display_fields("task_tracker", &result);
+        assert_eq!(stripped.as_ref(), &result);
+    }
 }

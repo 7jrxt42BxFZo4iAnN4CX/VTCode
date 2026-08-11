@@ -47,6 +47,11 @@ pub const DEFAULT_MAX_OUTPUT_TOKENS: usize = 10_000;
 pub const MIN_MAX_OUTPUT_TOKENS: usize = 1;
 /// Largest valid model-visible preview budget for a function-tool result.
 pub const MAX_MAX_OUTPUT_TOKENS: usize = 50_000;
+/// Canonical JSON property name for the common result-preview budget field.
+///
+/// Centralized so the strict dedicated validator in `vtcode-core` and any
+/// compatibility coercion both reference one name and cannot drift.
+pub const MAX_OUTPUT_TOKENS_FIELD: &str = "max_output_tokens";
 
 /// Adds the common result-preview budget field to an object-shaped tool schema.
 ///
@@ -65,7 +70,7 @@ pub fn with_max_output_tokens_parameter(mut schema: Value) -> Value {
         return schema;
     };
     {
-        let _entry = properties_object.entry("max_output_tokens").or_insert_with(|| {
+        let _entry = properties_object.entry(MAX_OUTPUT_TOKENS_FIELD).or_insert_with(|| {
             json!({
                 "type": "integer",
                 "minimum": MIN_MAX_OUTPUT_TOKENS,

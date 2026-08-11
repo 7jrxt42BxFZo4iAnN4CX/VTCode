@@ -76,7 +76,7 @@ pub(super) fn reject_denied_tool(
     if !quiet {
         warn!(agent = %agent_prefix, tool = %tool_name, message = %detail);
     }
-    runtime.state.warnings.push(detail.clone());
+    runtime.state.push_warning(detail.clone());
     runtime.state.push_tool_error(
         tool_call_id.to_string(),
         tool_name,

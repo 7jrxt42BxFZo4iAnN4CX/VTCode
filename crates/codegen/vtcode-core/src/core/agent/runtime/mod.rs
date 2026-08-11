@@ -397,6 +397,64 @@ const MAX_REASONING_UPDATE_EVENTS: usize = 2;
 const MIN_OUTPUT_UPDATE_BYTES: usize = 1024;
 const MAX_OUTPUT_UPDATE_EVENTS: usize = 64;
 
+/// Bounded update throttle shared by the streaming lifecycle paths.
+///
+/// Limits how many intermediate snapshot events are emitted for a single
+/// streaming text/reasoning buffer within one turn:
+///
+/// - emission stops once `max_events` snapshots have been produced;
+/// - an update is emitted eagerly when the caller's `eager` signal is true
+///   (e.g. the first update, or a reasoning stage change);
+/// - otherwise an update requires at least `min_bytes` of new content since
+///   the last emitted snapshot.
+///
+/// The throttle owns only the accounting; the authoritative accumulated text
+/// lives on the lifecycle emitter, which always emits a final lossless
+/// snapshot on completion. This keeps live and replay streams consistent.
+#[derive(Debug, Clone, Default)]
+struct UpdateThrottle {
+    events: usize,
+    last_emit_len: usize,
+}
+
+impl UpdateThrottle {
+    const fn new() -> Self {
+        Self { events: 0, last_emit_len: 0 }
+    }
+
+    /// Whether an intermediate snapshot should be emitted now.
+    fn should_emit(&self, current_len: usize, eager: bool, min_bytes: usize, max_events: usize) -> bool {
+        if self.events >= max_events {
+            return false;
+        }
+        eager || current_len.saturating_sub(self.last_emit_len) >= min_bytes
+    }
+
+    /// Record that a snapshot was emitted at `current_len`.
+    fn record(&mut self, current_len: usize) {
+        self.events += 1;
+        self.last_emit_len = current_len;
+    }
+
+    /// Advance the last-emitted length marker without counting an event.
+    /// Used when a snapshot is emitted outside the throttle's accounting
+    /// (e.g. the first reasoning snapshot before reasoning has "started").
+    fn advance_to(&mut self, current_len: usize) {
+        self.last_emit_len = current_len;
+    }
+
+    /// Whether no snapshot has been emitted yet — the first-update eager signal.
+    fn is_first(&self) -> bool {
+        self.events == 0
+    }
+
+    /// Reset the throttle for a new turn.
+    fn reset(&mut self) {
+        self.events = 0;
+        self.last_emit_len = 0;
+    }
+}
+
 /// Bridges streaming model progress events to the lifecycle event sink for real-time UI updates.
 #[doc(hidden)]
 pub struct StreamingLifecycleBridge {
@@ -406,10 +464,8 @@ pub struct StreamingLifecycleBridge {
     lifecycle: SharedLifecycleEmitter,
     tool_call_item_ids: hashbrown::HashMap<String, String>,
     reasoning_stage: Option<String>,
-    reasoning_update_events: usize,
-    last_reasoning_emit_len: usize,
-    output_update_events: usize,
-    last_output_emit_len: usize,
+    output: UpdateThrottle,
+    reasoning: UpdateThrottle,
 }
 
 impl StreamingLifecycleBridge {
@@ -423,10 +479,8 @@ impl StreamingLifecycleBridge {
             lifecycle: SharedLifecycleEmitter::default(),
             tool_call_item_ids: hashbrown::HashMap::new(),
             reasoning_stage: None,
-            reasoning_update_events: 0,
-            last_reasoning_emit_len: 0,
-            output_update_events: 0,
-            last_output_emit_len: 0,
+            output: UpdateThrottle::new(),
+            reasoning: UpdateThrottle::new(),
         }
     }
 
@@ -454,6 +508,10 @@ impl StreamingLifecycleBridge {
 
     /// Complete all open text items gracefully and flush pending events.
     pub fn complete_open_items(&mut self) {
+        // Flush the authoritative accumulated tool-call arguments before
+        // closing text items so the UI sees the full streamed arguments even
+        // when intermediate deltas were throttled (small tool calls).
+        self.lifecycle.flush_open_tool_call_arguments();
         self.lifecycle.complete_open_text_items();
         self.emit_pending_events();
     }
@@ -469,13 +527,13 @@ impl StreamingLifecycleBridge {
             return;
         }
 
-        if !self.should_emit_output_update() {
-            return;
-        }
-
-        if self.lifecycle.emit_assistant_snapshot(Some(self.assistant_item_id.clone())) {
-            self.output_update_events += 1;
-            self.last_output_emit_len = self.lifecycle.assistant_len();
+        let len = self.lifecycle.assistant_len();
+        if self
+            .output
+            .should_emit(len, self.output.is_first(), MIN_OUTPUT_UPDATE_BYTES, MAX_OUTPUT_UPDATE_EVENTS)
+            && self.lifecycle.emit_assistant_snapshot(Some(self.assistant_item_id.clone()))
+        {
+            self.output.record(len);
             self.emit_pending_events();
         }
     }
@@ -487,18 +545,19 @@ impl StreamingLifecycleBridge {
 
         if !self.lifecycle.reasoning_started() {
             if self.lifecycle.emit_reasoning_snapshot(Some(self.reasoning_item_id.clone())) {
-                self.last_reasoning_emit_len = self.lifecycle.reasoning_len();
+                self.reasoning.advance_to(self.lifecycle.reasoning_len());
                 self.emit_pending_events();
             }
             return;
         }
 
-        if !self.should_emit_reasoning_update(false) {
-            return;
-        }
-
-        if self.lifecycle.emit_reasoning_snapshot(Some(self.reasoning_item_id.clone())) {
-            self.record_reasoning_update();
+        let len = self.lifecycle.reasoning_len();
+        if self
+            .reasoning
+            .should_emit(len, false, MIN_REASONING_UPDATE_BYTES, MAX_REASONING_UPDATE_EVENTS)
+            && self.lifecycle.emit_reasoning_snapshot(Some(self.reasoning_item_id.clone()))
+        {
+            self.reasoning.record(len);
             self.emit_pending_events();
         }
     }
@@ -511,37 +570,19 @@ impl StreamingLifecycleBridge {
         }
         self.reasoning_stage = Some(stage);
 
-        if !self.lifecycle.reasoning_started() || !self.should_emit_reasoning_update(true) {
+        if !self.lifecycle.reasoning_started() {
             return;
         }
 
-        if self.lifecycle.emit_reasoning_stage_update() {
-            self.record_reasoning_update();
+        let len = self.lifecycle.reasoning_len();
+        if self
+            .reasoning
+            .should_emit(len, true, MIN_REASONING_UPDATE_BYTES, MAX_REASONING_UPDATE_EVENTS)
+            && self.lifecycle.emit_reasoning_stage_update()
+        {
+            self.reasoning.record(len);
             self.emit_pending_events();
         }
-    }
-
-    fn should_emit_reasoning_update(&self, stage_changed: bool) -> bool {
-        if self.reasoning_update_events >= MAX_REASONING_UPDATE_EVENTS {
-            return false;
-        }
-
-        stage_changed
-            || self.lifecycle.reasoning_len().saturating_sub(self.last_reasoning_emit_len) >= MIN_REASONING_UPDATE_BYTES
-    }
-
-    fn record_reasoning_update(&mut self) {
-        self.reasoning_update_events += 1;
-        self.last_reasoning_emit_len = self.lifecycle.reasoning_len();
-    }
-
-    fn should_emit_output_update(&self) -> bool {
-        if self.output_update_events >= MAX_OUTPUT_UPDATE_EVENTS {
-            return false;
-        }
-
-        self.output_update_events == 0
-            || self.lifecycle.assistant_len().saturating_sub(self.last_output_emit_len) >= MIN_OUTPUT_UPDATE_BYTES
     }
 
     fn start_tool_call(&mut self, call_id: String, name: Option<String>) {
@@ -584,10 +625,8 @@ pub struct AgentRuntime {
     event_sink: Option<EventSink>,
     lifecycle: SharedLifecycleEmitter,
     emitted_events: Vec<ThreadEvent>,
-    output_update_events: usize,
-    last_output_emit_len: usize,
-    reasoning_update_events: usize,
-    last_reasoning_emit_len: usize,
+    output: UpdateThrottle,
+    reasoning: UpdateThrottle,
 }
 
 impl AgentRuntime {
@@ -603,10 +642,8 @@ impl AgentRuntime {
             event_sink,
             lifecycle: SharedLifecycleEmitter::default(),
             emitted_events: Vec::new(),
-            output_update_events: 0,
-            last_output_emit_len: 0,
-            reasoning_update_events: 0,
-            last_reasoning_emit_len: 0,
+            output: UpdateThrottle::new(),
+            reasoning: UpdateThrottle::new(),
         }
     }
 
@@ -744,24 +781,6 @@ impl AgentRuntime {
         }
     }
 
-    fn should_emit_output_update(&self) -> bool {
-        if self.output_update_events >= MAX_OUTPUT_UPDATE_EVENTS {
-            return false;
-        }
-
-        self.output_update_events == 0
-            || self.lifecycle.assistant_len().saturating_sub(self.last_output_emit_len) >= MIN_OUTPUT_UPDATE_BYTES
-    }
-
-    fn should_emit_reasoning_update(&self) -> bool {
-        if self.reasoning_update_events >= MAX_REASONING_UPDATE_EVENTS {
-            return false;
-        }
-
-        self.reasoning_update_events == 0
-            || self.lifecycle.reasoning_len().saturating_sub(self.last_reasoning_emit_len) >= MIN_REASONING_UPDATE_BYTES
-    }
-
     fn emit_pending_lifecycle_events(&mut self) {
         for event in self.lifecycle.drain_events() {
             self.emit_event(event);
@@ -818,20 +837,34 @@ impl AgentRuntime {
         match event {
             RuntimeModelProgress::OutputDelta(delta) => {
                 full_text.push_str(&delta);
-                if self.lifecycle.append_assistant_delta(&delta) && self.should_emit_output_update() {
-                    let _ = self.lifecycle.emit_assistant_snapshot(None);
-                    self.output_update_events += 1;
-                    self.last_output_emit_len = self.lifecycle.assistant_len();
-                    self.emit_pending_lifecycle_events();
+                if self.lifecycle.append_assistant_delta(&delta) {
+                    let len = self.lifecycle.assistant_len();
+                    if self.output.should_emit(
+                        len,
+                        self.output.is_first(),
+                        MIN_OUTPUT_UPDATE_BYTES,
+                        MAX_OUTPUT_UPDATE_EVENTS,
+                    ) && self.lifecycle.emit_assistant_snapshot(None)
+                    {
+                        self.output.record(len);
+                        self.emit_pending_lifecycle_events();
+                    }
                 }
             }
             RuntimeModelProgress::ReasoningDelta(delta) => {
                 full_reasoning.push_str(&delta);
-                if self.lifecycle.append_reasoning_delta(&delta) && self.should_emit_reasoning_update() {
-                    let _ = self.lifecycle.emit_reasoning_snapshot(None);
-                    self.reasoning_update_events += 1;
-                    self.last_reasoning_emit_len = self.lifecycle.reasoning_len();
-                    self.emit_pending_lifecycle_events();
+                if self.lifecycle.append_reasoning_delta(&delta) {
+                    let len = self.lifecycle.reasoning_len();
+                    if self.reasoning.should_emit(
+                        len,
+                        self.reasoning.is_first(),
+                        MIN_REASONING_UPDATE_BYTES,
+                        MAX_REASONING_UPDATE_EVENTS,
+                    ) && self.lifecycle.emit_reasoning_snapshot(None)
+                    {
+                        self.reasoning.record(len);
+                        self.emit_pending_lifecycle_events();
+                    }
                 }
             }
             RuntimeModelProgress::ReasoningStage(stage) => {
@@ -860,10 +893,8 @@ impl AgentRuntime {
     ) -> Result<TurnExecution> {
         let request_model = request.model.clone();
         let start_time = std::time::Instant::now();
-        self.output_update_events = 0;
-        self.last_output_emit_len = 0;
-        self.reasoning_update_events = 0;
-        self.last_reasoning_emit_len = 0;
+        self.output.reset();
+        self.reasoning.reset();
         let mut full_text = String::new();
         let mut full_reasoning = String::new();
         let mut on_progress = |event| self.record_model_progress(event, &mut full_text, &mut full_reasoning);
@@ -1299,5 +1330,57 @@ mod tests {
             item_ids.get("call_42").map(String::as_str),
             Some("turn_tool_map-step-5-assistant-stream-2-tool-call-call_42")
         );
+    }
+
+    #[test]
+    fn update_throttle_first_update_is_eager() {
+        let mut throttle = UpdateThrottle::new();
+        assert!(throttle.is_first());
+        // No new bytes, but eager (first update) should still emit.
+        assert!(throttle.should_emit(0, throttle.is_first(), 1024, 64));
+        throttle.record(0);
+        assert!(!throttle.is_first());
+    }
+
+    #[test]
+    fn update_throttle_requires_min_bytes_after_first() {
+        let mut throttle = UpdateThrottle::new();
+        throttle.record(0);
+        // 500 bytes is below the 1024 threshold and not eager -> no emit.
+        assert!(!throttle.should_emit(500, false, 1024, 64));
+        // 1024 bytes meets the threshold.
+        assert!(throttle.should_emit(1024, false, 1024, 64));
+    }
+
+    #[test]
+    fn update_throttle_stops_at_max_events() {
+        let mut throttle = UpdateThrottle::new();
+        for _ in 0..2 {
+            assert!(throttle.should_emit(0, true, 256, 2));
+            throttle.record(0);
+        }
+        // Cap reached; even an eager signal cannot emit.
+        assert!(!throttle.should_emit(0, true, 256, 2));
+    }
+
+    #[test]
+    fn update_throttle_advance_to_does_not_count_event() {
+        let mut throttle = UpdateThrottle::new();
+        throttle.advance_to(100);
+        assert!(throttle.is_first());
+        // last_emit_len is now 100; 100 new bytes is below 256 threshold.
+        assert!(!throttle.should_emit(200, false, 256, 2));
+        // 256 new bytes past 100 meets the threshold.
+        assert!(throttle.should_emit(356, false, 256, 2));
+    }
+
+    #[test]
+    fn update_throttle_reset_restores_initial_state() {
+        let mut throttle = UpdateThrottle::new();
+        throttle.record(500);
+        assert!(!throttle.is_first());
+        throttle.reset();
+        assert!(throttle.is_first());
+        assert!(throttle.should_emit(0, true, 1024, 64));
     }
 }

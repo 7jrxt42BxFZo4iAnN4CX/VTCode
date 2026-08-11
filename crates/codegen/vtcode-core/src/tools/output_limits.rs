@@ -2,7 +2,9 @@
 
 use anyhow::{Context, Result, anyhow};
 use serde_json::Value;
-use vtcode_utility_tool_specs::{DEFAULT_MAX_OUTPUT_TOKENS, MAX_MAX_OUTPUT_TOKENS, MIN_MAX_OUTPUT_TOKENS};
+use vtcode_utility_tool_specs::{
+    DEFAULT_MAX_OUTPUT_TOKENS, MAX_MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS_FIELD, MIN_MAX_OUTPUT_TOKENS,
+};
 
 pub(crate) const OUTPUT_PREVIEW_CHARS_PER_TOKEN: usize = 4;
 
@@ -12,7 +14,7 @@ pub(crate) const OUTPUT_PREVIEW_CHARS_PER_TOKEN: usize = 4;
 /// so callers cannot silently coerce floats or strings into a larger context
 /// allocation than the model requested.
 pub(crate) fn max_output_tokens(args: &Value) -> Result<usize> {
-    let Some(value) = args.get("max_output_tokens") else {
+    let Some(value) = args.get(MAX_OUTPUT_TOKENS_FIELD) else {
         return Ok(DEFAULT_MAX_OUTPUT_TOKENS);
     };
     let Some(tokens) = value.as_u64() else {
@@ -37,7 +39,7 @@ pub(crate) fn max_output_tokens(args: &Value) -> Result<usize> {
 pub(crate) fn args_without_output_metadata(args: &Value) -> Value {
     let mut args = args.clone();
     if let Some(object) = args.as_object_mut() {
-        object.remove("max_output_tokens");
+        object.remove(MAX_OUTPUT_TOKENS_FIELD);
     }
     args
 }
@@ -47,7 +49,7 @@ pub(crate) fn handler_accepts_output_metadata(schema: Option<&Value>) -> bool {
     schema
         .and_then(|schema| schema.get("properties"))
         .and_then(Value::as_object)
-        .is_some_and(|properties| properties.contains_key("max_output_tokens"))
+        .is_some_and(|properties| properties.contains_key(MAX_OUTPUT_TOKENS_FIELD))
 }
 
 #[cfg(test)]

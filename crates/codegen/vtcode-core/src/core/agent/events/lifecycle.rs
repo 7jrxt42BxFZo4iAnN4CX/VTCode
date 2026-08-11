@@ -20,7 +20,25 @@ struct ToolCallStreamState {
     name: Option<String>,
     arguments: String,
     started: bool,
+    /// Bytes of `arguments` included in the last emitted `item.updated` event.
+    /// Used to throttle per-token delta emissions — see `MIN_TOOL_ARG_UPDATE_BYTES`.
+    last_emitted_args_len: usize,
+    /// Number of intermediate `item.updated` events emitted for this tool call.
+    /// Capped at `MAX_TOOL_ARG_UPDATE_EVENTS` to bound log growth for large arguments.
+    update_events: usize,
 }
+
+/// Minimum accumulated bytes of tool-call arguments between two `item.updated`
+/// events. Without this, every streaming argument delta (one per token) emits a
+/// full-arguments update, producing ~30+ events per tool call and bloating the
+/// session log (observed 3069 `item.updated` events for 98 tool outputs in a
+/// single 3-turn session). The final `complete_tool_call` always emits the full
+/// arguments, so intermediate updates are progress hints only.
+const MIN_TOOL_ARG_UPDATE_BYTES: usize = 512;
+
+/// Maximum intermediate `item.updated` events per tool call. Once reached, no
+/// further streaming updates are emitted until the tool call completes.
+const MAX_TOOL_ARG_UPDATE_EVENTS: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Aggregated output from a tool execution, containing either inline text or a
@@ -440,6 +458,8 @@ impl SharedLifecycleEmitter {
                 name: None,
                 arguments: String::new(),
                 started: false,
+                last_emitted_args_len: 0,
+                update_events: 0,
             });
 
         if buffer.name.is_none() {
@@ -480,6 +500,8 @@ impl SharedLifecycleEmitter {
                 name: None,
                 arguments: String::new(),
                 started: false,
+                last_emitted_args_len: 0,
+                update_events: 0,
             });
 
         if !buffer.started {
@@ -498,14 +520,26 @@ impl SharedLifecycleEmitter {
         }
 
         buffer.arguments.push_str(delta);
-        let arguments = progress_tool_arguments(&buffer.arguments);
-        self.pending_events.push(tool_invocation_updated_event(
-            buffer.item_id.clone(),
-            buffer.name.as_deref().unwrap_or_default(),
-            Some(&arguments),
-            Some(call_id),
-            ToolCallStatus::InProgress,
-        ));
+        // Throttle intermediate `item.updated` events: emit the first delta
+        // eagerly (so the UI shows progress), then only when enough new bytes
+        // have accumulated and the per-call cap hasn't been reached. The final
+        // `complete_tool_call` always emits the full arguments regardless.
+        let new_len = buffer.arguments.len();
+        let should_emit = buffer.update_events == 0
+            || (buffer.update_events < MAX_TOOL_ARG_UPDATE_EVENTS
+                && new_len.saturating_sub(buffer.last_emitted_args_len) >= MIN_TOOL_ARG_UPDATE_BYTES);
+        if should_emit {
+            buffer.last_emitted_args_len = new_len;
+            buffer.update_events += 1;
+            let arguments = progress_tool_arguments(&buffer.arguments);
+            self.pending_events.push(tool_invocation_updated_event(
+                buffer.item_id.clone(),
+                buffer.name.as_deref().unwrap_or_default(),
+                Some(&arguments),
+                Some(call_id),
+                ToolCallStatus::InProgress,
+            ));
+        }
         true
     }
 
@@ -555,6 +589,8 @@ impl SharedLifecycleEmitter {
                 name: None,
                 arguments: String::new(),
                 started: false,
+                last_emitted_args_len: 0,
+                update_events: 0,
             });
 
         if buffer.name.is_none() {
@@ -585,6 +621,8 @@ impl SharedLifecycleEmitter {
             Some(call_id),
             ToolCallStatus::InProgress,
         ));
+        buffer.last_emitted_args_len = buffer.arguments.len();
+        buffer.update_events = buffer.update_events.saturating_add(1);
         true
     }
 
@@ -607,6 +645,38 @@ impl SharedLifecycleEmitter {
         let call_ids = self.tool_calls.keys().cloned().collect::<Vec<_>>();
         for call_id in call_ids {
             let _ = self.complete_tool_call(&call_id, status.clone(), None);
+        }
+    }
+
+    /// Emit a final `item.updated` carrying the full accumulated arguments for
+    /// each open tool call, bypassing the intermediate-update throttle.
+    ///
+    /// Tool calls remain open (not completed); callers complete them via
+    /// [`Self::complete_tool_call`] when execution finishes. This guarantees
+    /// the authoritative streamed arguments are visible after streaming ends
+    /// even when intermediate deltas were throttled (e.g. small tool calls
+    /// whose completing delta fell below the byte threshold). Updates that
+    /// would carry the same length as the last emitted snapshot are skipped
+    /// to avoid redundant events for large tool calls whose last intermediate
+    /// update already captured the full arguments.
+    pub fn flush_open_tool_call_arguments(&mut self) {
+        let call_ids: Vec<String> = self.tool_calls.keys().cloned().collect();
+        for call_id in call_ids {
+            let Some(buffer) = self.tool_calls.get_mut(&call_id) else {
+                continue;
+            };
+            if buffer.arguments.is_empty() || buffer.last_emitted_args_len == buffer.arguments.len() {
+                continue;
+            }
+            let arguments = progress_tool_arguments(&buffer.arguments);
+            self.pending_events.push(tool_invocation_updated_event(
+                buffer.item_id.clone(),
+                buffer.name.as_deref().unwrap_or_default(),
+                Some(&arguments),
+                Some(&call_id),
+                ToolCallStatus::InProgress,
+            ));
+            buffer.last_emitted_args_len = buffer.arguments.len();
         }
     }
 
@@ -989,5 +1059,129 @@ mod tests {
             panic!("expected tool invocation");
         };
         assert_eq!(details.outcome, Some(ToolOutcome::Success));
+    }
+
+    #[test]
+    fn append_tool_call_delta_throttles_intermediate_updates() {
+        let mut emitter = SharedLifecycleEmitter::default();
+        let call_id = "call_t".to_string();
+        emitter.start_tool_call(&call_id, Some("exec_command".to_string()), None);
+        // Clear the ItemStarted event so we only count delta-driven ItemUpdated events.
+        let _ = emitter.drain_events();
+
+        // Send 600 one-byte deltas. The first delta always emits (update_events == 0).
+        // Subsequent deltas only emit after MIN_TOOL_ARG_UPDATE_BYTES (512) new bytes.
+        // Expected ItemUpdated events: at 1 byte (first) and at 513 bytes (threshold met).
+        for _ in 0..600 {
+            emitter.append_tool_call_delta(&call_id, "x", None, None);
+        }
+        let events = emitter.drain_events();
+        let item_updated_count = events.iter().filter(|e| matches!(e, ThreadEvent::ItemUpdated(_))).count();
+        assert_eq!(
+            item_updated_count, 2,
+            "expected 2 throttled ItemUpdated events for 600 1-byte deltas, got {item_updated_count}"
+        );
+
+        // The complete event must still carry the full accumulated arguments.
+        emitter.complete_tool_call(&call_id, ToolCallStatus::Completed, None);
+        let events = emitter.drain_events();
+        let completed = events
+            .iter()
+            .find_map(|e| {
+                if let ThreadEvent::ItemCompleted(ItemCompletedEvent { item }) = e {
+                    Some(item)
+                } else {
+                    None
+                }
+            })
+            .expect("should have a completed event");
+        let ThreadItemDetails::ToolInvocation(details) = &completed.details else {
+            panic!("expected tool invocation in completed event");
+        };
+        assert!(
+            details.arguments.as_ref().is_some_and(|a| a.to_string().contains("xxx")),
+            "completed event should carry the full accumulated arguments"
+        );
+    }
+
+    #[test]
+    fn append_tool_call_delta_caps_intermediate_update_events() {
+        let mut emitter = SharedLifecycleEmitter::default();
+        let call_id = "call_c".to_string();
+        emitter.start_tool_call(&call_id, Some("exec_command".to_string()), None);
+        let _ = emitter.drain_events();
+
+        // Send 5000 one-byte deltas. With MIN_TOOL_ARG_UPDATE_BYTES=512 and
+        // MAX_TOOL_ARG_UPDATE_EVENTS=8, emissions stop after 8 updates even
+        // though the threshold keeps being met.
+        for _ in 0..5000 {
+            emitter.append_tool_call_delta(&call_id, "x", None, None);
+        }
+        let events = emitter.drain_events();
+        let item_updated_count = events.iter().filter(|e| matches!(e, ThreadEvent::ItemUpdated(_))).count();
+        assert_eq!(
+            item_updated_count, MAX_TOOL_ARG_UPDATE_EVENTS,
+            "intermediate updates should be capped at MAX_TOOL_ARG_UPDATE_EVENTS, got {item_updated_count}"
+        );
+    }
+
+    #[test]
+    fn flush_open_tool_call_arguments_emits_full_args_for_throttled_small_calls() {
+        let mut emitter = SharedLifecycleEmitter::default();
+        let call_id = "call_flush".to_string();
+        emitter.start_tool_call(&call_id, Some("shell".to_string()), None);
+        let _ = emitter.drain_events();
+
+        // Stream a small JSON tool call in two deltas. The first delta emits
+        // eagerly (incomplete JSON); the second is below the byte threshold
+        // and is throttled out.
+        emitter.append_tool_call_delta(&call_id, "{\"cmd\":\"ec", None, None);
+        emitter.append_tool_call_delta(&call_id, "ho hi\"}", None, None);
+        let intermediate = emitter.drain_events();
+        let intermediate_updated = intermediate.iter().filter(|e| matches!(e, ThreadEvent::ItemUpdated(_))).count();
+        assert_eq!(intermediate_updated, 1, "first delta emits one eager update");
+
+        // Flush should emit a final update with the full, valid-JSON arguments.
+        emitter.flush_open_tool_call_arguments();
+        let flushed = emitter.drain_events();
+        let updated = flushed
+            .iter()
+            .filter_map(|e| {
+                if let ThreadEvent::ItemUpdated(ItemUpdatedEvent { item }) = e {
+                    Some(&item.details)
+                } else {
+                    None
+                }
+            })
+            .next_back();
+        let ThreadItemDetails::ToolInvocation(details) = updated.expect("flush should emit an update") else {
+            panic!("expected tool invocation update");
+        };
+        assert_eq!(
+            details.arguments.as_ref().and_then(|a| a.get("cmd")).and_then(|c| c.as_str()),
+            Some("echo hi"),
+            "flush should carry the full accumulated arguments"
+        );
+        // Tool call should still be open (no completed event).
+        assert!(flushed.iter().all(|e| !matches!(e, ThreadEvent::ItemCompleted(_))));
+    }
+
+    #[test]
+    fn flush_open_tool_call_arguments_skips_redundant_flush() {
+        let mut emitter = SharedLifecycleEmitter::default();
+        let call_id = "call_skip".to_string();
+        emitter.start_tool_call(&call_id, Some("shell".to_string()), None);
+        let _ = emitter.drain_events();
+
+        // A single large delta (>= MIN_TOOL_ARG_UPDATE_BYTES) emits with the
+        // full arguments, so the last_emitted_args_len already equals the
+        // accumulated length. A subsequent flush should be a no-op.
+        let big = "x".repeat(MIN_TOOL_ARG_UPDATE_BYTES);
+        emitter.append_tool_call_delta(&call_id, &big, None, None);
+        let _ = emitter.drain_events();
+
+        emitter.flush_open_tool_call_arguments();
+        let flushed = emitter.drain_events();
+        assert!(flushed.is_empty(), "flush should skip when the last update already carried the full arguments");
     }
 }

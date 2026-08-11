@@ -482,6 +482,58 @@ async fn maybe_inline_spooled_with_preview_skips_preview_when_spool_missing() {
     assert_eq!(parsed.get("result_ref_only"), Some(&serde_json::json!(true)));
 }
 
+#[tokio::test]
+async fn maybe_inline_spooled_with_preview_skips_tail_when_failure_diagnostics_present() {
+    // When structured failure_diagnostics are embedded (e.g. cargo test
+    // failures), the ~10 KB tail_preview of raw PASS/FAIL lines is redundant
+    // token waste — the diagnostics already carry panic, source location,
+    // rerun hint, and next action.
+    let workspace = tempdir().expect("tempdir");
+    let spool_dir = workspace.path().join(".vtcode/context/tool_outputs");
+    tokio::fs::create_dir_all(&spool_dir).await.expect("create spool dir");
+    let spool_relative = ".vtcode/context/tool_outputs/test_failure.txt";
+    let spool_absolute = workspace.path().join(spool_relative);
+    // Write a large spool with mostly PASS lines (realistic cargo test output)
+    let mut content = String::new();
+    for idx in 0..200 {
+        content.push_str(&format!("PASS [0.001s] ({idx}/200) test_pass_{idx}\n"));
+    }
+    content.push_str("FAIL [0.009s] (198/200) my_test\n");
+    tokio::fs::write(&spool_absolute, &content).await.expect("write spool");
+
+    let serialized = maybe_inline_spooled_with_preview(
+        workspace.path(),
+        tool_names::UNIFIED_EXEC,
+        &serde_json::json!({
+            "output": "",
+            "spool_path": spool_relative,
+            "exit_code": 100,
+            "is_exited": true,
+            "failure_diagnostics": {
+                "kind": "cargo_test_failure",
+                "package": "my-crate",
+                "test_fqname": "my_test",
+                "panic": "assertion failed",
+                "rerun_hint": "cargo nextest run -p my-crate my_test",
+                "critical_note": "Cargo reported a concrete failing test.",
+                "next_action": "Rerun with: cargo nextest run -p my-crate my_test"
+            }
+        }),
+    )
+    .await;
+
+    let parsed: serde_json::Value = serde_json::from_str(&serialized).expect("serialized JSON payload");
+    assert!(
+        parsed.get("tail_preview").is_none(),
+        "tail_preview should be skipped when failure_diagnostics is present"
+    );
+    assert_eq!(parsed.get("result_ref_only"), Some(&serde_json::json!(true)));
+    assert!(
+        parsed.get("failure_diagnostics").is_some(),
+        "failure_diagnostics should be preserved in the compacted payload"
+    );
+}
+
 #[test]
 fn maybe_inline_spooled_drops_terminal_exec_metadata_without_continuation() {
     let serialized = maybe_inline_spooled(

@@ -24,7 +24,7 @@ impl AgentRunner {
             tracing::warn!(?warning, "Loop detector warning");
         }
         if hard_limit {
-            session_state.warnings.push(warning.clone());
+            session_state.push_warning(warning.clone());
             session_state.conversation.push(Content {
                 role: ROLE_USER.to_owned(),
                 parts: vec![Part::Text { text: warning.clone(), thought_signature: None }],
@@ -33,7 +33,7 @@ impl AgentRunner {
             session_state.outcome = TaskOutcome::LoopDetected;
             true
         } else {
-            session_state.warnings.push(warning.clone());
+            session_state.push_warning(warning.clone());
             // Inject soft loop warnings into conversation so the LLM sees them
             // and can self-correct (re-plan, use alternatives, synthesize).
             session_state.conversation.push(Content {

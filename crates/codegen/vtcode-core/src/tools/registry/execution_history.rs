@@ -15,6 +15,8 @@ use crate::config::constants::{defaults, tools};
 use crate::tools::continuation::read_chunk_progress_from_result;
 use crate::tools::tool_intent;
 
+use super::execution_kernel::PATH_ALIAS_KEYS;
+
 /// Result of loop detection analysis.
 #[derive(Debug, Clone)]
 pub struct LoopDetectionResult {
@@ -287,7 +289,7 @@ enum ReplayMode {
 
 fn read_file_path_from_args(args: &Value) -> Option<&str> {
     let obj = args.as_object()?;
-    for key in ["path", "file_path", "filepath", "target_path", "file"] {
+    for key in PATH_ALIAS_KEYS {
         if let Some(path) = obj.get(key).and_then(|v| v.as_str()) {
             let trimmed = path.trim();
             if !trimmed.is_empty() {
@@ -791,7 +793,7 @@ impl ToolExecutionHistory {
     }
 
     fn extract_path_from_args(obj: &serde_json::Map<String, Value>) -> Option<String> {
-        for key in ["path", "file_path", "filepath", "target_path", "file"] {
+        for key in PATH_ALIAS_KEYS {
             if let Some(path) = obj.get(key).and_then(Value::as_str) {
                 let trimmed = path.trim();
                 if !trimmed.is_empty() {

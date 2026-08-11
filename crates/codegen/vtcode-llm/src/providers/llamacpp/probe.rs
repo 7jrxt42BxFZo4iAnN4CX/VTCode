@@ -41,7 +41,9 @@ pub async fn fetch_llamacpp_models(base_url: Option<String>) -> Result<Vec<Strin
         .send()
         .await
         .map_err(|e| {
-            tracing::warn!("Failed to connect to llama.cpp server: {e:?}");
+            // Connection refused is expected when llama.cpp isn't running —
+            // debug-level to keep startup quiet. Error is still propagated.
+            tracing::debug!("Failed to connect to llama.cpp server: {e:?}");
             anyhow::anyhow!(LLAMACPP_CONNECTION_ERROR)
         })?;
 

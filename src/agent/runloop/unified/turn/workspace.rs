@@ -47,7 +47,16 @@ pub(crate) async fn refresh_vt_config(
 ) -> Result<()> {
     let mut snapshot = load_workspace_config_snapshot(workspace).await?;
     apply_runtime_overrides(Some(&mut snapshot), runtime_cfg);
-    vtcode_core::llm::factory::register_custom_providers(&snapshot.custom_providers);
+    // Skip the remove+register cycle when custom providers haven't changed.
+    // This function is called on every turn and on live-reload; re-registering
+    // unchanged providers wastes factory lock + closure rebuild work and
+    // produces repeated "Registered custom provider" log noise.
+    let custom_providers_unchanged = vt_cfg
+        .as_ref()
+        .is_some_and(|old| old.custom_providers == snapshot.custom_providers);
+    if !custom_providers_unchanged {
+        vtcode_core::llm::factory::register_custom_providers(&snapshot.custom_providers);
+    }
     *vt_cfg = Some(snapshot);
     Ok(())
 }

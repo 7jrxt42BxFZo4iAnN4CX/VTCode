@@ -124,7 +124,10 @@ pub async fn fetch_ollama_models(base_url: Option<String>) -> Result<Vec<String>
         .send()
         .await
         .map_err(|e| {
-            tracing::warn!("Failed to connect to Ollama server: {e:?}");
+            // Connection refused is the expected state when Ollama isn't
+            // running — log at debug so startup stays quiet for users without
+            // local servers. The error is still propagated to the caller.
+            tracing::debug!("Failed to connect to Ollama server: {e:?}");
             anyhow::anyhow!(OLLAMA_CONNECTION_ERROR)
         })?;
 

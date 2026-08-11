@@ -179,7 +179,7 @@ pub fn check_for_response_loop(response_text: &str, session_state: &mut AgentSes
 
     if repeated {
         let warning = "Repetitive assistant response detected. Breaking potential loop.".to_string();
-        session_state.warnings.push(warning);
+        session_state.push_warning(warning);
         session_state.consecutive_idle_turns = session_state.consecutive_idle_turns.saturating_add(1);
         return true;
     }

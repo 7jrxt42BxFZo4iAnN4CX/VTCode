@@ -3,6 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 use vtcode_commons::preview::{condense_text_bytes, tail_preview_text};
 use vtcode_core::config::constants::tools as tool_names;
+use vtcode_core::core::agent::result_reducers::strip_tui_display_fields;
 use vtcode_core::llm::provider::{LLMRequest, Message as LlmMessage};
 use vtcode_core::llm::{
     LightweightFeature, collect_single_response, create_provider_for_model_route, resolve_lightweight_route,
@@ -184,6 +185,12 @@ pub(super) fn maybe_inline_spooled(tool_name: &str, output: &serde_json::Value) 
 /// reference, reads the spool file and embeds an inline `tail_preview` so the
 /// model has actual content to reason about. Prevents tight retry loops where
 /// the model sees an empty payload and assumes the command produced nothing.
+///
+/// When structured `failure_diagnostics` is already present (e.g. cargo test
+/// failures), the tail preview is skipped — the diagnostics already contain
+/// the panic message, source location, rerun hint, and next action, so the
+/// ~10 KB of raw test-runner output (mostly PASS lines) would be redundant
+/// token waste. The model can still read the spool file directly if needed.
 pub(super) async fn maybe_inline_spooled_with_preview(
     workspace_root: &Path,
     tool_name: &str,
@@ -197,10 +204,17 @@ pub(super) async fn maybe_inline_spooled_with_preview(
 
     apply_spool_reference_only(&mut compacted, output);
 
-    if let Some(spool_path) = output
-        .get("spool_path")
-        .and_then(serde_json::Value::as_str)
-        .filter(|path| !path.trim().is_empty())
+    // Skip the tail preview when structured failure diagnostics are already
+    // embedded in the payload. The diagnostics carry all actionable fields
+    // (panic, source_file, source_line, rerun_hint, next_action) and the raw
+    // tail would be mostly noise (thousands of PASS lines).
+    let has_failure_diagnostics = output.get("failure_diagnostics").is_some_and(|v| !v.is_null());
+
+    if !has_failure_diagnostics
+        && let Some(spool_path) = output
+            .get("spool_path")
+            .and_then(serde_json::Value::as_str)
+            .filter(|path| !path.trim().is_empty())
     {
         match validate_and_resolve_path(workspace_root, spool_path).await {
             Ok(resolved) => match tokio::fs::read(&resolved).await {
@@ -493,6 +507,14 @@ pub(super) async fn prepare_tool_response_content(
     args_val: &serde_json::Value,
     output: &serde_json::Value,
 ) -> String {
+    // Strip TUI-only display fields (e.g. task_tracker `view`) before any
+    // model-facing serialization. The TUI reads `view` from the original
+    // `output` via the pipeline-output path, not from this string, so
+    // removing it here is display-safe and avoids feeding redundant display
+    // data to the model on every tracker call.
+    let model_output = strip_tui_display_fields(tool_name, output);
+    let output = model_output.as_ref();
+
     // Skip LLM summarization when raw=true is requested
     if args_val.get("raw").and_then(serde_json::Value::as_bool).unwrap_or(false) {
         let workspace_root = ctx.tool_registry.workspace_root().clone();

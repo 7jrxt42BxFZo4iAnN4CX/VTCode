@@ -43,10 +43,10 @@ async fn record_circuit_transition(
     let Some(breaker) = ctx.tool_registry.shared_circuit_breaker() else {
         return;
     };
-    let after = breaker.get_diagnostics(tool_name);
-    if before.status != after.status || after.denied_requests > before.denied_requests {
-        ctx.error_recovery.write().await.record_circuit_transition(&before, &after);
-    }
+    ctx.error_recovery
+        .write()
+        .await
+        .record_circuit_transition_from_snapshot(&breaker, tool_name, &before);
 }
 
 impl ValidatedToolCall<'_> {

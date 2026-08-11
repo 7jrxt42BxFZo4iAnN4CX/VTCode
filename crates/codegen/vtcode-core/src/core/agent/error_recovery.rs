@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::time::Instant;
 
-use crate::tools::circuit_breaker::{CircuitState, ToolCircuitDiagnostics};
+use crate::tools::circuit_breaker::{CircuitBreaker, CircuitState, ToolCircuitDiagnostics};
 
 // Re-export from vtcode-config so call sites outside this module keep compiling.
 pub use vtcode_config::constants::execution::{DEFAULT_MAX_OPEN_CIRCUITS, DEFAULT_MAX_RECENT_ERRORS};
@@ -9,7 +9,7 @@ pub use vtcode_config::constants::execution::{DEFAULT_MAX_OPEN_CIRCUITS, DEFAULT
 #[derive(Debug, Clone)]
 pub struct ErrorRecoveryState {
     pub recent_errors: VecDeque<RecentError>,
-    pub circuit_events: Vec<CircuitEvent>,
+    pub circuit_events: VecDeque<CircuitEvent>,
     pub pause_threshold: usize,
     pub last_recovery_prompt: Option<Instant>,
     pub recovery_cooldown: std::time::Duration,
@@ -58,7 +58,7 @@ impl Default for ErrorRecoveryState {
     fn default() -> Self {
         Self {
             recent_errors: VecDeque::with_capacity(DEFAULT_MAX_RECENT_ERRORS),
-            circuit_events: Vec::new(),
+            circuit_events: VecDeque::with_capacity(DEFAULT_MAX_RECENT_ERRORS),
             pause_threshold: DEFAULT_MAX_OPEN_CIRCUITS,
             last_recovery_prompt: None,
             recovery_cooldown: std::time::Duration::from_secs(60),
@@ -74,7 +74,7 @@ impl ErrorRecoveryState {
     pub fn with_threshold(max_open_circuits: usize) -> Self {
         Self {
             recent_errors: VecDeque::with_capacity(DEFAULT_MAX_RECENT_ERRORS),
-            circuit_events: Vec::new(),
+            circuit_events: VecDeque::with_capacity(DEFAULT_MAX_RECENT_ERRORS),
             pause_threshold: max_open_circuits,
             last_recovery_prompt: None,
             recovery_cooldown: std::time::Duration::from_secs(60),
@@ -114,7 +114,7 @@ impl ErrorRecoveryState {
         failure_count: u32,
         backoff_duration: std::time::Duration,
     ) {
-        self.circuit_events.push(CircuitEvent {
+        self.circuit_events.push_back(CircuitEvent {
             tool_name: tool_name.to_string(),
             timestamp: Instant::now(),
             state: state.to_string(),
@@ -123,7 +123,7 @@ impl ErrorRecoveryState {
         });
 
         if self.circuit_events.len() > DEFAULT_MAX_RECENT_ERRORS {
-            self.circuit_events.remove(0);
+            self.circuit_events.pop_front();
         }
     }
 
@@ -148,12 +148,35 @@ impl ErrorRecoveryState {
         }
     }
 
+    /// Snapshot the current circuit-breaker state for `tool_name`, compare it
+    /// to `before`, and record any transition.
+    ///
+    /// This is the shared seam used by both the core `AgentRunner`
+    /// (`runner/tool_exec.rs`) and the unified binary runloop
+    /// (`handlers_batch.rs`) so the compare-and-record logic is not
+    /// duplicated across harness paths. Callers acquire their own lock on
+    /// `ErrorRecoveryState` (sync or async) and pass the breaker reference.
+    pub fn record_circuit_transition_from_snapshot(
+        &mut self,
+        breaker: &CircuitBreaker,
+        tool_name: &str,
+        before: &ToolCircuitDiagnostics,
+    ) {
+        let after = breaker.get_diagnostics(tool_name);
+        if before.status != after.status || after.denied_requests > before.denied_requests {
+            self.record_circuit_transition(before, &after);
+        }
+    }
+
     /// Builds a diagnostic summary from the current state, including whether
     /// the agent should pause for user guidance.
+    ///
+    /// `error_patterns` is left empty here; callers that need pattern analysis
+    /// should call [`Self::detect_error_patterns`] explicitly. This avoids
+    /// building a per-tool error histogram on every recovery diagnostics call
+    /// when no production path consumes it.
     pub fn get_diagnostics(&self, open_circuits: &[String], max_recent_errors: usize) -> RecoveryDiagnostics {
         let recent_errors: Vec<RecentError> = self.recent_errors.iter().take(max_recent_errors).cloned().collect();
-
-        let error_patterns = self.detect_error_patterns();
 
         let should_pause = open_circuits.len() >= self.pause_threshold;
         let pause_reason = if should_pause {
@@ -169,13 +192,18 @@ impl ErrorRecoveryState {
         RecoveryDiagnostics {
             open_circuits: open_circuits.to_vec(),
             recent_errors,
-            error_patterns,
+            error_patterns: Vec::new(),
             should_pause,
             pause_reason,
         }
     }
 
-    fn detect_error_patterns(&self) -> Vec<ErrorPattern> {
+    /// Group recent errors by tool and surface tools with repeated failures.
+    ///
+    /// Only tools with at least two recent errors are reported. The
+    /// `common_error` field is the first-seen message for that tool, not a
+    /// frequency-weighted "most common" message.
+    pub fn detect_error_patterns(&self) -> Vec<ErrorPattern> {
         let mut tool_errors: hashbrown::HashMap<String, (usize, String, hashbrown::HashSet<ErrorType>)> =
             hashbrown::HashMap::new();
 
@@ -307,10 +335,10 @@ mod tests {
 
         state.record_error("read_file", "File not found".to_string(), ErrorType::ResourceNotFound);
 
-        let diagnostics = state.get_diagnostics(&[], 10);
-        assert_eq!(diagnostics.error_patterns.len(), 1);
-        assert_eq!(diagnostics.error_patterns[0].tool_name, tools::GREP_FILE);
-        assert_eq!(diagnostics.error_patterns[0].error_count, 3);
+        let patterns = state.detect_error_patterns();
+        assert_eq!(patterns.len(), 1);
+        assert_eq!(patterns[0].tool_name, tools::GREP_FILE);
+        assert_eq!(patterns[0].error_count, 3);
     }
 
     #[test]

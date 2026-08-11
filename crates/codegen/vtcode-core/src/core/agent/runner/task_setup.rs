@@ -102,7 +102,7 @@ impl AgentRunner {
         let mut runtime = AgentRuntime::new(session_state, None, steering_receiver);
 
         if prompt_bundle.system_prompt_report.over_budget && self.config().agent.system_prompt_budget_warning {
-            runtime.state.warnings.push(format!(
+            runtime.state.push_warning(format!(
                 "Base system prompt is ~{} tokens (budget {}); later appendices (session context, runtime line, subagents roster) add more. Consider a leaner system prompt mode or enable agent.trim_system_prompt.",
                 prompt_bundle.system_prompt_report.token_estimate,
                 self.config().agent.max_system_prompt_tokens
@@ -114,7 +114,7 @@ impl AgentRunner {
                 error = %err,
                 "Tool registry initialization failed at task start"
             );
-            runtime.state.warnings.push(format!("Tool registry init failed: {err}"));
+            runtime.state.push_warning(format!("Tool registry init failed: {err}"));
         }
 
         let orchestration_enabled = self.harness_plan_build_evaluate_enabled(full_auto_active, review_like);

@@ -95,6 +95,16 @@ pub enum BackoffStrategy {
 }
 
 impl ErrorCategory {
+    /// Return the category as a `&'static str`, avoiding the temporary
+    /// `String` allocation that `to_string()` (via `Display`) would create.
+    /// Equivalent to `user_label()` but named to match the conventional
+    /// `as_str()` accessor used across the codebase.
+    #[inline]
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        self.user_label()
+    }
+
     /// Whether this error category is safe to retry.
     #[inline]
     #[must_use]

@@ -88,7 +88,7 @@ impl AgentRunner {
             println!("{} {} {}", agent_prefix, style("(WARN)").red().bold(), warning_message);
         }
         event_recorder.warning(&warning_message);
-        session_state.warnings.push(warning_message);
+        session_state.push_warning(warning_message);
     }
 
     pub(super) fn record_tool_failure(
@@ -114,7 +114,7 @@ impl AgentRunner {
         }
         failure_ctx.event_recorder.warning(&failure_text);
         // Move failure_text into warnings first, then reference for conversation
-        failure_ctx.session_state.warnings.push(failure_text.clone());
+        failure_ctx.session_state.push_warning(failure_text.clone());
 
         if let Some(call_id) = tool_response_id {
             failure_ctx.session_state.push_tool_error(

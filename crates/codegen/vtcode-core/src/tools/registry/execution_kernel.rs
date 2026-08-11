@@ -14,6 +14,15 @@ use super::ToolRegistry;
 const DESCRIPTION_FIELD: &str = "description";
 const DETAILS_ALIAS_FIELD: &str = "details";
 
+/// Path-field aliases accepted by file tools, in priority order.
+///
+/// `read_file`/`edit_file`/`unified_file` historically accept several path-key
+/// spellings. The required-arg check, the preflight path-safety check, and the
+/// execution-history path extraction must all agree on the same set (and order)
+/// so a value accepted as "present" by one stage is validated by the next.
+/// Shared across the `registry` module via `pub(super)`.
+pub(super) const PATH_ALIAS_KEYS: [&str; 5] = ["path", "file_path", "filepath", "target_path", "file"];
+
 /// The explicit set of model-hidden tools the harness path is allowed to
 /// dispatch when the public route lookup misses.
 ///
@@ -96,9 +105,7 @@ fn is_missing_apply_patch_payload(args: &Value) -> bool {
 
 fn is_missing_required_arg(tool_name: &str, args: &Value, key: &str) -> bool {
     if tool_name == tool_names::READ_FILE && key == "path" {
-        return ["path", "file_path", "filepath", "target_path", "file"]
-            .iter()
-            .all(|candidate| is_missing_arg_value(args, candidate));
+        return PATH_ALIAS_KEYS.iter().all(|candidate| is_missing_arg_value(args, candidate));
     }
     if tool_name == tool_names::EDIT_FILE {
         return match key {
@@ -111,6 +118,15 @@ fn is_missing_required_arg(tool_name: &str, args: &Value, key: &str) -> bool {
         return is_missing_apply_patch_payload(args);
     }
     is_missing_arg_value(args, key)
+}
+
+/// Format a missing-required-argument failure with the canonical wording.
+///
+/// Single source of truth for the preflight failure message so the
+/// tool-specific and command-session required-arg checks cannot drift in
+/// phrasing (both feed into the same joined `failures` list).
+fn missing_required_arg_failure(key: &str) -> String {
+    format!("Missing required argument: {key}")
 }
 
 #[cfg(test)]
@@ -155,6 +171,15 @@ fn normalize_schema_aliases_in_place(value: &mut Value, schema: &Value) -> bool 
         changed |= normalize_description_alias(object, properties);
         for (property_name, property_schema) in properties {
             if let Some(property_value) = object.get_mut(property_name) {
+                // Coerce string-encoded JSON into the schema-declared type before
+                // recursing, so nested alias/type normalization sees the real value.
+                // The output-budget field is skipped: it has a dedicated strict
+                // validator (`output_limits::max_output_tokens`) that deliberately
+                // rejects string/float values, and bypassing it would weaken that
+                // guardrail.
+                if property_name != vtcode_utility_tool_specs::MAX_OUTPUT_TOKENS_FIELD {
+                    changed |= coerce_string_to_schema_type_in_place(property_value, property_schema);
+                }
                 changed |= normalize_schema_aliases_in_place(property_value, property_schema);
             }
         }
@@ -164,6 +189,7 @@ fn normalize_schema_aliases_in_place(value: &mut Value, schema: &Value) -> bool 
         && let Some(items_schema) = schema_object.get("items")
     {
         for item in items {
+            changed |= coerce_string_to_schema_type_in_place(item, items_schema);
             changed |= normalize_schema_aliases_in_place(item, items_schema);
         }
     }
@@ -182,6 +208,56 @@ fn normalize_schema_aliases_in_place(value: &mut Value, schema: &Value) -> bool 
     }
 
     changed
+}
+
+/// Strict, schema-aware compatibility coercion of a string-encoded JSON value.
+///
+/// Some models occasionally emit a JSON-encoded *string* where the schema
+/// expects a structured or primitive value — e.g. `"[\"path\"]"` for an array
+/// field, or `"10"` for an integer field. Left unhandled the agent retries the
+/// same malformed call for many turns (six preflight failures were observed in
+/// a single checkpoint turn), wasting tool budget and context.
+///
+/// When `value` is a string and `schema` declares a single non-string `type`,
+/// this rewrites it in place to the parsed JSON value, but **only** when the
+/// parse is unambiguous and the parsed top-level type exactly matches the
+/// schema. It deliberately does not:
+/// - coerce free-form string fields (schema `type` is `string`, an array of
+///   types, or absent),
+/// - reinterpret malformed/non-JSON strings (they stay strings and fail strict
+///   validation with an actionable message),
+/// - coerce floats into integers (`"10.0"` for an integer field stays a string),
+/// - relax enum/bounds checks — strict `jsonschema` validation still runs after.
+fn coerce_string_to_schema_type_in_place(value: &mut Value, schema: &Value) -> bool {
+    let Some(raw) = value.as_str() else {
+        return false;
+    };
+    let Some(schema_type) = schema.get("type").and_then(Value::as_str) else {
+        return false;
+    };
+    let Some(coerced) = parse_string_as_schema_type(raw, schema_type) else {
+        return false;
+    };
+    *value = coerced;
+    true
+}
+
+/// Parse a JSON-encoded string into the schema-declared primitive/container type.
+///
+/// Returns `Some` only when `serde_json` accepts the string and the resulting
+/// top-level JSON type exactly matches `schema_type`. Anything else returns
+/// `None` so the caller leaves the value untouched and lets strict validation
+/// produce the error.
+fn parse_string_as_schema_type(raw: &str, schema_type: &str) -> Option<Value> {
+    let parsed = serde_json::from_str::<Value>(raw).ok()?;
+    match schema_type {
+        "array" => parsed.is_array().then_some(parsed),
+        "object" => parsed.is_object().then_some(parsed),
+        "integer" => parsed.as_i64().map(Value::from).or_else(|| parsed.as_u64().map(Value::from)),
+        "number" => parsed.is_number().then_some(parsed),
+        "boolean" => parsed.as_bool().map(Value::Bool),
+        _ => None,
+    }
 }
 
 fn normalize_details_aliases(args: &Value, parameter_schema: Option<&Value>) -> Option<Value> {
@@ -209,6 +285,26 @@ fn file_operation_action_for_limit(normalized_tool_name: &str, args: &Value) -> 
     None
 }
 
+/// Shared prefix for action-alias remappers: return the args object only when it
+/// is a JSON object that does not already declare an `action`. A caller that
+/// needs to reject non-matching tool names does that check before calling.
+fn args_object_without_action(args: &Value) -> Option<&Map<String, Value>> {
+    let obj = args.as_object()?;
+    if obj.contains_key("action") {
+        return None;
+    }
+    Some(obj)
+}
+
+/// Clone an args object and inject the resolved `action` field, producing the
+/// remapped payload. Single source for the clone-insert-wrap so the two
+/// action-alias remappers cannot drift in how the action is attached.
+fn with_action_inserted(obj: &Map<String, Value>, action: &str) -> Value {
+    let mut mapped = obj.clone();
+    mapped.insert("action".to_string(), Value::String(action.to_string()));
+    Value::Object(mapped)
+}
+
 pub(super) fn remap_public_file_operation_alias_args(
     requested_name: &str,
     normalized_tool_name: &str,
@@ -218,10 +314,7 @@ pub(super) fn remap_public_file_operation_alias_args(
         return None;
     }
 
-    let obj = args.as_object()?;
-    if obj.contains_key("action") {
-        return None;
-    }
+    let obj = args_object_without_action(args)?;
 
     let action = super::assembly::public_tool_name_candidates(requested_name)
         .into_iter()
@@ -236,9 +329,7 @@ pub(super) fn remap_public_file_operation_alias_args(
             _ => None,
         })?;
 
-    let mut mapped = obj.clone();
-    mapped.insert("action".to_string(), Value::String(action.to_string()));
-    Some(Value::Object(mapped))
+    Some(with_action_inserted(obj, action))
 }
 
 pub(super) fn remap_consolidated_action_alias_args(
@@ -246,10 +337,7 @@ pub(super) fn remap_consolidated_action_alias_args(
     normalized_tool_name: &str,
     args: &Value,
 ) -> Option<Value> {
-    let obj = args.as_object()?;
-    if obj.contains_key("action") {
-        return None;
-    }
+    let obj = args_object_without_action(args)?;
 
     let action = super::assembly::public_tool_name_candidates(requested_name)
         .into_iter()
@@ -271,9 +359,7 @@ pub(super) fn remap_consolidated_action_alias_args(
             _ => None,
         })?;
 
-    let mut mapped = obj.clone();
-    mapped.insert("action".to_string(), Value::String(action.to_string()));
-    Some(Value::Object(mapped))
+    Some(with_action_inserted(obj, action))
 }
 
 fn enforce_file_operation_payload_limit(
@@ -458,6 +544,11 @@ pub(super) fn preflight_validate_resolved_call(
         .and_then(|registration| registration.parameter_schema().cloned());
     let mut validation_args = normalize_tool_args(normalized_tool_name, args, parameter_schema.as_ref())?;
     let mut effective_args = None;
+    // Schema for the tool we ultimately validate against. Defaults to the
+    // originally-resolved tool's schema; each remap branch overwrites it with
+    // the exec schema it already fetches, so we never re-look-up the same
+    // registration (the previous form fetched the same schema up to 3x).
+    let mut effective_parameter_schema = parameter_schema;
 
     crate::tools::output_limits::max_output_tokens(validation_args.as_ref())
         .map_err(|error| anyhow!("Invalid arguments for tool '{routed_tool_name}': {error}"))?;
@@ -466,18 +557,23 @@ pub(super) fn preflight_validate_resolved_call(
         validation_tool_name = tool_names::UNIFIED_EXEC.to_string();
         validation_args = std::borrow::Cow::Owned(exec_args);
         effective_args = Some(validation_args.as_ref().clone());
+        effective_parameter_schema = registry
+            .inventory
+            .registration_for(&validation_tool_name)
+            .and_then(|registration| registration.parameter_schema().cloned());
     } else if normalized_tool_name == tool_names::UNIFIED_FILE
         && let Some(remapped_args) =
             crate::tools::tool_intent::remap_file_operation_command_args_to_command_session(validation_args.as_ref())
     {
         routed_tool_name = tool_names::UNIFIED_EXEC.to_string();
         validation_tool_name = tool_names::UNIFIED_EXEC.to_string();
-        let exec_schema = registry
+        effective_parameter_schema = registry
             .inventory
             .registration_for(&validation_tool_name)
             .and_then(|registration| registration.parameter_schema().cloned());
         validation_args = std::borrow::Cow::Owned(
-            normalize_tool_args(&validation_tool_name, &remapped_args, exec_schema.as_ref())?.into_owned(),
+            normalize_tool_args(&validation_tool_name, &remapped_args, effective_parameter_schema.as_ref())?
+                .into_owned(),
         );
         effective_args = Some(validation_args.as_ref().clone());
     }
@@ -486,25 +582,20 @@ pub(super) fn preflight_validate_resolved_call(
     let mut failures = Vec::with_capacity(required.len());
     for key in required {
         if is_missing_required_arg(&validation_tool_name, validation_args.as_ref(), key) {
-            failures.push(format!("Missing required argument: {key}"));
+            failures.push(missing_required_arg_failure(key));
         }
     }
     if validation_tool_name == tool_names::UNIFIED_EXEC {
         failures.extend(
             crate::tools::command_args::command_session_missing_required_args(validation_args.as_ref())
                 .into_iter()
-                .map(|key| format!("Missing required argument: {key}")),
+                .map(missing_required_arg_failure),
         );
     }
 
-    if let Some(path) = validation_args
-        .as_ref()
-        .get("path")
-        .and_then(|v| v.as_str())
-        .or_else(|| validation_args.as_ref().get("file_path").and_then(|v| v.as_str()))
-        .or_else(|| validation_args.as_ref().get("filepath").and_then(|v| v.as_str()))
-        .or_else(|| validation_args.as_ref().get("target_path").and_then(|v| v.as_str()))
-        .or_else(|| validation_args.as_ref().get("file").and_then(|v| v.as_str()))
+    if let Some(path) = PATH_ALIAS_KEYS
+        .iter()
+        .find_map(|key| validation_args.as_ref().get(*key).and_then(Value::as_str))
         && let Err(err) = paths::validate_path_safety(path)
     {
         failures.push(format!("Path security check failed: {err}"));
@@ -541,10 +632,6 @@ pub(super) fn preflight_validate_resolved_call(
             "Invalid arguments for tool '{routed_tool_name}': missing action; provide `action` or inferable exec arguments"
         ));
     }
-    let effective_parameter_schema = registry
-        .inventory
-        .registration_for(&validation_tool_name)
-        .and_then(|registration| registration.parameter_schema().cloned());
     let schema_validation_args = crate::tools::output_limits::args_without_output_metadata(validation_args.as_ref());
     if let Some(schema) = effective_parameter_schema.as_ref() {
         let error_msg = match jsonschema::validator_for(schema) {
@@ -591,8 +678,9 @@ pub(super) fn preflight_validate_resolved_call(
 mod tests {
     use super::super::assembly::public_tool_name_candidates;
     use super::{
-        ToolRegistry, configured_file_operation_max_payload_bytes, enforce_file_operation_payload_limit,
-        is_missing_required_arg, normalize_tool_args, parse_file_operation_max_payload_bytes, preflight_validate_call,
+        ToolRegistry, coerce_string_to_schema_type_in_place, configured_file_operation_max_payload_bytes,
+        enforce_file_operation_payload_limit, is_missing_required_arg, normalize_tool_args,
+        parse_file_operation_max_payload_bytes, parse_string_as_schema_type, preflight_validate_call,
         preflight_validate_resolved_call,
     };
     use crate::config::constants::tools as tool_names;
@@ -642,6 +730,136 @@ mod tests {
             &json!({"query": "ToolRegistry", "max_output_tokens": "37"}),
         )
         .expect_err("string output limits must be rejected");
+        assert!(error.to_string().contains("max_output_tokens must be an integer"));
+    }
+
+    // --- schema-aware string-type coercion -------------------------------------
+    //
+    // Regression coverage for the checkpoint-observed defect where the model
+    // emitted JSON-encoded strings (`"[\"path\"]"`, `"10"`) for array/integer
+    // fields and retried the same malformed call six times in one turn.
+
+    #[test]
+    fn parse_string_as_schema_type_coerces_array_and_integer() {
+        assert_eq!(parse_string_as_schema_type(r#"["path"]"#, "array"), Some(json!(["path"])));
+        assert_eq!(parse_string_as_schema_type("10", "integer"), Some(json!(10)));
+    }
+
+    #[test]
+    fn parse_string_as_schema_type_coerces_boolean_object_and_number() {
+        assert_eq!(parse_string_as_schema_type("true", "boolean"), Some(json!(true)));
+        assert_eq!(parse_string_as_schema_type("false", "boolean"), Some(json!(false)));
+        assert_eq!(parse_string_as_schema_type(r#"{"a": 1}"#, "object"), Some(json!({"a": 1})));
+        assert_eq!(parse_string_as_schema_type("3.5", "number"), Some(json!(3.5)));
+        // An integer literal is also a valid JSON number.
+        assert_eq!(parse_string_as_schema_type("3", "number"), Some(json!(3)));
+    }
+
+    #[test]
+    fn parse_string_as_schema_type_rejects_float_for_integer() {
+        // "10.0" must not be silently coerced to an integer: that would be a
+        // lossy reinterpretation. Let strict validation surface the type error.
+        assert_eq!(parse_string_as_schema_type("10.0", "integer"), None);
+    }
+
+    #[test]
+    fn parse_string_as_schema_type_rejects_mismatched_and_malformed() {
+        // Parsed type does not match schema type.
+        assert_eq!(parse_string_as_schema_type(r#"{"a": 1}"#, "array"), None);
+        assert_eq!(parse_string_as_schema_type(r#"["path"]"#, "object"), None);
+        assert_eq!(parse_string_as_schema_type("10", "boolean"), None);
+        // Malformed JSON stays a string and is left for strict validation.
+        assert_eq!(parse_string_as_schema_type("not json", "array"), None);
+        assert_eq!(parse_string_as_schema_type("[\"path\"", "array"), None);
+        // Unknown schema type is never coerced.
+        assert_eq!(parse_string_as_schema_type("anything", "string"), None);
+    }
+
+    #[test]
+    fn coerce_string_to_schema_type_in_place_only_touches_strings() {
+        let mut already_array = json!(["path"]);
+        let schema = json!({"type": "array"});
+        assert!(!coerce_string_to_schema_type_in_place(&mut already_array, &schema));
+        assert_eq!(already_array, json!(["path"]));
+
+        let mut no_type = json!("keep me");
+        let schema = json!({}); // no declared type → free-form string
+        assert!(!coerce_string_to_schema_type_in_place(&mut no_type, &schema));
+        assert_eq!(no_type, json!("keep me"));
+    }
+
+    #[test]
+    fn normalize_tool_args_coerces_code_search_stringified_args() {
+        // Mirrors the exact checkpoint defect: result_types and max_results
+        // arrive as JSON-encoded strings.
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "result_types": {"type": "array", "items": {"type": "string", "enum": ["definition", "usage", "text", "path"]}},
+                "max_results": {"type": "integer", "minimum": 1, "maximum": 100}
+            }
+        });
+        let args = json!({
+            "query": "turn_loop",
+            "result_types": "[\"path\"]",
+            "max_results": "10"
+        });
+        let normalized = normalize_tool_args(tool_names::CODE_SEARCH, &args, Some(&schema))
+            .expect("code_search stringified args normalize");
+        assert_eq!(normalized["result_types"], json!(["path"]));
+        assert_eq!(normalized["max_results"], json!(10));
+        assert_eq!(normalized["query"], json!("turn_loop"));
+    }
+
+    #[tokio::test]
+    async fn preflight_coerces_stringified_code_search_args_then_validates() {
+        let (_temp, registry) = new_test_registry().await;
+        // The exact malformed shape from the checkpoint should now pass preflight.
+        let outcome = preflight_validate_call(
+            &registry,
+            tool_names::CODE_SEARCH,
+            &json!({"query": "turn_loop", "result_types": "[\"path\"]", "max_results": "10"}),
+        )
+        .expect("stringified args should be coerced and pass preflight");
+        assert_eq!(outcome.effective_args["result_types"], json!(["path"]));
+        assert_eq!(outcome.effective_args["max_results"], json!(10));
+    }
+
+    #[tokio::test]
+    async fn preflight_coercion_still_enforces_bounds_and_enum() {
+        let (_temp, registry) = new_test_registry().await;
+        // Coerced to integer 999, then the max=100 bound must still reject it.
+        let over_max = preflight_validate_call(
+            &registry,
+            tool_names::CODE_SEARCH,
+            &json!({"query": "turn_loop", "max_results": "999"}),
+        )
+        .expect_err("coerced integer must still be bounds-checked");
+        assert!(over_max.to_string().contains("max_results"), "msg: {over_max}");
+
+        // Coerced to array ["bogus"], then the item enum must still reject it.
+        let bad_enum = preflight_validate_call(
+            &registry,
+            tool_names::CODE_SEARCH,
+            &json!({"query": "turn_loop", "result_types": "[\"bogus\"]"}),
+        )
+        .expect_err("coerced array items must still be enum-checked");
+        assert!(bad_enum.to_string().contains("result_types"), "msg: {bad_enum}");
+    }
+
+    #[tokio::test]
+    async fn preflight_does_not_coerce_max_output_tokens_string() {
+        // The output-budget field has a dedicated strict validator that must keep
+        // rejecting strings even though schema-aware coercion exists for other
+        // integer fields.
+        let (_temp, registry) = new_test_registry().await;
+        let error = preflight_validate_call(
+            &registry,
+            tool_names::CODE_SEARCH,
+            &json!({"query": "x", "max_output_tokens": "100"}),
+        )
+        .expect_err("max_output_tokens string must remain rejected");
         assert!(error.to_string().contains("max_output_tokens must be an integer"));
     }
     #[test]

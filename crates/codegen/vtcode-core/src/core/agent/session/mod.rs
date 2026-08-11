@@ -1,9 +1,5 @@
 //! Centralized agent session state management.
 
-pub mod loop_detection;
-pub mod tracking_state;
-pub mod turn_metrics;
-
 use crate::core::agent::error_recovery::ErrorRecoveryState;
 use crate::core::agent::task::{TaskOutcome, TaskResults};
 use crate::core::pending_actions::PendingActions;
@@ -572,7 +568,12 @@ impl AgentSessionState {
     /// Push a successful tool result to both conversation (for Gemini) and messages.
     pub fn push_tool_result(&mut self, call_id: String, tool_name: &str, result: &serde_json::Value, is_gemini: bool) {
         self.push_tool_event(call_id, tool_name, result, is_gemini);
-        self.executed_commands.push(tool_name.to_owned());
+        // Deduplicate tool names — a long session may call the same tool
+        // hundreds of times, and the results report only needs unique entries.
+        let tool_name_owned = tool_name.to_owned();
+        if !self.executed_commands.contains(&tool_name_owned) {
+            self.executed_commands.push(tool_name_owned);
+        }
     }
 
     /// Push a tool error to both conversation (for Gemini) and messages.
@@ -585,7 +586,35 @@ impl AgentSessionState {
     ) {
         self.push_tool_event(call_id, tool_name, error_payload, is_gemini);
     }
+
+    /// Record a session warning, skipping exact duplicates.
+    ///
+    /// In long-running sessions, the same warning can fire repeatedly (e.g.
+    /// "Tool was rate limited; halting further tool calls this turn." on every
+    /// rate-limited call). Deduplicating keeps the `TaskResults.warnings` Vec
+    /// bounded and the evaluator prompt clean. The Vec is also capped at
+    /// `MAX_SESSION_WARNINGS` as a safety net against unbounded growth from
+    /// unique-but-repetitive warnings. When the cap is reached a single
+    /// elision marker is appended so consumers know warnings were truncated
+    /// rather than silently losing data.
+    pub fn push_warning(&mut self, warning: impl Into<String>) {
+        let warning = warning.into();
+        if self.warnings.contains(&warning) {
+            return;
+        }
+        if self.warnings.len() < MAX_SESSION_WARNINGS {
+            self.warnings.push(warning);
+        } else if self.warnings.last().is_none_or(|w| w != WARNINGS_ELIDED_MARKER) {
+            self.warnings.push(WARNINGS_ELIDED_MARKER.to_string());
+        }
+    }
 }
+
+/// Maximum number of warnings retained in session state. Exact duplicates are
+/// always skipped; this cap limits unique-but-repetitive warnings. One extra
+/// elision marker may be appended beyond this count.
+const MAX_SESSION_WARNINGS: usize = 200;
+const WARNINGS_ELIDED_MARKER: &str = "[Additional unique warnings elided — session warning cap reached]";
 
 #[cfg(test)]
 mod tests {
@@ -783,5 +812,53 @@ mod tests {
         assert!(state.progress_hashes.is_empty());
         assert_eq!(state.stagnant_turns, 0);
         assert!(state.previous_response_chains.is_empty());
+    }
+
+    #[test]
+    fn push_warning_skips_exact_duplicates() {
+        let mut state = AgentSessionState::new("session".to_string(), 4, 4, 16_000);
+        state.push_warning("rate limited");
+        state.push_warning("rate limited");
+        state.push_warning("rate limited");
+        assert_eq!(state.warnings.len(), 1);
+        assert_eq!(state.warnings[0], "rate limited");
+    }
+
+    #[test]
+    fn push_warning_retains_distinct_warnings() {
+        let mut state = AgentSessionState::new("session".to_string(), 4, 4, 16_000);
+        state.push_warning("first warning");
+        state.push_warning("second warning");
+        state.push_warning("third warning");
+        assert_eq!(state.warnings.len(), 3);
+        assert_eq!(state.warnings[0], "first warning");
+        assert_eq!(state.warnings[1], "second warning");
+        assert_eq!(state.warnings[2], "third warning");
+    }
+
+    #[test]
+    fn push_warning_inserts_elision_marker_at_cap() {
+        let mut state = AgentSessionState::new("session".to_string(), 4, 4, 16_000);
+        // Fill up to the cap with unique warnings.
+        for i in 0..super::MAX_SESSION_WARNINGS {
+            state.push_warning(format!("warning {i}"));
+        }
+        assert_eq!(state.warnings.len(), super::MAX_SESSION_WARNINGS);
+        assert!(!state.warnings.iter().any(|w| w == super::WARNINGS_ELIDED_MARKER));
+
+        // Next unique warning triggers the marker exactly once.
+        state.push_warning("overflow A");
+        assert_eq!(state.warnings.len(), super::MAX_SESSION_WARNINGS + 1);
+        assert_eq!(state.warnings.last().unwrap(), super::WARNINGS_ELIDED_MARKER);
+
+        // Further unique warnings are silently dropped — marker stays as the
+        // last entry and the count does not grow.
+        state.push_warning("overflow B");
+        state.push_warning("overflow C");
+        assert_eq!(state.warnings.len(), super::MAX_SESSION_WARNINGS + 1);
+        assert_eq!(state.warnings.last().unwrap(), super::WARNINGS_ELIDED_MARKER);
+        // The overflow warnings themselves were not stored.
+        assert!(!state.warnings.iter().any(|w| w == "overflow A"));
+        assert!(!state.warnings.iter().any(|w| w == "overflow B"));
     }
 }

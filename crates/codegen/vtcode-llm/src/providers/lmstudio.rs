@@ -83,7 +83,9 @@ pub async fn fetch_lmstudio_models(base_url: Option<String>) -> Result<Vec<Strin
         .send()
         .await
         .map_err(|e| {
-            tracing::warn!("Failed to connect to LM Studio server: {e:?}");
+            // Connection refused is expected when LM Studio isn't running —
+            // debug-level to keep startup quiet. Error is still propagated.
+            tracing::debug!("Failed to connect to LM Studio server: {e:?}");
             anyhow::anyhow!(LMSTUDIO_CONNECTION_ERROR)
         })?;
 

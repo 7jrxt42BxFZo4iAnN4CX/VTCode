@@ -215,7 +215,7 @@ impl CustomProviderCommandAuthConfig {
 /// proxies) with distinct display names, so they can toggle between them
 /// and clearly see which endpoint is active.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CustomProviderConfig {
     /// Stable provider key used for routing and persistence (e.g., "mycorp").
     /// Must be lowercase alphanumeric with optional hyphens/underscores.

@@ -604,7 +604,7 @@ impl AgentRunner {
                                     input cost."
                         .to_string();
                     tracing::warn!("{message}");
-                    runtime.state.warnings.push(message);
+                    runtime.state.push_warning(message);
                 }
 
                 let temperature = if reasoning_effort.is_some()
@@ -693,7 +693,7 @@ impl AgentRunner {
                             "~{gap} since the last request; the provider prompt cache has likely expired, so this request may re-pay full input cost."
                         );
                         tracing::warn!("{message}");
-                        runtime.state.warnings.push(message);
+                        runtime.state.push_warning(message);
                     }
                 }
                 runtime.state.note_request_sent();
@@ -757,7 +757,7 @@ impl AgentRunner {
                                     max_budget_usd = max,
                                     "Session cost approaching budget limit"
                                 );
-                                runtime.state.warnings.push(format!(
+                                runtime.state.push_warning(format!(
                                     "Session cost ${:.4} has reached {:.0}% of the ${max:.2} budget. {}",
                                     estimate.raw_usd,
                                     threshold * 100.0,
@@ -779,7 +779,7 @@ impl AgentRunner {
                                 model = %turn_model,
                                 "Budget enforcement disabled because pricing metadata is unavailable"
                             );
-                            runtime.state.warnings.push(warning_message);
+                            runtime.state.push_warning(warning_message);
                         }
                     }
                 }
