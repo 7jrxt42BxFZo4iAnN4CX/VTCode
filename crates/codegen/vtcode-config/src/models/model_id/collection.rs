@@ -50,6 +50,10 @@ impl ModelId {
             // DeepSeek models
             ModelId::DeepSeekV4Pro,
             ModelId::DeepSeekV4Flash,
+            // Official Meta AI models (kept before marketplace entries)
+            ModelId::MetaMuseSpark12,
+            ModelId::MetaMuseSpark12Contributor,
+            ModelId::MetaMuseSpark11,
             // NVIDIA NIM models
             ModelId::NvidiaNemotron3Ultra550bA55b,
             ModelId::NvidiaNemotron3Super120bA12b,

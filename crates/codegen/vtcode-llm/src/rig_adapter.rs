@@ -88,6 +88,14 @@ impl RigProviderCapabilities {
                     Some(json!({"thinking": {"type": "enabled"}, "reasoning_effort": "max"}))
                 }
             },
+            Provider::Meta => match effort {
+                ReasoningEffortLevel::None | ReasoningEffortLevel::Unknown => None,
+                ReasoningEffortLevel::Minimal => Some(json!({ "reasoning_effort": "minimal" })),
+                ReasoningEffortLevel::Low => Some(json!({ "reasoning_effort": "low" })),
+                ReasoningEffortLevel::Medium => Some(json!({ "reasoning_effort": "medium" })),
+                ReasoningEffortLevel::High => Some(json!({ "reasoning_effort": "high" })),
+                ReasoningEffortLevel::XHigh | ReasoningEffortLevel::Max => Some(json!({ "reasoning_effort": "xhigh" })),
+            },
             Provider::Minimax => None,
             Provider::Ollama => None,
             Provider::LlamaCpp => None,

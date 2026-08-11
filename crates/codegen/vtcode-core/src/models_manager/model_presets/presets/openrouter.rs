@@ -6,6 +6,72 @@ use crate::config::types::ReasoningEffortLevel;
 pub(crate) fn openrouter_presets() -> Vec<ModelPreset> {
     vec![
         ModelPreset {
+            id: "openrouter/meta/muse-glimmer-30b".to_string(),
+            model: "meta/muse-glimmer-30b".to_string(),
+            display_name: "Muse Glimmer 30B (OpenRouter)".to_string(),
+            description: "Meta Muse Glimmer 30B reasoning model served through OpenRouter".to_string(),
+            provider: Provider::OpenRouter,
+            default_reasoning_effort: ReasoningEffortLevel::Medium,
+            supported_reasoning_efforts: vec![
+                ReasoningEffortPreset {
+                    effort: ReasoningEffortLevel::Low,
+                    description: "Fast".to_string(),
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffortLevel::Medium,
+                    description: "Balanced".to_string(),
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffortLevel::High,
+                    description: "Deep".to_string(),
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffortLevel::XHigh,
+                    description: "Maximum".to_string(),
+                },
+            ],
+            is_default: false,
+            upgrade: None,
+            show_in_picker: true,
+            supported_in_api: true,
+            context_window: Some(131_072),
+        },
+        ModelPreset {
+            id: "openrouter/meta/muse-spark-1.2".to_string(),
+            model: "meta/muse-spark-1.2".to_string(),
+            display_name: "Muse Spark 1.2 (OpenRouter)".to_string(),
+            description: "Meta Muse Spark 1.2 reasoning model served through OpenRouter".to_string(),
+            provider: Provider::OpenRouter,
+            default_reasoning_effort: ReasoningEffortLevel::Medium,
+            supported_reasoning_efforts: vec![
+                ReasoningEffortPreset {
+                    effort: ReasoningEffortLevel::Minimal,
+                    description: "Minimal".to_string(),
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffortLevel::Low,
+                    description: "Fast".to_string(),
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffortLevel::Medium,
+                    description: "Balanced".to_string(),
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffortLevel::High,
+                    description: "Deep".to_string(),
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffortLevel::XHigh,
+                    description: "Maximum".to_string(),
+                },
+            ],
+            is_default: false,
+            upgrade: None,
+            show_in_picker: true,
+            supported_in_api: true,
+            context_window: Some(1_048_576),
+        },
+        ModelPreset {
             id: "openrouter/deepseek/deepseek-chat".to_string(),
             model: "deepseek/deepseek-chat".to_string(),
             display_name: "DeepSeek V3.2 (OpenRouter)".to_string(),

@@ -23,7 +23,7 @@
 
 [meta]
 version      = "1.1.0"
-last_updated = "2026-06-27"
+last_updated = "2026-08-11"
 maintainer   = "vinhnx"
 repo         = "github.com/vinhnx/VTCode"
 description  = "Curated egress allowlist for VT Code agent sandboxing"
@@ -92,6 +92,12 @@ domain   = "api.deepseek.com"
 protocol = "https"
 # ACTION REQUIRED: migrate model strings before late-Jul 2026
 notes    = "DeepSeek V3, R1"
+
+[[ai_providers.cloud]]
+name     = "Meta AI"
+domain   = "api.meta.ai"
+protocol = "https"
+notes    = "Official Meta AI Muse models"
 
 [[ai_providers.cloud]]
 name     = "xAI (Grok)"

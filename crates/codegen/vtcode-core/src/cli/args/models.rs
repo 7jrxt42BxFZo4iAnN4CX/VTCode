@@ -6,7 +6,7 @@ pub enum ModelCommands {
     /// List all providers and models with status indicators
     List,
 
-    /// Set default provider (gemini, openai, anthropic, deepseek)
+    /// Set default provider (gemini, openai, anthropic, deepseek, meta, openrouter)
     #[command(name = "set-provider")]
     SetProvider {
         /// Provider name to set as default

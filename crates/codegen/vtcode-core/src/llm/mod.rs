@@ -1,7 +1,7 @@
 //! # LLM Integration Layer
 //!
 //! This module provides a unified, modular interface for integrating multiple LLM providers
-//! with VT Code, supporting Gemini, OpenAI, Anthropic, xAI, and DeepSeek.
+//! with VT Code, supporting Gemini, OpenAI, Anthropic, Meta AI, xAI, and DeepSeek.
 //!
 //! ## Architecture Overview
 //!
@@ -22,6 +22,7 @@
 //! | Anthropic | ✓ | claude-4.1-opus, claude-4-sonnet |
 //! | xAI | ✓ | grok-2-latest, grok-2-mini |
 //! | DeepSeek | ✓ | deepseek-chat, deepseek-reasoner |
+//! | Meta AI | ✓ | muse-spark-1.1, muse-spark-1.2 |
 //! | Z.AI | ✓ | glm-5 |
 //! | Ollama | ✓ | gpt-oss:20b (local) |
 //!
@@ -223,7 +224,7 @@ pub use lightweight_routing::{
 pub use model_resolver::{DynamicModelMeta, DynamicModelRef, ModelAvailability, ModelResolver, ResolvedModel};
 pub use provider::{FinishReason, LLMStream, LLMStreamEvent, Usage};
 pub use providers::{
-    AnthropicProvider, GeminiProvider, HuggingFaceProvider, OllamaProvider, OpenAIProvider, ZAIProvider,
+    AnthropicProvider, GeminiProvider, HuggingFaceProvider, MetaProvider, OllamaProvider, OpenAIProvider, ZAIProvider,
 };
 pub use single_response::collect_single_response;
 pub use tool_bridge::{

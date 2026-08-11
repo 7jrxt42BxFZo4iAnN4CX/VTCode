@@ -17,7 +17,7 @@
 //! ## Highlights
 //!
 //! - **Multi-provider agent**: integrations for OpenAI, Anthropic,
-//!   DeepSeek, Gemini, OpenRouter, and Ollama (local) with automatic failover and spend guards.
+//!   DeepSeek, Meta AI, Gemini, OpenRouter, and Ollama (local) with automatic failover and spend guards.
 //! - **Semantic code understanding**: LLM-native code analysis and navigation (Rust, Python,
 //!   JavaScript, TypeScript, Go, Java, and more) without the need for local grammar libraries.
 //! - **Bash shell safety**: tree-sitter-bash integration for critical command validation

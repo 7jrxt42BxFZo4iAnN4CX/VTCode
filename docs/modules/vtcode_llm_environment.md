@@ -21,6 +21,7 @@ the secret values.
 | `openai`     | `OPENAI_API_KEY`     | –                | Required for GPT models served by OpenAI.                                                                         |
 | `anthropic`  | `ANTHROPIC_API_KEY`  | –                | Required for Claude models.                                                                                       |
 | `deepseek`   | `DEEPSEEK_API_KEY`   | –                | Required for DeepSeek models.                                                                                     |
+| `meta`       | `META_API_KEY`       | `MODEL_API_KEY`   | Required for official Meta AI Muse models; both variable names are accepted.                                      |
 | `openrouter` | `OPENROUTER_API_KEY` | –                | Required for OpenRouter routing.                                                                                  |
 | `zai`        | `ZAI_API_KEY`        | –                | Required for Zhipu AI (Z.AI) models.                                                                              |
 | `moonshot`   | `MOONSHOT_API_KEY`   | –                | Required for Moonshot AI models.                                                                                  |

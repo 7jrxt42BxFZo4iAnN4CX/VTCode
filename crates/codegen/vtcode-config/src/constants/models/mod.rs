@@ -6,6 +6,7 @@ pub mod google;
 pub mod huggingface;
 pub mod llamacpp;
 pub mod lmstudio;
+pub mod meta;
 pub mod mimo;
 pub mod minimax;
 pub mod mistral;

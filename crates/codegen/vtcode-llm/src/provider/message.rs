@@ -557,7 +557,7 @@ impl Message {
 
         // Provider-specific validations based on official docs
         match provider {
-            "openai" | "openrouter" | "zai" | "stepfun" | "evolink" => {
+            "openai" | "openrouter" | "meta" | "zai" | "stepfun" | "evolink" => {
                 if self.role == MessageRole::Tool && self.tool_call_id.is_none() {
                     return Err(format!("{provider} requires tool_call_id for tool messages"));
                 }
@@ -701,7 +701,7 @@ impl MessageRole {
     fn validate_for_provider(&self, provider: &str, has_tool_call_id: bool) -> Result<(), String> {
         match (self, provider) {
             (MessageRole::Tool, provider)
-                if matches!(provider, "openai" | "openrouter" | "deepseek" | "zai") && !has_tool_call_id =>
+                if matches!(provider, "openai" | "openrouter" | "meta" | "deepseek" | "zai") && !has_tool_call_id =>
             {
                 Err(format!("{provider} tool messages must have tool_call_id"))
             }
@@ -776,5 +776,19 @@ mod tests {
         );
 
         message.validate_for_provider("anthropic").unwrap();
+    }
+
+    #[test]
+    fn validate_for_provider_requires_tool_call_id_for_meta() {
+        let message = Message {
+            role: MessageRole::Tool,
+            content: MessageContent::text("result".to_owned()),
+            ..Default::default()
+        };
+
+        let error = message
+            .validate_for_provider("meta")
+            .expect_err("Meta tool messages need an id");
+        assert!(error.contains("tool_call_id"));
     }
 }

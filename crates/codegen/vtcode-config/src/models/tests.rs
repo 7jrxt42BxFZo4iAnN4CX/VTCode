@@ -20,6 +20,10 @@ fn test_model_string_conversion() {
     assert_eq!(ModelId::DeepSeekV4Pro.as_str(), models::deepseek::DEEPSEEK_V4_PRO);
     assert_eq!(ModelId::DeepSeekV4Flash.as_str(), models::deepseek::DEEPSEEK_V4_FLASH);
     assert_eq!(ModelId::DeepSeekV4Flash.as_str(), models::deepseek::DEEPSEEK_V4_FLASH);
+    // Official Meta AI models
+    assert_eq!(ModelId::MetaMuseSpark11.as_str(), models::meta::MUSE_SPARK_1_1);
+    assert_eq!(ModelId::MetaMuseSpark12.as_str(), models::meta::MUSE_SPARK_1_2);
+    assert_eq!(ModelId::MetaMuseSpark12Contributor.as_str(), models::meta::MUSE_SPARK_1_2_CONTRIBUTOR);
     // Hugging Face models
     assert_eq!(ModelId::HuggingFaceGlm51ZaiOrg.as_str(), models::huggingface::ZAI_GLM_5_1_ZAI_ORG);
     assert_eq!(ModelId::HuggingFaceKimiK3Together.as_str(), models::huggingface::KIMI_K3_TOGETHER);
@@ -49,6 +53,12 @@ fn test_model_from_string() {
     // DeepSeek models
     assert_eq!(models::deepseek::DEEPSEEK_V4_PRO.parse::<ModelId>().unwrap(), ModelId::DeepSeekV4Pro);
     assert_eq!(models::deepseek::DEEPSEEK_V4_FLASH.parse::<ModelId>().unwrap(), ModelId::DeepSeekV4Flash);
+    assert_eq!(models::meta::MUSE_SPARK_1_1.parse::<ModelId>().unwrap(), ModelId::MetaMuseSpark11);
+    assert_eq!(models::meta::MUSE_SPARK_1_2.parse::<ModelId>().unwrap(), ModelId::MetaMuseSpark12);
+    assert_eq!(
+        models::meta::MUSE_SPARK_1_2_CONTRIBUTOR.parse::<ModelId>().unwrap(),
+        ModelId::MetaMuseSpark12Contributor
+    );
     assert_eq!(models::ollama::DEEPSEEK_V4_PRO_CLOUD.parse::<ModelId>().unwrap(), ModelId::OllamaDeepseekV4ProCloud);
     // Hugging Face models
     assert_eq!(
@@ -74,6 +84,8 @@ fn test_provider_parsing() {
     assert_eq!("openai".parse::<Provider>().unwrap(), Provider::OpenAI);
     assert_eq!("anthropic".parse::<Provider>().unwrap(), Provider::Anthropic);
     assert_eq!("deepseek".parse::<Provider>().unwrap(), Provider::DeepSeek);
+    assert_eq!("meta".parse::<Provider>().unwrap(), Provider::Meta);
+    assert_eq!("meta-ai".parse::<Provider>().unwrap(), Provider::Meta);
     assert_eq!("nvidia".parse::<Provider>().unwrap(), Provider::NVIDIA);
     assert_eq!("nvidia-nim".parse::<Provider>().unwrap(), Provider::NVIDIA);
     assert_eq!("openrouter".parse::<Provider>().unwrap(), Provider::OpenRouter);
@@ -93,6 +105,7 @@ fn test_model_providers() {
     assert_eq!(ModelId::ClaudeSonnet46.provider(), Provider::Anthropic);
     assert_eq!(ModelId::ClaudeHaiku45.provider(), Provider::Anthropic);
     assert_eq!(ModelId::DeepSeekV4Pro.provider(), Provider::DeepSeek);
+    assert_eq!(ModelId::MetaMuseSpark12.provider(), Provider::Meta);
     assert_eq!(ModelId::NvidiaNemotron3Ultra550bA55b.provider(), Provider::NVIDIA);
     assert_eq!(ModelId::NvidiaDeepseekV4Flash0731.provider(), Provider::NVIDIA);
     assert_eq!(ModelId::ZaiGlm51.provider(), Provider::ZAI);
@@ -113,6 +126,7 @@ fn test_provider_defaults() {
     assert_eq!(ModelId::default_orchestrator_for_provider(Provider::OpenAI), ModelId::GPT54);
     assert_eq!(ModelId::default_orchestrator_for_provider(Provider::Anthropic), ModelId::ClaudeOpus48);
     assert_eq!(ModelId::default_orchestrator_for_provider(Provider::DeepSeek), ModelId::DeepSeekV4Pro);
+    assert_eq!(ModelId::default_orchestrator_for_provider(Provider::Meta), ModelId::MetaMuseSpark12);
     assert_eq!(ModelId::default_orchestrator_for_provider(Provider::NVIDIA), ModelId::NvidiaNemotron3Ultra550bA55b);
     assert_eq!(
         ModelId::default_orchestrator_for_provider(Provider::OpenRouter),
@@ -144,6 +158,7 @@ fn test_model_variants() {
     assert!(ModelId::ClaudeSonnet46.is_pro_variant());
     assert!(ModelId::OpenCodeZenGPT54.is_pro_variant());
     assert!(ModelId::DeepSeekV4Pro.is_pro_variant());
+    assert!(ModelId::MetaMuseSpark12.is_pro_variant());
     assert!(ModelId::ZaiGlm51.is_pro_variant());
     assert!(!ModelId::Gemini35Flash.is_pro_variant());
 
@@ -153,6 +168,7 @@ fn test_model_variants() {
     assert!(ModelId::ClaudeHaiku45.is_efficient_variant());
     assert!(ModelId::OpenCodeZenGPT54Mini.is_efficient_variant());
     assert!(ModelId::DeepSeekV4Flash.is_efficient_variant());
+    assert!(ModelId::MetaMuseSpark11.is_efficient_variant());
     assert!(!ModelId::GPT55.is_efficient_variant());
 
     for entry in openrouter_generated::ENTRIES {
@@ -165,6 +181,7 @@ fn test_model_variants() {
     assert!(ModelId::ClaudeOpus48.is_top_tier());
     assert!(ModelId::ClaudeSonnet46.is_top_tier());
     assert!(ModelId::DeepSeekV4Pro.is_top_tier());
+    assert!(ModelId::MetaMuseSpark12.is_top_tier());
     assert!(ModelId::ZaiGlm51.is_top_tier());
     assert!(ModelId::Gemini35Flash.is_top_tier());
     assert!(!ModelId::ClaudeHaiku45.is_top_tier());
@@ -180,6 +197,7 @@ fn test_preferred_lightweight_variant() {
     assert_eq!(ModelId::ClaudeSonnet46.preferred_lightweight_variant(), Some(ModelId::ClaudeHaiku45));
     assert_eq!(ModelId::Gemini31ProPreview.preferred_lightweight_variant(), Some(ModelId::Gemini35Flash));
     assert_eq!(ModelId::ZaiGlm51.preferred_lightweight_variant(), None);
+    assert_eq!(ModelId::MetaMuseSpark12.preferred_lightweight_variant(), Some(ModelId::MetaMuseSpark11));
     assert_eq!(ModelId::OpenCodeZenGPT54.preferred_lightweight_variant(), Some(ModelId::OpenCodeZenGPT54Mini));
     assert_eq!(ModelId::GPT54Mini.preferred_lightweight_variant(), None);
 }
@@ -203,6 +221,9 @@ fn test_model_generation() {
     // DeepSeek generations
     assert_eq!(ModelId::DeepSeekV4Pro.generation(), "4");
     assert_eq!(ModelId::DeepSeekV4Flash.generation(), "4");
+    assert_eq!(ModelId::MetaMuseSpark11.generation(), "Muse-Spark-1.1");
+    assert_eq!(ModelId::MetaMuseSpark12.generation(), "Muse-Spark-1.2");
+    assert_eq!(ModelId::MetaMuseSpark12Contributor.generation(), "Muse-Spark-1.2");
 
     // Z.AI generations
     assert_eq!(ModelId::ZaiGlm51.generation(), "5.1");
@@ -235,6 +256,16 @@ fn test_models_for_provider() {
     assert!(deepseek_models.contains(&ModelId::DeepSeekV4Pro));
     assert!(deepseek_models.contains(&ModelId::DeepSeekV4Flash));
 
+    let meta_models = ModelId::models_for_provider(Provider::Meta);
+    assert_eq!(
+        meta_models,
+        &[
+            ModelId::MetaMuseSpark12,
+            ModelId::MetaMuseSpark12Contributor,
+            ModelId::MetaMuseSpark11
+        ]
+    );
+
     let nvidia_models = ModelId::models_for_provider(Provider::NVIDIA);
     assert_eq!(nvidia_models.len(), 5);
     assert!(nvidia_models.contains(&ModelId::NvidiaNemotron3Ultra550bA55b));
@@ -242,6 +273,8 @@ fn test_models_for_provider() {
 
     let openrouter_models = ModelId::models_for_provider(Provider::OpenRouter);
     assert!(openrouter_models.contains(&ModelId::OpenRouterOpenAIGpt55));
+    assert!(openrouter_models.contains(&ModelId::OpenRouterMetaMuseGlimmer30b));
+    assert!(openrouter_models.contains(&ModelId::OpenRouterMetaMuseSpark12));
     for entry in openrouter_generated::ENTRIES {
         assert!(openrouter_models.contains(&entry.variant));
     }
@@ -374,6 +407,8 @@ fn test_generated_model_capability_lookup() {
     assert!(catalog_provider_keys().contains(&"openai"));
     let openrouter_models = supported_models_for_provider("openrouter").expect("openrouter models");
     assert!(openrouter_models.contains(&"openai/gpt-5.5"));
+    let meta_models = supported_models_for_provider("meta-ai").expect("Meta AI models");
+    assert!(meta_models.contains(&models::meta::MUSE_SPARK_1_2));
     let opencode_zen_models = supported_models_for_provider("opencode-zen").expect("opencode zen models");
     assert!(opencode_zen_models.contains(&models::opencode_zen::GPT_5_4));
     let opencode_go_models = supported_models_for_provider("opencode-go").expect("opencode go models");

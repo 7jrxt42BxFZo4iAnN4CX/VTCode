@@ -32,6 +32,20 @@ vtcode --provider openrouter --model xiaomi/mimo-v2.5 chat
 
 Both commands stream responses using the OpenRouter Responses API and support VT Code tooling out of the box.
 
+## Meta Muse models
+
+For direct Meta access, prefer the [official Meta AI provider](./meta.md).
+OpenRouter also exposes these marketplace model IDs:
+
+```bash
+vtcode --provider openrouter --model meta/muse-spark-1.2 chat
+vtcode --provider openrouter --model meta/muse-glimmer-30b chat
+```
+
+These routes use `OPENROUTER_API_KEY` and OpenRouter billing. The `meta/...`
+namespace is distinct from the official provider's bare `muse-spark-1.2` and
+`muse-spark-1.1` IDs.
+
 ## Persisting configuration
 
 Add OpenRouter to your workspace `vtcode.toml` (MiMo V2.5 Pro is the default):

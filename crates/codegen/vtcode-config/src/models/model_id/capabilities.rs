@@ -42,6 +42,8 @@ fn catalog_provider_key(provider: &str) -> &str {
         "anthropic"
     } else if provider.eq_ignore_ascii_case("deepseek") {
         "deepseek"
+    } else if provider.eq_ignore_ascii_case("meta") || provider.eq_ignore_ascii_case("meta-ai") {
+        "meta"
     } else if provider.eq_ignore_ascii_case("openrouter") {
         "openrouter"
     } else if provider.eq_ignore_ascii_case("ollama") {
@@ -80,6 +82,7 @@ fn capability_provider_key(provider: Provider) -> &'static str {
         Provider::Anthropic => "anthropic",
         Provider::Copilot => "copilot",
         Provider::DeepSeek => "deepseek",
+        Provider::Meta => "meta",
         Provider::OpenRouter => "openrouter",
         Provider::Ollama => "ollama",
         Provider::OllamaCloud => "ollama-cloud",
@@ -159,6 +162,7 @@ impl ModelId {
             ModelId::CopilotGPT54 => Some(ModelId::CopilotGPT54Mini),
             ModelId::CopilotGPT52Codex | ModelId::CopilotGPT51CodexMax => Some(ModelId::CopilotGPT54Mini),
             ModelId::DeepSeekV4Pro => Some(ModelId::DeepSeekV4Flash),
+            ModelId::MetaMuseSpark12 => Some(ModelId::MetaMuseSpark11),
             ModelId::NvidiaNemotron3Ultra550bA55b => Some(ModelId::NvidiaNemotron3Super120bA12b),
             ModelId::NvidiaNemotron3Super120bA12b => Some(ModelId::NvidiaNemotron3Nano30bA3b),
             ModelId::OpenCodeGoDeepseekV4Pro => Some(ModelId::OpenCodeGoDeepseekV4Flash),
@@ -234,6 +238,7 @@ impl ModelId {
             ModelId::OpenCodeZenGPT54 => Some(ModelId::OpenCodeZenGPT54Mini),
             ModelId::CopilotGPT52Codex | ModelId::CopilotGPT54 => Some(ModelId::CopilotGPT54Mini),
             ModelId::DeepSeekV4Pro => Some(ModelId::DeepSeekV4Flash),
+            ModelId::MetaMuseSpark12 => Some(ModelId::MetaMuseSpark11),
             ModelId::NvidiaNemotron3Ultra550bA55b => Some(ModelId::NvidiaNemotron3Nano30bA3b),
             ModelId::NvidiaNemotron3Super120bA12b => Some(ModelId::NvidiaNemotron3Nano30bA3b),
             ModelId::EvolinkDeepseekV4Pro => Some(ModelId::EvolinkDeepseekV4Flash),
@@ -308,6 +313,7 @@ impl ModelId {
                 | ModelId::OpenCodeGoQwen37Max
                 | ModelId::OpenCodeGoDeepseekV4Pro
                 | ModelId::DeepSeekV4Pro
+                | ModelId::MetaMuseSpark12
                 | ModelId::EvolinkDeepseekV4Pro
                 | ModelId::ZaiGlm52
                 | ModelId::ZaiGlm51
@@ -347,6 +353,7 @@ impl ModelId {
                 | ModelId::ClaudeHaiku45
                 | ModelId::OpenCodeZenGPT54Mini
                 | ModelId::DeepSeekV4Flash
+                | ModelId::MetaMuseSpark11
                 | ModelId::HuggingFaceStep35Flash
                 | ModelId::HuggingFaceDeepseekV4FlashNovita
                 | ModelId::PoolsideLagunaXs2
@@ -395,6 +402,7 @@ impl ModelId {
                 | ModelId::OpenCodeGoQwen37Plus
                 | ModelId::OpenCodeGoDeepseekV4Pro
                 | ModelId::DeepSeekV4Pro
+                | ModelId::MetaMuseSpark12
                 | ModelId::ZaiGlm52
                 | ModelId::ZaiGlm51
                 | ModelId::OpenRouterStepfunStep35FlashFree
@@ -466,6 +474,8 @@ impl ModelId {
             ModelId::ClaudeHaiku45 => "4.5",
             // DeepSeek generations
             ModelId::DeepSeekV4Pro | ModelId::DeepSeekV4Flash => "4",
+            ModelId::MetaMuseSpark11 => "Muse-Spark-1.1",
+            ModelId::MetaMuseSpark12 | ModelId::MetaMuseSpark12Contributor => "Muse-Spark-1.2",
             // Z.AI generations
             ModelId::ZaiGlm52 => "5.2",
             ModelId::ZaiGlm51 => "5.1",

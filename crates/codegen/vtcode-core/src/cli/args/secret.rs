@@ -15,6 +15,8 @@ pub enum SecretProvider {
     Gemini,
     #[value(name = "deepseek")]
     DeepSeek,
+    #[value(name = "meta")]
+    Meta,
     #[value(name = "openrouter")]
     OpenRouter,
     #[value(name = "stepfun")]
@@ -60,6 +62,7 @@ impl SecretProvider {
             SecretProvider::Anthropic => "anthropic",
             SecretProvider::Gemini => "gemini",
             SecretProvider::DeepSeek => "deepseek",
+            SecretProvider::Meta => "meta",
             SecretProvider::OpenRouter => "openrouter",
             SecretProvider::StepFun => "stepfun",
             SecretProvider::Zai => "zai",

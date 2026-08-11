@@ -61,6 +61,8 @@ curl -fsSL "https://api.github.com/repos/vinhnx/vtcode/contents/scripts/install.
 export OPENAI_API_KEY="..."       # OpenAI
 export ANTHROPIC_API_KEY="..."    # Anthropic
 export GEMINI_API_KEY="..."       # Google Gemini
+export MODEL_API_KEY="..."        # Meta AI (official, documented name)
+# Or: export META_API_KEY="..."
 export XAI_API_KEY="..."          # xAI
 export DEEPSEEK_API_KEY="..."     # DeepSeek
 export OPENROUTER_API_KEY="..."   # OpenRouter

@@ -405,6 +405,7 @@ impl ToolChoice {
         "evolink",
         "lmstudio",
         "llamacpp",
+        "meta",
     ];
 
     /// Convert to provider-specific format

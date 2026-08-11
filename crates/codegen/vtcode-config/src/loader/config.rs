@@ -364,7 +364,7 @@ impl VTCodeConfig {
             if Provider::from_str(provider_name).is_err() {
                 anyhow::bail!(
                     "provider_overrides: unknown provider `{provider_name}`; \
-                     must be one of: gemini, openai, anthropic, copilot, deepseek, \
+                     must be one of: gemini, openai, anthropic, copilot, deepseek, meta, \
                      openrouter, ollama, lmstudio, llamacpp, moonshot, zai, minimax, \
                      mimo, mistral, huggingface, opencodezen, opencodego, qwen, \
                      stepfun, evolink, poolside"

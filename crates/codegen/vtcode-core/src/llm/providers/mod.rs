@@ -9,7 +9,7 @@ pub use vtcode_llm::providers::reasoning::{
 };
 pub use vtcode_llm::providers::{
     AnthropicProvider, CopilotProvider, DeepSeekProvider, EvolinkProvider, GeminiProvider, HuggingFaceProvider,
-    LlamaCppProvider, LmStudioProvider, MiMoProvider, MinimaxProvider, MistralProvider, MoonshotProvider,
+    LlamaCppProvider, LmStudioProvider, MetaProvider, MiMoProvider, MinimaxProvider, MistralProvider, MoonshotProvider,
     NvidiaProvider, OllamaProvider, OpenAIProvider, OpenCodeGoProvider, OpenCodeZenProvider, OpenResponsesProvider,
     OpenRouterProvider, PoolsideProvider, QwenProvider, StepFunProvider, StreamingProgressBuilder,
     StreamingProgressCallback, StreamingProgressTracker, TagStreamSanitizer, XAIProvider, ZAIProvider,
@@ -35,6 +35,7 @@ pub use vtcode_llm::providers::huggingface;
 pub use vtcode_llm::providers::llamacpp;
 pub use vtcode_llm::providers::lmstudio;
 pub use vtcode_llm::providers::local_server;
+pub use vtcode_llm::providers::meta;
 pub use vtcode_llm::providers::mimo;
 pub use vtcode_llm::providers::minimax;
 pub use vtcode_llm::providers::mistral;

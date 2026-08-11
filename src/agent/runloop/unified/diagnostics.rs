@@ -522,6 +522,7 @@ fn canonical_provider_name(raw: &str) -> String {
         "lm studio" | "lm_studio" => "lmstudio".to_string(),
         "llama.cpp" | "llama-cpp" | "llama cpp" => "llamacpp".to_string(),
         "z.ai" | "z-ai" => "zai".to_string(),
+        "meta-ai" | "meta_ai" => "meta".to_string(),
         _ => normalized,
     }
 }
@@ -536,6 +537,7 @@ fn api_key_env_hint(provider: &str) -> String {
         "openai" => "OPENAI_API_KEY".to_string(),
         "anthropic" => "ANTHROPIC_API_KEY".to_string(),
         "deepseek" => "DEEPSEEK_API_KEY".to_string(),
+        "meta" => "META_API_KEY or MODEL_API_KEY".to_string(),
         "openrouter" => "OPENROUTER_API_KEY".to_string(),
         "zai" => "ZAI_API_KEY".to_string(),
         "moonshot" => "MOONSHOT_API_KEY".to_string(),
@@ -597,6 +599,7 @@ mod tests {
     fn canonical_provider_normalizes_variants() {
         assert_eq!(canonical_provider_name(" LM Studio "), "lmstudio");
         assert_eq!(canonical_provider_name("Z.AI"), "zai");
+        assert_eq!(canonical_provider_name("meta-ai"), "meta");
         assert_eq!(canonical_provider_name(""), "gemini");
     }
 
@@ -610,6 +613,7 @@ mod tests {
     #[test]
     fn api_key_hint_is_provider_specific() {
         assert_eq!(api_key_env_hint("openrouter"), "OPENROUTER_API_KEY");
+        assert_eq!(api_key_env_hint("meta"), "META_API_KEY or MODEL_API_KEY");
         assert_eq!(api_key_env_hint("huggingface"), "HF_TOKEN");
     }
 }

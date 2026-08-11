@@ -14,14 +14,14 @@ use super::provider::LLMProvider;
 use super::provider_config::{
     AnthropicProviderConfig, CopilotProviderConfig, DeepSeekProviderConfig, EvolinkProviderConfig,
     GeminiProviderConfig, HuggingFaceProviderConfig, LlamaCppProviderConfig, LmStudioProviderConfig,
-    MiMoProviderConfig, MinimaxProviderConfig, MistralProviderConfig, MoonshotProviderConfig, NvidiaProviderConfig,
-    OllamaCloudProviderConfig, OllamaProviderConfig, OpenAIProviderConfig, OpenCodeGoProviderConfig,
-    OpenCodeZenProviderConfig, OpenResponsesProviderConfig, OpenRouterProviderConfig, PoolsideProviderConfig,
-    QwenProviderConfig, StepFunProviderConfig, XAIProviderConfig, ZAIProviderConfig,
+    MetaProviderConfig, MiMoProviderConfig, MinimaxProviderConfig, MistralProviderConfig, MoonshotProviderConfig,
+    NvidiaProviderConfig, OllamaCloudProviderConfig, OllamaProviderConfig, OpenAIProviderConfig,
+    OpenCodeGoProviderConfig, OpenCodeZenProviderConfig, OpenResponsesProviderConfig, OpenRouterProviderConfig,
+    PoolsideProviderConfig, QwenProviderConfig, StepFunProviderConfig, XAIProviderConfig, ZAIProviderConfig,
 };
 use super::providers::{
     AnthropicProvider, CopilotProvider, DeepSeekProvider, EvolinkProvider, GeminiProvider, HuggingFaceProvider,
-    LlamaCppProvider, LmStudioProvider, MiMoProvider, MinimaxProvider, MistralProvider, MoonshotProvider,
+    LlamaCppProvider, LmStudioProvider, MetaProvider, MiMoProvider, MinimaxProvider, MistralProvider, MoonshotProvider,
     NvidiaProvider, OllamaProvider, OpenCodeGoProvider, OpenCodeZenProvider, OpenResponsesProvider, OpenRouterProvider,
     PoolsideProvider, QwenProvider, StepFunProvider, XAIProvider, ZAIProvider,
 };
@@ -247,6 +247,7 @@ impl_standard_provider_constructor!(
     MiMoProvider,
     MinimaxProvider,
     DeepSeekProvider,
+    MetaProvider,
     MistralProvider,
     OpenRouterProvider,
     OpenResponsesProvider,
@@ -288,6 +289,10 @@ crate::delegate_components!(HuggingFaceProviderConfig {
 crate::delegate_components!(DeepSeekProviderConfig {
     ProviderMetadataComponent => DeepSeekProviderConfig,
     ProviderBuildComponent => StandardProviderBuild<DeepSeekProvider>,
+});
+crate::delegate_components!(MetaProviderConfig {
+    ProviderMetadataComponent => MetaProviderConfig,
+    ProviderBuildComponent => StandardProviderBuild<MetaProvider>,
 });
 crate::delegate_components!(MiMoProviderConfig {
     ProviderMetadataComponent => MiMoProviderConfig,
@@ -376,6 +381,7 @@ pub fn register_builtin_cgp_providers(factory: &mut LLMFactory) {
     factory.register_cgp_provider::<MinimaxProviderConfig>();
     factory.register_cgp_provider::<MiMoProviderConfig>();
     factory.register_cgp_provider::<DeepSeekProviderConfig>();
+    factory.register_cgp_provider::<MetaProviderConfig>();
     factory.register_cgp_provider::<OpenRouterProviderConfig>();
     factory.register_cgp_provider::<OpenResponsesProviderConfig>();
     factory.register_cgp_provider::<MoonshotProviderConfig>();
@@ -489,6 +495,7 @@ mod tests {
                 "huggingface",
                 "llamacpp",
                 "lmstudio",
+                "meta",
                 "mimo",
                 "minimax",
                 "mistral",

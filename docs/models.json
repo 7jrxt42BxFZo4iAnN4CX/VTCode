@@ -2016,6 +2016,97 @@
       }
     }
   },
+  "meta": {
+    "id": "meta",
+    "env": [
+      "META_API_KEY",
+      "MODEL_API_KEY"
+    ],
+    "api": "https://api.meta.ai/v1",
+    "name": "Meta AI",
+    "doc": "https://dev.meta.ai/docs/models.md",
+    "default_model": "muse-spark-1.2",
+    "models": {
+      "muse-spark-1.1": {
+        "id": "muse-spark-1.1",
+        "name": "Muse Spark 1.1",
+        "description": "Meta's Standard-tier Muse Spark 1.1 model for reasoning and agentic coding workflows.",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text",
+            "image",
+            "video",
+            "audio",
+            "pdf"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 1048576,
+        "capabilities": {
+          "streaming": true,
+          "function_calling": true,
+          "structured_output": true,
+          "thinking": true
+        }
+      },
+      "muse-spark-1.2": {
+        "id": "muse-spark-1.2",
+        "name": "Muse Spark 1.2",
+        "description": "Meta's latest Standard-tier Muse Spark model for reasoning and agentic coding workflows.",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text",
+            "image",
+            "video",
+            "audio",
+            "pdf"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 1048576,
+        "capabilities": {
+          "streaming": true,
+          "function_calling": true,
+          "structured_output": true,
+          "thinking": true
+        }
+      },
+      "muse-spark-1.2-contributor": {
+        "id": "muse-spark-1.2-contributor",
+        "name": "Muse Spark 1.2 Contributor",
+        "description": "Meta's Contributor-tier Muse Spark 1.2 model; prompts and completions may be used to train future Meta models.",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text",
+            "image",
+            "video",
+            "audio",
+            "pdf"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 1048576,
+        "capabilities": {
+          "streaming": true,
+          "function_calling": true,
+          "structured_output": true,
+          "thinking": true
+        }
+      }
+    }
+  },
   "openrouter": {
     "id": "openrouter",
     "env": [
@@ -2025,6 +2116,75 @@
     "name": "OpenRouter",
     "doc": "https://openrouter.ai/models",
     "models": {
+      "meta/muse-glimmer-30b": {
+        "id": "meta/muse-glimmer-30b",
+        "name": "Meta: Muse Glimmer 30B",
+        "description": "Meta Muse Glimmer 30B reasoning model via OpenRouter.",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text",
+            "image"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 131072,
+        "cost": {
+          "input": 3.5e-7,
+          "output": 1.5e-6,
+          "cache_read": 4e-8
+        },
+        "vtcode": {
+          "variant": "OpenRouterMetaMuseGlimmer30b",
+          "constant": "META_MUSE_GLIMMER_30B",
+          "vendor": "meta",
+          "display": "Muse Glimmer 30B (OpenRouter)",
+          "description": "Meta Muse Glimmer 30B reasoning model via OpenRouter",
+          "efficient": true,
+          "top_tier": false,
+          "generation": "Muse-Glimmer-30B",
+          "doc_comment": "Muse Glimmer 30B - Meta Muse Glimmer 30B reasoning model via OpenRouter"
+        }
+      },
+      "meta/muse-spark-1.2": {
+        "id": "meta/muse-spark-1.2",
+        "name": "Meta: Muse Spark 1.2",
+        "description": "Meta Muse Spark 1.2 reasoning model via OpenRouter.",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text",
+            "image",
+            "video",
+            "file",
+            "audio"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 1048576,
+        "cost": {
+          "input": 1.25e-6,
+          "output": 4.25e-6,
+          "cache_read": 1.5e-7
+        },
+        "vtcode": {
+          "variant": "OpenRouterMetaMuseSpark12",
+          "constant": "META_MUSE_SPARK_1_2",
+          "vendor": "meta",
+          "display": "Muse Spark 1.2 (OpenRouter)",
+          "description": "Meta Muse Spark 1.2 reasoning model via OpenRouter",
+          "efficient": false,
+          "top_tier": true,
+          "generation": "Muse-Spark-1.2",
+          "doc_comment": "Muse Spark 1.2 - Meta Muse Spark 1.2 reasoning model via OpenRouter"
+        }
+      },
       "stepfun/step-3.5-flash:free": {
         "id": "stepfun/step-3.5-flash:free",
         "name": "Step 3.5 Flash (free)",

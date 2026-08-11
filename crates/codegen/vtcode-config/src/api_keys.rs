@@ -266,6 +266,7 @@ fn static_env_var(env_key: &str) -> Option<&'static str> {
         .or(match env_key {
             "GOOGLE_API_KEY" => Some("GOOGLE_API_KEY"),
             "DASHSCOPE_API_KEY" => Some("DASHSCOPE_API_KEY"),
+            "MODEL_API_KEY" => Some("MODEL_API_KEY"),
             _ => None,
         })
 }
@@ -275,6 +276,7 @@ fn alternate_env_var(provider: Provider) -> Option<&'static str> {
     match provider {
         Provider::Gemini => Some("GOOGLE_API_KEY"),
         Provider::Qwen => Some("DASHSCOPE_API_KEY"),
+        Provider::Meta => Some("MODEL_API_KEY"),
         _ => None,
     }
 }
@@ -467,6 +469,36 @@ mod tests {
     }
 
     #[test]
+    fn meta_reads_provider_specific_env_var() {
+        with_overrides(
+            &[
+                ("META_API_KEY", Some("meta-primary")),
+                ("MODEL_API_KEY", Some("model-fallback")),
+            ],
+            || {
+                let result = get_api_key("meta", &default_sources());
+                assert_eq!(result.expect("Meta key"), "meta-primary");
+            },
+        );
+    }
+
+    #[test]
+    fn meta_falls_back_to_documented_model_api_key() {
+        with_overrides(&[("META_API_KEY", None), ("MODEL_API_KEY", Some("model-key"))], || {
+            let result = get_api_key("meta", &default_sources());
+            assert_eq!(result.expect("Meta fallback key"), "model-key");
+        });
+    }
+
+    #[test]
+    fn meta_missing_key_error_names_both_supported_env_vars() {
+        with_overrides(&[("META_API_KEY", None), ("MODEL_API_KEY", None)], || {
+            let error = get_api_key("meta", &default_sources()).expect_err("missing Meta key");
+            assert!(error.to_string().contains("META_API_KEY or MODEL_API_KEY"));
+        });
+    }
+
+    #[test]
     fn api_key_env_var_uses_provider_defaults() {
         assert_eq!(api_key_env_var("codex"), "");
         assert_eq!(api_key_env_var("minimax"), "MINIMAX_API_KEY");
@@ -637,6 +669,15 @@ mod tests {
             let detail = provider_credential_detail(Provider::Gemini).expect("Gemini discovered");
             assert_eq!(detail.source, CredentialSource::Env);
             assert_eq!(detail.env_var, Some("GOOGLE_API_KEY"));
+        });
+    }
+
+    #[test]
+    fn credential_detail_surfaces_meta_alternate_env_var_name() {
+        with_overrides(&[("META_API_KEY", None), ("MODEL_API_KEY", Some("model-key"))], || {
+            let detail = provider_credential_detail(Provider::Meta).expect("Meta discovered");
+            assert_eq!(detail.source, CredentialSource::Env);
+            assert_eq!(detail.env_var, Some("MODEL_API_KEY"));
         });
     }
 

@@ -6,7 +6,7 @@ Welcome to VT Code! This guide will help you get up and running with this Rust-b
 
 VT Code represents a modern approach to AI-powered software development, featuring:
 
--   **Multi-Provider LLM Support** - Gemini, OpenAI, Anthropic, DeepSeek, OpenRouter, Z.AI, Moonshot, StepFun, MiniMax, and more
+-   **Multi-Provider LLM Support** - Gemini, OpenAI, Anthropic, Meta AI, DeepSeek, OpenRouter, Z.AI, Moonshot, StepFun, MiniMax, and more
 -   **Enhanced Terminal Interface** - Modern TUI with mouse support and text selection
 -   **Advanced Code Intelligence** - Tree-sitter parsers for 6+ programming languages
 -   **Enterprise-Grade Safety** - Comprehensive security controls and path validation
@@ -41,6 +41,10 @@ Choose one of the supported LLM providers:
 
 -   **Anthropic**: `export ANTHROPIC_API_KEY=your_key_here`
     -   Get from [Anthropic Console](https://console.anthropic.com/)
+
+-   **Meta AI**: `export MODEL_API_KEY=your_key_here` or `export META_API_KEY=your_key_here`
+    -   Get from the [Meta AI developer documentation](https://dev.meta.ai/docs/llms.txt)
+    -   Default model: `muse-spark-1.2`; see the [Meta AI provider guide](../providers/meta.md)
 
 -   **Z.AI**: `export ZAI_API_KEY=your_key_here`
     -   Get from [Z.AI Platform](https://z.ai/docs)

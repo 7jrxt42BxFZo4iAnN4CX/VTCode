@@ -135,6 +135,7 @@ pub trait LLMProvider: Send + Sync {
             "openai" => BackendKind::OpenAI,
             "anthropic" => BackendKind::Anthropic,
             "deepseek" => BackendKind::DeepSeek,
+            "meta" => BackendKind::Meta,
             "mistral" => BackendKind::Mistral,
             "openrouter" => BackendKind::OpenRouter,
             "ollama" => BackendKind::Ollama,

@@ -63,6 +63,8 @@ pub struct ProviderConfigs {
     pub gemini: Option<ProviderConfig>,
     /// DeepSeek provider configuration.
     pub deepseek: Option<ProviderConfig>,
+    /// Official Meta AI provider configuration.
+    pub meta: Option<ProviderConfig>,
     /// OpenRouter provider configuration.
     pub openrouter: Option<ProviderConfig>,
     /// Ollama provider configuration.

@@ -93,6 +93,7 @@ vtcode
 -   **OpenAI** (OPENAI_API_KEY)
 -   **Anthropic** (ANTHROPIC_API_KEY)
 -   **Google Gemini** (GEMINI_API_KEY)
+-   **Meta AI** (MODEL_API_KEY or META_API_KEY; see [Meta AI Provider](../providers/meta.md))
 -   **xAI** (XAI_API_KEY)
 -   **DeepSeek** (DEEPSEEK_API_KEY)
 -   **OpenRouter** (OPENROUTER_API_KEY)

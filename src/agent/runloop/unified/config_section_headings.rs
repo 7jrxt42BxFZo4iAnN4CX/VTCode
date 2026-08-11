@@ -256,6 +256,7 @@ fn format_human_token(token: &str) -> String {
         "openai" => "OpenAI".to_string(),
         "openrouter" => "OpenRouter".to_string(),
         "deepseek" => "DeepSeek".to_string(),
+        "meta" => "Meta AI".to_string(),
         "moonshot" => "Moonshot".to_string(),
         "zai" => "Z.AI".to_string(),
         _ => {
@@ -285,6 +286,7 @@ mod tests {
         assert_eq!(humanize_identifier("askQuestions"), "Ask Questions");
         assert_eq!(humanize_identifier("mcp_ui"), "MCP UI");
         assert_eq!(humanize_identifier("openai"), "OpenAI");
+        assert_eq!(humanize_identifier("meta"), "Meta AI");
     }
 
     #[test]

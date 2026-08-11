@@ -243,7 +243,7 @@ pub async fn example_function(path: &str) -> Result<()> {
 
 ### Core Components
 
-- **LLM Abstractions**: Provider traits with uniform async interfaces supporting OpenAI, Anthropic, Gemini, xAI, DeepSeek, Z.AI, Moonshot AI, OpenRouter, and Ollama
+- **LLM Abstractions**: Provider traits with uniform async interfaces supporting OpenAI, Anthropic, Gemini, Meta AI, xAI, DeepSeek, Z.AI, Moonshot AI, OpenRouter, and Ollama
 - **Modular Tools**: Internal trait-based composition for built-in tools, with MCP/manifests preferred for external extensions
 - **Extension Boundaries**: Prefer config, manifests, plugins, and MCP over new public Rust traits for third-party integrations
 - **Configuration Engine**: Deserializes `vtcode.toml` into validated structs

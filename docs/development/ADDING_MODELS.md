@@ -15,11 +15,17 @@ configuration, factory registration, resolver, startup defaults, picker
 presets, and a provider guide. NVIDIA is an OpenAI-compatible provider, but
 its curated constants are intentionally separate from the OpenAI constants;
 explicit NVIDIA model IDs remain valid even when they are not in the picker.
+For marketplace entries such as Meta Muse on OpenRouter, add generated metadata
+to both `docs/models.json` and the embedded
+`crates/codegen/vtcode-config/build_data/openrouter_models.json`; keep the
+official Meta provider's bare model IDs separate from OpenRouter's `meta/...`
+namespace.
 
 ## Quick Checklist
 
 - [ ] Add to the provider constants module (for example, NVIDIA uses `constants/models/nvidia.rs`)
 - [ ] Add to model metadata (`docs/models.json`)
+- [ ] If the model is OpenRouter-only, mirror its metadata in `build_data/openrouter_models.json`
 - [ ] Add enum variant (`crates/codegen/vtcode-config/src/models/model_id.rs`)
 - [ ] Update `as_str.rs` - string mapping
 - [ ] Update `display.rs` - human-readable name
@@ -304,6 +310,7 @@ v **Do:**
 ## Related Files
 
 - Provider setup: `docs/providers/PROVIDER_GUIDES.md`
+- Provider quick references: `docs/providers/<provider>-quick-reference.md`
 - Configuration precedence: `docs/config/CONFIGURATION_PRECEDENCE.md`
 - Model examples: `docs/models.json`
 - Constants reference: `crates/codegen/vtcode-config/src/constants/models/`

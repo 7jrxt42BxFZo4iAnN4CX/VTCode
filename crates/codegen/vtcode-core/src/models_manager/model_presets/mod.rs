@@ -164,6 +164,9 @@ pub fn builtin_model_presets() -> Vec<ModelPreset> {
     // DeepSeek presets
     presets.extend(presets::deepseek_presets());
 
+    // Official Meta AI presets
+    presets.extend(presets::meta_presets());
+
     // Z.AI presets
     presets.extend(presets::zai_presets());
 
@@ -208,6 +211,7 @@ pub fn presets_for_provider(provider: Provider) -> Vec<ModelPreset> {
         Provider::Anthropic => presets::anthropic_presets(),
         Provider::Copilot => presets::copilot_presets(),
         Provider::DeepSeek => presets::deepseek_presets(),
+        Provider::Meta => presets::meta_presets(),
         Provider::ZAI => presets::zai_presets(),
         Provider::Minimax => presets::minimax_presets(),
         Provider::OpenRouter => presets::openrouter_presets(),
@@ -316,5 +320,37 @@ mod tests {
                 .iter()
                 .all(|preset| preset.provider == Provider::NVIDIA && preset.show_in_picker)
         );
+    }
+
+    #[test]
+    fn meta_presets_keep_standard_default_and_contributor_opt_in() {
+        let presets = presets::meta_presets();
+        assert_eq!(presets.len(), 3);
+
+        let default = presets.iter().find(|preset| preset.is_default).expect("Meta default preset");
+        assert_eq!(default.model, "muse-spark-1.2");
+        assert!(presets.iter().any(|preset| preset.model == "muse-spark-1.2-contributor"));
+        assert!(
+            presets
+                .iter()
+                .all(|preset| preset.provider == Provider::Meta && preset.show_in_picker)
+        );
+    }
+
+    #[test]
+    fn openrouter_presets_include_meta_muse_models() {
+        let presets = presets::openrouter_presets();
+
+        let glimmer = presets
+            .iter()
+            .find(|preset| preset.model == "meta/muse-glimmer-30b")
+            .expect("OpenRouter Glimmer preset");
+        assert_eq!(glimmer.context_window, Some(131_072));
+
+        let spark = presets
+            .iter()
+            .find(|preset| preset.model == "meta/muse-spark-1.2")
+            .expect("OpenRouter Spark preset");
+        assert_eq!(spark.context_window, Some(1_048_576));
     }
 }

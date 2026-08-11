@@ -19,6 +19,8 @@ pub const FILTERED_ENV_VARS: &[&str] = &[
     "GEMINI_API_KEY",
     "XAI_API_KEY",
     "DEEPSEEK_API_KEY",
+    "META_API_KEY",
+    "MODEL_API_KEY",
     "OPENROUTER_API_KEY",
     "GROQ_API_KEY",
     "MISTRAL_API_KEY",
@@ -247,6 +249,7 @@ mod tests {
     #[test]
     fn test_should_filter_sensitive_vars() {
         assert!(should_filter_env_var("OPENAI_API_KEY"));
+        assert!(should_filter_env_var("META_API_KEY"));
         assert!(should_filter_env_var("AWS_SECRET_ACCESS_KEY"));
         assert!(should_filter_env_var("GITHUB_TOKEN"));
         assert!(should_filter_env_var("LD_PRELOAD"));
@@ -323,6 +326,7 @@ mod tests {
         let mut env = HashMap::new();
         for (name, value) in [
             ("MODEL_API_KEY", "model-secret"),
+            ("META_API_KEY", "meta-secret"),
             ("INSTRUCTION_SECRET", "prompt-secret"),
             ("AWS_PROFILE", "production"),
             ("LD_AUDIT", "audit.so"),
@@ -337,6 +341,7 @@ mod tests {
 
         for sensitive in [
             "MODEL_API_KEY",
+            "META_API_KEY",
             "INSTRUCTION_SECRET",
             "AWS_PROFILE",
             "LD_AUDIT",

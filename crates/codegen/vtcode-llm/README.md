@@ -1,7 +1,7 @@
 # vtcode-llm
 
 LLM provider abstraction layer for VT Code, providing a unified interface for
-multiple LLM providers including Gemini, OpenAI, Anthropic, DeepSeek, Ollama,
+multiple LLM providers including Gemini, OpenAI, Anthropic, Meta AI, DeepSeek, Ollama,
 and Copilot.
 
 <!-- cargo-rdme start -->
@@ -9,7 +9,7 @@ and Copilot.
 ### vtcode-llm - LLM Provider Abstraction
 
 Provides a unified interface for multiple LLM providers including
-Gemini, OpenAI, Anthropic, DeepSeek, and Ollama.
+Gemini, OpenAI, Anthropic, Meta AI, DeepSeek, and Ollama.
 
 <!-- cargo-rdme end -->
 

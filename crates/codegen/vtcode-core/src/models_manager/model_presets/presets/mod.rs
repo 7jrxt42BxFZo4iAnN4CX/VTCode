@@ -28,6 +28,8 @@ mod mistral;
 pub(crate) use mistral::mistral_presets;
 mod minimax;
 pub(crate) use minimax::minimax_presets;
+mod meta;
+pub(crate) use meta::meta_presets;
 mod openrouter;
 pub(crate) use openrouter::openrouter_presets;
 mod ollama;

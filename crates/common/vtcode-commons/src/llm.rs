@@ -11,6 +11,7 @@ pub enum BackendKind {
     OpenAI,
     Anthropic,
     DeepSeek,
+    Meta,
     Mistral,
     OpenRouter,
     Ollama,

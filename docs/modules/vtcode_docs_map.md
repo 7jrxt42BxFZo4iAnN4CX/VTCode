@@ -488,6 +488,15 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Supported Providers, Running Ollama, Running LM Studio, Running llama.cpp, Command Reference
   - **User Questions**: "What can you tell me about Local Inference Servers?", "How does Supported Providers work?", "How does Running Ollama work?"
 
+- **File**: `docs/providers/meta.md`
+  - **Content**: Meta AI Integration Guide
+  - **Topics**: Quickstart, Curated models, Troubleshooting
+  - **User Questions**: "What can you tell me about Meta AI Integration Guide?", "How does Quickstart work?", "How does Curated models work?"
+
+- **File**: `docs/providers/meta-quick-reference.md`
+  - **Content**: Meta AI Quick Reference
+  - **User Questions**: "What can you tell me about Meta AI Quick Reference?"
+
 - **File**: `docs/providers/nvidia.md`
   - **Content**: NVIDIA NIM Provider Guide
   - **Topics**: Setup, Curated models, Reasoning and tools, References
@@ -519,8 +528,8 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/providers/openrouter.md`
   - **Content**: OpenRouter Integration Guide
-  - **Topics**: Quickstart, Persisting configuration, Runtime behaviour, Troubleshooting
-  - **User Questions**: "What can you tell me about OpenRouter Integration Guide?", "How does Quickstart work?", "How does Persisting configuration work?"
+  - **Topics**: Quickstart, Meta Muse models, Persisting configuration, Runtime behaviour, Troubleshooting
+  - **User Questions**: "What can you tell me about OpenRouter Integration Guide?", "How does Quickstart work?", "How does Meta Muse models work?"
 
 - **File**: `docs/providers/PROVIDER_GUIDES.md`
   - **Content**: Provider Guides

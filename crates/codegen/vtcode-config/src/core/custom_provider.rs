@@ -433,6 +433,8 @@ impl CustomProviderConfig {
             "gemini",
             "copilot",
             "deepseek",
+            "meta",
+            "meta-ai",
             "openrouter",
             "ollama",
             "lmstudio",

@@ -127,6 +127,7 @@ pub fn get_api_key_with_mode(
     let message = match normalized_provider.as_str() {
         "gemini" => "GEMINI_API_KEY or GOOGLE_API_KEY not set".to_owned(),
         "qwen" => "QWEN_API_KEY or DASHSCOPE_API_KEY not set".to_owned(),
+        "meta" => "META_API_KEY or MODEL_API_KEY not set".to_owned(),
         _ => format!(
             "{normalized_provider} API key not found. Export {inferred_env} in your shell, or store it with `/secret add {normalized_provider}` (it is kept in secure storage, not a workspace .env).",
         ),

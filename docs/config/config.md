@@ -60,7 +60,7 @@ The AI provider that VT Code should use.
 
 ```toml
 [agent]
-provider = "anthropic"  # available: openai, anthropic, google, deepseek, copilot, openrouter, mimo, huggingface, zai, moonshot, minimax, mistral, qwen, stepfun, evolink, poolside, xai, nvidia, ollama, lmstudio, llamacpp
+provider = "anthropic"  # available: openai, anthropic, google, meta, deepseek, copilot, openrouter, mimo, huggingface, zai, moonshot, minimax, mistral, qwen, stepfun, evolink, poolside, xai, nvidia, ollama, lmstudio, llamacpp
 default_model = "claude-sonnet-4-6"  # overrides the default model for the selected provider
 ```
 
@@ -99,6 +99,11 @@ base_url = "http://localhost:11434/v1"
 name = "NVIDIA NIM"
 base_url = "https://integrate.api.nvidia.com/v1"
 env_key = "NVIDIA_API_KEY"
+
+[agent.provider_settings.meta]
+name = "Meta AI"
+base_url = "https://api.meta.ai/v1"
+env_key = "META_API_KEY"
 ```
 
 Note this makes it possible to use VT Code with non-default models, so long as they are properly configured with the correct API endpoints and authentication.
@@ -893,6 +898,9 @@ OPENAI_API_KEY=your_openai_api_key
 ANTHROPIC_API_KEY=your_anthropic_api_key
 GOOGLE_GEMINI_API_KEY=your_google_api_key
 DEEPSEEK_API_KEY=your_deepseek_api_key
+META_API_KEY=your_meta_api_key
+# Meta's documentation also names MODEL_API_KEY as the credential variable.
+MODEL_API_KEY=your_meta_api_key
 OPENROUTER_API_KEY=your_openrouter_api_key
 MIMO_API_KEY=your_mimo_api_key
 EVOLINK_API_KEY=your_evolink_api_key
@@ -1044,7 +1052,7 @@ turn limits, and context reuse for long-running exec sessions.
 
 | Key                                     | Type / Values                                     | Notes                                                                                                                                                                         |
 | --------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agent.provider`                        | string                                            | Provider to use (e.g., `openai`, `anthropic`, `google`, `nvidia`, `ollama`).                                                                                                   |
+| `agent.provider`                        | string                                            | Provider to use (e.g., `openai`, `anthropic`, `google`, `meta`, `nvidia`, `ollama`).                                                                                            |
 | `agent.default_model`                   | string                                            | Default model for the selected provider.                                                                                                                                      |
 | `agent.context_window`                  | number                                            | Context window tokens.                                                                                                                                                        |
 | `agent.max_output_tokens`               | number                                            | Max output tokens.                                                                                                                                                            |

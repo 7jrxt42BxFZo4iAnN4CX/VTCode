@@ -23,6 +23,7 @@ pub fn supported_for(provider: &str) -> Option<&'static [&'static str]> {
         "poolside" => Some(models::poolside::SUPPORTED_MODELS),
         "xai" => Some(models::xai::SUPPORTED_MODELS),
         "nvidia" => Some(models::nvidia::SUPPORTED_MODELS),
+        "meta" | "meta-ai" => Some(models::meta::SUPPORTED_MODELS),
         _ => None,
     }
 }
@@ -50,6 +51,7 @@ pub fn default_for(provider: &str) -> Option<&'static str> {
         "poolside" => Some(models::poolside::DEFAULT_MODEL),
         "xai" => Some(models::xai::DEFAULT_MODEL),
         "nvidia" => Some(models::nvidia::DEFAULT_MODEL),
+        "meta" | "meta-ai" => Some(models::meta::DEFAULT_MODEL),
         _ => None,
     }
 }

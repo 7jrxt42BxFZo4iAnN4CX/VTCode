@@ -305,6 +305,28 @@ model_id_table! {
         display: "DeepSeek V4 Flash",
         description: "Official release with significantly enhanced agent capabilities for coding and tool use (Terminal Bench 2.1: 82.7, DeepSWE: 54.4)",
     },
+    // Official Meta AI models
+    MetaMuseSpark11 {
+        provider: Meta,
+        id: models::meta::MUSE_SPARK_1_1,
+        parse: [models::meta::MUSE_SPARK_1_1],
+        display: "Muse Spark 1.1 (Meta AI)",
+        description: "Official Meta AI Muse Spark 1.1 Standard-tier model with always-on reasoning and long context",
+    },
+    MetaMuseSpark12 {
+        provider: Meta,
+        id: models::meta::MUSE_SPARK_1_2,
+        parse: [models::meta::MUSE_SPARK_1_2],
+        display: "Muse Spark 1.2 (Meta AI)",
+        description: "Official Meta AI Muse Spark 1.2 Standard-tier flagship with always-on reasoning and long context",
+    },
+    MetaMuseSpark12Contributor {
+        provider: Meta,
+        id: models::meta::MUSE_SPARK_1_2_CONTRIBUTOR,
+        parse: [models::meta::MUSE_SPARK_1_2_CONTRIBUTOR],
+        display: "Muse Spark 1.2 Contributor (Meta AI)",
+        description: "Official Meta AI Muse Spark 1.2 Contributor-tier variant with always-on reasoning and long context",
+    },
     // NVIDIA NIM models
     NvidiaNemotron3Ultra550bA55b {
         provider: NVIDIA,

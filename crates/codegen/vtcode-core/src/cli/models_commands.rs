@@ -93,6 +93,7 @@ fn is_provider_configured(config: &DotConfig, provider: &str) -> bool {
         "anthropic" => (config.providers.anthropic.as_ref(), false),
         "gemini" => (config.providers.gemini.as_ref(), false),
         "deepseek" => (config.providers.deepseek.as_ref(), false),
+        "meta" => (config.providers.meta.as_ref(), false),
         "openrouter" => (config.providers.openrouter.as_ref(), false),
         "ollama" => (config.providers.ollama.as_ref(), true),
         "lmstudio" => (config.providers.lmstudio.as_ref(), true),
@@ -179,7 +180,7 @@ async fn handle_config_provider(
     let mut config = manager.load_config().await?;
 
     match provider {
-        "openai" | "anthropic" | "gemini" | "openrouter" | "deepseek" | "ollama" | "lmstudio" | "llamacpp"
+        "openai" | "anthropic" | "gemini" | "deepseek" | "meta" | "openrouter" | "ollama" | "lmstudio" | "llamacpp"
         | "stepfun" | "evolink" => {
             configure_standard_provider(&mut config, provider, api_key, base_url, model)?;
         }
@@ -212,6 +213,7 @@ fn configure_standard_provider(
         "anthropic" => get_provider_config!(anthropic),
         "gemini" => get_provider_config!(gemini),
         "deepseek" => get_provider_config!(deepseek),
+        "meta" => get_provider_config!(meta),
         "openrouter" => get_provider_config!(openrouter),
         "ollama" => get_provider_config!(ollama),
         "lmstudio" => get_provider_config!(lmstudio),
@@ -299,6 +301,7 @@ fn get_provider_credentials(
         "anthropic" => config.providers.anthropic.as_ref(),
         "gemini" => config.providers.gemini.as_ref(),
         "deepseek" => config.providers.deepseek.as_ref(),
+        "meta" => config.providers.meta.as_ref(),
         "openrouter" => config.providers.openrouter.as_ref(),
         "ollama" => config.providers.ollama.as_ref(),
         "lmstudio" => config.providers.lmstudio.as_ref(),

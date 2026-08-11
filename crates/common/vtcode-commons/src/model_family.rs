@@ -283,6 +283,17 @@ pub fn find_family_for_model(slug: &str) -> ModelFamily {
         );
     }
 
+    // Official Meta AI Muse models
+    if slug.starts_with("muse-spark-") {
+        return model_family!(
+            slug, "muse-spark", Provider::Meta,
+            context_window: Some(LARGE_CONTEXT_WINDOW),
+            supports_thinking: true,
+            supports_parallel_tool_calls: true,
+            supports_reasoning_summaries: false,
+        );
+    }
+
     // Z.AI GLM models
     if slug.contains("glm-5") {
         return model_family!(

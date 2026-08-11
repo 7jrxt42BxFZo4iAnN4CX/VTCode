@@ -10,7 +10,7 @@ Provides a unified interface for multiple LLM providers with streaming, tool cal
 
 | Module | Purpose |
 |--------|---------|
-| `providers/` | Per-provider implementations (gemini, openai, anthropic, deepseek, ollama, etc.) |
+| `providers/` | Per-provider implementations (gemini, openai, anthropic, meta, deepseek, ollama, etc.) |
 | `provider/` | Core trait (`LLMProvider`), message types, request/response |
 | `factory_types.rs` | `ProviderConfig` struct, `infer_provider_from_model` |
 | `system_prompt.rs` | System prompt injection via `OnceLock` callbacks |

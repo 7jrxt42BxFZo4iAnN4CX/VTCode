@@ -414,22 +414,23 @@ fn provider_precedence(provider: Provider) -> usize {
         Provider::Minimax => 5,
         Provider::Mistral => 6,
         Provider::Moonshot => 7,
-        Provider::OpenRouter => 8,
-        Provider::HuggingFace => 9,
-        Provider::Copilot => 10,
-        Provider::Ollama => 11,
-        Provider::OllamaCloud => 12,
-        Provider::LmStudio => 13,
-        Provider::LlamaCpp => 14,
-        Provider::OpenCodeZen => 15,
-        Provider::OpenCodeGo => 16,
-        Provider::MiMo => 17,
-        Provider::Qwen => 18,
-        Provider::StepFun => 19,
-        Provider::Evolink => 20,
-        Provider::Poolside => 21,
-        Provider::XAI => 22,
-        Provider::NVIDIA => 23,
+        Provider::Meta => 8,
+        Provider::OpenRouter => 9,
+        Provider::HuggingFace => 10,
+        Provider::Copilot => 11,
+        Provider::Ollama => 12,
+        Provider::OllamaCloud => 13,
+        Provider::LmStudio => 14,
+        Provider::LlamaCpp => 15,
+        Provider::OpenCodeZen => 16,
+        Provider::OpenCodeGo => 17,
+        Provider::MiMo => 18,
+        Provider::Qwen => 19,
+        Provider::StepFun => 20,
+        Provider::Evolink => 21,
+        Provider::Poolside => 22,
+        Provider::XAI => 23,
+        Provider::NVIDIA => 24,
     }
 }
 
@@ -457,7 +458,9 @@ pub fn heuristic_provider_from_model(model: &str) -> Option<Provider> {
     }
 
     let model = trimmed.to_ascii_lowercase();
-    if model.starts_with("gpt-oss-")
+    if model.starts_with("muse-spark-") {
+        Some(Provider::Meta)
+    } else if model.starts_with("gpt-oss-")
         || model.starts_with("gpt-")
         || model.starts_with("o1")
         || model.starts_with("o3")
@@ -551,6 +554,17 @@ mod tests {
 
         assert_eq!(resolved.provider, Provider::NVIDIA);
         assert!(resolved.known_model());
+    }
+
+    #[test]
+    fn resolver_keeps_official_meta_and_openrouter_meta_models_distinct() {
+        let official = ModelResolver::resolve(None, "muse-spark-1.2", &[], None).expect("official Meta model");
+        assert_eq!(official.provider, Provider::Meta);
+        assert!(official.known_model());
+
+        let marketplace = ModelResolver::resolve(None, "meta/muse-spark-1.2", &[], None).expect("OpenRouter model");
+        assert_eq!(marketplace.provider, Provider::OpenRouter);
+        assert!(marketplace.known_model());
     }
 
     #[test]

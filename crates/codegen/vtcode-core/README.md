@@ -9,7 +9,7 @@ execution, semantic code analysis, and configurable safety policies.
 ## Highlights
 
 - **Provider Abstraction** — unified LLM interface with adapters for OpenAI,
-  Anthropic, xAI, DeepSeek, Gemini, OpenRouter, and Ollama (local), including automatic
+  Anthropic, xAI, DeepSeek, Meta AI, Gemini, OpenRouter, and Ollama (local), including automatic
   failover and spend controls.
 - **Prompt Caching** — cross-provider caching system that leverages
   provider-specific caching capabilities (OpenAI's automatic caching, Anthropic's
@@ -41,7 +41,7 @@ execution, semantic code analysis, and configurable safety policies.
 #### Highlights
 
 - **Provider Abstraction**: unified LLM interface with adapters for OpenAI,
-  Anthropic, xAI, DeepSeek, Gemini, OpenRouter, and Ollama (local), including automatic
+  Anthropic, xAI, DeepSeek, Meta AI, Gemini, OpenRouter, and Ollama (local), including automatic
   failover and spend controls.
 - **Prompt Caching**: cross-provider prompt caching system that leverages
   provider-specific caching capabilities (OpenAI's automatic caching, Anthropic's

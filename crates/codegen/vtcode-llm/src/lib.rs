@@ -15,7 +15,7 @@
 //! # vtcode-llm - LLM Provider Abstraction
 //!
 //! Provides a unified interface for multiple LLM providers including
-//! Gemini, OpenAI, Anthropic, DeepSeek, and Ollama.
+//! Gemini, OpenAI, Anthropic, Meta AI, DeepSeek, and Ollama.
 
 pub mod capabilities;
 pub mod client;

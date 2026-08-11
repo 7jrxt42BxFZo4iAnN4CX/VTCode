@@ -5,6 +5,7 @@ pub const ANTHROPIC_BASE_URL: &str = "ANTHROPIC_BASE_URL";
 pub const OPENROUTER_BASE_URL: &str = "OPENROUTER_BASE_URL";
 pub const XAI_BASE_URL: &str = "XAI_BASE_URL";
 pub const NVIDIA_BASE_URL: &str = "NVIDIA_BASE_URL";
+pub const META_BASE_URL: &str = "META_BASE_URL";
 pub const DEEPSEEK_BASE_URL: &str = "DEEPSEEK_BASE_URL";
 pub const MISTRAL_BASE_URL: &str = "MISTRAL_BASE_URL";
 pub const Z_AI_BASE_URL: &str = "Z_AI_BASE_URL";

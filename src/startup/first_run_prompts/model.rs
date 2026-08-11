@@ -37,6 +37,7 @@ pub(crate) fn default_model_for_provider(provider: Provider) -> &'static str {
         Provider::Anthropic => models::anthropic::DEFAULT_MODEL,
         Provider::Copilot => models::copilot::DEFAULT_MODEL,
         Provider::DeepSeek => models::deepseek::DEFAULT_MODEL,
+        Provider::Meta => models::meta::DEFAULT_MODEL,
         Provider::HuggingFace => models::huggingface::DEFAULT_MODEL,
         Provider::OpenRouter => models::openrouter::DEFAULT_MODEL,
         Provider::Ollama => models::ollama::DEFAULT_MODEL,

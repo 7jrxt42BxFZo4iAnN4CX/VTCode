@@ -103,6 +103,17 @@ See the [Configuration guide](../config/config.md#custom_providers) for full det
 -   Key management and defaults mirror the Gemini/OpenAI flow in [Getting Started](../user-guide/getting-started.md#api-requirements).
 -   Supported model IDs live in [`crates/codegen/vtcode-core/src/config/constants.rs`](../../crates/codegen/vtcode-core/src/config/constants.rs).
 
+## Meta AI
+
+-   **Guide:** [Meta AI Integration](./meta.md)
+-   **Official docs:** [LLM documentation](https://dev.meta.ai/docs/llms.txt) · [Models](https://developer.meta.com/ai/models)
+-   **Provider key:** `meta`
+-   **Authentication:** `META_API_KEY` or Meta's documented `MODEL_API_KEY`
+-   **Base URL:** `https://api.meta.ai/v1`, override with `META_BASE_URL`
+-   **Default model:** `muse-spark-1.2`
+-   **Curated models:** Muse Spark 1.2, Muse Spark 1.1, and the opt-in Muse Spark 1.2 Contributor tier
+-   **Features:** Streaming, tool calls, structured output, multimodal input, reasoning effort, and 1M-token context
+
 ## NVIDIA NIM
 
 -   **Guide:** [NVIDIA NIM Integration](./nvidia.md)
@@ -129,6 +140,8 @@ See the [Configuration guide](../config/config.md#custom_providers) for full det
     -   [Streaming](https://openrouter.ai/docs/api-reference/streaming/llms)
     -   [Model catalog](https://openrouter.ai/docs/llms)
 -   Default model: `xiaomi/mimo-v2.5-pro` (VT Code's default). Xiaomi MiMo V2.5 and V2.5 Pro are also available.
+-   For Meta Muse, prefer the official [`meta` provider](./meta.md) when direct Meta access is desired. OpenRouter's `meta/...` entries are separately namespaced marketplace routes.
+-   **Meta Muse models via OpenRouter:** `meta/muse-glimmer-30b` and `meta/muse-spark-1.2`
 -   **Xiaomi MiMo models:**
     -   `xiaomi/mimo-v2.5-pro` — flagship agentic model, 1M context, reasoning + tool calls
     -   `xiaomi/mimo-v2.5` — omnimodal model, 1M context, reasoning + tool calls

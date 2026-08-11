@@ -341,6 +341,7 @@ fn known_provider_from_name(provider_name: &str) -> Option<Provider> {
         "anthropic" => Some(Provider::Anthropic),
         "copilot" => Some(Provider::Copilot),
         "deepseek" => Some(Provider::DeepSeek),
+        "meta" | "meta-ai" => Some(Provider::Meta),
         "gemini" | "google" => Some(Provider::Gemini),
         "openrouter" => Some(Provider::OpenRouter),
         "ollama" => Some(Provider::Ollama),
@@ -404,6 +405,13 @@ fn preferred_lightweight_model_slug(provider: Provider, active_model: &str) -> O
             }
             None
         }
+        Provider::Meta => {
+            if lower == "muse-spark-1.2" {
+                Some(ModelId::MetaMuseSpark11.as_str().to_string())
+            } else {
+                Some(trimmed_model.to_string())
+            }
+        }
         Provider::Gemini => {
             if lower.contains("flash-lite") || lower.contains("flash preview") {
                 return Some(trimmed_model.to_string());
@@ -441,6 +449,7 @@ fn provider_default_lightweight_model(provider: Provider) -> Option<std::borrow:
         Provider::Anthropic => Some(ModelId::ClaudeHaiku45.as_str()),
         Provider::Copilot => Some(ModelId::CopilotGPT54Mini.as_str()),
         Provider::DeepSeek => Some(ModelId::DeepSeekV4Flash.as_str()),
+        Provider::Meta => Some(ModelId::MetaMuseSpark11.as_str()),
         Provider::Gemini => Some(ModelId::Gemini35Flash.as_str()),
         Provider::ZAI => Some(ModelId::ZaiGlm51.as_str()),
         Provider::Minimax => Some(ModelId::MinimaxM3.as_str()),

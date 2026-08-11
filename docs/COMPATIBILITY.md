@@ -112,6 +112,7 @@ All VT Code crates require Rust 1.88 or later due to dependencies (ratatui 0.30,
 | OpenRouter | Yes | `openrouter` | Multi-provider gateway |
 | LM Studio | Yes | `lmstudio` | Local inference |
 | DeepSeek | Yes | `deepseek` | Full support |
+| Meta AI | Yes | `meta` | Official Muse models via Meta's OpenAI-compatible API |
 | Moonshot | Yes | `moonshot` | Full support |
 | Z.AI | Yes | `zai` | GLM-5.2 support |
 | Xiaomi MiMo | Yes | `mimo` | Full support |

@@ -91,6 +91,14 @@ pub enum ModelId {
     /// DeepSeek V4 Flash - Fast inference model for cost-effective reasoning
     DeepSeekV4Flash,
 
+    // Official Meta AI models
+    /// Meta Muse Spark 1.1 - Official Meta AI Standard-tier reasoning model
+    MetaMuseSpark11,
+    /// Meta Muse Spark 1.2 - Official Meta AI flagship Standard-tier reasoning model
+    MetaMuseSpark12,
+    /// Meta Muse Spark 1.2 Contributor tier - opt-in variant with Meta's discounted data-contribution terms
+    MetaMuseSpark12Contributor,
+
     // NVIDIA NIM models
     /// NVIDIA Nemotron 3 Ultra - NVIDIA's flagship agentic reasoning model via NIM
     NvidiaNemotron3Ultra550bA55b,
@@ -292,6 +300,11 @@ pub enum ModelId {
     OpenRouterOpenAIGpt55,
     /// OpenAI GPT-5 Chat - Chat optimised GPT-5 endpoint without tool use
     OpenRouterOpenAIGpt5Chat,
+
+    /// Meta Muse Glimmer 30B via OpenRouter
+    OpenRouterMetaMuseGlimmer30b,
+    /// Meta Muse Spark 1.2 via OpenRouter
+    OpenRouterMetaMuseSpark12,
 
     /// Gemini 3.1 Pro Preview - Google's latest Gemini 3.1 Pro model via OpenRouter
     OpenRouterGoogleGemini31ProPreview,

@@ -40,7 +40,7 @@ impl ManPageGenerator {
             .text([
                 roman("VT Code is an advanced coding agent with single-agent architecture and Decision Ledger that provides"),
                 roman(" intelligent code generation, analysis, and modification capabilities. It supports"),
-                roman(" multiple LLM providers including Gemini, OpenAI, Anthropic, DeepSeek, Z.AI,"),
+                roman(" multiple LLM providers including Gemini, OpenAI, Anthropic, DeepSeek, Meta AI, Z.AI,"),
                 roman(" Moonshot AI, OpenRouter, and Ollama, and includes LLM-native semantic code understanding."),
                 roman(" Rust, Python, JavaScript, TypeScript, Go, and Java."),
             ])
@@ -52,7 +52,7 @@ impl ManPageGenerator {
             .text([bold("-p"), roman(", "), bold("--provider"), roman(" "), italic("PROVIDER")])
             .text([
                 roman(
-                    "Specify the LLM provider (gemini, openai, anthropic, deepseek, zai, moonshot, openrouter, ollama, lmstudio)",
+                    "Specify the LLM provider (gemini, openai, anthropic, deepseek, meta, zai, moonshot, openrouter, ollama, lmstudio)",
                 ),
             ])
             .control("TP", [])
@@ -172,6 +172,12 @@ impl ManPageGenerator {
             .control("TP", [])
             .text([bold("DEEPSEEK_API_KEY")])
             .text([roman("API key for DeepSeek models")])
+            .control("TP", [])
+            .text([bold("META_API_KEY")])
+            .text([roman("API key for Meta AI Muse models")])
+            .control("TP", [])
+            .text([bold("MODEL_API_KEY")])
+            .text([roman("Meta AI's documented API key variable")])
             .control("TP", [])
             .text([bold("ZAI_API_KEY")])
             .text([roman("API key for Z.AI GLM models")])

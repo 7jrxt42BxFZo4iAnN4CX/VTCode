@@ -92,6 +92,16 @@ define_provider_config!(
     ()
 );
 define_provider_config!(
+    /// Provider configuration for the official Meta AI API.
+    MetaProviderConfig,
+    "meta",
+    "Meta AI",
+    crate::config::constants::models::meta::DEFAULT_MODEL,
+    crate::config::constants::urls::META_API_BASE,
+    Some(crate::config::constants::env_vars::META_BASE_URL),
+    ()
+);
+define_provider_config!(
     /// Provider configuration for Mistral AI.
     MistralProviderConfig,
     "mistral",
