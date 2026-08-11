@@ -178,6 +178,8 @@ Want to use VT Code as a library? See [`vtcode-battery-pack`](https://github.com
 cargo nextest run        # parallel test runner
 ```
 
+Read more about Rust Cargo Battery Pack in the [blog](https://smallcultfollowing.com/babysteps/blog/2026/07/15/battery-packs/).
+
 ## Contributing
 
 VT Code is built by an open source community. Whether you're fixing bugs, improving docs, proposing features, reporting security issues, or shipping patches, all contributions are welcome.
