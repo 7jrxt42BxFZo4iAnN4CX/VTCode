@@ -2,6 +2,20 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.143.0 - 2026-08-11
+
+### Highlights
+#### Bug Fixes
+
+- Raise recursion limit for hawk's pinned toolchain (284e90d4) 
+#### Documentation
+
+- Fix bare URL rustdoc warning in plugins CLI docs (2ff9cf98) (@vinhnx)
+#### Features
+
+- Add Meta AI Muse support (aeefb802) 
+- Emit session-completion notification at finalization (a36032e8) 
+### Other Changes
 ## 0.142.9 - 2026-08-11
 
 ### Highlights
