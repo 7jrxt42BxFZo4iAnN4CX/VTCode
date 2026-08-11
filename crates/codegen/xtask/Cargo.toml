@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-version = "0.142.9"
+version = "0.143.0"
 edition = "2024"
 publish = false
 
