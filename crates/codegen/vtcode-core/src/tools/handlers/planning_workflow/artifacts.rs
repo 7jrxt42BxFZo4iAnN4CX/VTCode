@@ -5,6 +5,7 @@
 //! is independently testable (see `super::tests`). I/O and tool wiring live in
 //! `persistence.rs` / `start.rs` / `finish.rs`.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -231,7 +232,9 @@ fn section_body(content: &str, header: &str) -> Option<String> {
             if capture {
                 break;
             }
-            capture = found.trim().trim_end_matches(':').trim().eq_ignore_ascii_case(header);
+            capture = strip_emphasis(found.trim().trim_end_matches(':'))
+                .trim()
+                .eq_ignore_ascii_case(header);
             continue;
         }
         if capture {
@@ -248,12 +251,25 @@ fn section_body_for_aliases(content: &str, headers: &[&str]) -> Option<String> {
         .find_map(|header| section_body(content, header).or_else(|| standalone_section_body(content, header)))
 }
 
+/// Strip Markdown emphasis markers (`**bold**`, `` `code` ``) that models
+/// frequently wrap around plan labels such as `**Files/symbols:**`. Emphasis
+/// carries no semantics for validation; leaving it in place makes label
+/// prefix matching reject well-formed plans (checkpoint turn_912).
+fn strip_emphasis(value: &str) -> &str {
+    value.trim_matches(['*', '`'])
+}
+
+/// Leading-edge variant for label prefixes: `**Files/symbols:** value`.
+fn strip_leading_emphasis(value: &str) -> &str {
+    value.trim_start_matches(['*', '`'])
+}
+
 fn normalized_section_label(line: &str) -> &str {
     let mut normalized = line.trim().trim_start_matches('>').trim_start();
     while let Some(stripped) = normalized.strip_prefix('#') {
         normalized = stripped.trim_start();
     }
-    strip_list_marker(normalized).trim()
+    strip_emphasis(strip_list_marker(normalized).trim()).trim()
 }
 
 fn is_standalone_section_label(line: &str, header: &str) -> bool {
@@ -321,6 +337,13 @@ fn meaningful_section_lines(body: &str) -> Vec<&str> {
 
 fn numbered_line_parts(line: &str) -> Option<(&str, &str)> {
     let trimmed = line.trim();
+    // Tolerate a `Step ` prefix (`Step 1: ...`), a common model variant. The
+    // digit check requires a leading digit after whitespace trimming so words
+    // like `stepwise` are never mistaken for a step prefix.
+    let trimmed = strip_ascii_case_insensitive_prefix(trimmed, "step")
+        .map(str::trim_start)
+        .filter(|rest| rest.chars().next().is_some_and(|ch| ch.is_ascii_digit()))
+        .unwrap_or(trimmed);
     let digit_end = trimmed
         .char_indices()
         .take_while(|(_, ch)| ch.is_ascii_digit())
@@ -332,7 +355,7 @@ fn numbered_line_parts(line: &str) -> Option<(&str, &str)> {
 
     let rest = trimmed.get(digit_end..)?.trim_start();
     let punctuation = rest.chars().next()?;
-    if punctuation != '.' && punctuation != ')' {
+    if punctuation != '.' && punctuation != ')' && punctuation != ':' {
         return None;
     }
 
@@ -368,7 +391,7 @@ fn is_plan_section_boundary(line: &str) -> bool {
     while let Some(stripped) = normalized.strip_prefix('#') {
         normalized = stripped.trim_start();
     }
-    normalized = strip_list_marker(normalized).trim();
+    normalized = strip_emphasis(strip_list_marker(normalized).trim()).trim();
     SUMMARY_SECTION_ALIASES
         .iter()
         .chain(IMPLEMENTATION_SECTION_ALIASES.iter())
@@ -438,9 +461,19 @@ fn collect_implementation_step_blocks(content: &str, stop_at_section_boundaries:
 
 fn marker_value<'a>(line: &'a str, labels: &[&str]) -> Option<&'a str> {
     let line = strip_list_marker(line);
-    labels
-        .iter()
-        .find_map(|label| strip_ascii_case_insensitive_prefix(line, &format!("{label}:")))
+    // Tolerate emphasis around the label (`**Files/symbols:** value`) — models
+    // routinely bold marker labels, and the `**` otherwise breaks both the
+    // label prefix and the trailing `:` match (checkpoint turn_912).
+    let line = strip_leading_emphasis(line);
+    labels.iter().find_map(|label| {
+        strip_ascii_case_insensitive_prefix(line, &format!("{label}:"))
+            .or_else(|| {
+                // Emphasis between label and colon: `**Files/symbols:**`.
+                strip_ascii_case_insensitive_prefix(line, label)
+                    .and_then(|rest| strip_leading_emphasis(rest).strip_prefix(':').map(str::trim_start))
+            })
+            .map(|value| strip_leading_emphasis(value).trim_start())
+    })
 }
 
 fn is_concrete_value(value: &str) -> bool {
@@ -753,6 +786,32 @@ fn is_concrete_verification(value: &str) -> bool {
         || ((words.contains(&"tests") || words.contains(&"checks")) && words.contains(&"pass"))
 }
 
+/// Normalize a step action line for `->` segmentation, tolerating the
+/// Unicode `→` arrow models occasionally emit. Validation and tracker
+/// generation share this so the two paths can never disagree about which
+/// arrows delimit a step's action/targets/verification. Returns
+/// `Cow::Borrowed` (zero allocation) when no Unicode arrow is present — the
+/// same normalize-or-borrow pattern as `summarizers`/`untrusted_data`.
+fn normalize_step_action(action: &str) -> Cow<'_, str> {
+    if action.contains('→') {
+        Cow::Owned(action.replace('→', "->"))
+    } else {
+        Cow::Borrowed(action)
+    }
+}
+
+/// Split a step action line into `->`-separated segments, tolerating the
+/// Unicode `→` arrow. Owns its segments (`String`) so callers never juggle
+/// the normalized temporary's lifetime; step lines are short, so the
+/// per-segment allocation is immaterial.
+fn step_action_segments(action: &str) -> Vec<String> {
+    normalize_step_action(action)
+        .split("->")
+        .map(str::trim)
+        .map(str::to_string)
+        .collect()
+}
+
 fn implementation_step_shape_error(step: &ImplementationStepBlock) -> Option<String> {
     let first_line = step.lines.first().map(String::as_str).unwrap_or_default();
     let action = first_line.trim();
@@ -760,7 +819,7 @@ fn implementation_step_shape_error(step: &ImplementationStepBlock) -> Option<Str
         return Some("action is empty".to_string());
     }
 
-    let segments = action.split("->").map(str::trim).collect::<Vec<_>>();
+    let segments = step_action_segments(action);
     let verify_index = segments
         .iter()
         .position(|segment| marker_value(segment, &["verify", "verification"]).is_some());
@@ -790,7 +849,7 @@ fn implementation_step_shape_error(step: &ImplementationStepBlock) -> Option<Str
 
     let mut has_verification = verify_index.is_some();
     let mut verification_is_concrete = verify_index
-        .and_then(|index| marker_value(segments[index], &["verify", "verification"]))
+        .and_then(|index| marker_value(&segments[index], &["verify", "verification"]))
         .is_none_or(is_concrete_verification);
     for continuation in step.lines.iter().skip(1) {
         if let Some(target) = marker_value(continuation, &["files/symbols", "files", "symbols", "target"]) {
@@ -976,12 +1035,13 @@ pub fn generate_tracker_markdown_from_plan(plan_markdown: &str) -> Option<String
     let mut items = Vec::new();
     let mut seen_descriptions = HashSet::new();
     for line in implementation.lines().map(str::trim).filter(|line| !line.is_empty()) {
-        if !is_numbered_line(line) {
+        let Some((_, description)) = numbered_line_parts(line) else {
             continue;
-        }
-        let description = line.split_once(['.', ')']).map(|(_, rest)| rest.trim()).unwrap_or(line);
-        let segments = description.split("->").map(str::trim).collect::<Vec<_>>();
-        let main = segments.first().copied().unwrap_or_default();
+        };
+        // Share arrow normalization with validation so an accepted `→`-style
+        // step produces the same tracker segments the validator saw.
+        let segments = step_action_segments(description);
+        let main = segments.first().map(String::as_str).unwrap_or_default();
         if main.is_empty() {
             continue;
         }
@@ -992,21 +1052,24 @@ pub fn generate_tracker_markdown_from_plan(plan_markdown: &str) -> Option<String
 
         let mut entry = format!("- [ ] {main}\n");
         for segment in segments.iter().skip(1) {
-            if let Some(files) = strip_ascii_case_insensitive_prefix(segment, "files:") {
+            // Reuse the validator's emphasis-tolerant marker parsing so an
+            // accepted `**files:**`-style segment yields the same tracker
+            // metadata the validator saw.
+            if let Some(files) = marker_value(segment, &["files"]) {
                 let values = parse_bracket_list(files);
                 if !values.is_empty() {
                     entry.push_str(&format!("  files: {}\n", values.join(", ")));
                 }
                 continue;
             }
-            if let Some(outcome) = strip_ascii_case_insensitive_prefix(segment, "outcome:") {
+            if let Some(outcome) = marker_value(segment, &["outcome"]) {
                 let outcome = outcome.trim().trim_start_matches('[').trim_end_matches(']');
                 if !outcome.is_empty() {
                     entry.push_str(&format!("  outcome: {outcome}\n"));
                 }
                 continue;
             }
-            if let Some(verify) = strip_ascii_case_insensitive_prefix(segment, "verify:") {
+            if let Some(verify) = marker_value(segment, &["verify"]) {
                 let values = parse_bracket_list(verify);
                 if values.is_empty() {
                     let trimmed = verify.trim();

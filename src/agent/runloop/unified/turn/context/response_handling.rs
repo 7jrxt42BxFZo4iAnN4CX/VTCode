@@ -32,6 +32,7 @@ impl<'a> TurnProcessingContext<'a> {
     fn reject_plan_artifact(
         &mut self,
         error: PlanArtifactError,
+        plan_text: &str,
         allow_repair: bool,
     ) -> anyhow::Result<TurnHandlerOutcome> {
         use vtcode_core::utils::ansi::MessageStyle;
@@ -46,6 +47,13 @@ impl<'a> TurnProcessingContext<'a> {
             // later-turn approval rejection path share identical guidance.
             self.push_system_message(plan_repair_directive_for_error(&error));
             return Ok(TurnHandlerOutcome::Continue);
+        }
+        // Terminal rejection: the draft is never persisted or shown by the
+        // approval flow, so render it here — otherwise the user cannot see
+        // what was rejected or revise it manually (checkpoint turn_912).
+        if !plan_text.trim().is_empty() {
+            self.renderer.line(MessageStyle::Info, "Rejected plan draft:")?;
+            self.renderer.line(MessageStyle::Response, plan_text)?;
         }
         self.renderer.line(
             MessageStyle::Warning,
@@ -264,6 +272,21 @@ impl<'a> TurnProcessingContext<'a> {
         } else {
             text
         };
+        // Dead-end guard (checkpoint turn_912): decide whether this planning
+        // response qualifies for the no-approval-ready hint, but DEFER the
+        // append until terminality is known — the pseudo-tool-call reprompt
+        // and stop-hook paths below can still return `Continue`, and storing
+        // the hint before a continuation would leave stale "no approval-ready
+        // plan" guidance in history for a turn that kept going. Clarifying
+        // questions are excluded — the turn ends intentionally for the user's
+        // answer — and the denied-interview path above already surfaced the
+        // hint as the response text. Responses carrying a `proposed_plan` are
+        // also excluded: the plan-validation/persistence branch owns their
+        // terminal messaging.
+        let defer_no_ready_plan_hint = self.is_planning_active()
+            && proposed_plan.is_none()
+            && should_render_no_ready_plan_hint(denied_interview_without_ready_plan, &text)
+            && !persisted_plan_is_ready(&self.tool_registry.planning_workflow_state()).await;
         let final_text = text.clone();
         let consecutive_relaxed = self.harness_state.consecutive_relaxed_continuations;
         let continuation_decision = if tool_free_recovery_pass {
@@ -438,6 +461,20 @@ impl<'a> TurnProcessingContext<'a> {
         }
         self.harness_state.stop_hook_active = false;
 
+        // Terminal planless exit: every continuation path (interim-progress,
+        // denied-interview retry, pseudo-tool-call reprompt, stop-hook) has
+        // returned above, so the turn is ending. Now surface the deferred
+        // no-approval-ready hint — rendered for the user AND appended to the
+        // stored assistant message so it survives in history, ATIF, and
+        // harness logs. A turn that continued never stores the hint.
+        if defer_no_ready_plan_hint {
+            use vtcode_core::utils::ansi::MessageStyle;
+            let hint =
+                crate::agent::runloop::unified::planning_workflow_state::PLANNING_WORKFLOW_NO_APPROVAL_READY_PLAN_HINT;
+            self.renderer.line(MessageStyle::Info, hint)?;
+            append_no_ready_plan_hint_to_last_assistant(self.working_history);
+        }
+
         if let Some(plan_text) = proposed_plan {
             let planning_active = self.is_planning_active();
             tracing::info!(
@@ -454,14 +491,14 @@ impl<'a> TurnProcessingContext<'a> {
                     reasons: validation.reasons().join("; "),
                     report: Box::new(validation),
                 };
-                return self.reject_plan_artifact(error, !tool_free_recovery_pass);
+                return self.reject_plan_artifact(error, &plan_text, !tool_free_recovery_pass);
             }
 
             let persisted = match persist_plan_draft(&self.tool_registry.planning_workflow_state(), &plan_text).await {
                 Ok(persisted) => persisted,
                 Err(error) => {
                     let error = PlanArtifactError::Persistence { reason: error.to_string() };
-                    return self.reject_plan_artifact(error, false);
+                    return self.reject_plan_artifact(error, &plan_text, false);
                 }
             };
             // `persist_plan_draft` already validated the same immutable text
@@ -473,7 +510,7 @@ impl<'a> TurnProcessingContext<'a> {
                 let error = PlanArtifactError::Persistence {
                     reason: "plan, sidecar tracker, and workspace tracker were not published completely".to_string(),
                 };
-                return self.reject_plan_artifact(error, false);
+                return self.reject_plan_artifact(error, &plan_text, false);
             }
             // Construct from the already-validated report instead of
             // re-parsing the same immutable text a fourth time.
@@ -613,6 +650,37 @@ impl<'a> TurnProcessingContext<'a> {
 
         Ok(TurnHandlerOutcome::Break(TurnLoopResult::Completed { plan_approved_execution_pending: false }))
     }
+}
+
+/// Pure predicate for the planless-planning-turn hint; kept separate from the
+/// async persistence check so the decision is unit-testable.
+pub(super) fn should_render_no_ready_plan_hint(denied_interview_hint_shown: bool, final_text: &str) -> bool {
+    !denied_interview_hint_shown && !looks_like_clarifying_question(final_text)
+}
+
+/// Append the no-approval-ready hint to the stored assistant message from
+/// this response, so the guidance survives in history, ATIF, and harness
+/// logs. The message was pushed by `handle_assistant_response` before
+/// terminality was known; mutating the trailing assistant message keeps the
+/// hint attached to the answer it explains. Content is rewritten through
+/// `MessageContent::text`, which is lossless here: the message just pushed
+/// above is always built from a plain text string.
+fn append_no_ready_plan_hint_to_last_assistant(working_history: &mut [uni::Message]) {
+    let Some(last) = working_history
+        .iter_mut()
+        .rev()
+        .find(|message| message.role == uni::MessageRole::Assistant)
+    else {
+        return;
+    };
+    let hint = crate::agent::runloop::unified::planning_workflow_state::PLANNING_WORKFLOW_NO_APPROVAL_READY_PLAN_HINT;
+    let text = last.content.as_text();
+    let updated = if text.trim().is_empty() {
+        hint.to_string()
+    } else {
+        format!("{}\n\n{}", text.trim_end(), hint)
+    };
+    last.content = uni::MessageContent::text(updated);
 }
 
 // NOTE: Provider-noise stripping (MiniMax `]<]minimax[>[` and similar) has been
@@ -830,5 +898,117 @@ mod tests {
             !text.contains("no approval-ready plan was produced"),
             "the hint must NOT replace a clarifying question: {text}"
         );
+    }
+
+    #[tokio::test]
+    async fn planless_planning_turn_ends_with_hint_in_history() {
+        // Checkpoint turn_912: after the validation repair was consumed, the
+        // model answered with a planless status echo and the turn closed with
+        // no visible next step. The assistant's stored answer must carry the
+        // no-approval-ready hint so the user knows planning is still active.
+        let mut backing = TestTurnProcessingBacking::new(4).await;
+        backing.enable_planning();
+        let mut ctx = backing.turn_processing_context();
+        ctx.plan_session.mark_plan_validation_repair_used();
+
+        let outcome = ctx
+            .handle_text_response(
+                "Planning workflow is active with read-only permissions.".to_string(),
+                Vec::new(),
+                None,
+                None,
+                false,
+            )
+            .await
+            .expect("text response should be handled");
+
+        assert!(matches!(outcome, TurnHandlerOutcome::Break(_)), "a planless planning response should end the turn");
+        let last = ctx
+            .working_history
+            .iter()
+            .rev()
+            .find(|m| m.role == uni::MessageRole::Assistant)
+            .expect("an assistant message must be pushed");
+        let text = last.content.as_text();
+        assert!(
+            text.contains("no approval-ready plan was produced"),
+            "the no-approval-ready hint must accompany the planless answer: {text}"
+        );
+        assert!(
+            text.contains("Planning workflow is active with read-only permissions."),
+            "the model's own text must be preserved, not replaced: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn planless_planning_clarifying_question_ends_without_hint() {
+        let mut backing = TestTurnProcessingBacking::new(4).await;
+        backing.enable_planning();
+        let mut ctx = backing.turn_processing_context();
+
+        let outcome = ctx
+            .handle_text_response(
+                "Should I focus on the runtime loop or startup?".to_string(),
+                Vec::new(),
+                None,
+                None,
+                false,
+            )
+            .await
+            .expect("text response should be handled");
+
+        assert!(matches!(outcome, TurnHandlerOutcome::Break(_)));
+        let last = ctx
+            .working_history
+            .iter()
+            .rev()
+            .find(|m| m.role == uni::MessageRole::Assistant)
+            .expect("an assistant message must be pushed");
+        let text = last.content.as_text();
+        assert!(
+            !text.contains("no approval-ready plan was produced"),
+            "a clarifying question must not gain the hint: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn planless_planning_hint_is_not_stored_when_turn_continues() {
+        // Regression: the hint must be deferred until terminality is known.
+        // A pseudo-tool-call response that triggers a bounded reprompt returns
+        // `Continue` — storing the hint before that decision would leave stale
+        // "no approval-ready plan" guidance in history for a turn that kept
+        // going.
+        let mut backing = TestTurnProcessingBacking::new(4).await;
+        backing.enable_planning();
+        let mut ctx = backing.turn_processing_context();
+
+        let outcome = ctx
+            .handle_text_response(BROKEN_MARKUP_RESPONSE.to_string(), Vec::new(), None, None, false)
+            .await
+            .expect("text response should be handled");
+
+        assert!(
+            matches!(outcome, TurnHandlerOutcome::Continue),
+            "pseudo-tool-call markup should re-prompt (Continue), not end the turn"
+        );
+        let assistant_texts: Vec<String> = ctx
+            .working_history
+            .iter()
+            .filter(|message| message.role == uni::MessageRole::Assistant)
+            .map(|message| message.content.as_text().into_owned())
+            .collect();
+        assert!(
+            assistant_texts
+                .iter()
+                .all(|text| !text.contains("no approval-ready plan was produced")),
+            "a continued turn must never store the terminal hint: {assistant_texts:?}"
+        );
+    }
+
+    #[test]
+    fn no_ready_plan_hint_predicate_gates_on_denied_interview_and_questions() {
+        assert!(should_render_no_ready_plan_hint(false, "Here is a research summary."));
+        assert!(!should_render_no_ready_plan_hint(true, "Here is a research summary."));
+        assert!(!should_render_no_ready_plan_hint(false, "Which approach should I take?"));
     }
 }

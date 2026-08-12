@@ -354,7 +354,7 @@ Persist a concrete draft and seed tracker state.
 }
 #[cfg(test)]
 mod planning_artifact_regression_tests {
-    use super::artifacts::validate_plan_content;
+    use super::artifacts::{generate_tracker_markdown_from_plan, validate_plan_content};
     use super::persistence::persist_plan_draft;
     use super::start::StartPlanningTool;
     use super::state::PlanningWorkflowState;
@@ -609,6 +609,89 @@ Next open decision: should we use the foo bar baz approach or the qux approach?
         assert!(feedback.contains("unresolved decision marker(s)"), "feedback must mention the decision count");
         assert!(!feedback.contains("foo bar baz"), "feedback must NOT echo raw open-decision text");
         assert!(!feedback.contains("qux"), "feedback must NOT echo raw open-decision text");
+    }
+
+    #[test]
+    fn validate_plan_content_accepts_bold_labeled_block_steps() {
+        // Checkpoint turn_912: the model emitted well-formed block steps but
+        // bolded the marker labels (`- **Files/symbols:** ...`). Every step
+        // was rejected with "must name a concrete file, symbol, or behavior
+        // target", which made plan mode look broken. Emphasis must not affect
+        // marker parsing.
+        let plan = r#"# Plan
+
+## Summary
+Improve vtcode runtime by instrumenting the agent turn loop.
+
+## Implementation Steps
+1. Instrument turn timing
+   - **Action:** Add `Instant` timers around `run_turn_once`.
+   - **Files/symbols:** crates/codegen/vtcode-core/src/core/agent/runtime/mod.rs
+   - **Verify:** cargo nextest run -p vtcode-core
+2. Reduce allocations
+   - **Action:** Reuse message buffers in the runner.
+   - **Files/symbols:** crates/codegen/vtcode-core/src/core/agent/runner/execute.rs
+   - **Verify:** cargo nextest run -p vtcode-core
+
+## Test Cases and Validation
+1. Run cargo nextest run -p vtcode-core.
+
+## Assumptions and Defaults
+1. Keep existing behavior.
+"#;
+        let report = validate_plan_content(plan);
+        assert!(report.is_ready(), "bold labels must not break validation: {:?}", report.reasons());
+        assert_eq!(report.implementation_step_count, 2);
+    }
+
+    #[test]
+    fn validate_plan_content_accepts_bold_inline_markers_and_unicode_arrow() {
+        let plan = "# Plan\n\n## Summary\nTolerate common Markdown emphasis in steps.\n\n## Implementation Steps\n1. Instrument turn timing → **files:** [crates/codegen/vtcode-core/src/core/agent/runtime/mod.rs] → **verify:** [cargo nextest run -p vtcode-core]\n\n## Test Cases and Validation\n1. Run cargo nextest run -p vtcode-core.\n\n## Assumptions and Defaults\n1. Keep existing behavior.\n";
+        let report = validate_plan_content(plan);
+        assert!(report.is_ready(), "unicode arrow and bold markers must validate: {:?}", report.reasons());
+    }
+
+    #[test]
+    fn validate_plan_content_accepts_bold_section_headers() {
+        let plan = "# Plan\n\n## Summary\nTolerate bold section headers.\n\n## **Implementation Steps**\n1. Instrument timing -> files: [src/main.rs] -> verify: [cargo check]\n\n**Test Cases and Validation**\n1. Run cargo check.\n\n## Assumptions and Defaults\n1. Keep existing behavior.\n";
+        let report = validate_plan_content(plan);
+        assert!(report.is_ready(), "bold section headers must be recognized: {:?}", report.reasons());
+    }
+
+    #[test]
+    fn validate_plan_content_accepts_step_prefixed_and_colon_numbering() {
+        // Models frequently number steps as `Step 1: ...` or `1: ...`. The
+        // numbering typography must not hide otherwise concrete steps.
+        let plan = "# Plan\n\n## Summary\nTolerate common step numbering variants.\n\n## Implementation Steps\nStep 1: Instrument timing -> files: [src/main.rs] -> verify: [cargo check]\n2: Reuse buffers -> files: [src/lib.rs] -> verify: [cargo check]\n\n## Test Cases and Validation\n1. Run cargo check.\n\n## Assumptions and Defaults\n1. Keep existing behavior.\n";
+        let report = validate_plan_content(plan);
+        assert!(report.is_ready(), "step-prefixed/colon numbering must validate: {:?}", report.reasons());
+        assert_eq!(report.implementation_step_count, 2);
+    }
+
+    #[test]
+    fn tracker_generation_shares_arrow_normalization_with_validation() {
+        // A step accepted by validation with the Unicode `→` arrow must
+        // produce a tracker whose checkbox is the step action and whose
+        // files/verify metadata is extracted — not one checkbox holding the
+        // entire raw line.
+        let plan = "# Plan\n\n## Summary\nConcrete.\n\n## Implementation Steps\n1. Instrument turn timing → files: [src/main.rs] → verify: [cargo check]\n\n## Test Cases and Validation\n1. Run cargo check.\n\n## Assumptions and Defaults\n1. Keep existing behavior.\n";
+        let report = validate_plan_content(plan);
+        assert!(report.is_ready(), "plan must validate: {:?}", report.reasons());
+        let tracker = generate_tracker_markdown_from_plan(plan).expect("tracker generated");
+        assert!(tracker.contains("- [ ] Instrument turn timing"), "tracker: {tracker}");
+        assert!(tracker.contains("files: src/main.rs"), "tracker: {tracker}");
+        assert!(tracker.contains("verify: cargo check"), "tracker: {tracker}");
+        assert!(!tracker.contains('→'), "tracker must not leak the raw arrow: {tracker}");
+    }
+
+    #[test]
+    fn tracker_generation_reuses_canonical_numbered_line_parsing() {
+        // Tracker items must follow the same numbering rules as validation so
+        // `Step N:` steps do not leak their prefix into task descriptions.
+        let plan = "# Plan\n\n## Summary\nConcrete.\n\n## Implementation Steps\nStep 1: Instrument timing -> files: [src/main.rs] -> verify: [cargo check]\n\n## Test Cases and Validation\n1. Run cargo check.\n\n## Assumptions and Defaults\n1. Keep existing behavior.\n";
+        let tracker = generate_tracker_markdown_from_plan(plan).expect("tracker generated");
+        assert!(tracker.contains("- [ ] Instrument timing"), "tracker: {tracker}");
+        assert!(!tracker.contains("Step 1:"), "tracker must not leak the numbering prefix: {tracker}");
     }
 
     #[test]
