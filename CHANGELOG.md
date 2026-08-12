@@ -2,6 +2,13 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.143.2 - 2026-08-12
+
+### Highlights
+#### Features
+
+- Implement snapshot V2 migration and update core documentation (29996b93) 
+### Other Changes
 ## 0.143.1 - 2026-08-12
 
 ### Highlights
