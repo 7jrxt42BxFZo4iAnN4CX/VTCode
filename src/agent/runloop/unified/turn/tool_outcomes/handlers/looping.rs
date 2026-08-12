@@ -1,14 +1,13 @@
-use serde_json::{Value, json};
 use std::borrow::Cow;
 use std::time::Duration;
+
+use serde_json::{Value, json};
 use vtcode_core::config::constants::tools as tool_names;
 use vtcode_core::tools::registry::ToolRegistry;
 use vtcode_core::tools::tool_intent;
 
-use crate::agent::runloop::unified::tool_reads::{is_read_file_style_call, read_file_path_arg};
-
 pub(super) use crate::agent::runloop::unified::tool_reads::spool_chunk_read_path;
-
+use crate::agent::runloop::unified::tool_reads::{is_read_file_style_call, read_file_path_arg};
 // Read-offset / read-limit field aliases are the canonical vocabulary owned by
 // `tool_outcomes::read_extent` — the single source of truth shared with the
 // cross-turn dedup normalizer and the summarization gate. The family-cap slice
@@ -222,7 +221,7 @@ pub(super) fn task_tracker_create_signature(tool_name: &str, args: &Value) -> Op
 /// accepted so callers/tests that predate the rename keep working.
 fn stable_family_label(name: &str) -> Cow<'_, str> {
     match name {
-        tool_names::UNIFIED_EXEC | "command_session" => Cow::Borrowed("unified_exec"),
+        tool_names::UNIFIED_EXEC | tool_names::EXEC_COMMAND | "command_session" => Cow::Borrowed("unified_exec"),
         tool_names::UNIFIED_FILE | "file_operation" => Cow::Borrowed("unified_file"),
         tool_names::UNIFIED_SEARCH | "search_dispatch" => Cow::Borrowed("search_dispatch"),
         _ => Cow::Borrowed(name),
@@ -243,7 +242,7 @@ pub(crate) fn low_signal_family_key(canonical_tool_name: &str, args: &Value) -> 
                 format!("{label}::read::{}{}", compact_loop_key_part(path, 120), read_file_slice_suffix(args),)
             })
         }
-        tool_names::UNIFIED_EXEC => {
+        tool_names::UNIFIED_EXEC | tool_names::EXEC_COMMAND => {
             normalized_shell_command_arg(args, 160).map(|command| format!("{label}::run::{command}"))
         }
         tool_names::CODE_SEARCH => vtcode_core::tools::normalised_code_search_loop_identity(args)
@@ -277,13 +276,14 @@ pub(crate) fn low_signal_family_key(canonical_tool_name: &str, args: &Value) -> 
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+    use vtcode_core::config::constants::tools as tool_names;
+
     use super::{
         read_file_has_limit_arg, read_file_has_offset_arg, read_file_limit_value, read_file_offset_value,
         read_file_raw_flag, read_file_slice_suffix,
     };
     use crate::agent::runloop::unified::turn::tool_outcomes::handlers::low_signal_family_key;
-    use serde_json::json;
-    use vtcode_core::config::constants::tools as tool_names;
 
     #[test]
     fn read_file_offset_value_accepts_alias_keys() {

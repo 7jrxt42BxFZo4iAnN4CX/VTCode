@@ -1,10 +1,13 @@
-use crate::agent::runloop::unified::tool_pipeline::{ToolExecutionStatus, ToolPipelineOutcome};
-use crate::agent::runloop::unified::turn::tool_outcomes::read_extent;
-use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+use rustc_hash::{FxHashMap, FxHashSet};
 use vtcode_core::llm::provider as uni;
 use vtcode_core::tools::names::canonical_tool_name;
+use vtcode_core::tools::tool_intent::{ShellActivity, classify_shell_activity};
+
+use crate::agent::runloop::unified::tool_pipeline::{ToolExecutionStatus, ToolPipelineOutcome};
+use crate::agent::runloop::unified::turn::tool_outcomes::read_extent;
 
 /// Threshold: number of consecutive file mutations before the Anti-Blind-Editing
 /// warning fires. NL2Repo-Bench recommends verifying after every few edits.
@@ -13,6 +16,12 @@ pub(crate) const BLIND_EDITING_THRESHOLD: usize = 4;
 /// Threshold: number of consecutive read/search operations before the Navigation
 /// Loop warning fires.
 pub(crate) const NAVIGATION_LOOP_THRESHOLD: usize = 15;
+
+/// Planning recovery thresholds for low-signal navigation. These are kept
+/// below the hard planning tool-call ceiling so the model gets one bounded,
+/// tool-free synthesis pass while the evidence is still useful.
+pub(crate) const PLANNING_CONSECUTIVE_LOW_SIGNAL_THRESHOLD: u8 = 6;
+pub(crate) const PLANNING_TOTAL_LOW_SIGNAL_THRESHOLD: u8 = 10;
 
 /// Optimized loop detection with bounded signature keys and exponential backoff.
 pub(crate) struct LoopTracker {
@@ -24,6 +33,15 @@ pub(crate) struct LoopTracker {
     pub consecutive_navigations: usize,
     /// Number of times navigation-loop recovery has fired in this session.
     pub navigation_loop_recoveries: usize,
+    /// Consecutive low-signal navigation outcomes in this turn.
+    pub consecutive_low_signal_navigations: u8,
+    /// Total low-signal navigation outcomes in this turn.
+    pub total_low_signal_navigations: u8,
+    /// Lifetime low-signal outcomes for checkpoint diagnostics. Unlike the
+    /// adaptive window counters, this never resets within the turn.
+    pub low_signal_tool_calls: u32,
+    /// At most one adaptive planning synthesis pass is scheduled per turn.
+    pub planning_low_signal_synthesis_triggered: bool,
     /// Unique navigation signatures in the current consecutive window.
     /// Used to distinguish legitimate exploration (all unique) from actual looping (many repeats).
     nav_signatures: FxHashSet<String>,
@@ -37,6 +55,10 @@ impl LoopTracker {
             consecutive_mutations: 0,
             consecutive_navigations: 0,
             navigation_loop_recoveries: 0,
+            consecutive_low_signal_navigations: 0,
+            total_low_signal_navigations: 0,
+            low_signal_tool_calls: 0,
+            planning_low_signal_synthesis_triggered: false,
             nav_signatures: FxHashSet::default(),
         }
     }
@@ -82,12 +104,31 @@ impl LoopTracker {
         self.low_signal_attempts.clear();
     }
 
+    fn reset_low_signal_navigation_counters(&mut self) {
+        self.consecutive_low_signal_navigations = 0;
+        self.total_low_signal_navigations = 0;
+    }
+
+    fn record_navigation_signal(&mut self, is_low_signal: bool) {
+        if is_low_signal {
+            self.low_signal_tool_calls = self.low_signal_tool_calls.saturating_add(1);
+            self.consecutive_low_signal_navigations = self.consecutive_low_signal_navigations.saturating_add(1);
+            self.total_low_signal_navigations = self.total_low_signal_navigations.saturating_add(1);
+        } else {
+            // Productive inspection breaks only the consecutive streak. The
+            // total remains turn-scoped so diverse empty searches still
+            // converge on synthesis.
+            self.consecutive_low_signal_navigations = 0;
+        }
+    }
+
     pub(crate) fn reset_after_balancer_recovery(&mut self) {
         self.attempts.clear();
         self.low_signal_attempts.clear();
         self.nav_signatures.clear();
         self.consecutive_mutations = 0;
         self.consecutive_navigations = 0;
+        self.reset_low_signal_navigation_counters();
     }
 }
 
@@ -312,8 +353,11 @@ fn is_low_signal_outcome(outcome: &ToolPipelineOutcome, canonical_tool_name: &st
         ToolExecutionStatus::Success { output, command_success, .. } => {
             output_has_empty_search_results(output)
                 || output_reuses_recent_result(output)
-                || (canonical_tool_name == vtcode_core::config::constants::tools::UNIFIED_EXEC
-                    && output_is_grep_style_miss(output, *command_success))
+                || (matches!(
+                    canonical_tool_name,
+                    vtcode_core::config::constants::tools::UNIFIED_EXEC
+                        | vtcode_core::config::constants::tools::EXEC_COMMAND
+                ) && output_is_grep_style_miss(output, *command_success))
         }
         ToolExecutionStatus::Failure { error } => error_is_missing_resource(&error.message),
         ToolExecutionStatus::Timeout { .. } | ToolExecutionStatus::Cancelled => false,
@@ -546,6 +590,7 @@ pub(crate) fn update_repetition_tracker(
     let low_signal_family =
         crate::agent::runloop::unified::turn::tool_outcomes::handlers::low_signal_family_key(canonical_name, args)
             .filter(|_| is_low_signal_outcome(outcome, canonical_name));
+    let is_low_signal_navigation = low_signal_family.is_some();
     if let Some(low_signal_family) = low_signal_family.as_ref() {
         loop_tracker.record_low_signal(low_signal_family.clone());
     }
@@ -562,30 +607,53 @@ pub(crate) fn update_repetition_tracker(
     let is_execution_tool = matches!(
         canonical_name,
         n if n == tool_names::UNIFIED_EXEC
+            || n == tool_names::EXEC_COMMAND
+            || n == tool_names::EXEC_PTY_CMD
             || n == tool_names::RUN_PTY_CMD
             || n == tool_names::EXECUTE_CODE
             || n == tool_names::SHELL
     );
 
     if is_execution_tool {
-        // Execution/verification step resets both counters
-        loop_tracker.consecutive_mutations = 0;
-        loop_tracker.consecutive_navigations = 0;
-        loop_tracker.nav_signatures.clear();
-        if low_signal_family.is_none() {
-            loop_tracker.reset_low_signal_attempts();
+        match classify_shell_activity(canonical_name, args) {
+            ShellActivity::Inspection => {
+                loop_tracker.consecutive_mutations = 0;
+                loop_tracker.consecutive_navigations = loop_tracker.consecutive_navigations.saturating_add(1);
+                loop_tracker.nav_signatures.insert(signature_key);
+                loop_tracker.record_navigation_signal(is_low_signal_navigation);
+            }
+            ShellActivity::Verification => {
+                loop_tracker.consecutive_mutations = 0;
+                loop_tracker.consecutive_navigations = 0;
+                loop_tracker.nav_signatures.clear();
+                loop_tracker.reset_low_signal_navigation_counters();
+                if low_signal_family.is_none() {
+                    loop_tracker.reset_low_signal_attempts();
+                }
+            }
+            ShellActivity::Mutation => {
+                loop_tracker.consecutive_mutations = loop_tracker.consecutive_mutations.saturating_add(1);
+                loop_tracker.consecutive_navigations = 0;
+                loop_tracker.nav_signatures.clear();
+                loop_tracker.reset_low_signal_navigation_counters();
+                if low_signal_family.is_none() {
+                    loop_tracker.reset_low_signal_attempts();
+                }
+            }
         }
     } else if is_plan_artifact_write(canonical_name, args) {
         // Plan artifact writes in dedicated plan storage are allowed in Planning workflow and
         // should not trigger anti-blind-editing verification pressure.
         loop_tracker.consecutive_navigations = 0;
         loop_tracker.nav_signatures.clear();
+        loop_tracker.reset_low_signal_navigation_counters();
     } else {
         let intent = vtcode_core::tools::tool_intent::classify_tool_intent(canonical_name, args);
         if intent.mutating {
             loop_tracker.consecutive_mutations += 1;
             loop_tracker.consecutive_navigations = 0;
             loop_tracker.nav_signatures.clear();
+            loop_tracker.reset_low_signal_navigation_counters();
             if low_signal_family.is_none() {
                 loop_tracker.reset_low_signal_attempts();
             }
@@ -593,6 +661,7 @@ pub(crate) fn update_repetition_tracker(
             // Read-only / navigation tool
             loop_tracker.consecutive_navigations += 1;
             loop_tracker.nav_signatures.insert(signature_key);
+            loop_tracker.record_navigation_signal(is_low_signal_navigation);
         }
     }
 }
@@ -620,9 +689,10 @@ pub(crate) fn check_is_argument_error(error_str: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
     use vtcode_core::config::constants::tools;
+
+    use super::*;
 
     #[test]
     fn push_tool_response_replaces_existing_tool_call_entry() {
@@ -773,6 +843,8 @@ mod tests {
         tracker.record("code_search:{\"query\":\"Widget\"}".to_string());
         tracker.consecutive_mutations = 2;
         tracker.consecutive_navigations = 4;
+        tracker.consecutive_low_signal_navigations = 3;
+        tracker.total_low_signal_navigations = 7;
         tracker.record_low_signal("code_search::Widget::src".to_string());
         tracker.navigation_loop_recoveries = 3;
 
@@ -782,7 +854,125 @@ mod tests {
         assert_eq!(tracker.max_low_signal_count(), 0);
         assert_eq!(tracker.consecutive_mutations, 0);
         assert_eq!(tracker.consecutive_navigations, 0);
+        assert_eq!(tracker.consecutive_low_signal_navigations, 0);
+        assert_eq!(tracker.total_low_signal_navigations, 0);
         assert_eq!(tracker.navigation_loop_recoveries, 3);
+    }
+
+    #[test]
+    fn shell_activity_distinguishes_inspection_verification_and_mutation() {
+        for command in [
+            "rg -n 'LoopTracker' src",
+            "find src -name '*.rs'",
+            "cat Cargo.toml",
+            "sed -n '1,80p' src/main.rs",
+        ] {
+            assert_eq!(
+                classify_shell_activity(tools::EXEC_COMMAND, &json!({"cmd":command})),
+                ShellActivity::Inspection,
+                "{command}"
+            );
+        }
+
+        for command in [
+            "cargo check --locked",
+            "cargo nextest run -p vtcode",
+            "cargo clippy --all-targets",
+            "cargo build --release",
+            "./scripts/check-dev.sh --changed",
+            "cargo check --locked > build.log",
+            "cargo nextest run -p vtcode 2>&1 | head -c 4000",
+        ] {
+            assert_eq!(
+                classify_shell_activity(tools::EXEC_COMMAND, &json!({"cmd":command})),
+                ShellActivity::Verification,
+                "{command}"
+            );
+        }
+
+        assert_eq!(
+            classify_shell_activity(tools::EXEC_COMMAND, &json!({"cmd":"sed -i '' 's/a/b/' src/lib.rs"})),
+            ShellActivity::Mutation
+        );
+        assert_eq!(
+            classify_shell_activity(tools::EXEC_COMMAND, &json!({"cmd":"rm output && cargo check"})),
+            ShellActivity::Mutation
+        );
+    }
+
+    #[test]
+    fn inspection_commands_increment_navigation_instead_of_resetting_it() {
+        let mut tracker = LoopTracker::new();
+        let success = ToolPipelineOutcome::from_status(ToolExecutionStatus::Success {
+            output: json!({}),
+            stdout: None,
+            modified_files: vec![],
+            command_success: true,
+        });
+
+        for command in [
+            "rg LoopTracker src",
+            "find src -name '*.rs'",
+            "cat Cargo.toml",
+            "sed -n '1,20p' src/main.rs",
+        ] {
+            update_repetition_tracker(&mut tracker, &success, tools::EXEC_COMMAND, &json!({"cmd":command}));
+        }
+
+        assert_eq!(tracker.consecutive_navigations, 4);
+    }
+
+    #[test]
+    fn productive_navigation_resets_only_consecutive_low_signal_count() {
+        let mut tracker = LoopTracker::new();
+        let miss = ToolPipelineOutcome::from_status(ToolExecutionStatus::Success {
+            output: json!({"results":[]}),
+            stdout: None,
+            modified_files: vec![],
+            command_success: true,
+        });
+        let hit = ToolPipelineOutcome::from_status(ToolExecutionStatus::Success {
+            output: json!({"results":[{"path":"src/lib.rs"}]}),
+            stdout: None,
+            modified_files: vec![],
+            command_success: true,
+        });
+
+        for query in ["missing-a", "missing-b"] {
+            update_repetition_tracker(&mut tracker, &miss, tools::CODE_SEARCH, &json!({"query":query, "path":"src"}));
+        }
+        update_repetition_tracker(
+            &mut tracker,
+            &hit,
+            tools::CODE_SEARCH,
+            &json!({"query":"LoopTracker", "path":"src"}),
+        );
+
+        assert_eq!(tracker.consecutive_low_signal_navigations, 0);
+        assert_eq!(tracker.total_low_signal_navigations, 2);
+    }
+
+    #[test]
+    fn verification_resets_all_low_signal_navigation_counts() {
+        let mut tracker = LoopTracker::new();
+        tracker.consecutive_low_signal_navigations = 6;
+        tracker.total_low_signal_navigations = 10;
+        let success = ToolPipelineOutcome::from_status(ToolExecutionStatus::Success {
+            output: json!({}),
+            stdout: None,
+            modified_files: vec![],
+            command_success: true,
+        });
+
+        update_repetition_tracker(
+            &mut tracker,
+            &success,
+            tools::UNIFIED_EXEC,
+            &json!({"action":"run", "command":"cargo check --locked"}),
+        );
+
+        assert_eq!(tracker.consecutive_low_signal_navigations, 0);
+        assert_eq!(tracker.total_low_signal_navigations, 0);
     }
 
     #[test]
@@ -1126,21 +1316,22 @@ mod tests {
             modified_files: vec![],
             command_success: false,
         });
-
         update_repetition_tracker(
             &mut tracker,
             &miss,
-            tools::UNIFIED_EXEC,
-            &json!({"action":"run","command":"grep -n '-> Result' vtcode-tui/src/**/*.rs"}),
+            tools::EXEC_COMMAND,
+            &json!({"cmd":"grep -n '-> Result' vtcode-tui/src/**/*.rs"}),
         );
         update_repetition_tracker(
             &mut tracker,
             &miss,
-            tools::UNIFIED_EXEC,
-            &json!({"action":"run","command":"grep -n \"-> Result\" vtcode-tui/src/**/*.rs"}),
+            tools::EXEC_COMMAND,
+            &json!({"cmd":"grep -n \"-> Result\" vtcode-tui/src/**/*.rs"}),
         );
 
         assert_eq!(tracker.max_low_signal_count(), 2);
+        assert_eq!(tracker.consecutive_low_signal_navigations, 2);
+        assert_eq!(tracker.total_low_signal_navigations, 2);
     }
 
     // --- read_normalized_signature_key tests ---

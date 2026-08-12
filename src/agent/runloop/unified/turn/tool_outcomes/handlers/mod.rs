@@ -1,7 +1,6 @@
 //! Tool outcome handling helpers for turn execution.
 
 use anyhow::Result;
-
 use vtcode_core::config::constants::tools as tool_names;
 use vtcode_core::exec_policy::AskForApproval;
 use vtcode_core::primary_agent::primary_agent_allows_tool;
@@ -9,19 +8,17 @@ use vtcode_core::tools::registry::ToolExecutionError;
 use vtcode_core::tools::registry::labels::tool_action_label;
 use vtcode_core::utils::ansi::MessageStyle;
 
+use super::error_handling::tool_denial_diagnostic;
+use super::helpers::check_is_argument_error;
 use crate::agent::runloop::unified::async_mcp_manager::approval_policy_from_human_in_the_loop;
 use crate::agent::runloop::unified::tool_call_safety::invocation_id_from_call_id;
 use crate::agent::runloop::unified::tool_pipeline::validation::{
     SafetyValidationFailure, validate_tool_call_with_limit_prompt,
 };
-use crate::agent::runloop::unified::tool_routing::ensure_tool_permission_with_call_id;
+use crate::agent::runloop::unified::tool_routing::{ToolPermissionFlow, ensure_tool_permission_with_call_id};
 use crate::agent::runloop::unified::turn::context::{
     PreparedAssistantToolCall, TurnHandlerOutcome, TurnLoopResult, TurnProcessingContext,
 };
-
-use super::error_handling::tool_denial_diagnostic;
-use super::helpers::check_is_argument_error;
-use crate::agent::runloop::unified::tool_routing::ToolPermissionFlow;
 mod budget;
 mod fallbacks;
 mod guards;
@@ -699,6 +696,7 @@ pub(crate) async fn validate_tool_call<'a>(
             Ok(ValidationResult::Proceed(prepared))
         }
         Ok(ToolPermissionFlow::Denied) => {
+            ctx.harness_state.record_denied_tool_call();
             // A permanent `request_user_input` denial (non-interactive runtime,
             // inline UI unavailable, etc.) must be recorded so the planning
             // workflow stops re-forcing the interview AND the tool is suppressed

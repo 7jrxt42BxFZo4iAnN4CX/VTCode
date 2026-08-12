@@ -1,8 +1,8 @@
 # vtcode-core
-[Root AGENTS.md](../AGENTS.md) | Agent loop, tools, LLM, safety, UI.
+[Root AGENTS.md](../../../AGENTS.md) | Agent loop, tools, LLM, safety, UI.
 ## Module map
 - `core/agent/`: runtime, event recording, runner, progress, harness artifacts; `request_envelope` freezes each segment's prompt and ordered catalog.
-- `tools/`: handlers, registry, policy, execution; `read_file/batch.rs` owns batch admission while `read_file.rs` owns single-file semantics; `registry/executors/` is split into `exec_command.rs`, `exec_output.rs`, `exec_sessions.rs`, `exec_support.rs`; `grep_file.rs` delegates to `grep_backend.rs`.
+- `tools/`: handlers, registry, policy, execution; `output_spooler.rs` owns bounded model previews and `tool_intent/activity.rs` owns inspection/verification classification; `read_file/batch.rs` owns batch admission while `read_file.rs` owns single-file semantics; `registry/executors/` is split into `exec_command.rs`, `exec_output.rs`, `exec_sessions.rs`, `exec_support.rs`; `grep_file.rs` delegates to `grep_backend.rs`.
 - `llm/`: re-export facade; providers live in `vtcode-llm`. `exec/events.rs` re-exports canonical `vtcode-exec-events::ThreadEvent`; `prompts/` owns cached static profiles, compiled runtime guidance, and bounded resource caches.
 - `mcp/plugin_providers.rs`: discovers Agent Plugin MCP servers and maps them to `McpProviderConfig`. `./`-prefixed stdio `command`/`cwd` are canonicalized at discovery so symlink escapes cannot bypass the plugin-root sandbox.
 - `skills/skill_policy.rs` owns skill-scoped tool/network/sandbox policy; `skills/executor.rs` owns sub-LLM/fork execution. `skills/loader.rs` loads `SKILL.md` manifests from plugin `skills/*/` directories into the session skill catalog.
@@ -10,8 +10,9 @@
 ## Rules
 - Re-export public APIs from `lib.rs`; consumers must not reach into submodules, and keep constants in `config::constants` rather than inline.
 - `exec_policy` and `command_safety` are separate policy layers.
-- Session event sinks are authoritative: preserve ordering, use one bounded non-blocking handoff with count/byte limits and fail-closed saturation, and await the shared one-shot drain result before reporting task success. `SessionStoreSink` writes the canonical workspace store; recovery/final assistant messages must use the canonical `ThreadEvent` path rather than history-only writes.
+- Session event sinks are authoritative: preserve ordering, use one bounded non-blocking handoff with count/byte limits and fail-closed saturation, and await the shared one-shot drain result before reporting task success. `SessionStoreSink` writes the canonical workspace store; recovery/final assistant messages must use the canonical `ThreadEvent` path rather than history-only writes. Snapshot files migrate independently through V2 while unrelated durable state remains on V1.
 - Trajectory logging is best effort: retain line/byte bounds and expose drops/failures through diagnostics.
+- Spool references are consumed through `SpooledOutputReference`; binary consumers must not reopen spool paths to reconstruct previews.
 ## Workflows
 - Add tools under `tools/`, register/classify them, wire them into `core/agent/`; approved-plan task trackers deduplicate normalized step descriptions while preserving first-seen order, approval must fail closed if the tracker cannot be persisted, and plan artifacts must validate concrete targets and verification markers before writing. Add providers with `adding-llm-providers` and update model enumeration, presets, and the `llm/providers` facade. NVIDIA-style first-class providers also need startup defaults, the secret enum, lightweight routing, and generated docs metadata.
 - Custom provider registration stays in the factory and delegates protocol selection to the profile-aware router; do not add arbitrary custom names to the finite `Provider` enum.

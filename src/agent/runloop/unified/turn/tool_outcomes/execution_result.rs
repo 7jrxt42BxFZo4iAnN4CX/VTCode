@@ -13,35 +13,30 @@ mod failure_path;
 
 use anyhow::Result;
 use vtcode_commons::ErrorCategory;
+#[cfg(test)]
+use vtcode_core::config::constants::tools as tool_names;
 use vtcode_core::core::agent::error_recovery::ErrorType as RecoveryErrorType;
 use vtcode_core::notifications::notify_tool_success;
+#[cfg(test)]
+use vtcode_core::persistent_memory::GroundedFactRecord;
 use vtcode_core::tools::error_messages::agent_execution;
 use vtcode_core::tools::registry::ToolExecutionError;
 use vtcode_core::tools::registry::labels::tool_action_label;
 use vtcode_core::utils::ansi::MessageStyle;
-
-use crate::agent::runloop::mcp_events;
-use crate::agent::runloop::unified::tool_output_handler::handle_pipeline_output_from_turn_ctx;
-use crate::agent::runloop::unified::tool_pipeline::{ToolExecutionStatus, ToolPipelineOutcome};
 
 use self::auto_permission_probe::push_tool_response_with_auto_permission_probe;
 use self::failure_path::{
     finalize_failed_tool_response, log_structured_failure, notify_structured_failure, record_recovery_tool_error,
 };
 pub(crate) use super::error_handling::build_error_content;
+#[cfg(test)]
+use super::error_handling::serialize_json_for_model;
+#[cfg(test)]
+use super::error_handling::{build_structured_error_content, fallback_from_error};
 use super::error_handling::{format_structured_tool_error_for_user, is_blocked_or_denied_failure};
 use super::helpers::{check_is_argument_error, serialize_output, signature_key_for};
 pub(crate) use super::response_content::compact_model_tool_payload;
 use super::response_content::prepare_tool_response_content;
-use super::subagent_memory::{merge_subagent_completion_into_memory, record_request_user_input_interview_result};
-
-#[cfg(test)]
-use super::error_handling::{build_structured_error_content, fallback_from_error};
-
-use crate::agent::runloop::unified::turn::context::{TurnHandlerOutcome, TurnLoopResult, TurnProcessingContext};
-
-#[cfg(test)]
-use super::error_handling::serialize_json_for_model;
 #[cfg(test)]
 use super::response_content::{
     maybe_inline_spooled, maybe_inline_spooled_with_preview, tool_output_summary_input_or_serialized,
@@ -49,10 +44,11 @@ use super::response_content::{
 };
 #[cfg(test)]
 use super::subagent_memory::{build_subagent_memory_update, parse_subagent_summary_markdown};
-#[cfg(test)]
-use vtcode_core::config::constants::tools as tool_names;
-#[cfg(test)]
-use vtcode_core::persistent_memory::GroundedFactRecord;
+use super::subagent_memory::{merge_subagent_completion_into_memory, record_request_user_input_interview_result};
+use crate::agent::runloop::mcp_events;
+use crate::agent::runloop::unified::tool_output_handler::handle_pipeline_output_from_turn_ctx;
+use crate::agent::runloop::unified::tool_pipeline::{ToolExecutionStatus, ToolPipelineOutcome};
+use crate::agent::runloop::unified::turn::context::{TurnHandlerOutcome, TurnLoopResult, TurnProcessingContext};
 
 fn record_tool_execution(
     ctx: &mut TurnProcessingContext<'_>,
@@ -136,6 +132,9 @@ pub(crate) async fn handle_tool_execution_result<'a>(
     };
 
     record_tool_execution(t_ctx.ctx, tool_name, tool_start_time, is_success, is_argument_error);
+    if matches!(pipeline_outcome.status, ToolExecutionStatus::Failure { .. } | ToolExecutionStatus::Timeout { .. }) {
+        t_ctx.ctx.harness_state.record_failed_tool_call();
+    }
 
     match &pipeline_outcome.status {
         ToolExecutionStatus::Success { output, .. } => {
@@ -301,6 +300,7 @@ async fn handle_failure<'a>(
     finalize_failed_tool_response(t_ctx, tool_call_id, tool_name, args_val, error, "execution").await;
 
     if blocked_or_denied_failure {
+        t_ctx.ctx.harness_state.record_denied_tool_call();
         let streak = t_ctx.ctx.record_blocked_tool_call();
         let max_streak = super::handlers::max_consecutive_blocked_tool_calls_per_turn(t_ctx.ctx);
         // The interview denial has already armed the bounded tool-free

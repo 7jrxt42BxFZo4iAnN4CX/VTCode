@@ -1,12 +1,13 @@
-use crate::agent::runloop::unified::turn::context::{TurnHandlerOutcome, TurnLoopResult, TurnProcessingContext};
+use std::borrow::Cow;
+use std::sync::Arc;
+
 use anyhow::Result;
 use serde_json::Value;
-use std::borrow::Cow;
-use vtcode_core::utils::ansi::MessageStyle;
-
-use std::sync::Arc;
 use vtcode_core::config::constants::tools as tool_names;
 use vtcode_core::tools::validation_cache::ValidationCache;
+use vtcode_core::utils::ansi::MessageStyle;
+
+use crate::agent::runloop::unified::turn::context::{TurnHandlerOutcome, TurnLoopResult, TurnProcessingContext};
 
 /// Validates that a textual tool call has required arguments before execution.
 /// Returns `None` if valid, or `Some(missing_params)` if validation fails.
@@ -26,6 +27,7 @@ pub(crate) fn validate_tool_args_security(
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     use std::io;
+
     use vtcode_core::tools::validation::{commands, paths};
 
     struct HasherWriter<'a, H: Hasher>(&'a mut H);
@@ -317,10 +319,12 @@ pub(crate) async fn handle_turn_balancer(
     max_tool_loops: usize,
     tool_repeat_limit: usize,
 ) -> TurnHandlerOutcome {
-    use crate::agent::runloop::unified::turn::tool_outcomes::helpers::{
-        BLIND_EDITING_THRESHOLD, NAVIGATION_LOOP_THRESHOLD,
-    };
     use vtcode_core::llm::provider as uni;
+
+    use crate::agent::runloop::unified::turn::tool_outcomes::helpers::{
+        BLIND_EDITING_THRESHOLD, NAVIGATION_LOOP_THRESHOLD, PLANNING_CONSECUTIVE_LOW_SIGNAL_THRESHOLD,
+        PLANNING_TOTAL_LOW_SIGNAL_THRESHOLD,
+    };
 
     // NL2Repo-Bench checks run on every step (no backoff) since they
     // are safety guardrails, not performance optimizations.
@@ -336,6 +340,32 @@ pub(crate) async fn handle_turn_balancer(
         ));
         repeated_tool_attempts.consecutive_mutations = 0;
         return TurnHandlerOutcome::Continue;
+    }
+
+    // Planning keeps its generous 120-call ceiling for genuinely complex
+    // research, but diverse empty searches and ref-only reads must converge
+    // much earlier. Trigger a single tool-free synthesis pass at the first
+    // adaptive threshold; recovery resets both turn-scoped counters.
+    if ctx.is_planning_active()
+        && !repeated_tool_attempts.planning_low_signal_synthesis_triggered
+        && (repeated_tool_attempts.consecutive_low_signal_navigations >= PLANNING_CONSECUTIVE_LOW_SIGNAL_THRESHOLD
+            || repeated_tool_attempts.total_low_signal_navigations >= PLANNING_TOTAL_LOW_SIGNAL_THRESHOLD)
+    {
+        repeated_tool_attempts.planning_low_signal_synthesis_triggered = true;
+        let recovery_reason = format!(
+            "Planning navigation produced {} consecutive and {} total low-signal results. Tools are disabled on the next pass; synthesize the plan from collected evidence.",
+            repeated_tool_attempts.consecutive_low_signal_navigations,
+            repeated_tool_attempts.total_low_signal_navigations
+        );
+        ctx.activate_recovery(recovery_reason.clone());
+        ctx.renderer
+            .line(
+                MessageStyle::Info,
+                "[!] Planning recovery: low-signal research reached the adaptive synthesis threshold.",
+            )
+            .unwrap_or(());
+        ctx.working_history.push(uni::Message::system(recovery_reason));
+        return apply_balancer_recovery(repeated_tool_attempts);
     }
 
     // NL2Repo-Bench: Navigation Loop Detection
@@ -461,18 +491,19 @@ fn apply_balancer_recovery(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+    use vtcode_core::config::constants::tools as tool_names;
+
     use super::{
         apply_balancer_recovery, is_readonly_signature, navigation_loop_guidance, validate_tool_args_security,
     };
     use crate::agent::runloop::unified::tool_pipeline::{ToolExecutionStatus, ToolPipelineOutcome};
-    use crate::agent::runloop::unified::turn::context::TurnHandlerOutcome;
-    use crate::agent::runloop::unified::turn::context::TurnLoopResult;
+    use crate::agent::runloop::unified::turn::context::{TurnHandlerOutcome, TurnLoopResult};
     use crate::agent::runloop::unified::turn::tool_outcomes::helpers::{
-        LoopTracker, NAVIGATION_LOOP_THRESHOLD, update_repetition_tracker,
+        LoopTracker, NAVIGATION_LOOP_THRESHOLD, PLANNING_CONSECUTIVE_LOW_SIGNAL_THRESHOLD,
+        PLANNING_TOTAL_LOW_SIGNAL_THRESHOLD, update_repetition_tracker,
     };
     use crate::agent::runloop::unified::turn::turn_processing::test_support::TestTurnProcessingBacking;
-    use serde_json::json;
-    use vtcode_core::config::constants::tools as tool_names;
 
     #[test]
     fn readonly_signature_handles_file_and_code_search_signatures() {
@@ -573,6 +604,79 @@ mod tests {
         assert_eq!(tracker.max_count_filtered(|_| false), 0);
         assert_eq!(tracker.consecutive_mutations, 0);
         assert_eq!(tracker.consecutive_navigations, 0);
+    }
+
+    #[tokio::test]
+    async fn planning_recovery_triggers_at_exact_consecutive_low_signal_threshold() {
+        let mut backing = TestTurnProcessingBacking::new(120).await;
+        backing.activate_planning_for_test();
+        let mut ctx = backing.turn_processing_context();
+        let mut tracker = LoopTracker::new();
+        tracker.consecutive_low_signal_navigations = PLANNING_CONSECUTIVE_LOW_SIGNAL_THRESHOLD;
+        tracker.total_low_signal_navigations = PLANNING_CONSECUTIVE_LOW_SIGNAL_THRESHOLD;
+
+        let outcome = super::handle_turn_balancer(&mut ctx, 6, &mut tracker, 120, 3).await;
+
+        assert!(matches!(outcome, TurnHandlerOutcome::Continue));
+        assert!(ctx.is_recovery_active());
+        assert_eq!(tracker.consecutive_low_signal_navigations, 0);
+        assert_eq!(tracker.total_low_signal_navigations, 0);
+        assert!(ctx.working_history.iter().any(|message| {
+            message.content.as_text().contains("adaptive synthesis threshold")
+                || message.content.as_text().contains("synthesize the plan")
+        }));
+    }
+
+    #[tokio::test]
+    async fn planning_recovery_triggers_at_exact_total_low_signal_threshold() {
+        let mut backing = TestTurnProcessingBacking::new(120).await;
+        backing.activate_planning_for_test();
+        let mut ctx = backing.turn_processing_context();
+        let mut tracker = LoopTracker::new();
+        tracker.consecutive_low_signal_navigations = 1;
+        tracker.total_low_signal_navigations = PLANNING_TOTAL_LOW_SIGNAL_THRESHOLD;
+
+        let outcome = super::handle_turn_balancer(&mut ctx, 10, &mut tracker, 120, 3).await;
+
+        assert!(matches!(outcome, TurnHandlerOutcome::Continue));
+        assert!(ctx.is_recovery_active());
+        assert_eq!(tracker.consecutive_low_signal_navigations, 0);
+        assert_eq!(tracker.total_low_signal_navigations, 0);
+    }
+
+    #[tokio::test]
+    async fn adaptive_low_signal_threshold_does_not_change_non_planning_turns() {
+        let mut backing = TestTurnProcessingBacking::new(120).await;
+        let mut ctx = backing.turn_processing_context();
+        let mut tracker = LoopTracker::new();
+        tracker.consecutive_low_signal_navigations = PLANNING_CONSECUTIVE_LOW_SIGNAL_THRESHOLD;
+        tracker.total_low_signal_navigations = PLANNING_TOTAL_LOW_SIGNAL_THRESHOLD;
+
+        let outcome = super::handle_turn_balancer(&mut ctx, 1, &mut tracker, 120, 20).await;
+
+        assert!(matches!(outcome, TurnHandlerOutcome::Continue));
+        assert!(!ctx.is_recovery_active());
+    }
+
+    #[tokio::test]
+    async fn adaptive_low_signal_synthesis_triggers_only_once_per_turn() {
+        let mut backing = TestTurnProcessingBacking::new(120).await;
+        backing.activate_planning_for_test();
+        let mut ctx = backing.turn_processing_context();
+        let mut tracker = LoopTracker::new();
+        tracker.consecutive_low_signal_navigations = PLANNING_CONSECUTIVE_LOW_SIGNAL_THRESHOLD;
+        tracker.total_low_signal_navigations = PLANNING_TOTAL_LOW_SIGNAL_THRESHOLD;
+
+        let first = super::handle_turn_balancer(&mut ctx, 6, &mut tracker, 120, 3).await;
+        assert!(matches!(first, TurnHandlerOutcome::Continue));
+        assert!(tracker.planning_low_signal_synthesis_triggered);
+
+        tracker.consecutive_low_signal_navigations = PLANNING_CONSECUTIVE_LOW_SIGNAL_THRESHOLD;
+        tracker.total_low_signal_navigations = PLANNING_TOTAL_LOW_SIGNAL_THRESHOLD;
+        let second = super::handle_turn_balancer(&mut ctx, 12, &mut tracker, 120, usize::MAX).await;
+        assert!(matches!(second, TurnHandlerOutcome::Continue));
+        assert_eq!(tracker.consecutive_low_signal_navigations, PLANNING_CONSECUTIVE_LOW_SIGNAL_THRESHOLD);
+        assert_eq!(tracker.total_low_signal_navigations, PLANNING_TOTAL_LOW_SIGNAL_THRESHOLD);
     }
 
     #[tokio::test]

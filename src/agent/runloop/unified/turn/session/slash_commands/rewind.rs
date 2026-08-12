@@ -227,6 +227,10 @@ mod tests {
             file_count: 0,
             prompt_text: Some("target".to_string()),
             prompt_message_index: Some(2),
+            session_id: None,
+            runtime_turn_id: None,
+            session_turn_number: None,
+            turn_diagnostics: None,
         };
 
         assert_eq!(resolve_prompt_boundary_in_history(&metadata, &history), Some(2));
@@ -248,6 +252,10 @@ mod tests {
             file_count: 0,
             prompt_text: Some("target".to_string()),
             prompt_message_index: Some(2),
+            session_id: None,
+            runtime_turn_id: None,
+            session_turn_number: None,
+            turn_diagnostics: None,
         };
 
         assert_eq!(resolve_prompt_boundary_in_history(&metadata, &history), Some(2));

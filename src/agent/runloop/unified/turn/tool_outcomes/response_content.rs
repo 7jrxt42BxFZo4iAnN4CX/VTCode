@@ -1,6 +1,6 @@
-use anyhow::{Context, Result};
-use std::path::Path;
 use std::sync::Arc;
+
+use anyhow::{Context, Result};
 use vtcode_commons::preview::{condense_text_bytes, tail_preview_text};
 use vtcode_core::config::constants::tools as tool_names;
 use vtcode_core::core::agent::result_reducers::strip_tui_display_fields;
@@ -8,8 +8,8 @@ use vtcode_core::llm::provider::{LLMRequest, Message as LlmMessage};
 use vtcode_core::llm::{
     LightweightFeature, collect_single_response, create_provider_for_model_route, resolve_lightweight_route,
 };
+use vtcode_core::tools::SpooledOutputReference;
 use vtcode_core::tools::continuation::{PtyContinuationArgs, ReadChunkContinuationArgs};
-use vtcode_core::tools::validation::unified_path::validate_and_resolve_path;
 
 use super::error_handling::{serialize_json_for_model, truncate_text_for_model};
 use super::helpers::serialize_output;
@@ -181,73 +181,22 @@ pub(super) fn maybe_inline_spooled(tool_name: &str, output: &serde_json::Value) 
     serialize_output(&compacted)
 }
 
-/// Like `maybe_inline_spooled`, but when the output is stripped to a spool
-/// reference, reads the spool file and embeds an inline `tail_preview` so the
-/// model has actual content to reason about. Prevents tight retry loops where
-/// the model sees an empty payload and assumes the command produced nothing.
-///
-/// When structured `failure_diagnostics` is already present (e.g. cargo test
-/// failures), the tail preview is skipped — the diagnostics already contain
-/// the panic message, source location, rerun hint, and next action, so the
-/// ~10 KB of raw test-runner output (mostly PASS lines) would be redundant
-/// token waste. The model can still read the spool file directly if needed.
-pub(super) async fn maybe_inline_spooled_with_preview(
-    workspace_root: &Path,
-    tool_name: &str,
-    output: &serde_json::Value,
-) -> String {
+/// Shape a spooled result for the model using the bounded preview produced by
+/// the core spooler. Consumers never reopen `spool_path` on this response path.
+pub(super) fn maybe_inline_spooled_with_preview(tool_name: &str, output: &serde_json::Value) -> String {
     let mut compacted = compact_model_tool_payload(output.clone());
     let prefer_ref_only = should_prefer_spool_reference_only(tool_name, output);
     if !prefer_ref_only {
         return serialize_output(&compacted);
     }
 
+    let spooled_output = SpooledOutputReference::from_value(output);
     apply_spool_reference_only(&mut compacted, output);
-
-    // Skip the tail preview when structured failure diagnostics are already
-    // embedded in the payload. The diagnostics carry all actionable fields
-    // (panic, source_file, source_line, rerun_hint, next_action) and the raw
-    // tail would be mostly noise (thousands of PASS lines).
     let has_failure_diagnostics = output.get("failure_diagnostics").is_some_and(|v| !v.is_null());
-
-    if !has_failure_diagnostics
-        && let Some(spool_path) = output
-            .get("spool_path")
-            .and_then(serde_json::Value::as_str)
-            .filter(|path| !path.trim().is_empty())
-    {
-        match validate_and_resolve_path(workspace_root, spool_path).await {
-            Ok(resolved) => match tokio::fs::read(&resolved).await {
-                Ok(bytes) => {
-                    let content = String::from_utf8_lossy(&bytes);
-                    let preview = tail_preview_text(
-                        &content,
-                        TOOL_OUTPUT_SUMMARY_EXEC_TAIL_BYTES,
-                        TOOL_OUTPUT_SUMMARY_EXEC_MAX_LINES,
-                    );
-                    if !preview.trim().is_empty()
-                        && let Some(obj) = compacted.as_object_mut()
-                    {
-                        obj.insert("tail_preview".to_string(), serde_json::Value::String(preview));
-                    }
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        tool = %tool_name,
-                        spool_path = %resolved.display(),
-                        error = %err,
-                        "Failed to read spool file for inline tail preview; sending reference-only payload",
-                    );
-                }
-            },
-            Err(err) => {
-                tracing::warn!(
-                    tool = %tool_name,
-                    spool_path,
-                    error = %err,
-                    "Failed to validate spool path for inline tail preview; sending reference-only payload",
-                );
-            }
+    if let Some(obj) = compacted.as_object_mut() {
+        obj.remove("preview");
+        if !has_failure_diagnostics && let Some(preview) = spooled_output.and_then(|spooled| spooled.preview) {
+            obj.insert("preview".to_string(), serde_json::Value::String(preview.to_string()));
         }
     }
 
@@ -320,48 +269,15 @@ fn build_spooled_tool_summary_input(tool_name: &str, output: &serde_json::Value,
     }
 }
 
-pub(super) async fn tool_output_summary_input_or_serialized(
-    workspace_root: &Path,
+pub(super) fn tool_output_summary_input_or_serialized(
     tool_name: &str,
     output: &serde_json::Value,
     serialized_output: &str,
 ) -> String {
-    let Some(spool_path) = output
-        .get("spool_path")
-        .and_then(serde_json::Value::as_str)
-        .filter(|path| !path.trim().is_empty())
-    else {
+    let Some(preview) = SpooledOutputReference::from_value(output).and_then(|spooled| spooled.preview) else {
         return serialized_output.to_string();
     };
-
-    let resolved = match validate_and_resolve_path(workspace_root, spool_path).await {
-        Ok(path) => path,
-        Err(err) => {
-            tracing::warn!(
-                tool = %tool_name,
-                spool_path,
-                error = %err,
-                "Failed to validate spool path for tool output summary; using compact fallback"
-            );
-            return serialized_output.to_string();
-        }
-    };
-
-    match tokio::fs::read(&resolved).await {
-        Ok(spool_bytes) => {
-            let spool_content = String::from_utf8_lossy(&spool_bytes);
-            build_spooled_tool_summary_input(tool_name, output, &spool_content)
-        }
-        Err(err) => {
-            tracing::warn!(
-                tool = %tool_name,
-                spool_path = %resolved.display(),
-                error = %err,
-                "Failed to read spool file for tool output summary; using compact fallback"
-            );
-            serialized_output.to_string()
-        }
-    }
+    build_spooled_tool_summary_input(tool_name, output, preview)
 }
 
 fn tool_output_summary_feature(
@@ -501,7 +417,7 @@ fn summarized_tool_response_payload(
     serialize_output(&compacted)
 }
 
-pub(super) async fn prepare_tool_response_content(
+async fn build_tool_response_content(
     ctx: &mut TurnProcessingContext<'_>,
     tool_name: &str,
     args_val: &serde_json::Value,
@@ -517,15 +433,12 @@ pub(super) async fn prepare_tool_response_content(
 
     // Skip LLM summarization when raw=true is requested
     if args_val.get("raw").and_then(serde_json::Value::as_bool).unwrap_or(false) {
-        let workspace_root = ctx.tool_registry.workspace_root().clone();
-        return maybe_inline_spooled_with_preview(workspace_root.as_path(), tool_name, output).await;
+        return maybe_inline_spooled_with_preview(tool_name, output);
     }
 
-    let workspace_root = ctx.tool_registry.workspace_root().clone();
-    let fallback = maybe_inline_spooled_with_preview(workspace_root.as_path(), tool_name, output).await;
+    let fallback = maybe_inline_spooled_with_preview(tool_name, output);
     let serialized_output = serialize_json_for_model(output);
-    let summary_input =
-        tool_output_summary_input_or_serialized(workspace_root.as_path(), tool_name, output, &serialized_output).await;
+    let summary_input = tool_output_summary_input_or_serialized(tool_name, output, &serialized_output);
     let Some(feature) = tool_output_summary_feature(tool_name, args_val, output, serialized_output.len()) else {
         return fallback;
     };
@@ -573,6 +486,23 @@ pub(super) async fn prepare_tool_response_content(
     }
 
     fallback
+}
+
+pub(super) async fn prepare_tool_response_content(
+    ctx: &mut TurnProcessingContext<'_>,
+    tool_name: &str,
+    args_val: &serde_json::Value,
+    output: &serde_json::Value,
+) -> String {
+    let content = build_tool_response_content(ctx, tool_name, args_val, output).await;
+    let spooled_output = SpooledOutputReference::from_value(output);
+    let raw_spooled_bytes = spooled_output.and_then(|spooled| spooled.original_bytes).unwrap_or(0);
+    let reused = ["reused_recent_result", "reused_spooled_output"]
+        .into_iter()
+        .any(|key| output.get(key).and_then(serde_json::Value::as_bool) == Some(true));
+    ctx.harness_state
+        .record_tool_output_metrics(reused, spooled_output.is_some(), raw_spooled_bytes, 0);
+    content
 }
 
 fn compact_next_continue_args(value: &serde_json::Value) -> serde_json::Value {
@@ -679,8 +609,9 @@ fn should_keep_search_recovery_success_next_action(obj: &serde_json::Map<String,
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn big_read_output() -> serde_json::Value {
         json!({ "content_kind": "text", "path": "src/cli/mod.rs" })

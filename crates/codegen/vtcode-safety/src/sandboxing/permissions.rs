@@ -26,6 +26,18 @@ pub enum SandboxPermissions {
 }
 
 impl SandboxPermissions {
+    /// Normalize an implicit additional-permission request to its explicit
+    /// sandboxed wire mode. Escalated and bypass modes are left unchanged so
+    /// their conflict checks remain fail-closed at the execution boundary.
+    #[must_use]
+    pub fn normalized_for(self, additional_permissions: Option<&AdditionalPermissions>) -> Self {
+        if self == Self::UseDefault && additional_permissions.is_some_and(|permissions| !permissions.is_empty()) {
+            Self::WithAdditionalPermissions
+        } else {
+            self
+        }
+    }
+
     /// Check if this permission requires approval.
     fn requires_approval(&self) -> bool {
         matches!(self, Self::RequireEscalated | Self::WithAdditionalPermissions | Self::BypassSandbox)
@@ -115,6 +127,27 @@ mod tests {
         assert!(perm.uses_additional_permissions());
         assert!(!perm.requires_escalated_permissions());
         assert!(!perm.bypasses_sandbox());
+    }
+
+    #[test]
+    fn default_normalizes_for_non_empty_additional_permissions() {
+        let additional = AdditionalPermissions {
+            fs_read: vec![PathBuf::from("/tmp/reference")],
+            fs_write: Vec::new(),
+        };
+
+        assert_eq!(
+            SandboxPermissions::UseDefault.normalized_for(Some(&additional)),
+            SandboxPermissions::WithAdditionalPermissions
+        );
+        assert_eq!(
+            SandboxPermissions::RequireEscalated.normalized_for(Some(&additional)),
+            SandboxPermissions::RequireEscalated
+        );
+        assert_eq!(
+            SandboxPermissions::UseDefault.normalized_for(Some(&AdditionalPermissions::default())),
+            SandboxPermissions::UseDefault
+        );
     }
 
     #[test]

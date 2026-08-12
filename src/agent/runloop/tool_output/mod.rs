@@ -10,10 +10,16 @@ mod streams;
 mod styles;
 
 // Re-export stream utilities
-pub(crate) use streams::{render_code_fence_blocks, resolve_stdout_tail_limit};
-
 use anyhow::Result;
+use commands::render_terminal_command_panel;
+use files::{
+    format_diff_content_lines_with_numbers, render_list_dir_output, render_read_file_output, render_write_file_preview,
+};
+use mcp::{render_context7_output, render_generic_output, render_sequential_output, resolve_renderer_profile};
 use serde_json::Value;
+use streams::render_stream_section;
+pub(crate) use streams::{render_code_fence_blocks, resolve_stdout_tail_limit};
+use styles::{GitStyles, LsStyles};
 use vtcode_core::config::ToolOutputMode;
 use vtcode_core::config::constants::tools;
 use vtcode_core::config::loader::VTCodeConfig;
@@ -23,14 +29,6 @@ use vtcode_core::tools::continuation::{
 };
 use vtcode_core::utils::ansi::{AnsiRenderer, MessageStyle};
 use vtcode_core::utils::style_helpers::{ColorPalette, render_styled};
-
-use commands::render_terminal_command_panel;
-use files::{
-    format_diff_content_lines_with_numbers, render_list_dir_output, render_read_file_output, render_write_file_preview,
-};
-use mcp::{render_context7_output, render_generic_output, render_sequential_output, resolve_renderer_profile};
-use streams::render_stream_section;
-use styles::{GitStyles, LsStyles};
 
 pub(crate) fn spooled_output_hint(path: &str) -> String {
     format!(

@@ -1,19 +1,44 @@
-use anyhow::{Context, Result};
 use std::collections::VecDeque;
 use std::time::Instant;
+
+use anyhow::{Context, Result};
+use hashbrown::HashSet;
+use tokio::sync::mpsc;
 use tokio::time::{Duration, sleep, timeout};
 use tokio_util::sync::CancellationToken;
+use vtcode_commons::ui_protocol::ActivityState;
 use vtcode_config::loader::SimpleConfigWatcher;
 use vtcode_core::config::loader::VTCodeConfig;
 use vtcode_core::config::types::AgentConfig as CoreAgentConfig;
+use vtcode_core::core::agent::runtime::AgentRuntime;
+use vtcode_core::core::agent::session::AgentSessionState;
+use vtcode_core::core::agent::steering::SteeringMessage;
 use vtcode_core::core::interfaces::session::PlanningEntrySource;
 use vtcode_core::exec::events::ThreadCompletionSubtype;
 use vtcode_core::hooks::{SessionEndReason, SessionStartTrigger};
+use vtcode_core::llm::provider::MessageRole;
 use vtcode_core::session::SessionId;
 use vtcode_core::utils::ansi::MessageStyle;
+use vtcode_core::utils::session_archive;
 use vtcode_core::utils::session_archive::{SessionMessage, SessionProgressArgs, SessionProgressPersistenceStatus};
+use vtcode_ui::tui::app::ArchivedPromptEntry;
 
 use super::super::{CancelGuard, RECENT_MESSAGE_LIMIT, TerminalCleanupGuard, extract_idle_config};
+use super::archive::{create_session_archive, refresh_runtime_debug_context_for_next_session, workspace_archive_label};
+use super::handoff::{
+    PLAN_APPROVED_EXECUTION_INPUT, apply_primary_agent_tool_policy_overrides, build_approved_plan_execution_prompt,
+    select_approved_plan_execution_agent,
+};
+use super::metrics::{
+    TurnExecutionMetrics, capture_code_change_snapshot, emit_turn_execution_metrics, estimate_history_bytes,
+};
+use super::plan_seed::load_active_plan_seed;
+use super::support::{
+    ExecutionSummaryStatus, append_transient_turn_notes, approved_plan_execution_summary,
+    build_unrelated_dirty_worktree_note, checkpoint_session_archive_start, force_reload_workspace_config_for_execution,
+    latest_assistant_result_text, live_reload_preserves_session_config, prepare_resume_bootstrap_without_archive,
+    prompt_startup_planning_workflow, remove_transient_system_notes, take_pending_resumed_user_prompt,
+};
 use crate::agent::runloop::ResumeSession;
 use crate::agent::runloop::git::{compute_session_code_change_delta, normalize_workspace_path};
 use crate::agent::runloop::model_picker::ModelPickerState;
@@ -30,41 +55,16 @@ use crate::agent::runloop::unified::state::SessionStats;
 use crate::agent::runloop::unified::status_line::InputStatusState;
 use crate::agent::runloop::unified::turn::context::TurnLoopResult as RunLoopTurnLoopResult;
 use crate::agent::runloop::unified::turn::finalization::finalize_session;
-use crate::agent::runloop::unified::turn::turn_loop::TurnLoopOutcome;
-use crate::agent::runloop::unified::workspace_links::LinkedDirectory;
-use crate::updater::{InlineUpdateOutcome, display_update_notice, run_inline_update_prompt};
-use hashbrown::HashSet;
-use vtcode_core::core::agent::runtime::AgentRuntime;
-use vtcode_core::core::agent::session::AgentSessionState;
-use vtcode_core::core::agent::steering::SteeringMessage;
-
-use super::archive::{create_session_archive, refresh_runtime_debug_context_for_next_session, workspace_archive_label};
-use super::handoff::{
-    PLAN_APPROVED_EXECUTION_INPUT, apply_primary_agent_tool_policy_overrides, build_approved_plan_execution_prompt,
-    select_approved_plan_execution_agent,
-};
-use super::metrics::{
-    TurnExecutionMetrics, capture_code_change_snapshot, emit_turn_execution_metrics, estimate_history_bytes,
-};
-use super::plan_seed::load_active_plan_seed;
-use super::support::{
-    ExecutionSummaryStatus, append_transient_turn_notes, approved_plan_execution_summary,
-    build_unrelated_dirty_worktree_note, checkpoint_session_archive_start, force_reload_workspace_config_for_execution,
-    latest_assistant_result_text, live_reload_preserves_session_config, prepare_resume_bootstrap_without_archive,
-    prompt_startup_planning_workflow, remove_transient_system_notes, take_pending_resumed_user_prompt,
-};
 use crate::agent::runloop::unified::turn::primary_agent_runtime::{
     PrimaryAgentRuntimeSyncContext, sync_primary_agent_permissions, sync_primary_agent_runtime,
 };
+use crate::agent::runloop::unified::turn::turn_loop::TurnLoopOutcome;
 use crate::agent::runloop::unified::turn::turn_loop_helpers::{
     effective_max_tool_calls_for_approved_plan_execution, effective_max_tool_calls_for_turn,
     resolve_safety_tool_call_limits,
 };
-use tokio::sync::mpsc;
-use vtcode_commons::ui_protocol::ActivityState;
-use vtcode_core::llm::provider::MessageRole;
-use vtcode_core::utils::session_archive;
-use vtcode_ui::tui::app::ArchivedPromptEntry;
+use crate::agent::runloop::unified::workspace_links::LinkedDirectory;
+use crate::updater::{InlineUpdateOutcome, display_update_notice, run_inline_update_prompt};
 
 #[cfg_attr(feature = "profiling", hotpath::measure)]
 pub(crate) async fn run_single_agent_loop_unified_impl(
@@ -1028,6 +1028,7 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                         TurnLoopOutcome {
                             result: RunLoopTurnLoopResult::Aborted,
                             turn_modified_files: std::collections::BTreeSet::new(),
+                            turn_diagnostics: Default::default(),
                             pending_primary_agent: None,
                             pending_plan_auto_accept: false,
                             pending_plan_execution_context:
@@ -1088,6 +1089,7 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                         show_turn_timer,
                         workspace: &config.workspace,
                         session_id: &harness_snapshot.session_id,
+                        runtime_turn_id: Some(&turn_id),
                         harness_emitter: harness_emitter.as_ref(),
                     },
                 )

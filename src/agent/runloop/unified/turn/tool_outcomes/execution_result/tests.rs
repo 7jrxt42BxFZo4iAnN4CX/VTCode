@@ -1,7 +1,8 @@
-use super::*;
 use std::borrow::Cow;
-use tempfile::tempdir;
+
 use vtcode_core::tools::registry::{ToolErrorType, ToolExecutionError};
+
+use super::*;
 
 #[test]
 fn fallback_from_error_extracts_command_session_poll() {
@@ -421,92 +422,128 @@ fn maybe_inline_spooled_uses_reference_only_for_spooled_code_search_output() {
     );
 }
 
-#[tokio::test]
-async fn maybe_inline_spooled_with_preview_includes_tail_excerpt_from_spool_file() {
-    let workspace = tempdir().expect("tempdir");
-    let spool_dir = workspace.path().join(".vtcode/context/tool_outputs");
-    tokio::fs::create_dir_all(&spool_dir).await.expect("create spool dir");
+#[test]
+fn turn_911_style_exec_inspection_preview_keeps_head_tail_within_budget() {
     let spool_relative = ".vtcode/context/tool_outputs/command_session_test.txt";
-    let spool_absolute = workspace.path().join(spool_relative);
     let mut content = String::new();
     for idx in 0..40 {
         content.push_str(&format!("./crate/file_{idx}.rs\n"));
     }
-    tokio::fs::write(&spool_absolute, &content).await.expect("write spool");
-
     let serialized = maybe_inline_spooled_with_preview(
-        workspace.path(),
-        tool_names::UNIFIED_EXEC,
+        tool_names::EXEC_COMMAND,
         &serde_json::json!({
+            "command": "rg --files crate",
             "output": "",
-            "stdout": "",
-            "stderr": "",
-            "spool_path": spool_relative,
+            "spool_path": ".vtcode/context/tool_outputs/command_session_test.txt",
+            "preview": content,
             "exit_code": 0,
             "is_exited": true
         }),
-    )
-    .await;
+    );
 
     let parsed: serde_json::Value = serde_json::from_str(&serialized).expect("serialized JSON payload");
     assert!(parsed.get("output").is_none(), "output should be stripped");
     assert_eq!(parsed.get("exit_code"), Some(&serde_json::json!(0)));
     assert_eq!(parsed.get("result_ref_only"), Some(&serde_json::json!(true)));
     let preview = parsed
-        .get("tail_preview")
+        .get("preview")
         .and_then(serde_json::Value::as_str)
-        .expect("tail_preview should be present so the model sees actual content");
-    assert!(
-        preview.contains("./crate/file_"),
-        "tail_preview should include actual spool content, got: {preview}"
-    );
+        .expect("preview should be present so the model sees actual content");
+    assert!(preview.contains("file_0"), "inspection preview should retain head context: {preview}");
+    assert!(preview.contains("./crate/file_"), "preview should include actual spool content, got: {preview}");
+    assert!(preview.contains("file_39"), "inspection preview should retain tail context: {preview}");
+    assert!(preview.lines().count() <= 80);
+    assert!(serialized.len() < 7_000, "turn-911 regression payload exceeded preview budget");
+    assert_eq!(parsed.get("spool_path"), Some(&serde_json::json!(spool_relative)));
 }
 
-#[tokio::test]
-async fn maybe_inline_spooled_with_preview_skips_preview_when_spool_missing() {
-    let workspace = tempdir().expect("tempdir");
+#[test]
+fn maybe_inline_spooled_with_preview_uses_tail_focused_preview_for_verification_logs() {
+    let spool_relative = ".vtcode/context/tool_outputs/verification_log.txt";
+    let mut content = String::new();
+    for idx in 101..=120 {
+        content.push_str(&format!("build-line-{idx}\n"));
+    }
     let serialized = maybe_inline_spooled_with_preview(
-        workspace.path(),
+        tool_names::EXEC_COMMAND,
+        &serde_json::json!({
+            "output": "",
+            "command": "cargo nextest run -p vtcode-core",
+            "spool_path": ".vtcode/context/tool_outputs/verification_log.txt",
+            "preview": content,
+            "exit_code": 101,
+            "is_exited": true
+        }),
+    );
+
+    let parsed: serde_json::Value = serde_json::from_str(&serialized).expect("serialized JSON payload");
+    let preview = parsed
+        .get("preview")
+        .and_then(serde_json::Value::as_str)
+        .expect("verification preview should be present");
+    assert!(
+        preview.lines().all(|line| line != "build-line-1"),
+        "verification logs should be tail-focused instead of preserving the head: {preview}"
+    );
+    assert!(
+        preview.contains("build-line-120"),
+        "tail-focused preview should retain the end of the log: {preview}"
+    );
+    assert_eq!(parsed.get("spool_path"), Some(&serde_json::json!(spool_relative)));
+}
+
+#[test]
+fn maybe_inline_spooled_with_preview_skips_preview_when_spool_missing() {
+    let serialized = maybe_inline_spooled_with_preview(
         tool_names::UNIFIED_EXEC,
         &serde_json::json!({
             "output": "",
+            "command": "cargo check -p vtcode-core",
             "spool_path": ".vtcode/context/tool_outputs/missing.txt",
             "exit_code": 0,
             "is_exited": true
         }),
-    )
-    .await;
+    );
 
     let parsed: serde_json::Value = serde_json::from_str(&serialized).expect("serialized JSON payload");
-    assert!(parsed.get("tail_preview").is_none());
+    assert!(parsed.get("preview").is_none());
     assert_eq!(parsed.get("result_ref_only"), Some(&serde_json::json!(true)));
+    assert_eq!(parsed.get("spool_path"), Some(&serde_json::json!(".vtcode/context/tool_outputs/missing.txt")));
 }
 
-#[tokio::test]
-async fn maybe_inline_spooled_with_preview_skips_tail_when_failure_diagnostics_present() {
+#[test]
+fn maybe_inline_spooled_with_preview_keeps_spool_reference_when_path_is_invalid() {
+    let serialized = maybe_inline_spooled_with_preview(
+        tool_names::EXEC_COMMAND,
+        &serde_json::json!({
+            "output": "",
+            "command": "cat ../outside.txt",
+            "spool_path": "../outside.txt",
+            "exit_code": 0,
+            "is_exited": true
+        }),
+    );
+
+    let parsed: serde_json::Value = serde_json::from_str(&serialized).expect("serialized JSON payload");
+    assert!(parsed.get("preview").is_none(), "invalid spool paths must not be previewed");
+    assert_eq!(parsed.get("result_ref_only"), Some(&serde_json::json!(true)));
+    assert_eq!(parsed.get("spool_path"), Some(&serde_json::json!("../outside.txt")));
+}
+
+#[test]
+fn maybe_inline_spooled_with_preview_skips_tail_when_failure_diagnostics_present() {
     // When structured failure_diagnostics are embedded (e.g. cargo test
     // failures), the ~10 KB tail_preview of raw PASS/FAIL lines is redundant
     // token waste — the diagnostics already carry panic, source location,
     // rerun hint, and next action.
-    let workspace = tempdir().expect("tempdir");
-    let spool_dir = workspace.path().join(".vtcode/context/tool_outputs");
-    tokio::fs::create_dir_all(&spool_dir).await.expect("create spool dir");
     let spool_relative = ".vtcode/context/tool_outputs/test_failure.txt";
-    let spool_absolute = workspace.path().join(spool_relative);
-    // Write a large spool with mostly PASS lines (realistic cargo test output)
-    let mut content = String::new();
-    for idx in 0..200 {
-        content.push_str(&format!("PASS [0.001s] ({idx}/200) test_pass_{idx}\n"));
-    }
-    content.push_str("FAIL [0.009s] (198/200) my_test\n");
-    tokio::fs::write(&spool_absolute, &content).await.expect("write spool");
-
     let serialized = maybe_inline_spooled_with_preview(
-        workspace.path(),
         tool_names::UNIFIED_EXEC,
         &serde_json::json!({
             "output": "",
+            "command": "cargo nextest run -p my-crate",
             "spool_path": spool_relative,
+            "preview": "PASS test_pass_1\nFAIL my_test",
             "exit_code": 100,
             "is_exited": true,
             "failure_diagnostics": {
@@ -519,15 +556,12 @@ async fn maybe_inline_spooled_with_preview_skips_tail_when_failure_diagnostics_p
                 "next_action": "Rerun with: cargo nextest run -p my-crate my_test"
             }
         }),
-    )
-    .await;
+    );
 
     let parsed: serde_json::Value = serde_json::from_str(&serialized).expect("serialized JSON payload");
-    assert!(
-        parsed.get("tail_preview").is_none(),
-        "tail_preview should be skipped when failure_diagnostics is present"
-    );
+    assert!(parsed.get("preview").is_none(), "preview should be skipped when failure_diagnostics is present");
     assert_eq!(parsed.get("result_ref_only"), Some(&serde_json::json!(true)));
+    assert_eq!(parsed.get("spool_path"), Some(&serde_json::json!(spool_relative)));
     assert!(
         parsed.get("failure_diagnostics").is_some(),
         "failure_diagnostics should be preserved in the compacted payload"
@@ -662,26 +696,19 @@ fn maybe_inline_spooled_drops_generic_success_recovery_guidance() {
     assert!(parsed.get("next_action").is_none());
 }
 
-#[tokio::test]
-async fn tool_output_summary_input_uses_spool_file_tail_for_exec_output() {
-    let temp = tempdir().unwrap();
-    let spool_dir = temp.path().join(".vtcode/context/tool_outputs");
-    std::fs::create_dir_all(&spool_dir).unwrap();
-    let spool_path = spool_dir.join("command_session_1.txt");
+#[test]
+fn tool_output_summary_input_uses_bounded_preview_for_exec_output() {
     let spool_content = (1..=150).map(|idx| format!("line-{idx}")).collect::<Vec<_>>().join("\n");
-    std::fs::write(&spool_path, spool_content).unwrap();
-
     let output = serde_json::json!({
         "output": "preview text",
         "stderr_preview": "warning text",
         "spool_path": ".vtcode/context/tool_outputs/command_session_1.txt",
+        "preview": spool_content,
         "exit_code": 0,
         "is_exited": true
     });
     let serialized = serialize_json_for_model(&output);
-
-    let input =
-        tool_output_summary_input_or_serialized(temp.path(), tool_names::UNIFIED_EXEC, &output, &serialized).await;
+    let input = tool_output_summary_input_or_serialized(tool_names::UNIFIED_EXEC, &output, &serialized);
 
     assert!(input.contains("Tool payload:"));
     assert!(input.contains("stderr_preview:\nwarning text"));
@@ -690,22 +717,16 @@ async fn tool_output_summary_input_uses_spool_file_tail_for_exec_output() {
     assert!(!input.contains("line-1\nline-2\nline-3"));
 }
 
-#[tokio::test]
-async fn tool_output_summary_input_uses_spool_file_excerpt_for_large_reads() {
-    let temp = tempdir().unwrap();
-    let spool_dir = temp.path().join(".vtcode/context/tool_outputs");
-    std::fs::create_dir_all(&spool_dir).unwrap();
-    let spool_path = spool_dir.join("read_1.txt");
+#[test]
+fn tool_output_summary_input_uses_bounded_preview_excerpt_for_large_reads() {
     let spool_content = (1..=200).map(|idx| format!("read-line-{idx}")).collect::<Vec<_>>().join("\n");
-    std::fs::write(&spool_path, spool_content).unwrap();
-
     let output = serde_json::json!({
         "path": "src/main.rs",
-        "spool_path": ".vtcode/context/tool_outputs/read_1.txt"
+        "spool_path": ".vtcode/context/tool_outputs/read_1.txt",
+        "preview": spool_content
     });
     let serialized = serialize_json_for_model(&output);
-
-    let input = tool_output_summary_input_or_serialized(temp.path(), tool_names::READ_FILE, &output, &serialized).await;
+    let input = tool_output_summary_input_or_serialized(tool_names::READ_FILE, &output, &serialized);
 
     assert!(input.contains("source_path: src/main.rs"));
     assert!(input.contains("content_excerpt:"));
@@ -713,9 +734,8 @@ async fn tool_output_summary_input_uses_spool_file_excerpt_for_large_reads() {
     assert!(input.contains("read-line-200"));
 }
 
-#[tokio::test]
-async fn tool_output_summary_input_falls_back_to_serialized_output_when_spool_missing() {
-    let temp = tempdir().unwrap();
+#[test]
+fn tool_output_summary_input_falls_back_to_serialized_output_when_spool_missing() {
     let output = serde_json::json!({
         "spool_path": ".vtcode/context/tool_outputs/missing.txt",
         "exit_code": 0,
@@ -723,31 +743,24 @@ async fn tool_output_summary_input_falls_back_to_serialized_output_when_spool_mi
     });
     let serialized = serialize_json_for_model(&output);
 
-    let input =
-        tool_output_summary_input_or_serialized(temp.path(), tool_names::UNIFIED_EXEC, &output, &serialized).await;
+    let input = tool_output_summary_input_or_serialized(tool_names::UNIFIED_EXEC, &output, &serialized);
 
     assert_eq!(input, serialized);
 }
 
-#[tokio::test]
-async fn tool_output_summary_input_decodes_invalid_utf8_spool_lossily() {
-    let temp = tempdir().unwrap();
-    let spool_dir = temp.path().join(".vtcode/context/tool_outputs");
-    std::fs::create_dir_all(&spool_dir).unwrap();
-    let spool_path = spool_dir.join("command_session_invalid.txt");
-    std::fs::write(&spool_path, b"ok\n\xff\xfe\nlast line\n").unwrap();
-
+#[test]
+fn tool_output_summary_input_preserves_utf8_preview() {
     let output = serde_json::json!({
         "output": "preview text",
         "stderr_preview": "warning text",
         "spool_path": ".vtcode/context/tool_outputs/command_session_invalid.txt",
+        "preview": "ok\n�\nlast line\n",
         "exit_code": 0,
         "is_exited": true
     });
     let serialized = serialize_json_for_model(&output);
 
-    let input =
-        tool_output_summary_input_or_serialized(temp.path(), tool_names::UNIFIED_EXEC, &output, &serialized).await;
+    let input = tool_output_summary_input_or_serialized(tool_names::UNIFIED_EXEC, &output, &serialized);
 
     assert!(input.contains("warning text"));
     assert!(input.contains("last line"));

@@ -1,28 +1,25 @@
-use crate::config::constants::tools;
-use crate::tools::file_tracker::FileTracker;
-use crate::tools::native_memory;
-use crate::tools::registry::unified_actions::CommandSessionAction;
-use crate::tools::tool_intent;
+use std::path::PathBuf;
+use std::time::{Duration, SystemTime};
+
 use anyhow::{Context, Result, anyhow, bail};
-use chrono;
-use futures::future::BoxFuture;
-use hashbrown::HashMap;
-use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
-use std::{
-    path::PathBuf,
-    time::{Duration, SystemTime},
-};
-
-use super::{ExecSettlementMode, ToolRegistry};
-use exec_support::*;
-use sandbox_runtime::*;
-
 #[cfg(test)]
 use cargo_failure_diagnostics::{
     CargoTestCommandKind, attach_exec_recovery_guidance, attach_failure_diagnostics_metadata,
     cargo_selector_error_diagnostics, cargo_test_failure_diagnostics, cargo_test_rerun_hint,
 };
+use chrono;
+use exec_support::*;
+use futures::future::BoxFuture;
+use hashbrown::HashMap;
+use sandbox_runtime::*;
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
+
+use super::{ExecSettlementMode, ToolRegistry};
+use crate::config::constants::tools;
+use crate::tools::file_tracker::FileTracker;
+use crate::tools::registry::unified_actions::CommandSessionAction;
+use crate::tools::{native_memory, tool_intent};
 
 mod cargo_failure_diagnostics;
 mod exec_command;
@@ -527,8 +524,10 @@ impl ToolRegistry {
         payload: &serde_json::Map<String, Value>,
     ) -> Result<ResolvedExecSandboxRequest> {
         let working_dir_path = self.pty_manager().resolve_working_dir(shell_working_dir_value(payload)).await?;
+        let sandbox_config = self.sandbox_config();
         let (sandbox_permissions, additional_permissions) =
-            parse_requested_sandbox_permissions(payload, &working_dir_path)?;
+            parse_requested_sandbox_permissions(payload, self.workspace_root(), &working_dir_path, &sandbox_config)
+                .await?;
 
         Ok(ResolvedExecSandboxRequest {
             working_dir_path,
@@ -658,9 +657,10 @@ impl ToolRegistry {
 
 #[cfg(test)]
 mod execute_code_tests {
+    use serde_json::json;
+
     use super::code_language_from_args;
     use crate::exec::code_executor::Language;
-    use serde_json::json;
 
     #[test]
     fn code_language_uses_language_field_instead_of_action() {
@@ -689,9 +689,10 @@ mod execute_code_tests {
 
 #[cfg(test)]
 mod subagent_tool_output_tests {
-    use super::sanitize_subagent_tool_output_paths;
     use serde_json::json;
     use tempfile::TempDir;
+
+    use super::sanitize_subagent_tool_output_paths;
 
     #[test]
     fn strips_transcript_paths_outside_workspace() {
@@ -862,12 +863,13 @@ mod pty_output_filter_tests {
 
 #[cfg(test)]
 mod pty_context_tests {
+    use serde_json::json;
+
     use super::{
         ExecOutputPreview, PtyEphemeralCapture, attach_exec_response_context, attach_pty_continuation,
         build_exec_response, build_exec_session_command_display,
     };
     use crate::tools::types::VTCodeExecSession;
-    use serde_json::json;
 
     #[test]
     fn build_exec_session_command_display_unwraps_shell_c_argument() {
@@ -1065,6 +1067,10 @@ mod git_diff_tests {
 
 #[cfg(test)]
 mod unified_action_error_tests {
+    use std::time::Duration;
+
+    use serde_json::json;
+
     use super::{
         CargoTestCommandKind, ExecOutputPreview, PtyEphemeralCapture, attach_exec_recovery_guidance,
         attach_failure_diagnostics_metadata, build_exec_output_preview, build_exec_response, build_head_tail_preview,
@@ -1073,8 +1079,6 @@ mod unified_action_error_tests {
         filter_lines, missing_command_session_action_error, resolve_exec_run_session_id, summarized_arg_keys,
     };
     use crate::tools::types::VTCodeExecSession;
-    use serde_json::json;
-    use std::time::Duration;
 
     #[test]
     fn summarized_arg_keys_reports_shape_for_non_object_payloads() {
@@ -1390,8 +1394,9 @@ mod sandbox_runtime_tests;
 
 #[cfg(test)]
 mod mcp_action_dispatch_tests {
-    use super::ToolRegistry;
     use serde_json::json;
+
+    use super::ToolRegistry;
 
     /// `mcp_executor` must dispatch `action='connect'`/`'disconnect'` to
     /// `mcp_connect_server_executor`/`mcp_disconnect_server_executor` rather

@@ -6,28 +6,13 @@
 //! - Constraints: Preserve turn-phase transitions and recovery semantics when moving helpers out of the root.
 //! - Verify: `cargo check -p vtcode && cargo test -p vtcode --bin vtcode turn_loop`
 
-use anyhow::Result;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
 
-use crate::agent::runloop::unified::inline_events::harness::HarnessEventEmitter;
-use crate::agent::runloop::unified::inline_events::harness::{
-    turn_completed_event, turn_failed_event, turn_started_event,
-};
-use crate::agent::runloop::unified::planning_workflow::maybe_handle_planning_exit_trigger;
-use crate::agent::runloop::unified::planning_workflow_state::PlanningWorkflowSessionState;
-use crate::agent::runloop::unified::run_loop_context::HarnessTurnState;
-use crate::agent::runloop::unified::run_loop_context::RunLoopContext;
-use crate::agent::runloop::unified::run_loop_context::TurnPhase;
-use crate::agent::runloop::unified::tool_call_safety::ToolCallSafetyValidator;
-use crate::agent::runloop::unified::turn::context::TurnLoopResult;
-use crate::agent::runloop::unified::turn::turn_loop_helpers::{
-    ToolLoopLimitAction, extract_turn_config, handle_steering_messages, is_stale_approved_plan_pause_response,
-    maybe_handle_planning_enter_trigger, maybe_handle_tool_loop_limit, resolve_safety_tool_call_limits,
-};
+use anyhow::Result;
+use tokio::sync::RwLock;
 use vtcode_core::acp::ToolPermissionCache;
 use vtcode_core::config::loader::VTCodeConfig;
 use vtcode_core::core::agent::runtime::RuntimeSteering;
@@ -36,10 +21,22 @@ use vtcode_core::core::trajectory::TrajectoryLogger;
 use vtcode_core::exec::events::Usage as HarnessUsage;
 use vtcode_core::hooks::LifecycleHookEngine;
 use vtcode_core::llm::provider as uni;
-use vtcode_core::tools::ToolResultCache;
-use vtcode_core::tools::{ApprovalRecorder, ToolRegistry};
+use vtcode_core::tools::{ApprovalRecorder, ToolRegistry, ToolResultCache};
 use vtcode_core::utils::ansi::{AnsiRenderer, MessageStyle};
 use vtcode_ui::tui::app::{InlineHandle, InlineSession};
+
+use crate::agent::runloop::unified::inline_events::harness::{
+    HarnessEventEmitter, turn_completed_event, turn_failed_event, turn_started_event,
+};
+use crate::agent::runloop::unified::planning_workflow::maybe_handle_planning_exit_trigger;
+use crate::agent::runloop::unified::planning_workflow_state::PlanningWorkflowSessionState;
+use crate::agent::runloop::unified::run_loop_context::{HarnessTurnState, RunLoopContext, TurnPhase};
+use crate::agent::runloop::unified::tool_call_safety::ToolCallSafetyValidator;
+use crate::agent::runloop::unified::turn::context::TurnLoopResult;
+use crate::agent::runloop::unified::turn::turn_loop_helpers::{
+    ToolLoopLimitAction, extract_turn_config, handle_steering_messages, is_stale_approved_plan_pause_response,
+    maybe_handle_planning_enter_trigger, maybe_handle_tool_loop_limit, resolve_safety_tool_call_limits,
+};
 
 #[path = "turn_loop/notifications.rs"]
 mod notifications;
@@ -50,9 +47,6 @@ mod usage_accounting;
 
 // Using `tool_output_handler::handle_pipeline_output_from_turn_ctx` adapter where needed
 
-use crate::agent::runloop::mcp_events;
-use crate::agent::runloop::unified::turn::tool_outcomes::helpers::LoopTracker;
-use crate::agent::runloop::unified::turn::turn_helpers::{display_error, error_message_for_user};
 use notifications::emit_turn_outcome_notification;
 #[cfg(test)]
 use post_tool_recovery::PostToolFailureRecovery;
@@ -68,6 +62,10 @@ use usage_accounting::{accumulate_turn_usage, estimate_session_costs, has_turn_u
 use vtcode_core::config::types::AgentConfig;
 use vtcode_core::core::agent::error_recovery::ErrorType;
 use vtcode_core::primary_agent::ActivePrimaryAgentState;
+
+use crate::agent::runloop::mcp_events;
+use crate::agent::runloop::unified::turn::tool_outcomes::helpers::LoopTracker;
+use crate::agent::runloop::unified::turn::turn_helpers::{display_error, error_message_for_user};
 
 /// Max completion tokens for the tool-free recovery synthesis pass.
 ///
@@ -309,6 +307,7 @@ fn ensure_completed_turn_response(
 pub(crate) struct TurnLoopOutcome {
     pub result: TurnLoopResult,
     pub turn_modified_files: BTreeSet<PathBuf>,
+    pub turn_diagnostics: vtcode_core::core::agent::snapshots::SnapshotTurnDiagnostics,
     /// When set, the interaction loop should switch the active primary agent
     /// to this name after the turn completes.
     pub pending_primary_agent: Option<String>,
@@ -1382,9 +1381,13 @@ pub(crate) async fn run_turn_loop(
     ctx.session_stats.record_turn_completed();
     let plan_approved_execution_pending =
         matches!(&result, TurnLoopResult::Completed { plan_approved_execution_pending: true });
+    let turn_diagnostics = ctx
+        .harness_state
+        .snapshot_turn_diagnostics(turn_usage.clone(), repeated_tool_attempts.low_signal_tool_calls);
     Ok(TurnLoopOutcome {
         result,
         turn_modified_files,
+        turn_diagnostics,
         pending_primary_agent,
         pending_plan_auto_accept,
         pending_plan_execution_context,

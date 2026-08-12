@@ -282,7 +282,7 @@ pub use web_fetch::WebFetchTool;
 pub use web_search::WebSearchTool;
 
 // Dynamic context discovery
-pub use output_spooler::{SpoolResult, SpoolerConfig, ToolOutputSpooler};
+pub use output_spooler::{SpoolResult, SpooledOutputReference, SpoolerConfig, ToolOutputSpooler};
 
 // Production-grade improvements re-exports
 pub use async_middleware::{

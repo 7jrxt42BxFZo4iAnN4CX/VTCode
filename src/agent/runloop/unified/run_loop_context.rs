@@ -1,13 +1,9 @@
-use crate::agent::runloop::mcp_events::McpPanelState;
-use crate::agent::runloop::unified::inline_events::harness::HarnessEventEmitter;
-use crate::agent::runloop::unified::planning_workflow_state::PlanningWorkflowSessionState;
-use crate::agent::runloop::unified::state::SessionStats;
-use crate::agent::runloop::unified::tool_call_safety::ToolCallSafetyValidator;
-use hashbrown::{HashMap, HashSet};
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use hashbrown::{HashMap, HashSet};
 use tokio::sync::RwLock;
 use vtcode_config::core::permissions::AgentPermissionsConfig;
 use vtcode_core::acp::ToolPermissionCache;
@@ -17,12 +13,15 @@ use vtcode_core::config::types::AgentConfig as CoreAgentConfig;
 use vtcode_core::core::decision_tracker::DecisionTracker;
 use vtcode_core::core::trajectory::TrajectoryLogger;
 use vtcode_core::llm::provider as uni;
-use vtcode_core::tools::ApprovalRecorder;
-use vtcode_core::tools::ToolRegistry;
-use vtcode_core::tools::ToolResultCache;
+use vtcode_core::tools::{ApprovalRecorder, ToolRegistry, ToolResultCache};
 use vtcode_core::utils::ansi::AnsiRenderer;
-use vtcode_ui::tui::app::InlineHandle;
-use vtcode_ui::tui::app::InlineSession;
+use vtcode_ui::tui::app::{InlineHandle, InlineSession};
+
+use crate::agent::runloop::mcp_events::McpPanelState;
+use crate::agent::runloop::unified::inline_events::harness::HarnessEventEmitter;
+use crate::agent::runloop::unified::planning_workflow_state::PlanningWorkflowSessionState;
+use crate::agent::runloop::unified::state::SessionStats;
+use crate::agent::runloop::unified::tool_call_safety::ToolCallSafetyValidator;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TurnRunId(pub String);
@@ -306,6 +305,16 @@ pub(crate) struct HarnessTurnState {
     wait_started_at: Option<Instant>,
     excluded_wait_duration: Duration,
     pub tool_calls: usize,
+    requested_tool_calls: u32,
+    admitted_tool_calls: u32,
+    failed_tool_calls: u32,
+    denied_tool_calls: u32,
+    preflight_failures: u32,
+    reused_results: u32,
+    spooled_results: u32,
+    raw_spooled_bytes: u64,
+    model_visible_output_bytes: u64,
+    recovery_activations: u32,
     pub blocked_tool_calls: usize,
     pub consecutive_blocked_tool_calls: usize,
     /// Counts consecutive malformed/schema-invalid tool calls independently
@@ -426,6 +435,16 @@ impl HarnessTurnState {
             wait_started_at: None,
             excluded_wait_duration: Duration::ZERO,
             tool_calls: 0,
+            requested_tool_calls: 0,
+            admitted_tool_calls: 0,
+            failed_tool_calls: 0,
+            denied_tool_calls: 0,
+            preflight_failures: 0,
+            reused_results: 0,
+            spooled_results: 0,
+            raw_spooled_bytes: 0,
+            model_visible_output_bytes: 0,
+            recovery_activations: 0,
             blocked_tool_calls: 0,
             consecutive_blocked_tool_calls: 0,
             consecutive_preflight_failures: 0,
@@ -517,6 +536,65 @@ impl HarnessTurnState {
         self.tool_calls = self.tool_calls.saturating_add(1);
     }
 
+    pub(crate) fn record_requested_tool_calls(&mut self, count: usize) {
+        self.requested_tool_calls = self
+            .requested_tool_calls
+            .saturating_add(u32::try_from(count).unwrap_or(u32::MAX));
+    }
+
+    pub(crate) fn record_admitted_tool_call(&mut self) {
+        self.admitted_tool_calls = self.admitted_tool_calls.saturating_add(1);
+    }
+
+    pub(crate) fn record_failed_tool_call(&mut self) {
+        self.failed_tool_calls = self.failed_tool_calls.saturating_add(1);
+    }
+
+    pub(crate) fn record_denied_tool_call(&mut self) {
+        self.denied_tool_calls = self.denied_tool_calls.saturating_add(1);
+    }
+
+    pub(crate) fn record_tool_output_metrics(
+        &mut self,
+        reused: bool,
+        spooled: bool,
+        raw_spooled_bytes: u64,
+        model_visible_output_bytes: usize,
+    ) {
+        if reused {
+            self.reused_results = self.reused_results.saturating_add(1);
+        }
+        if spooled {
+            self.spooled_results = self.spooled_results.saturating_add(1);
+        }
+        self.raw_spooled_bytes = self.raw_spooled_bytes.saturating_add(raw_spooled_bytes);
+        self.model_visible_output_bytes = self
+            .model_visible_output_bytes
+            .saturating_add(u64::try_from(model_visible_output_bytes).unwrap_or(u64::MAX));
+    }
+
+    pub(crate) fn snapshot_turn_diagnostics(
+        &self,
+        usage: vtcode_core::exec::events::Usage,
+        low_signal_tool_calls: u32,
+    ) -> vtcode_core::core::agent::snapshots::SnapshotTurnDiagnostics {
+        vtcode_core::core::agent::snapshots::SnapshotTurnDiagnostics {
+            usage,
+            requested_tool_calls: self.requested_tool_calls,
+            admitted_tool_calls: self.admitted_tool_calls,
+            failed_tool_calls: self.failed_tool_calls,
+            denied_tool_calls: self.denied_tool_calls,
+            preflight_failures: self.preflight_failures,
+            reused_results: self.reused_results,
+            spooled_results: self.spooled_results,
+            raw_spooled_bytes: self.raw_spooled_bytes,
+            model_visible_output_bytes: self.model_visible_output_bytes,
+            low_signal_tool_calls,
+            recovery_activations: self.recovery_activations,
+            ..Default::default()
+        }
+    }
+
     pub(crate) fn record_tool_call_with_warning(&mut self, threshold: f64) -> Option<ToolBudgetWarning> {
         self.record_tool_call();
         if !self.should_emit_tool_budget_warning(threshold) {
@@ -597,6 +675,7 @@ impl HarnessTurnState {
 
     pub(crate) fn record_preflight_failure(&mut self) -> usize {
         self.consecutive_preflight_failures = self.consecutive_preflight_failures.saturating_add(1);
+        self.preflight_failures = self.preflight_failures.saturating_add(1);
         self.consecutive_preflight_failures
     }
 
@@ -634,6 +713,7 @@ impl HarnessTurnState {
 
     pub(crate) fn activate_recovery_with_mode(&mut self, reason: impl Into<String>, mode: RecoveryMode) {
         if matches!(self.recovery_phase, RecoveryPhase::Inactive) {
+            self.recovery_activations = self.recovery_activations.saturating_add(1);
             self.recovery_reason = Some(reason.into());
             self.recovery_phase = RecoveryPhase::Pending;
             self.recovery_mode = Some(mode);
@@ -683,6 +763,7 @@ impl HarnessTurnState {
         let changed = !matches!(self.recovery_phase, RecoveryPhase::Pending);
         self.recovery_phase = RecoveryPhase::Pending;
         if was_inactive {
+            self.recovery_activations = self.recovery_activations.saturating_add(1);
             self.recovery_retry_count = 0;
             if self.recovery_reason.is_none() {
                 self.recovery_reason = Some("post-tool follow-up failure".to_string());
@@ -1092,13 +1173,15 @@ impl<'a> RunLoopContext<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
+    use hashbrown::HashSet;
+
     use super::{
         CrossTurnTracker, HarnessTurnState, RecoveryMode, TOOL_BUDGET_WARNING_THRESHOLD, ToolBudgetExhaustion,
         ToolBudgetExhaustionNotice, ToolBudgetWarning, ToolWallClockExhaustion, ToolWallClockExhaustionNotice,
         TurnExecutionPhase, TurnId, TurnPhase, TurnRunId,
     };
-    use hashbrown::HashSet;
-    use std::time::{Duration, Instant};
 
     #[test]
     fn harness_state_tracks_phase_transitions() {
@@ -1559,6 +1642,33 @@ mod tests {
         assert_eq!(snapshot.max_tool_calls, 6);
         assert_eq!(snapshot.max_tool_wall_clock_secs, 120);
         assert_eq!(snapshot.max_tool_retries, 2);
+    }
+
+    #[test]
+    fn turn_diagnostic_counters_saturate_and_count_recovery_once() {
+        let mut state = HarnessTurnState::new(
+            TurnRunId("run-diagnostics".to_string()),
+            TurnId("turn-diagnostics".to_string()),
+            4,
+            120,
+            2,
+        );
+        state.requested_tool_calls = u32::MAX - 1;
+        state.record_requested_tool_calls(usize::MAX);
+        state.raw_spooled_bytes = u64::MAX - 2;
+        state.model_visible_output_bytes = u64::MAX - 2;
+        state.record_tool_output_metrics(true, true, 10, usize::MAX);
+        state.activate_recovery("adaptive planning synthesis");
+        state.activate_recovery("duplicate activation");
+
+        let diagnostics = state.snapshot_turn_diagnostics(Default::default(), u32::MAX);
+        assert_eq!(diagnostics.requested_tool_calls, u32::MAX);
+        assert_eq!(diagnostics.reused_results, 1);
+        assert_eq!(diagnostics.spooled_results, 1);
+        assert_eq!(diagnostics.raw_spooled_bytes, u64::MAX);
+        assert_eq!(diagnostics.model_visible_output_bytes, u64::MAX);
+        assert_eq!(diagnostics.low_signal_tool_calls, u32::MAX);
+        assert_eq!(diagnostics.recovery_activations, 1);
     }
 
     // --- CrossTurnTracker tests ---

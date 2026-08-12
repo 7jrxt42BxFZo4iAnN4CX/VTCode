@@ -112,7 +112,10 @@ fn repeated_file_read_family_key(canonical_tool_name: &str, args: &Value) -> Opt
 
     match canonical_tool_name {
         tool_names::READ_FILE | tool_names::UNIFIED_FILE => low_signal_family_key(canonical_tool_name, args),
-        tool_names::UNIFIED_EXEC | "command_session" => {
+        tool_names::UNIFIED_EXEC | tool_names::EXEC_COMMAND | "command_session" => {
+            if let Some(exec_read) = parse_simple_exec_read_target(args) {
+                return Some(format!("unified_exec::read::{}{}", exec_read.path, exec_read.slice_suffix));
+            }
             // Track file-reading shell commands in the family guard to prevent
             // bypass via unified_exec. Only commands on the is_readonly_unified_exec_command
             // allowlist (tool_intent.rs) reach this point — cat, head, tail, bat.
@@ -127,6 +130,74 @@ fn repeated_file_read_family_key(canonical_tool_name: &str, args: &Value) -> Opt
         }
         _ => None,
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExecReadTarget {
+    path: String,
+    slice_suffix: String,
+}
+
+fn parse_simple_exec_read_target(args: &Value) -> Option<ExecReadTarget> {
+    let parts = vtcode_core::tools::command_args::command_words(args).ok()??;
+    if parts.iter().any(|part| matches!(part.as_str(), "&&" | "|" | ";")) {
+        return None;
+    }
+
+    parse_simple_sed_read_target(parts.as_slice())
+}
+
+fn parse_simple_sed_read_target(parts: &[String]) -> Option<ExecReadTarget> {
+    if parts.first().map(String::as_str) != Some("sed") {
+        return None;
+    }
+
+    let mut cursor = 1usize;
+    if parts.get(cursor).map(String::as_str) != Some("-n") {
+        return None;
+    }
+    cursor += 1;
+
+    let script = parts.get(cursor)?.as_str();
+    cursor += 1;
+
+    let path = parts.get(cursor)?.as_str();
+    if cursor + 1 != parts.len() {
+        return None;
+    }
+
+    let (start, end) = parse_simple_sed_print_range(script)?;
+    let limit = end.saturating_sub(start).saturating_add(1);
+    Some(ExecReadTarget {
+        path: path.to_string(),
+        slice_suffix: format!("::off={start}::lim={limit}"),
+    })
+}
+
+fn parse_simple_sed_print_range(script: &str) -> Option<(usize, usize)> {
+    let range = script.strip_suffix('p')?;
+    let (start, end) = match range.split_once(',') {
+        Some((start, end)) => (start, end),
+        None => (range, range),
+    };
+
+    let start = start.parse::<usize>().ok()?;
+    let end = end.parse::<usize>().ok()?;
+    (start <= end).then_some((start, end))
+}
+
+fn repeated_read_path(canonical_tool_name: &str, effective_args: &Value) -> Option<String> {
+    if let Some(target) = parse_simple_exec_read_target(effective_args) {
+        if matches!(canonical_tool_name, tool_names::UNIFIED_EXEC | tool_names::EXEC_COMMAND | "command_session") {
+            return Some(target.path);
+        }
+    }
+
+    if is_read_action(canonical_tool_name, effective_args) {
+        return extract_read_path(effective_args);
+    }
+
+    None
 }
 
 /// Build the error content for a repeated file read family guard trip.
@@ -236,19 +307,17 @@ pub(crate) fn enforce_repeated_read_only_call_guard(
     // Per-file-path cap: catches paginated reads of the same file that the
     // slice-aware family key lets through (e.g., 8 reads of anthropic_types.rs
     // at different offsets each get a different family key and never collide).
-    if is_read_action(canonical_tool_name, effective_args) {
-        if let Some(path) = extract_read_path(effective_args) {
-            let path_count = ctx.harness_state.record_file_read_path_call(path.clone());
-            if path_count > MAX_SAME_FILE_PATH_READ_CALLS {
-                let block_reason = format!(
-                    "Repeated reads of '{path}' hit the per-file-path cap ({MAX_SAME_FILE_PATH_READ_CALLS}). \
-                     Read the file in full once and reuse the output."
-                );
-                let error_content = build_repeated_file_read_family_error_content(&path);
-                ctx.activate_recovery(block_reason.clone());
-                push_guard_failure_messages(ctx, tool_call_id, canonical_tool_name, error_content, &block_reason);
-                return Some(ValidationResult::Blocked);
-            }
+    if let Some(path) = repeated_read_path(canonical_tool_name, effective_args) {
+        let path_count = ctx.harness_state.record_file_read_path_call(path.clone());
+        if path_count > MAX_SAME_FILE_PATH_READ_CALLS {
+            let block_reason = format!(
+                "Repeated reads of '{path}' hit the per-file-path cap ({MAX_SAME_FILE_PATH_READ_CALLS}). \
+                 Read the file in full once and reuse the output."
+            );
+            let error_content = build_repeated_file_read_family_error_content(&path);
+            ctx.activate_recovery(block_reason.clone());
+            push_guard_failure_messages(ctx, tool_call_id, canonical_tool_name, error_content, &block_reason);
+            return Some(ValidationResult::Blocked);
         }
     }
 
@@ -349,8 +418,9 @@ pub(crate) fn enforce_repeated_read_only_call_guard(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use vtcode_core::config::constants::tools as tool_names;
+
+    use super::*;
 
     #[test]
     fn repeated_file_read_family_key_tracks_cat_via_unified_exec() {
@@ -385,6 +455,27 @@ mod tests {
         let args = serde_json::json!({"cmd": "cat Cargo.toml"});
         let key = repeated_file_read_family_key(tool_names::UNIFIED_EXEC, &args);
         assert_eq!(key, Some("unified_exec::run::cat Cargo.toml".to_string()));
+    }
+
+    #[test]
+    fn repeated_file_read_family_key_tracks_simple_sed_ranges_via_unified_exec() {
+        let args = serde_json::json!({"command": "sed -n '440,520p' Cargo.toml"});
+        let key = repeated_file_read_family_key(tool_names::UNIFIED_EXEC, &args);
+        assert_eq!(key, Some("unified_exec::read::Cargo.toml::off=440::lim=81".to_string()));
+    }
+
+    #[test]
+    fn repeated_file_read_family_key_tracks_simple_sed_ranges_via_public_exec_command() {
+        let args = serde_json::json!({"cmd": "sed -n '440,520p' Cargo.toml"});
+        let key = repeated_file_read_family_key(tool_names::EXEC_COMMAND, &args);
+        assert_eq!(key, Some("unified_exec::read::Cargo.toml::off=440::lim=81".to_string()));
+    }
+
+    #[test]
+    fn repeated_file_read_family_key_ignores_complex_sed_commands() {
+        let args = serde_json::json!({"command": "sed -n '440,520p' Cargo.toml extra.txt"});
+        let key = repeated_file_read_family_key(tool_names::UNIFIED_EXEC, &args);
+        assert_eq!(key, None);
     }
 
     #[test]
@@ -440,6 +531,7 @@ mod tests {
         assert_eq!(read_family_target("read_file::src/main.rs::off=80::lim=200::raw=true"), "src/main.rs");
         assert_eq!(read_family_target("unified_file::read::src/cli/update.rs"), "src/cli/update.rs");
         assert_eq!(read_family_target("unified_exec::run::cat README.md"), "cat README.md");
+        assert_eq!(read_family_target("unified_exec::read::Cargo.toml::off=440::lim=81"), "Cargo.toml");
         assert_eq!(read_family_target("read_file::src/lib.rs"), "src/lib.rs");
     }
 

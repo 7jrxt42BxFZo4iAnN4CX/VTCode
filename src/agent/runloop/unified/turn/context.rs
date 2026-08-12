@@ -11,23 +11,10 @@ mod message_history;
 mod response_handling;
 mod runtime_context;
 
-use self::continuation::{
-    AUTONOMOUS_CONTINUE_DIRECTIVE, InterimTextContinuationDecision, evaluate_interim_text_continuation,
-    push_system_directive_once,
-};
-use self::message_history::{
-    build_combined_reasoning, parse_reasoning_detail_value, push_assistant_message, reasoning_duplicates_content,
-    should_suppress_redundant_diff_recap,
-};
-#[cfg(test)]
-use self::response_handling::looks_like_clarifying_question;
-use crate::agent::runloop::mcp_events;
-use crate::agent::runloop::unified::state::SessionStats;
-use crate::agent::runloop::unified::tool_catalog::ToolCatalogState;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::Notify;
-use tokio::sync::RwLock;
+
+use tokio::sync::{Notify, RwLock};
 use vtcode_core::config::loader::VTCodeConfig;
 use vtcode_core::core::agent::runtime::RuntimeSteering;
 use vtcode_core::core::agent::snapshots::SnapshotManager;
@@ -38,13 +25,24 @@ use vtcode_core::tools::registry::ToolExecutionError;
 use vtcode_core::utils::ansi::AnsiRenderer;
 use vtcode_ui::tui::app::InlineHandle;
 
-use crate::agent::runloop::unified::run_loop_context::{RecoveryMode, RunLoopContext};
-use crate::agent::runloop::unified::state::CtrlCState;
-
+use self::continuation::{
+    AUTONOMOUS_CONTINUE_DIRECTIVE, InterimTextContinuationDecision, evaluate_interim_text_continuation,
+    push_system_directive_once,
+};
+use self::message_history::{
+    build_combined_reasoning, parse_reasoning_detail_value, push_assistant_message, reasoning_duplicates_content,
+    should_suppress_redundant_diff_recap,
+};
+#[cfg(test)]
+use self::response_handling::looks_like_clarifying_question;
 pub(crate) use self::runtime_context::{
     LLMContext, ToolContext, TurnHandlerOutcome, TurnOutcomeContext, TurnProcessingContext, TurnProcessingContextParts,
     TurnProcessingResult, TurnProcessingState, UIContext,
 };
+use crate::agent::runloop::mcp_events;
+use crate::agent::runloop::unified::run_loop_context::{RecoveryMode, RunLoopContext};
+use crate::agent::runloop::unified::state::{CtrlCState, SessionStats};
+use crate::agent::runloop::unified::tool_catalog::ToolCatalogState;
 
 #[derive(Clone, Debug)]
 pub(crate) enum TurnLoopResult {
@@ -240,6 +238,7 @@ impl<'a> TurnProcessingContext<'a> {
     where
         S: AsRef<str> + Into<String>,
     {
+        self.harness_state.record_tool_output_metrics(false, false, 0, content.len());
         crate::agent::runloop::unified::turn::tool_outcomes::helpers::push_tool_response(
             self.working_history,
             tool_call_id,

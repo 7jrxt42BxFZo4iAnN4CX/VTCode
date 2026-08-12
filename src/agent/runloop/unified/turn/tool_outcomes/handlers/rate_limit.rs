@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use crate::agent::runloop::unified::turn::context::{TurnHandlerOutcome, TurnLoopResult, TurnProcessingContext};
 
-use super::super::helpers::push_tool_response;
 use super::ValidationResult;
 
 const MAX_RATE_LIMIT_ACQUIRE_ATTEMPTS: usize = 4;
@@ -73,8 +72,7 @@ pub(crate) async fn acquire_adaptive_rate_limit_slot<'a>(
                         retry_after_ms,
                         "Adaptive rate limiter blocked tool execution after repeated attempts"
                     );
-                    push_tool_response(
-                        ctx.working_history,
+                    ctx.push_tool_response(
                         tool_call_id,
                         Some(tool_name),
                         build_rate_limit_error_content(tool_name, retry_after_ms),

@@ -1,5 +1,29 @@
 # Session Log Review
 
+## 2026-08-12 | Checkpoints 862–911 stabilization
+
+### Baseline
+
+The 50 active turns in checkpoints 862–911 produced 507 tool calls, 57 structured failures, 124 spooled or reference-only results, and about 1.40 MB of model-visible tool output. `code_search` accounted for 245 calls: 93 empty results (38%) and 150 truncated results (61%). Seven historical turns ended without a final answer.
+
+The most recent examples showed that the defects were still live:
+
+| Turn | Observation |
+| --- | --- |
+| 895 | Repeated low-signal searches continued without an early synthesis opportunity. |
+| 910 | The turn consumed 51,523 input tokens. |
+| 911 | A project-orientation request used 9 commands, hit 2 avoidable permission-validation failures, exposed about 139 KB of raw spooled output, and consumed 43,282 input tokens. |
+
+### Stabilized behavior
+
+- The planning workflow retains its 120-call hard ceiling. A separate adaptive guard schedules one tool-free synthesis pass after 6 consecutive or 10 total low-signal navigation results. A productive read resets only the consecutive count; verification, mutation, recovery, and a new turn reset both counts.
+- Shell progress accounting distinguishes inspection (`rg`, `find`, `cat`, simple `sed -n`, and similar reads), verification (compile, build, test, and clippy families), and mutation. Inspection contributes to navigation accounting instead of masquerading as implementation progress.
+- Successful spooled inspection output exposes a deterministic UTF-8-safe head/tail preview within 6 KB and 80 lines. Build, test, and runtime output uses a tail-focused preview within the same 6 KB/80-line envelope. A lower caller output budget wins. Structured `failure_diagnostics` stays reference-only, and every preview retains its `spool_path` for a targeted follow-up.
+- `exec_command` normalizes omitted or `use_default` sandbox mode with non-empty `additional_permissions` to `with_additional_permissions`. Requested paths still pass the normal traversal, symlink-containment, sensitive-path, and allowed-root validation. Explicit escalation or bypass conflicts remain fail-closed.
+- Newly written V2 snapshots can link session and runtime turn identifiers and include per-turn diagnostics for authoritative token usage, elapsed time, tool admission/outcomes, spooling, model-visible bytes, low-signal calls, and recovery activation. V0/V1 snapshots migrate with those additive fields absent.
+
+These changes preserve public tool names, sandbox permission enum values, duplicate-signature guards, and hard tool-call ceilings. `vtcode-exec-events::ThreadEvent` remains the authoritative runtime accounting contract.
+
 ## 2026-08-11 | Harness token-waste and startup-noise audit
 
 ### Scope

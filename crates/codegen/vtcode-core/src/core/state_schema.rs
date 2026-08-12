@@ -10,6 +10,7 @@
 //! |---------|-------------|
 //! | v0      | Implicit — no schema version field present (legacy snapshots, pre-2025) |
 //! | v1      | Initial explicit schema. Adds per-message metadata scaffolding. |
+//! | v2      | Snapshot-local turn linkage and diagnostics; unrelated state remains on v1. |
 //!
 //! ## Migration
 //!
@@ -38,6 +39,9 @@ impl SchemaVersion {
 
     /// The current schema version that all new state should use.
     pub const CURRENT: SchemaVersion = SchemaVersion::V1;
+
+    /// Snapshot turn metadata/diagnostics.
+    pub const V2: SchemaVersion = SchemaVersion(2);
 
     /// Return the inner `u32` value.
     pub const fn as_u32(self) -> u32 {
@@ -109,6 +113,7 @@ mod tests {
     fn schema_version_constants() {
         assert_eq!(SchemaVersion::V0.as_u32(), 0);
         assert_eq!(SchemaVersion::V1.as_u32(), 1);
+        assert_eq!(SchemaVersion::V2.as_u32(), 2);
         assert_eq!(SchemaVersion::CURRENT.as_u32(), 1);
     }
 

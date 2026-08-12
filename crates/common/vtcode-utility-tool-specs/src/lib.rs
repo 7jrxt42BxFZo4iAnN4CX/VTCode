@@ -216,19 +216,19 @@ pub fn exec_command_parameters() -> Value {
             "sandbox_permissions": {
                 "type": "string",
                 "enum": ["use_default", "with_additional_permissions", "require_escalated", "bypass_sandbox"],
-                "description": "Sandbox permission mode for this command.",
+                "description": "Sandbox permission mode for this command. Omit it or use `use_default` for the normal sandbox. Non-empty `additional_permissions` is normalized to `with_additional_permissions`. `require_escalated` and `bypass_sandbox` require a non-empty `justification` and cannot be combined with `additional_permissions`.",
                 "default": "use_default"
             },
             "additional_permissions": {
                 "type": "object",
-                "description": "Additional filesystem access requested with sandbox_permissions set to with_additional_permissions.",
+                "description": "Optional extra filesystem roots to grant inside the sandbox. Non-empty `additional_permissions` implicitly requests `with_additional_permissions`; every path is normalized and must stay within allowed workspace or temp roots.",
                 "properties": {
                     "fs_read": {"type": "array", "items": {"type": "string"}},
                     "fs_write": {"type": "array", "items": {"type": "string"}}
                 },
                 "additionalProperties": false
             },
-            "justification": {"type": "string", "description": "Reason for requesting the expanded sandbox permission scope."}
+            "justification": {"type": "string", "description": "Short approval question for expanded sandbox scope. Required when sandbox_permissions is `require_escalated` or `bypass_sandbox`."}
         },
         "additionalProperties": false
     })
@@ -358,8 +358,9 @@ pub fn list_files_parameters() -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn apply_patch_parameter_schema_keeps_alias_and_guidance_consistent() {
@@ -439,6 +440,24 @@ mod tests {
         );
         assert_eq!(exec_params["properties"]["additional_permissions"]["additionalProperties"], false);
         assert_eq!(exec_params["properties"]["justification"]["type"], "string");
+        assert!(
+            exec_params["properties"]["sandbox_permissions"]["description"]
+                .as_str()
+                .expect("sandbox_permissions description")
+                .contains("normalized to `with_additional_permissions`")
+        );
+        assert!(
+            exec_params["properties"]["additional_permissions"]["description"]
+                .as_str()
+                .expect("additional_permissions description")
+                .contains("allowed workspace or temp roots")
+        );
+        assert!(
+            exec_params["properties"]["justification"]["description"]
+                .as_str()
+                .expect("justification description")
+                .contains("Required when sandbox_permissions is `require_escalated` or `bypass_sandbox`")
+        );
         assert_eq!(exec_params["additionalProperties"], false);
         for command in ["ls", "rg", "find", "cat", "sed", "awk"] {
             assert!(

@@ -1,14 +1,18 @@
+use std::time::Duration;
+
+use anyhow::Result;
+use vtcode_core::core::agent::blocked_handoff::write_blocked_handoff;
+use vtcode_core::core::agent::harness_artifacts::existing_harness_artifact_paths;
+use vtcode_core::core::agent::snapshots::SnapshotTurnContext;
+use vtcode_core::exec::events::HarnessEventKind;
+use vtcode_core::llm::provider as uni;
+use vtcode_core::types::CompactStr;
+use vtcode_core::utils::ansi::MessageStyle;
+use vtcode_core::utils::session_archive::SessionMessage;
+
 use crate::agent::runloop::unified::display::reset_inline_input;
 use crate::agent::runloop::unified::turn::context::{TurnLoopResult, TurnOutcomeContext};
 use crate::agent::runloop::unified::turn::turn_loop::TurnLoopOutcome;
-use anyhow::Result;
-use std::time::Duration;
-use vtcode_core::core::agent::blocked_handoff::write_blocked_handoff;
-use vtcode_core::core::agent::harness_artifacts::existing_harness_artifact_paths;
-use vtcode_core::exec::events::HarnessEventKind;
-use vtcode_core::llm::provider as uni;
-use vtcode_core::utils::ansi::MessageStyle;
-use vtcode_core::utils::session_archive::SessionMessage;
 
 fn format_turn_elapsed_label(duration: Duration) -> String {
     let total_seconds = duration.as_secs();
@@ -99,6 +103,14 @@ pub(crate) async fn apply_turn_outcome(outcome: TurnLoopOutcome, ctx: TurnOutcom
                 let conversation_snapshot: Vec<SessionMessage> =
                     ctx.conversation_history.iter().map(SessionMessage::from).collect();
                 let turn_number = *ctx.next_checkpoint_turn;
+                let mut turn_diagnostics = outcome.turn_diagnostics.clone();
+                turn_diagnostics.elapsed_ms = ctx.turn_elapsed.as_millis().min(u128::from(u64::MAX)) as u64;
+                let turn_context = SnapshotTurnContext {
+                    session_id: Some(CompactStr::from(ctx.session_id)),
+                    runtime_turn_id: ctx.runtime_turn_id.map(CompactStr::from),
+                    session_turn_number: Some(turn_number),
+                    turn_diagnostics: Some(turn_diagnostics),
+                };
                 match manager
                     .create_snapshot(
                         turn_number,
@@ -107,6 +119,7 @@ pub(crate) async fn apply_turn_outcome(outcome: TurnLoopOutcome, ctx: TurnOutcom
                         &outcome.turn_modified_files,
                         ctx.completed_turn_prompt,
                         ctx.completed_turn_prompt_message_index,
+                        Some(turn_context),
                     )
                     .await
                 {
@@ -139,13 +152,15 @@ pub(crate) async fn apply_turn_outcome(outcome: TurnLoopOutcome, ctx: TurnOutcom
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::agent::runloop::unified::state::CtrlCState;
     use std::collections::BTreeSet;
     use std::sync::Arc;
+
     use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
     use vtcode_core::utils::ansi::AnsiRenderer;
     use vtcode_ui::tui::app::{InlineCommand, InlineHandle};
+
+    use super::*;
+    use crate::agent::runloop::unified::state::CtrlCState;
 
     fn renderer_with_channel() -> (InlineHandle, AnsiRenderer, UnboundedReceiver<InlineCommand>) {
         let (tx, rx) = unbounded_channel();
@@ -185,6 +200,7 @@ mod tests {
         let outcome = TurnLoopOutcome {
             result: TurnLoopResult::Completed { plan_approved_execution_pending: false },
             turn_modified_files: BTreeSet::new(),
+            turn_diagnostics: Default::default(),
             pending_primary_agent: None,
             pending_plan_auto_accept: false,
             pending_plan_execution_context:
@@ -211,6 +227,7 @@ mod tests {
                 show_turn_timer: true,
                 workspace: std::path::Path::new("."),
                 session_id: "session-test",
+                runtime_turn_id: None,
                 harness_emitter: None,
             },
         )
@@ -232,6 +249,7 @@ mod tests {
         let outcome = TurnLoopOutcome {
             result: TurnLoopResult::Cancelled,
             turn_modified_files: BTreeSet::new(),
+            turn_diagnostics: Default::default(),
             pending_primary_agent: None,
             pending_plan_auto_accept: false,
             pending_plan_execution_context:
@@ -258,6 +276,7 @@ mod tests {
                 show_turn_timer: true,
                 workspace: std::path::Path::new("."),
                 session_id: "session-test",
+                runtime_turn_id: None,
                 harness_emitter: None,
             },
         )
@@ -279,6 +298,7 @@ mod tests {
         let outcome = TurnLoopOutcome {
             result: TurnLoopResult::Completed { plan_approved_execution_pending: false },
             turn_modified_files: BTreeSet::new(),
+            turn_diagnostics: Default::default(),
             pending_primary_agent: None,
             pending_plan_auto_accept: false,
             pending_plan_execution_context:
@@ -305,6 +325,7 @@ mod tests {
                 show_turn_timer: false,
                 workspace: std::path::Path::new("."),
                 session_id: "session-test",
+                runtime_turn_id: None,
                 harness_emitter: None,
             },
         )

@@ -217,6 +217,15 @@ can exhaust it before a plan is produced. For a broad or ambiguous ask,
 research proportionally more, but stop and draft as soon as the
 scope/decomposition/verification decisions are closed.
 
+The 120-call ceiling remains available for complex work; it is not a target.
+Planning also tracks low-signal navigation separately from the hard ceiling.
+Six consecutive low-signal reads/searches, or ten total within one turn,
+schedule one tool-free synthesis pass from the evidence already gathered. A
+productive navigation resets only the consecutive count. Verification,
+mutation, recovery, and a new turn reset both counts. Shell inspection such as
+`rg`, `find`, `cat`, and simple `sed -n` contributes to navigation accounting;
+compile, test, build, and clippy commands count as verification progress.
+
 ## Review Gate
 
 After a plan is ready, an interactive human-in-the-loop (HITL) confirmation popup presents a bounded, decision-ready synopsis

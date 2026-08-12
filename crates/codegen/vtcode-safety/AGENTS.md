@@ -14,6 +14,7 @@
 
 - `exec_policy::manager` imports `command_safety::command_might_be_dangerous` and `sandboxing::SandboxPolicy` — these form a tightly coupled safety subsystem.
 - Re-export facades in vtcode-core (`command_safety/mod.rs`, `exec_policy/mod.rs`, `sandboxing/mod.rs`) must stay in sync.
+- `SandboxPermissions::normalized_for` is the canonical boundary for additional-permission mode normalization; callers must not duplicate that rule.
 - The `BashParser` singleton (`once_cell::Lazy`) is safe across crates — read-after-init pattern.
 
 ## Gotchas

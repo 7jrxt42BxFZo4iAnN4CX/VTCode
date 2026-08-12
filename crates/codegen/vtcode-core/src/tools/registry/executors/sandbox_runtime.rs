@@ -1,19 +1,18 @@
+use std::collections::BTreeSet;
+use std::path::{Component, Path, PathBuf};
+#[cfg(all(test, target_os = "linux"))]
+use std::sync::{LazyLock, Mutex};
+
+use anyhow::{Context, Result, anyhow};
+use serde_json::Value;
+use vtcode_config::{ResourceLimitsPreset, SandboxPolicy as RuntimeSandboxPolicy, SeccompProfilePreset};
+
 use crate::sandboxing::{
     AdditionalPermissions, CommandSpec as SandboxCommandSpec, NetworkAllowlistEntry, ResourceLimits, SandboxManager,
     SandboxPermissions, SandboxPolicy, SandboxTransformError, SeccompProfile, SensitivePath, WritableRoot,
     default_sensitive_paths,
 };
 use crate::tools::tool_intent;
-use anyhow::{Context, Result, anyhow};
-use serde_json::Value;
-use std::{
-    collections::BTreeSet,
-    path::{Path, PathBuf},
-};
-use vtcode_config::{ResourceLimitsPreset, SandboxPolicy as RuntimeSandboxPolicy, SeccompProfilePreset};
-
-#[cfg(all(test, target_os = "linux"))]
-use std::sync::{LazyLock, Mutex};
 
 #[derive(Debug, Clone)]
 pub(super) struct ShellExecutionPlan {
@@ -283,9 +282,11 @@ fn sensitive_paths_from_runtime_config(
     sensitive_paths
 }
 
-pub(super) fn parse_requested_sandbox_permissions(
+pub(super) async fn parse_requested_sandbox_permissions(
     payload: &serde_json::Map<String, Value>,
+    workspace_root: &Path,
     cwd: &Path,
+    sandbox_config: &vtcode_config::SandboxConfig,
 ) -> Result<(SandboxPermissions, Option<AdditionalPermissions>)> {
     let sandbox_permissions = payload
         .get("sandbox_permissions")
@@ -293,17 +294,21 @@ pub(super) fn parse_requested_sandbox_permissions(
         .map(serde_json::from_value::<SandboxPermissions>)
         .transpose()
         .with_context(
-            || "Invalid sandbox_permissions. Use one of: use_default, with_additional_permissions, require_escalated.",
+            || {
+                "Invalid sandbox_permissions. Use one of: use_default, with_additional_permissions, require_escalated, bypass_sandbox."
+            },
         )?
         .unwrap_or_default();
 
-    let additional_permissions = payload
+    let parsed_additional_permissions = payload
         .get("additional_permissions")
         .cloned()
         .map(serde_json::from_value::<AdditionalPermissions>)
         .transpose()
         .with_context(|| "Invalid additional_permissions. Expected object with fs_read/fs_write string arrays.")?
         .filter(|permissions| !permissions.is_empty());
+
+    let sandbox_permissions = sandbox_permissions.normalized_for(parsed_additional_permissions.as_ref());
 
     if sandbox_permissions.requires_escalated_permissions() {
         let justification = payload.get("justification").and_then(Value::as_str).map(str::trim);
@@ -313,16 +318,17 @@ pub(super) fn parse_requested_sandbox_permissions(
     }
 
     let additional_permissions = if sandbox_permissions.uses_additional_permissions() {
-        let Some(additional_permissions) = additional_permissions else {
+        let Some(additional_permissions) = parsed_additional_permissions else {
             return Err(anyhow!(MISSING_ADDITIONAL_PERMISSIONS_MESSAGE));
         };
-        let normalized = normalize_additional_permissions(additional_permissions, cwd)?;
+        let normalized =
+            normalize_additional_permissions(additional_permissions, workspace_root, cwd, sandbox_config).await?;
         if normalized.is_empty() {
             return Err(anyhow!("`additional_permissions` must include at least one path in `fs_read` or `fs_write`"));
         }
         Some(normalized)
     } else {
-        if additional_permissions.is_some() {
+        if parsed_additional_permissions.is_some() {
             return Err(anyhow!(
                 "`additional_permissions` requires `sandbox_permissions` set to `with_additional_permissions`"
             ));
@@ -333,7 +339,84 @@ pub(super) fn parse_requested_sandbox_permissions(
     Ok((sandbox_permissions, additional_permissions))
 }
 
-fn normalize_permission_paths(paths: Vec<PathBuf>, command_cwd: &Path, permission_kind: &str) -> Result<Vec<PathBuf>> {
+fn build_additional_permission_allowed_roots(workspace_root: &Path) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    let mut raw_roots = vec![workspace_root.to_path_buf(), std::env::temp_dir()];
+    if let Some(tmpdir_root) = std::env::var_os("TMPDIR").map(PathBuf::from) {
+        raw_roots.push(tmpdir_root);
+    }
+    #[cfg(not(windows))]
+    raw_roots.push(PathBuf::from("/tmp"));
+
+    for raw_root in raw_roots {
+        let absolute = if raw_root.is_absolute() {
+            raw_root
+        } else {
+            std::env::current_dir().unwrap_or_default().join(raw_root)
+        };
+        let normalized = crate::utils::path::normalize_path(&absolute);
+        if seen.insert(normalized.clone()) {
+            roots.push(normalized);
+        }
+    }
+
+    roots
+}
+
+async fn canonicalize_allowed_roots(allowed_roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut canonical_roots = Vec::with_capacity(allowed_roots.len());
+
+    for root in allowed_roots {
+        let canonical = crate::utils::path::canonicalize_allow_missing(root)
+            .await
+            .unwrap_or_else(|_| crate::utils::path::normalize_path(root));
+        // Preserve positional correspondence with `allowed_roots`: permission
+        // validation must compare a path against the canonical form of the
+        // lexical root that admitted it, not some other broader allowed root.
+        canonical_roots.push(canonical);
+    }
+
+    canonical_roots
+}
+
+fn most_specific_containing_root_index(path: &Path, roots: &[PathBuf]) -> Option<usize> {
+    roots
+        .iter()
+        .enumerate()
+        .filter(|(_, root)| path.starts_with(root))
+        .max_by_key(|(_, root)| root.components().count())
+        .map(|(index, _)| index)
+}
+
+fn ensure_permission_path_no_traversal(path: &Path, permission_kind: &str) -> Result<()> {
+    if path.components().any(|component| component == Component::ParentDir) {
+        return Err(anyhow!("{permission_kind} path '{}' must not contain '..' traversal", path.display()));
+    }
+    Ok(())
+}
+
+fn permission_validation_policy(allowed_roots: &[PathBuf], sensitive_paths: Vec<SensitivePath>) -> SandboxPolicy {
+    SandboxPolicy::workspace_write_full(
+        allowed_roots.to_vec(),
+        Vec::new(),
+        Some(sensitive_paths),
+        ResourceLimits::conservative(),
+        SeccompProfile::strict(),
+    )
+}
+
+async fn normalize_permission_paths(
+    paths: Vec<PathBuf>,
+    workspace_root: &Path,
+    command_cwd: &Path,
+    permission_kind: &str,
+    allowed_roots: &[PathBuf],
+    canonical_allowed_roots: &[PathBuf],
+    canonical_sensitive_roots: &[PathBuf],
+    validation_policy: &SandboxPolicy,
+) -> Result<Vec<PathBuf>> {
     let mut out = Vec::with_capacity(paths.len());
     let mut seen = BTreeSet::new();
 
@@ -341,6 +424,7 @@ fn normalize_permission_paths(paths: Vec<PathBuf>, command_cwd: &Path, permissio
         if path.as_os_str().is_empty() {
             return Err(anyhow!("{permission_kind} contains an empty path"));
         }
+        ensure_permission_path_no_traversal(&path, permission_kind)?;
 
         let resolved = if path.is_absolute() {
             path
@@ -348,20 +432,90 @@ fn normalize_permission_paths(paths: Vec<PathBuf>, command_cwd: &Path, permissio
             command_cwd.join(path)
         };
         let normalized = crate::utils::path::normalize_path(&resolved);
-        if seen.insert(normalized.clone()) {
-            out.push(normalized);
+        let Some(lexical_root_index) = most_specific_containing_root_index(&normalized, allowed_roots) else {
+            return Err(anyhow!(
+                "{permission_kind} path '{}' is outside the allowed workspace and temp roots",
+                normalized.display()
+            ));
+        };
+
+        let canonical = crate::utils::path::canonicalize_allow_missing(&normalized)
+            .await
+            .with_context(|| format!("failed to canonicalize {permission_kind} path '{}'", normalized.display()))?;
+        let canonical_admitting_root = &canonical_allowed_roots[lexical_root_index];
+        if !canonical.starts_with(canonical_admitting_root) {
+            return Err(anyhow!(
+                "{permission_kind} path '{}' resolves outside the allowed roots after symlink resolution",
+                normalized.display()
+            ));
+        }
+
+        if let Some(sensitive_root) = canonical_sensitive_roots.iter().find(|root| canonical.starts_with(root)) {
+            return Err(anyhow!(
+                "{permission_kind} path '{}' targets sensitive or protected location '{}'",
+                normalized.display(),
+                sensitive_root.display()
+            ));
+        }
+
+        let access_allowed = match permission_kind {
+            "fs_read" => validation_policy.is_path_readable(&canonical),
+            "fs_write" => validation_policy.is_path_writable(&canonical, workspace_root),
+            _ => false,
+        };
+        if !access_allowed {
+            return Err(anyhow!(
+                "{permission_kind} path '{}' targets a sensitive or protected location",
+                normalized.display()
+            ));
+        }
+
+        if seen.insert(canonical.clone()) {
+            out.push(canonical);
         }
     }
 
     Ok(out)
 }
 
-fn normalize_additional_permissions(
+async fn normalize_additional_permissions(
     additional_permissions: AdditionalPermissions,
+    workspace_root: &Path,
     command_cwd: &Path,
+    sandbox_config: &vtcode_config::SandboxConfig,
 ) -> Result<AdditionalPermissions> {
-    let fs_read = normalize_permission_paths(additional_permissions.fs_read, command_cwd, "fs_read")?;
-    let fs_write = normalize_permission_paths(additional_permissions.fs_write, command_cwd, "fs_write")?;
+    let allowed_roots = build_additional_permission_allowed_roots(workspace_root);
+    let canonical_allowed_roots = canonicalize_allowed_roots(&allowed_roots).await;
+    let sensitive_paths = sensitive_paths_from_runtime_config(&sandbox_config.sensitive_paths);
+    let canonical_sensitive_roots =
+        canonicalize_allowed_roots(&sensitive_paths.iter().map(SensitivePath::expand_path).collect::<Vec<_>>()).await;
+    // Validation runs on canonical candidate paths, so its writable roots must
+    // use the same representation (notably `/private/var` versus `/var` on
+    // macOS) or valid temporary-directory grants are rejected.
+    let validation_policy = permission_validation_policy(&canonical_allowed_roots, sensitive_paths);
+
+    let fs_read = normalize_permission_paths(
+        additional_permissions.fs_read,
+        workspace_root,
+        command_cwd,
+        "fs_read",
+        &allowed_roots,
+        &canonical_allowed_roots,
+        &canonical_sensitive_roots,
+        &validation_policy,
+    )
+    .await?;
+    let fs_write = normalize_permission_paths(
+        additional_permissions.fs_write,
+        workspace_root,
+        command_cwd,
+        "fs_write",
+        &allowed_roots,
+        &canonical_allowed_roots,
+        &canonical_sensitive_roots,
+        &validation_policy,
+    )
+    .await?;
 
     Ok(AdditionalPermissions { fs_read, fs_write })
 }

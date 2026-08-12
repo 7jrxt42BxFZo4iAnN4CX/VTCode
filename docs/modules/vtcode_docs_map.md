@@ -881,8 +881,8 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/harness/SESSION_LOG_REVIEW.md`
   - **Content**: Session Log Review
-  - **Topics**: 2026-08-11 | Harness token-waste and startup-noise audit, 2026-08-11 | Harness core logic audit (DRY/KISS, brittleness, long-running stability), 2026-08-11 | Continued harness audit: task_tracker `view` token waste + abort-path verification, 2026-08-11 | Continued harness audit: fallback DRY, failure-diagnostics tail skip, circuit-breaker dedup, dead tracking code, 2026-08-11 | Continued harness audit: warning-growth guard, ErrorCategory allocation, dead-module cleanup finalization
-  - **User Questions**: "What can you tell me about Session Log Review?", "How does 2026-08-11 | Harness token-waste and startup-noise audit work?", "How does 2026-08-11 | Harness core logic audit (DRY/KISS, brittleness, long-running stability) work?"
+  - **Topics**: 2026-08-12 | Checkpoints 862–911 stabilization, 2026-08-11 | Harness token-waste and startup-noise audit, 2026-08-11 | Harness core logic audit (DRY/KISS, brittleness, long-running stability), 2026-08-11 | Continued harness audit: task_tracker `view` token waste + abort-path verification, 2026-08-11 | Continued harness audit: fallback DRY, failure-diagnostics tail skip, circuit-breaker dedup, dead tracking code
+  - **User Questions**: "What can you tell me about Session Log Review?", "How does 2026-08-12 | Checkpoints 862–911 stabilization work?", "How does 2026-08-11 | Harness token-waste and startup-noise audit work?"
 
 - **File**: `docs/features/SHELL_SNAPSHOT.md`
   - **Content**: Shell Environment Snapshot

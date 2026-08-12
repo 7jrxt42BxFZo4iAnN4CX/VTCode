@@ -1,3 +1,7 @@
+use std::path::{Path, PathBuf};
+
+use serde_json::json;
+
 use super::{
     apply_runtime_sandbox_to_command, build_shell_execution_plan, enforce_sandbox_preflight_guards,
     exec_run_output_config, parse_command_parts, parse_requested_sandbox_permissions, prepare_exec_command,
@@ -6,8 +10,16 @@ use super::{
 use crate::sandboxing::{
     AdditionalPermissions, NetworkAllowlistEntry, SandboxPermissions, SandboxPolicy, SensitivePath,
 };
-use serde_json::json;
-use std::path::PathBuf;
+
+async fn parse_permissions(
+    payload: &serde_json::Value,
+    workspace_root: &Path,
+    cwd: &Path,
+    config: &vtcode_config::SandboxConfig,
+) -> anyhow::Result<(SandboxPermissions, Option<AdditionalPermissions>)> {
+    let obj = payload.as_object().expect("payload object");
+    parse_requested_sandbox_permissions(obj, workspace_root, cwd, config).await
+}
 
 #[test]
 fn runtime_sandbox_config_maps_workspace_policy_overrides() {
@@ -182,24 +194,61 @@ fn external_mode_is_rejected_for_local_pty_execution() {
     assert!(error.to_string().contains("not supported"));
 }
 
-#[test]
-fn additional_permissions_validation_requires_with_additional_permissions() {
+#[tokio::test]
+async fn additional_permissions_without_mode_normalize_to_with_additional_permissions() {
+    let demo_path = std::env::temp_dir().join("demo.txt");
     let payload = json!({
         "additional_permissions": {
-            "fs_write": ["/tmp/demo.txt"]
+            "fs_write": [demo_path]
         }
     });
-    let obj = payload.as_object().expect("payload object");
-    let err = parse_requested_sandbox_permissions(obj, PathBuf::from(".").as_path())
-        .expect_err("additional_permissions without with_additional_permissions should fail");
-    assert!(
-        err.to_string()
-            .contains("requires `sandbox_permissions` set to `with_additional_permissions`")
+    let config = vtcode_config::SandboxConfig::default();
+
+    let (sandbox_permissions, additional_permissions) =
+        parse_permissions(&payload, Path::new("."), Path::new("."), &config)
+            .await
+            .expect("non-empty additional_permissions should imply with_additional_permissions");
+
+    assert_eq!(sandbox_permissions, SandboxPermissions::WithAdditionalPermissions);
+    assert_eq!(
+        additional_permissions.expect("normalized permissions").fs_write,
+        vec![
+            crate::utils::path::canonicalize_allow_missing(&std::env::temp_dir().join("demo.txt"))
+                .await
+                .expect("canonical temp permission")
+        ]
     );
 }
 
-#[test]
-fn empty_additional_permissions_are_ignored_for_default_sandbox_policy() {
+#[tokio::test]
+async fn explicit_use_default_with_additional_permissions_normalizes_to_with_additional_permissions() {
+    let demo_path = std::env::temp_dir().join("demo.txt");
+    let payload = json!({
+        "sandbox_permissions": "use_default",
+        "additional_permissions": {
+            "fs_write": [demo_path]
+        }
+    });
+    let config = vtcode_config::SandboxConfig::default();
+
+    let (sandbox_permissions, additional_permissions) =
+        parse_permissions(&payload, Path::new("."), Path::new("."), &config)
+            .await
+            .expect("use_default plus additional permissions should normalize");
+
+    assert_eq!(sandbox_permissions, SandboxPermissions::WithAdditionalPermissions);
+    assert_eq!(
+        additional_permissions.expect("normalized permissions").fs_write,
+        vec![
+            crate::utils::path::canonicalize_allow_missing(&std::env::temp_dir().join("demo.txt"))
+                .await
+                .expect("canonical temp permission")
+        ]
+    );
+}
+
+#[tokio::test]
+async fn empty_additional_permissions_are_ignored_for_default_sandbox_policy() {
     let payload = json!({
         "sandbox_permissions": "use_default",
         "additional_permissions": {
@@ -207,17 +256,18 @@ fn empty_additional_permissions_are_ignored_for_default_sandbox_policy() {
             "fs_write": []
         }
     });
-    let obj = payload.as_object().expect("payload object");
+    let config = vtcode_config::SandboxConfig::default();
     let (sandbox_permissions, additional_permissions) =
-        parse_requested_sandbox_permissions(obj, PathBuf::from(".").as_path())
+        parse_permissions(&payload, Path::new("."), Path::new("."), &config)
+            .await
             .expect("empty permissions should be treated as absent");
 
     assert_eq!(sandbox_permissions, SandboxPermissions::UseDefault);
     assert!(additional_permissions.is_none());
 }
 
-#[test]
-fn with_additional_permissions_requires_non_empty_permissions() {
+#[tokio::test]
+async fn with_additional_permissions_requires_non_empty_permissions() {
     let payload = json!({
         "sandbox_permissions": "with_additional_permissions",
         "additional_permissions": {
@@ -225,8 +275,9 @@ fn with_additional_permissions_requires_non_empty_permissions() {
             "fs_write": []
         }
     });
-    let obj = payload.as_object().expect("payload object");
-    let err = parse_requested_sandbox_permissions(obj, PathBuf::from(".").as_path())
+    let config = vtcode_config::SandboxConfig::default();
+    let err = parse_permissions(&payload, Path::new("."), Path::new("."), &config)
+        .await
         .expect_err("empty additional_permissions should fail");
     assert!(err.to_string().contains("missing `additional_permissions`"));
 }
@@ -453,13 +504,85 @@ fn require_escalated_bypasses_runtime_sandbox_enforcement() {
     assert_eq!(out, command);
 }
 
-#[test]
-fn require_escalated_requires_non_empty_justification() {
+#[tokio::test]
+async fn additional_permissions_reject_parent_traversal() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let payload = json!({
+        "additional_permissions": {
+            "fs_write": ["../escape"]
+        }
+    });
+    let config = vtcode_config::SandboxConfig::default();
+
+    let err = parse_permissions(&payload, workspace.path(), workspace.path(), &config)
+        .await
+        .expect_err("parent traversal should fail");
+    assert!(err.to_string().contains("must not contain '..' traversal"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn additional_permissions_reject_symlink_escape() {
+    use std::os::unix::fs::symlink;
+
+    let workspace = tempfile::tempdir().expect("workspace");
+    let outside = tempfile::tempdir().expect("outside");
+    symlink(outside.path(), workspace.path().join("escape")).expect("symlink fixture");
+
+    let payload = json!({
+        "additional_permissions": {
+            "fs_write": ["escape/output.txt"]
+        }
+    });
+    let config = vtcode_config::SandboxConfig::default();
+
+    let err = parse_permissions(&payload, workspace.path(), workspace.path(), &config)
+        .await
+        .expect_err("symlink escape should fail");
+    assert!(err.to_string().contains("symlink resolution"), "unexpected error: {err:#}");
+}
+
+#[tokio::test]
+async fn additional_permissions_reject_sensitive_paths() {
+    let sensitive_root = tempfile::tempdir().expect("sensitive root");
+    let payload = json!({
+        "additional_permissions": {
+            "fs_read": [sensitive_root.path()]
+        }
+    });
+    let mut config = vtcode_config::SandboxConfig::default();
+    config.sensitive_paths.use_defaults = false;
+    config.sensitive_paths.additional = vec![sensitive_root.path().display().to_string()];
+
+    let err = parse_permissions(&payload, Path::new("."), Path::new("."), &config)
+        .await
+        .expect_err("sensitive roots should fail");
+    assert!(err.to_string().contains("sensitive or protected location"));
+}
+
+#[tokio::test]
+async fn additional_permissions_reject_paths_outside_allowed_roots() {
+    let payload = json!({
+        "additional_permissions": {
+            "fs_write": ["/etc/passwd"]
+        }
+    });
+    let config = vtcode_config::SandboxConfig::default();
+
+    let err = parse_permissions(&payload, Path::new("."), Path::new("."), &config)
+        .await
+        .expect_err("non-workspace, non-temp paths should fail");
+    assert!(err.to_string().contains("outside the allowed workspace and temp roots"));
+}
+
+#[tokio::test]
+async fn require_escalated_requires_non_empty_justification() {
     let payload = json!({
         "sandbox_permissions": "require_escalated"
     });
-    let obj = payload.as_object().expect("payload object");
-    let err = parse_requested_sandbox_permissions(obj, PathBuf::from(".").as_path())
+    let config = vtcode_config::SandboxConfig::default();
+    let err = parse_permissions(&payload, Path::new("."), Path::new("."), &config)
+        .await
         .expect_err("require_escalated without justification should fail");
     assert!(err.to_string().contains("missing `justification`"));
 
@@ -467,21 +590,68 @@ fn require_escalated_requires_non_empty_justification() {
         "sandbox_permissions": "require_escalated",
         "justification": "   "
     });
-    let obj = payload.as_object().expect("payload object");
-    let err = parse_requested_sandbox_permissions(obj, PathBuf::from(".").as_path())
+    let err = parse_permissions(&payload, Path::new("."), Path::new("."), &config)
+        .await
         .expect_err("blank justification should fail");
     assert!(err.to_string().contains("missing `justification`"));
 }
 
-#[test]
-fn require_escalated_accepts_justified_request() {
+#[tokio::test]
+async fn bypass_sandbox_requires_justification_and_rejects_additional_permissions() {
+    let config = vtcode_config::SandboxConfig::default();
+    let missing_justification = json!({
+        "sandbox_permissions": "bypass_sandbox"
+    });
+    let err = parse_permissions(&missing_justification, Path::new("."), Path::new("."), &config)
+        .await
+        .expect_err("bypass_sandbox without justification should fail");
+    assert!(err.to_string().contains("missing `justification`"));
+
+    let conflicting = json!({
+        "sandbox_permissions": "bypass_sandbox",
+        "justification": "Do you want to bypass the sandbox for this command?",
+        "additional_permissions": {
+            "fs_write": ["/tmp/demo.txt"]
+        }
+    });
+    let err = parse_permissions(&conflicting, Path::new("."), Path::new("."), &config)
+        .await
+        .expect_err("bypass_sandbox plus additional permissions should fail");
+    assert!(
+        err.to_string()
+            .contains("requires `sandbox_permissions` set to `with_additional_permissions`")
+    );
+}
+
+#[tokio::test]
+async fn require_escalated_rejects_additional_permissions_even_with_justification() {
+    let payload = json!({
+        "sandbox_permissions": "require_escalated",
+        "justification": "Do you want to rerun this command without sandbox restrictions?",
+        "additional_permissions": {
+            "fs_write": ["/tmp/demo.txt"]
+        }
+    });
+    let config = vtcode_config::SandboxConfig::default();
+
+    let err = parse_permissions(&payload, Path::new("."), Path::new("."), &config)
+        .await
+        .expect_err("escalated requests must not combine additional permissions");
+    assert!(
+        err.to_string()
+            .contains("requires `sandbox_permissions` set to `with_additional_permissions`")
+    );
+}
+
+#[tokio::test]
+async fn require_escalated_accepts_justified_request() {
     let payload = json!({
         "sandbox_permissions": "require_escalated",
         "justification": "Do you want to rerun this command without sandbox restrictions?"
     });
-    let obj = payload.as_object().expect("payload object");
     let (sandbox_permissions, additional_permissions) =
-        parse_requested_sandbox_permissions(obj, PathBuf::from(".").as_path())
+        parse_permissions(&payload, Path::new("."), Path::new("."), &vtcode_config::SandboxConfig::default())
+            .await
             .expect("justified require_escalated should parse");
     assert_eq!(sandbox_permissions, SandboxPermissions::RequireEscalated);
     assert!(additional_permissions.is_none());

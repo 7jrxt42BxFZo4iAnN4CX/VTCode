@@ -6,20 +6,19 @@ use serde_json::Value;
 use tokio::sync::Notify;
 use vtcode_core::core::interfaces::ui::UiSession;
 use vtcode_core::notifications::{NotificationEvent, send_global_notification};
-use vtcode_core::sandboxing::SandboxPermissions as CoreSandboxPermissions;
+use vtcode_core::sandboxing::{AdditionalPermissions, SandboxPermissions as CoreSandboxPermissions};
 use vtcode_core::utils::ansi::AnsiRenderer;
 use vtcode_ui::tui::app::{
     InlineHandle, ListOverlayRequest, TransientHotkey, TransientHotkeyAction, TransientHotkeyKey, TransientRequest,
     TransientSubmission,
 };
 
+use super::HitlDecision;
+use super::shell_approval::{ApprovalLearningTarget, PersistentApprovalTarget};
 use crate::agent::runloop::tool_output::format_unified_diff_lines;
 use crate::agent::runloop::unified::overlay_prompt::{OverlayWaitOutcome, show_overlay_and_wait};
 use crate::agent::runloop::unified::state::CtrlCState;
 use crate::agent::runloop::unified::ui_interaction::PlaceholderGuard;
-
-use super::HitlDecision;
-use super::shell_approval::{ApprovalLearningTarget, PersistentApprovalTarget};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ToolPermissionPromptKind {
@@ -127,21 +126,36 @@ fn shell_command_supports_persistent_approval(args: &Value, command_words: &[Str
 }
 
 fn parse_shell_sandbox_permissions(args: &Value) -> CoreSandboxPermissions {
-    args.get("sandbox_permissions")
+    let requested_permissions = args
+        .get("sandbox_permissions")
         .cloned()
         .map(serde_json::from_value::<CoreSandboxPermissions>)
         .transpose()
         .ok()
         .flatten()
-        .unwrap_or(CoreSandboxPermissions::UseDefault)
+        .unwrap_or(CoreSandboxPermissions::UseDefault);
+
+    requested_permissions.normalized_for(parse_shell_additional_permissions(args).as_ref())
+}
+
+fn parse_shell_additional_permissions(args: &Value) -> Option<AdditionalPermissions> {
+    args.get("additional_permissions")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<AdditionalPermissions>(value).ok())
+        .filter(|permissions| !permissions.is_empty())
+}
+
+fn shell_additional_permissions_present(args: &Value) -> bool {
+    parse_shell_additional_permissions(args).is_some()
 }
 
 fn shell_permission_scope_suffix(args: &Value) -> String {
     let sandbox_permissions = parse_shell_sandbox_permissions(args);
-    let additional_permissions = args.get("additional_permissions");
     let sandbox_permissions =
         serde_json::to_string(&sandbox_permissions).unwrap_or_else(|_| "\"use_default\"".to_string());
-    let additional_permissions = additional_permissions
+    let additional_permissions = args
+        .get("additional_permissions")
+        .filter(|_| shell_additional_permissions_present(args))
         .map(|value| serde_json::to_string(value).unwrap_or_else(|_| "\"<invalid_additional>\"".to_string()))
         .unwrap_or_else(|| "null".to_string());
 
@@ -269,7 +283,7 @@ pub(super) fn shell_permission_cache_suffix(tool_name: &str, tool_args: Option<&
     let scope_suffix = shell_permission_scope_suffix(args);
 
     if parse_shell_sandbox_permissions(args) == CoreSandboxPermissions::UseDefault
-        && args.get("additional_permissions").is_none()
+        && !shell_additional_permissions_present(args)
     {
         return Some(command);
     }
@@ -744,6 +758,9 @@ pub(super) async fn prompt_policy_denied_tool<S: UiSession + ?Sized>(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+    use vtcode_core::config::constants::tools;
+
     use super::{
         ToolPermissionPromptKind, build_tool_permission_options, cancelled_prompt_decision,
         extract_shell_approval_command_prefix_words, extract_shell_approval_justification,
@@ -753,8 +770,6 @@ mod tests {
         truncate_arg_preview,
     };
     use crate::agent::runloop::unified::tool_routing::shell_approval::PersistentApprovalTarget;
-    use serde_json::json;
-    use vtcode_core::config::constants::tools;
 
     #[test]
     fn command_session_extracts_command_when_action_is_run() {
@@ -849,6 +864,42 @@ mod tests {
     }
 
     #[test]
+    fn cache_suffix_normalizes_use_default_with_additional_permissions() {
+        let args = json!({
+            "command": "echo hi",
+            "sandbox_permissions": "use_default",
+            "additional_permissions": {
+                "fs_write": ["/tmp/demo.txt"]
+            }
+        });
+
+        let permissioned_key = shell_permission_cache_suffix("shell", Some(&args));
+
+        assert_eq!(
+            permissioned_key.as_deref(),
+            Some(
+                "echo hi|sandbox_permissions=\"with_additional_permissions\"|additional_permissions={\"fs_write\":[\"/tmp/demo.txt\"]}"
+            )
+        );
+    }
+
+    #[test]
+    fn cache_suffix_ignores_empty_additional_permissions() {
+        let args = json!({
+            "command": "echo hi",
+            "sandbox_permissions": "use_default",
+            "additional_permissions": {
+                "fs_read": [],
+                "fs_write": []
+            }
+        });
+
+        let permissioned_key = shell_permission_cache_suffix("shell", Some(&args));
+
+        assert_eq!(permissioned_key.as_deref(), Some("echo hi"));
+    }
+
+    #[test]
     fn shell_approval_justification_is_extracted_for_run_actions() {
         let args = json!({
             "action": "run",
@@ -925,6 +976,26 @@ mod tests {
 
         let scope = extract_shell_approval_scope_signature(tools::UNIFIED_EXEC, Some(&args));
         assert_eq!(scope.as_deref(), Some("sandbox_permissions=\"require_escalated\"|additional_permissions=null"));
+    }
+
+    #[test]
+    fn shell_approval_scope_signature_normalizes_implicit_additional_permissions() {
+        let args = json!({
+            "action": "run",
+            "command": "cargo test",
+            "sandbox_permissions": "use_default",
+            "additional_permissions": {
+                "fs_write": ["/tmp/demo.txt"]
+            }
+        });
+
+        let scope = extract_shell_approval_scope_signature(tools::UNIFIED_EXEC, Some(&args));
+        assert_eq!(
+            scope.as_deref(),
+            Some(
+                "sandbox_permissions=\"with_additional_permissions\"|additional_permissions={\"fs_write\":[\"/tmp/demo.txt\"]}"
+            )
+        );
     }
 
     #[test]

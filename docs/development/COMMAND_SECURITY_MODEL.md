@@ -5,6 +5,22 @@ Model-facing schemas preserve request intent (`sandbox_permissions`,
 approval policy or its current value. The execution gateway resolves those
 stable intent fields against the live sandbox and approval configuration.
 
+### Additional permission normalization
+
+`additional_permissions` is an additive sandbox request. When it contains at
+least one filesystem permission, an omitted `sandbox_permissions` value or an
+explicit `use_default` value is normalized to `with_additional_permissions`.
+The public enum values remain unchanged; this normalization only admits a
+request shape that already expresses the same intent.
+
+Every requested path is normalized relative to the command working directory,
+then checked against the workspace and configured temporary roots. Parent
+traversal, sensitive paths, paths outside those roots, and symlink escapes are
+rejected before execution. Explicit `require_escalated` or `bypass_sandbox`
+cannot be combined with `additional_permissions`, and both modes require a
+non-empty justification. These conflicts fail closed rather than silently
+downgrading or broadening the request.
+
 ## Overview
 
 VT Code implements a comprehensive, defense-in-depth command security system that enables non-powered users to run safe commands by default while protecting against dangerous operations. This system helps the agent use system and build tools properly via environment PATH configuration.

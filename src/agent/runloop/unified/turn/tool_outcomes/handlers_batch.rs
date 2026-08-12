@@ -1,22 +1,20 @@
 use anyhow::Result;
 use futures::stream::{FuturesUnordered, StreamExt};
-
-use crate::agent::runloop::unified::progress::ProgressReporter;
-use crate::agent::runloop::unified::tool_pipeline::exec_settlement_mode_for_tool_call;
-use crate::agent::runloop::unified::tool_pipeline::run_tool_call_with_args;
-use crate::agent::runloop::unified::turn::context::{
-    PreparedAssistantToolCall, TurnHandlerOutcome, TurnProcessingContext,
-};
+use vtcode_core::core::agent::harness_kernel::{PreparedToolBatch, PreparedToolBatchKind};
 
 use super::{
     PreparedToolCall, ToolOutcomeContext, ValidationTransition, finalize_validation_result,
     flush_budget_synthesis_directives, validate_tool_call,
 };
+use crate::agent::runloop::unified::progress::ProgressReporter;
+use crate::agent::runloop::unified::tool_pipeline::{exec_settlement_mode_for_tool_call, run_tool_call_with_args};
+use crate::agent::runloop::unified::turn::context::{
+    PreparedAssistantToolCall, TurnHandlerOutcome, TurnProcessingContext,
+};
 use crate::agent::runloop::unified::turn::tool_outcomes::execution_result::handle_tool_execution_result;
 use crate::agent::runloop::unified::turn::tool_outcomes::helpers::{
     resolve_max_tool_retries, update_repetition_tracker,
 };
-use vtcode_core::core::agent::harness_kernel::{PreparedToolBatch, PreparedToolBatchKind};
 
 struct ValidatedToolCall<'a> {
     tool_call: &'a PreparedAssistantToolCall,
@@ -265,6 +263,7 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
 ) -> Result<Option<TurnHandlerOutcome>> {
     use crate::agent::runloop::unified::run_loop_context::TurnPhase;
     t_ctx.ctx.set_phase(TurnPhase::ExecutingTools);
+    t_ctx.ctx.harness_state.record_requested_tool_calls(tool_calls.len());
 
     let mut validated_calls = Vec::with_capacity(tool_calls.len());
 
@@ -471,15 +470,18 @@ async fn execute_and_handle_tool_call_inner<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{PreparedToolCall, ValidatedToolCall, interrupt_parallel_group, planned_execution_group_stats};
-    use crate::agent::runloop::unified::turn::context::PreparedAssistantToolCall;
-    use crate::agent::runloop::unified::turn::context::{TurnHandlerOutcome, TurnLoopResult};
-    use futures::stream::FuturesUnordered;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use futures::stream::FuturesUnordered;
     use tempfile::TempDir;
     use vtcode_core::config::constants::tools;
     use vtcode_core::tools::registry::ToolRegistry;
+
+    use super::{PreparedToolCall, ValidatedToolCall, interrupt_parallel_group, planned_execution_group_stats};
+    use crate::agent::runloop::unified::turn::context::{
+        PreparedAssistantToolCall, TurnHandlerOutcome, TurnLoopResult,
+    };
 
     fn validated_call<'a>(
         call_id: &'a str,

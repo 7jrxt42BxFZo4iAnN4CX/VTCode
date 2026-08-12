@@ -59,12 +59,15 @@ fn limit_spooled_preview(mut value: Value, max_output_tokens: usize) -> Value {
         return value;
     };
     let mut preview_truncated = false;
-    for field in ["raw_output", "output", "stdout", "content"] {
+    for field in ["raw_output", "output", "stdout", "content", "preview"] {
         let Some(text) = object.get(field).and_then(Value::as_str) else {
             continue;
         };
         if text.len() > max_preview_bytes {
-            object.insert(field.to_string(), Value::String(text.chars().take(max_preview_bytes).collect()));
+            object.insert(
+                field.to_string(),
+                Value::String(vtcode_commons::formatting::truncate_byte_budget(text, max_preview_bytes, "")),
+            );
             preview_truncated = true;
         }
     }
@@ -239,7 +242,15 @@ impl ToolRegistry {
         if force_spool || self.output_spooler.should_spool(&value) {
             match self
                 .output_spooler
-                .process_output_with_force(tool_name, value.clone(), is_mcp, force_spool)
+                .process_output_with_preview_limit(
+                    tool_name,
+                    value.clone(),
+                    is_mcp,
+                    force_spool,
+                    max_output_tokens
+                        .saturating_mul(crate::tools::output_limits::OUTPUT_PREVIEW_CHARS_PER_TOKEN)
+                        .max(1),
+                )
                 .await
             {
                 Ok(spooled) => return limit_spooled_preview(spooled, max_output_tokens),

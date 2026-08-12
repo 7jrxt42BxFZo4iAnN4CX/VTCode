@@ -2,8 +2,9 @@
     missing_docs,
     reason = "Intentional compatibility, platform, or test-only suppression."
 )]
-use super::*;
 use std::time::Duration;
+
+use super::*;
 
 #[tokio::test]
 async fn blocked_tool_call_guard_emits_tool_and_system_messages() {
@@ -900,6 +901,60 @@ async fn repeated_identical_slice_read_trips_read_family_cap() {
             .working_history
             .iter()
             .any(|message| { message.content.as_text().contains("repeated_read_family") })
+    );
+}
+
+#[tokio::test]
+async fn repeated_paginated_sed_reads_eventually_trip_per_file_path_cap() {
+    // turn_911-style regression: simple `sed -n` pagination should behave like
+    // file reads. Different ranges must not trip the identical-slice family
+    // cap, but repeated exploration of the same file should still hit the
+    // shared per-file-path fuse and stop the loop.
+    let mut backing = TestContextBacking::new(20).await;
+    backing.select_build_primary_agent();
+    let sample_file = backing.sample_file.clone();
+    std::fs::write(&sample_file, (1..=16).map(|idx| format!("line {idx}\n")).collect::<String>())
+        .expect("rewrite sample file");
+    let sample_path = sample_file.to_string_lossy().to_string();
+
+    let mut repeated_tool_attempts = LoopTracker::new();
+    let mut turn_modified_files = BTreeSet::new();
+    let mut tp_ctx = backing.turn_processing_context();
+    let mut outcome_ctx = ToolOutcomeContext {
+        ctx: &mut tp_ctx,
+        repeated_tool_attempts: &mut repeated_tool_attempts,
+        turn_modified_files: &mut turn_modified_files,
+    };
+
+    let mut blocked_at = None;
+    for idx in 1..=10 {
+        let args = json!({
+            "cmd": format!("sed -n '{idx},{idx}p' {sample_path}")
+        });
+        let outcome =
+            handle_single_tool_call(&mut outcome_ctx, &format!("sed_read_{idx}"), tool_names::EXEC_COMMAND, args)
+                .await
+                .expect("sed read should complete");
+
+        if outcome.is_some() {
+            blocked_at = Some(idx);
+            break;
+        }
+    }
+
+    assert_eq!(blocked_at, Some(7), "sed pagination should stop on the shared per-file-path cap");
+    assert_eq!(
+        outcome_ctx.ctx.harness_state.consecutive_same_file_read_family_calls, 1,
+        "different sed ranges must reset the identical-slice family streak"
+    );
+    assert!(outcome_ctx.ctx.is_recovery_active());
+    assert!(
+        outcome_ctx
+            .ctx
+            .working_history
+            .iter()
+            .any(|message| { message.content.as_text().contains("repeated_read_family") }),
+        "sed pagination cap should reuse the existing repeated-read guard payload"
     );
 }
 

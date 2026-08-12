@@ -22,7 +22,10 @@ use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
-use vtcode_commons::preview::{condense_text_bytes, tail_preview_text};
+use vtcode_commons::formatting::truncate_byte_budget;
+use vtcode_commons::preview::{
+    condense_text_bytes, excerpt_text_lines_with_limit, format_hidden_lines_summary, tail_preview_text,
+};
 use vtcode_commons::serde_helpers::json_to_string_pretty;
 
 /// Default threshold for spooling tool output to files (8KB).
@@ -32,8 +35,11 @@ pub const DEFAULT_SPOOL_THRESHOLD_BYTES: usize = 8_192;
 
 const CONDENSE_HEAD_BYTES: usize = 8_000;
 const CONDENSE_TAIL_BYTES: usize = 4_000;
-const PTY_PREVIEW_TAIL_BYTES: usize = 2_500;
-const PTY_PREVIEW_MAX_LINES: usize = 40;
+const INSPECTION_PREVIEW_HEAD_BYTES: usize = 4 * 1024;
+const INSPECTION_PREVIEW_TAIL_BYTES: usize = 2 * 1024;
+const COMMAND_PREVIEW_MAX_BYTES: usize = 6 * 1024;
+const COMMAND_PREVIEW_MAX_LINES: usize = 80;
+const PREVIEW_NOTICE_RESERVE_BYTES: usize = 64;
 
 fn is_command_session_tool_name(tool_name: &str) -> bool {
     crate::tools::tool_intent::canonical_command_session_tool_name(tool_name).is_some()
@@ -43,8 +49,66 @@ fn condense_content(content: &str) -> String {
     condense_text_bytes(content, CONDENSE_HEAD_BYTES, CONDENSE_TAIL_BYTES)
 }
 
-fn tail_preview_content(content: &str, tail_bytes: usize, max_lines: usize) -> String {
-    tail_preview_text(content, tail_bytes, max_lines)
+fn render_line_bounded_preview(content: &str, max_lines: usize) -> String {
+    let preview = excerpt_text_lines_with_limit(content, max_lines, max_lines / 2);
+    if preview.hidden_count == 0 {
+        return content.to_string();
+    }
+
+    let mut lines = Vec::with_capacity(preview.head.len() + preview.tail.len() + 1);
+    lines.extend(preview.head.into_iter().map(str::to_string));
+    lines.push(format_hidden_lines_summary(preview.hidden_count));
+    lines.extend(preview.tail.into_iter().map(str::to_string));
+    lines.join("\n")
+}
+
+fn command_preview_byte_limit(max_preview_bytes: Option<usize>) -> usize {
+    max_preview_bytes
+        .unwrap_or(COMMAND_PREVIEW_MAX_BYTES)
+        .min(COMMAND_PREVIEW_MAX_BYTES)
+}
+
+fn inspection_preview_content(content: &str, max_preview_bytes: Option<usize>) -> String {
+    let byte_limit = command_preview_byte_limit(max_preview_bytes);
+    if byte_limit == 0 {
+        return String::new();
+    }
+
+    let content_budget = byte_limit.saturating_sub(PREVIEW_NOTICE_RESERVE_BYTES).max(1);
+    let head_bytes = content_budget.saturating_mul(2).div_ceil(3).min(INSPECTION_PREVIEW_HEAD_BYTES);
+    let tail_bytes = content_budget.saturating_sub(head_bytes).min(INSPECTION_PREVIEW_TAIL_BYTES);
+    let byte_bounded = condense_text_bytes(content, head_bytes, tail_bytes);
+    let line_bounded = render_line_bounded_preview(&byte_bounded, COMMAND_PREVIEW_MAX_LINES);
+    truncate_byte_budget(&line_bounded, byte_limit, "")
+}
+
+fn verification_preview_content(content: &str, max_preview_bytes: Option<usize>) -> String {
+    let byte_limit = command_preview_byte_limit(max_preview_bytes);
+    if byte_limit == 0 {
+        return String::new();
+    }
+
+    let content_budget = byte_limit.saturating_sub(PREVIEW_NOTICE_RESERVE_BYTES).max(1);
+    let preview = tail_preview_text(content, content_budget, COMMAND_PREVIEW_MAX_LINES.saturating_sub(1));
+    truncate_byte_budget(&preview, byte_limit, "")
+}
+
+fn command_preview_content(
+    tool_name: &str,
+    response: &Value,
+    content: &str,
+    max_preview_bytes: Option<usize>,
+) -> String {
+    let args = json!({
+        "action": "run",
+        "command": response.get("command").cloned().unwrap_or(Value::Null),
+    });
+    match crate::tools::tool_intent::classify_shell_activity(tool_name, &args) {
+        crate::tools::tool_intent::ShellActivity::Inspection => inspection_preview_content(content, max_preview_bytes),
+        crate::tools::tool_intent::ShellActivity::Verification | crate::tools::tool_intent::ShellActivity::Mutation => {
+            verification_preview_content(content, max_preview_bytes)
+        }
+    }
 }
 
 /// Configuration for the output spooler
@@ -112,6 +176,34 @@ pub struct SpoolResult {
     pub original_bytes: usize,
     /// Full content written to the spool file
     pub content: String,
+}
+
+/// Validated view of the bounded model-facing portion of a spooled result.
+///
+/// Consumers should use this interface instead of reopening `spool_path` just
+/// to reconstruct data that the spooler already produced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpooledOutputReference<'a> {
+    pub spool_path: &'a str,
+    pub preview: Option<&'a str>,
+    pub original_bytes: Option<u64>,
+}
+
+impl<'a> SpooledOutputReference<'a> {
+    #[must_use]
+    pub fn from_value(value: &'a Value) -> Option<Self> {
+        let spool_path = value
+            .get("spool_path")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|path| !path.is_empty())?;
+        let preview = value
+            .get("preview")
+            .and_then(Value::as_str)
+            .filter(|preview| !preview.trim().is_empty());
+        let original_bytes = value.get("spooled_bytes").and_then(Value::as_u64);
+        Some(Self { spool_path, preview, original_bytes })
+    }
 }
 
 /// How often (in number of spool operations) to run age-based cleanup.
@@ -320,7 +412,7 @@ impl ToolOutputSpooler {
     /// head+tail payload with a `spool_path` reference if spooled.
     /// Triggers periodic age-based cleanup of old spooled files.
     pub async fn process_output(&self, tool_name: &str, value: Value, is_mcp: bool) -> Result<Value> {
-        self.process_output_with_force(tool_name, value, is_mcp, false).await
+        self.process_output_with_options(tool_name, value, is_mcp, false, None).await
     }
 
     /// Process a tool output, optionally forcing spool behavior.
@@ -333,6 +425,30 @@ impl ToolOutputSpooler {
         value: Value,
         is_mcp: bool,
         force_spool: bool,
+    ) -> Result<Value> {
+        self.process_output_with_options(tool_name, value, is_mcp, force_spool, None)
+            .await
+    }
+
+    pub(crate) async fn process_output_with_preview_limit(
+        &self,
+        tool_name: &str,
+        value: Value,
+        is_mcp: bool,
+        force_spool: bool,
+        max_preview_bytes: usize,
+    ) -> Result<Value> {
+        self.process_output_with_options(tool_name, value, is_mcp, force_spool, Some(max_preview_bytes))
+            .await
+    }
+
+    async fn process_output_with_options(
+        &self,
+        tool_name: &str,
+        value: Value,
+        is_mcp: bool,
+        force_spool: bool,
+        max_preview_bytes: Option<usize>,
     ) -> Result<Value> {
         let no_spool = value.get("no_spool").and_then(|v| v.as_bool()).unwrap_or(false);
         if no_spool {
@@ -356,9 +472,12 @@ impl ToolOutputSpooler {
             }
         }
         let condensed = if is_command_session_tool_name(tool_name) {
-            tail_preview_content(&spool_result.content, PTY_PREVIEW_TAIL_BYTES, PTY_PREVIEW_MAX_LINES)
+            command_preview_content(tool_name, &value, &spool_result.content, max_preview_bytes)
         } else {
-            condense_content(&spool_result.content)
+            let condensed = condense_content(&spool_result.content);
+            max_preview_bytes
+                .map(|limit| truncate_byte_budget(&condensed, limit, ""))
+                .unwrap_or(condensed)
         };
         let spool_path = spool_result.file_path.to_string_lossy().to_string();
 
@@ -377,13 +496,14 @@ impl ToolOutputSpooler {
         let stderr_preview = response
             .get("stderr")
             .and_then(|v| v.as_str())
-            .map(|s| vtcode_commons::formatting::truncate_byte_budget(s, 500, "... (truncated)"));
+            .map(|s| truncate_byte_budget(s, 500, "... (truncated)"));
 
         if let Some(obj) = response.as_object_mut() {
             obj.remove("stdout");
             obj.remove("follow_up_prompt");
             obj.remove("spooled_to_file");
             obj.remove("raw_output");
+            obj.insert("preview".to_string(), json!(condensed.clone()));
 
             // Replace only the heavy stream field with condensed preview.
             if use_output_field {
@@ -393,6 +513,7 @@ impl ToolOutputSpooler {
             }
 
             obj.insert("spool_path".to_string(), json!(spool_path));
+            obj.insert("spooled_bytes".to_string(), json!(spool_result.original_bytes));
 
             // Keep the recovery guidance aligned with the model-facing command tools.
             // Large data stays on disk and the model pulls only the sections it needs.
@@ -910,8 +1031,8 @@ mod tests {
     #[test]
     fn test_tail_preview_content_shows_only_tail() {
         let input = (0..200).map(|i| format!("line-{i}")).collect::<Vec<_>>().join("\n");
-        let preview = tail_preview_content(&input, 500, 10);
-        assert!(preview.contains("bytes omitted"));
+        let preview = tail_preview_text(&input, 500, 10);
+        assert!(preview.contains("omitted"));
         assert!(preview.contains("line-199"));
         assert!(!preview.contains("line-1\n"));
     }

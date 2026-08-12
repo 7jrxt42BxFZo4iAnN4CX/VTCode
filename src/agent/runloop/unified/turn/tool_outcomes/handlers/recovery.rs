@@ -3,7 +3,6 @@ use serde_json::Value;
 
 use crate::agent::runloop::unified::turn::context::{TurnHandlerOutcome, TurnLoopResult, TurnProcessingContext};
 
-use super::super::helpers::push_tool_response;
 use super::ValidationResult;
 use super::fallbacks::build_validation_error_content_with_fallback;
 
@@ -14,8 +13,7 @@ fn circuit_breaker_default_blocked(
     fallback_tool: Option<String>,
     fallback_tool_args: Option<Value>,
 ) -> ValidationResult {
-    push_tool_response(
-        ctx.working_history,
+    ctx.push_tool_response(
         tool_call_id,
         Some(canonical_tool_name),
         build_validation_error_content_with_fallback(

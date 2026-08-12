@@ -8,20 +8,24 @@ use anyhow::{Context, Result};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Serialize};
+use vtcode_exec_events::Usage;
 
 use crate::core::pending_actions::ExpectedOutcome;
 use crate::core::state_schema::{SchemaVersion, VersionedState};
+use crate::types::CompactStr;
 use crate::utils::error_messages::ERR_CREATE_CHECKPOINT_DIR;
 use crate::utils::file_utils::{ensure_dir_exists, ensure_dir_exists_sync, write_json_file};
 use crate::utils::path::canonicalize_workspace;
 use crate::utils::session_archive::SessionMessage;
 
 const MAX_DESCRIPTION_LEN: usize = 160;
-use crate::core::SECONDS_PER_DAY;
 use vtcode_commons::canonicalize;
+
+use crate::core::SECONDS_PER_DAY;
 pub const DEFAULT_CHECKPOINTS_ENABLED: bool = true;
 pub const DEFAULT_MAX_SNAPSHOTS: usize = 50;
 pub const DEFAULT_MAX_AGE_DAYS: u64 = 30;
+const SNAPSHOT_SCHEMA_VERSION: SchemaVersion = SchemaVersion::V2;
 
 fn normalized_prompt_text(text: &str) -> Option<&str> {
     let trimmed = text.trim();
@@ -63,6 +67,14 @@ pub struct SnapshotMetadata {
     pub prompt_text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_message_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<CompactStr>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_turn_id: Option<CompactStr>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_turn_number: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_diagnostics: Option<SnapshotTurnDiagnostics>,
 }
 
 impl SnapshotMetadata {
@@ -73,6 +85,31 @@ impl SnapshotMetadata {
             .map(str::to_string)
             .or_else(|| SnapshotManager::derive_prompt_metadata(conversation).0)
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct SnapshotTurnDiagnostics {
+    pub usage: Usage,
+    pub elapsed_ms: u64,
+    pub requested_tool_calls: u32,
+    pub admitted_tool_calls: u32,
+    pub failed_tool_calls: u32,
+    pub denied_tool_calls: u32,
+    pub preflight_failures: u32,
+    pub reused_results: u32,
+    pub spooled_results: u32,
+    pub raw_spooled_bytes: u64,
+    pub model_visible_output_bytes: u64,
+    pub low_signal_tool_calls: u32,
+    pub recovery_activations: u32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SnapshotTurnContext {
+    pub session_id: Option<CompactStr>,
+    pub runtime_turn_id: Option<CompactStr>,
+    pub session_turn_number: Option<usize>,
+    pub turn_diagnostics: Option<SnapshotTurnDiagnostics>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -113,7 +150,20 @@ impl VersionedState for StoredSnapshot {
                 // Future versions add per-message metadata here.
                 Ok(Self { schema_version: Some(SchemaVersion::V1), ..self })
             }
+            (SchemaVersion::V1, SchemaVersion::V2) => Ok(Self {
+                schema_version: Some(SNAPSHOT_SCHEMA_VERSION),
+                ..self
+            }),
             _ => anyhow::bail!("unsupported snapshot migration: {from:?} -> {to:?}"),
+        }
+    }
+
+    fn next_version(current: SchemaVersion) -> Option<SchemaVersion> {
+        match current {
+            SchemaVersion::V0 => Some(SchemaVersion::V1),
+            SchemaVersion::V1 => Some(SchemaVersion::V2),
+            SchemaVersion::V2 => None,
+            _ => None,
         }
     }
 }
@@ -372,6 +422,7 @@ impl SnapshotManager {
         modified_files: &BTreeSet<PathBuf>,
         prompt_text: Option<&str>,
         prompt_message_index: Option<usize>,
+        turn_context: Option<SnapshotTurnContext>,
     ) -> Result<Option<SnapshotMetadata>> {
         if !self.enabled {
             return Ok(None);
@@ -410,6 +461,7 @@ impl SnapshotManager {
         let (prompt_text, prompt_message_index) =
             Self::resolve_prompt_metadata(prompt_text, prompt_message_index, conversation);
         let description_source = prompt_text.as_deref().unwrap_or(description);
+        let turn_context = turn_context.unwrap_or_default();
         let metadata = SnapshotMetadata {
             id: format!("turn_{turn_number}"),
             turn_number,
@@ -419,13 +471,17 @@ impl SnapshotManager {
             file_count: files.len(),
             prompt_text,
             prompt_message_index,
+            session_id: turn_context.session_id,
+            runtime_turn_id: turn_context.runtime_turn_id,
+            session_turn_number: turn_context.session_turn_number,
+            turn_diagnostics: turn_context.turn_diagnostics,
         };
 
         let stored = StoredSnapshot {
             metadata: metadata.clone(),
             conversation: conversation.to_vec(),
             files,
-            schema_version: Some(SchemaVersion::CURRENT),
+            schema_version: Some(SNAPSHOT_SCHEMA_VERSION),
         };
 
         let path = self.snapshot_path(turn_number);
@@ -479,7 +535,7 @@ impl SnapshotManager {
             serde_json::from_slice(&data).with_context(|| format!("failed to parse checkpoint: {}", path.display()))?;
         // Migrate legacy snapshots to the current schema version
         stored = stored
-            .migrate(SchemaVersion::CURRENT)
+            .migrate(SNAPSHOT_SCHEMA_VERSION)
             .with_context(|| format!("failed to migrate checkpoint: {}", path.display()))?;
         Self::hydrate_prompt_metadata(&mut stored);
         Ok(Some(stored))
@@ -722,8 +778,9 @@ pub struct CheckpointRestore {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::TempDir;
+
+    use super::*;
 
     fn setup_manager() -> (TempDir, SnapshotManager) {
         let dir = TempDir::new().expect("tempdir");
@@ -739,12 +796,12 @@ mod tests {
         conversation.push(SessionMessage::new(crate::llm::provider::MessageRole::User, "Hello"));
         let files = BTreeSet::new();
         manager
-            .create_snapshot(1, "First turn", &conversation, &files, None, None)
+            .create_snapshot(1, "First turn", &conversation, &files, None, None, None)
             .await?
             .expect("metadata");
         conversation.push(SessionMessage::new(crate::llm::provider::MessageRole::Assistant, "Hi"));
         manager
-            .create_snapshot(2, "Second turn", &conversation, &files, None, None)
+            .create_snapshot(2, "Second turn", &conversation, &files, None, None, None)
             .await?
             .expect("metadata");
 
@@ -769,7 +826,7 @@ mod tests {
             "edit example",
         )];
         manager
-            .create_snapshot(1, "save", &conversation, &files, None, None)
+            .create_snapshot(1, "save", &conversation, &files, None, None, None)
             .await?
             .expect("metadata");
 
@@ -791,7 +848,7 @@ mod tests {
         files.insert(PathBuf::from("remove.txt"));
         let conversation = vec![SessionMessage::new(crate::llm::provider::MessageRole::User, "remove")];
         manager
-            .create_snapshot(1, "save", &conversation, &files, None, None)
+            .create_snapshot(1, "save", &conversation, &files, None, None, None)
             .await?
             .expect("metadata");
 
@@ -811,7 +868,7 @@ mod tests {
 
         for turn in 1..=5 {
             manager
-                .create_snapshot(turn, "turn", &conversation, &files, None, None)
+                .create_snapshot(turn, "turn", &conversation, &files, None, None, None)
                 .await?
                 .expect("metadata");
         }
@@ -840,7 +897,7 @@ mod tests {
         let conversation = vec![SessionMessage::new(crate::llm::provider::MessageRole::User, "absolute")];
 
         manager
-            .create_snapshot(1, "abs", &conversation, &files, None, None)
+            .create_snapshot(1, "abs", &conversation, &files, None, None, None)
             .await?
             .expect("metadata");
 
@@ -858,7 +915,7 @@ mod tests {
         let files = BTreeSet::new();
 
         manager
-            .create_snapshot(1, "old", &conversation, &files, None, None)
+            .create_snapshot(1, "old", &conversation, &files, None, None, None)
             .await?
             .expect("metadata");
 
@@ -893,6 +950,7 @@ mod tests {
                 &BTreeSet::new(),
                 Some("Explain checkpointing"),
                 Some(0),
+                None,
             )
             .await?
             .expect("metadata");
@@ -917,6 +975,10 @@ mod tests {
                 file_count: 0,
                 prompt_text: None,
                 prompt_message_index: None,
+                session_id: None,
+                runtime_turn_id: None,
+                session_turn_number: None,
+                turn_diagnostics: None,
             },
             conversation: vec![
                 SessionMessage::new(crate::llm::provider::MessageRole::User, "Legacy prompt"),
@@ -934,6 +996,85 @@ mod tests {
         let loaded = manager.load_snapshot(1).await?.expect("loaded snapshot");
         assert_eq!(loaded.metadata.prompt_text.as_deref(), Some("Legacy prompt"));
         assert_eq!(loaded.metadata.prompt_message_index, Some(0));
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_snapshot_versions_migrate_to_v2_without_inventing_diagnostics() -> Result<()> {
+        let legacy = StoredSnapshot {
+            metadata: SnapshotMetadata {
+                id: "turn_1".to_string(),
+                turn_number: 1,
+                created_at: 1,
+                description: "legacy".to_string(),
+                message_count: 0,
+                file_count: 0,
+                prompt_text: None,
+                prompt_message_index: None,
+                session_id: None,
+                runtime_turn_id: None,
+                session_turn_number: None,
+                turn_diagnostics: None,
+            },
+            conversation: Vec::new(),
+            files: Vec::new(),
+            schema_version: None,
+        };
+
+        let migrated_v0 = legacy.clone().migrate(SNAPSHOT_SCHEMA_VERSION)?;
+        assert_eq!(migrated_v0.schema_version, Some(SchemaVersion::V2));
+        assert!(migrated_v0.metadata.turn_diagnostics.is_none());
+
+        let migrated_v1 =
+            StoredSnapshot { schema_version: Some(SchemaVersion::V1), ..legacy }.migrate(SNAPSHOT_SCHEMA_VERSION)?;
+        assert_eq!(migrated_v1.schema_version, Some(SchemaVersion::V2));
+        assert!(migrated_v1.metadata.turn_diagnostics.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn v2_snapshot_round_trips_session_linkage_and_canonical_usage() -> Result<()> {
+        let (_dir, manager) = setup_manager();
+        let usage = Usage {
+            input_tokens: 43_282,
+            output_tokens: 911,
+            cached_input_tokens: 8_000,
+            cache_creation_tokens: 512,
+        };
+        let diagnostics = SnapshotTurnDiagnostics {
+            usage: usage.clone(),
+            elapsed_ms: 12_345,
+            requested_tool_calls: 9,
+            admitted_tool_calls: 7,
+            failed_tool_calls: 2,
+            denied_tool_calls: 1,
+            preflight_failures: 1,
+            reused_results: 2,
+            spooled_results: 3,
+            raw_spooled_bytes: 139_000,
+            model_visible_output_bytes: 6_100,
+            low_signal_tool_calls: 4,
+            recovery_activations: 1,
+        };
+        let context = SnapshotTurnContext {
+            session_id: Some(CompactStr::from("session-911")),
+            runtime_turn_id: Some(CompactStr::from("turn-runtime-911")),
+            session_turn_number: Some(911),
+            turn_diagnostics: Some(diagnostics.clone()),
+        };
+
+        manager
+            .create_snapshot(1, "diagnostic checkpoint", &[], &BTreeSet::new(), None, None, Some(context))
+            .await?
+            .expect("metadata");
+
+        let stored = manager.load_snapshot(1).await?.expect("stored snapshot");
+        assert_eq!(stored.schema_version, Some(SchemaVersion::V2));
+        assert_eq!(stored.metadata.session_id.as_deref(), Some("session-911"));
+        assert_eq!(stored.metadata.runtime_turn_id.as_deref(), Some("turn-runtime-911"));
+        assert_eq!(stored.metadata.session_turn_number, Some(911));
+        assert_eq!(stored.metadata.turn_diagnostics, Some(diagnostics));
+        assert_eq!(stored.metadata.turn_diagnostics.expect("diagnostics").usage, usage);
         Ok(())
     }
 

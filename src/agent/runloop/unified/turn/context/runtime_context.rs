@@ -58,6 +58,7 @@ pub(crate) struct TurnOutcomeContext<'a> {
     pub show_turn_timer: bool,
     pub workspace: &'a std::path::Path,
     pub session_id: &'a str,
+    pub runtime_turn_id: Option<&'a str>,
     pub harness_emitter: Option<&'a crate::agent::runloop::unified::inline_events::harness::HarnessEventEmitter>,
 }
 
