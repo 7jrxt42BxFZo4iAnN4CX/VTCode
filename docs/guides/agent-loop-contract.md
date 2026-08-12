@@ -45,6 +45,27 @@ Fields:
 For `vtcode exec`, `outcome_code` comes from `TaskOutcome::code()`. Interactive
 sessions preserve the corresponding VT Code session end semantics.
 
+## Canonical event persistence
+
+Interactive and exec runs share one authoritative persistence contract:
+
+| Concern | Contract |
+| --- | --- |
+| Event type | `vtcode_exec_events::ThreadEvent` is the only runtime event contract. |
+| Canonical path | `<workspace>/.vtcode/sessions/<session_id>/events.jsonl`, with `manifest.json` and derived artifacts beside it. |
+| Ordering | One dispatch gate feeds canonical persistence and optional exporters in the same order. |
+| Backpressure | Canonical events use bounded non-blocking handoffs to a blocking I/O drain; queue saturation fails closed, and accepted events are never silently dropped. |
+| Shutdown | The terminal `thread.completed` event is emitted first, then exporters finish and canonical persistence drains before success is reported. |
+| Lifecycle status | Sessions become `active` at `thread.started`/`turn.started`; only `thread.completed` makes the manifest terminal. |
+| Retention | Closed sessions use the 50-session/30-day defaults. Active sessions, the current session, symlinks, and unrelated files are preserved. |
+
+`agent.harness.event_log_path` and exec `--events` are explicit compatibility
+exports. They do not replace the canonical store, and no global
+`~/.vtcode/sessions` harness artifact is created by default. ATIF and Open
+Responses files, when enabled by the interactive harness, are derived under
+the canonical session's `derived/` directory. Historical global artifacts are
+left untouched.
+
 ## Compaction Boundary
 
 Whenever VT Code compacts history itself or via a provider-native compaction

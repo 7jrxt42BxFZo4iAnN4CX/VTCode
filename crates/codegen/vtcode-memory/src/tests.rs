@@ -4,7 +4,8 @@ use std::fs;
 
 use tempfile::TempDir;
 use vtcode_exec_events::{
-    ThreadEvent, ThreadStartedEvent, TurnCompletedEvent, TurnStartedEvent, Usage, VersionedThreadEvent,
+    ThreadCompletedEvent, ThreadCompletionSubtype, ThreadEvent, ThreadStartedEvent, TurnCompletedEvent,
+    TurnStartedEvent, Usage, VersionedThreadEvent,
 };
 
 use crate::event_log::{DEFAULT_MAX_EVENTS, SessionEventLog};
@@ -14,8 +15,20 @@ use crate::{open, retention::apply_retention, sessions_root};
 
 fn sample_turn() -> Vec<ThreadEvent> {
     vec![
+        ThreadEvent::ThreadStarted(ThreadStartedEvent { thread_id: "thread".to_string() }),
         ThreadEvent::TurnStarted(TurnStartedEvent::default()),
         ThreadEvent::TurnCompleted(TurnCompletedEvent { usage: Usage::default() }),
+        ThreadEvent::ThreadCompleted(ThreadCompletedEvent {
+            thread_id: "thread".to_string(),
+            session_id: "session".to_string(),
+            subtype: ThreadCompletionSubtype::Success,
+            outcome_code: "completed".to_string(),
+            result: None,
+            stop_reason: None,
+            usage: Usage::default(),
+            total_cost_usd: None,
+            num_turns: 1,
+        }),
     ]
 }
 
@@ -210,6 +223,145 @@ fn retention_evicts_old_sessions_even_when_under_count_cap() {
     assert_eq!(removed, 1);
     let remaining = recent_sessions(dir.path(), 100);
     assert_eq!(remaining.len(), 2);
+}
+
+#[test]
+fn retention_preserves_active_sessions() {
+    let dir = TempDir::new().expect("tempdir");
+    let log = open(dir.path(), "active-session", DEFAULT_MAX_EVENTS).expect("open");
+    log.append(&ThreadEvent::ThreadStarted(ThreadStartedEvent { thread_id: "active".to_string() }))
+        .expect("append thread start");
+    log.flush().expect("flush active session");
+
+    let session_dir = sessions_root(dir.path()).join("active-session");
+    let manifest_path = session_dir.join("manifest.json");
+    let mut manifest: crate::SessionManifest =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("read manifest")).expect("parse manifest");
+    manifest.updated_at = "2020-01-01T00:00:00Z".to_string();
+    fs::write(&manifest_path, serde_json::to_string_pretty(&manifest).expect("serialize manifest"))
+        .expect("write manifest");
+
+    let removed = apply_retention(dir.path(), crate::retention::RetentionPolicy { max_sessions: 0, max_age_days: 0 })
+        .expect("retain");
+
+    assert_eq!(removed, 0);
+    assert!(session_dir.exists(), "active sessions must not be evicted");
+}
+
+#[test]
+fn retention_preserves_explicit_current_session() {
+    let dir = TempDir::new().expect("tempdir");
+    for session_id in ["current-session", "old-session"] {
+        let log = open(dir.path(), session_id, DEFAULT_MAX_EVENTS).expect("open");
+        for event in &sample_turn() {
+            log.append(event).expect("append lifecycle");
+        }
+        log.complete().expect("complete");
+        let manifest_path = sessions_root(dir.path()).join(session_id).join("manifest.json");
+        let mut manifest: crate::SessionManifest =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).expect("read manifest")).expect("parse manifest");
+        manifest.updated_at = "2020-01-01T00:00:00Z".to_string();
+        fs::write(&manifest_path, serde_json::to_string_pretty(&manifest).expect("serialize manifest"))
+            .expect("write manifest");
+    }
+
+    let removed = crate::retention::apply_retention_preserving(
+        dir.path(),
+        crate::retention::RetentionPolicy { max_sessions: 0, max_age_days: 0 },
+        Some("current-session"),
+    )
+    .expect("retain");
+
+    assert_eq!(removed, 1);
+    assert!(sessions_root(dir.path()).join("current-session").exists());
+    assert!(!sessions_root(dir.path()).join("old-session").exists());
+}
+
+#[test]
+fn retention_ignores_manifest_session_id_for_deletion_path() {
+    let dir = TempDir::new().expect("tempdir");
+    let outside = dir.path().join("outside");
+    fs::create_dir(&outside).expect("create outside");
+    fs::write(outside.join("keep.txt"), "preserve").expect("write outside file");
+
+    let log = open(dir.path(), "safe-session", DEFAULT_MAX_EVENTS).expect("open");
+    for event in &sample_turn() {
+        log.append(event).expect("append lifecycle");
+    }
+    log.complete().expect("complete");
+    let manifest_path = sessions_root(dir.path()).join("safe-session").join("manifest.json");
+    let mut manifest: crate::SessionManifest =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("read manifest")).expect("parse manifest");
+    manifest.session_id = "../outside".to_string();
+    manifest.updated_at = "2020-01-01T00:00:00Z".to_string();
+    fs::write(&manifest_path, serde_json::to_string(&manifest).expect("serialize manifest")).expect("write manifest");
+
+    assert_eq!(
+        apply_retention(dir.path(), crate::retention::RetentionPolicy { max_sessions: 0, max_age_days: 30 })
+            .expect("retain"),
+        1
+    );
+    assert!(outside.join("keep.txt").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn retention_skips_symlink_session_entries() {
+    use std::os::unix::fs::symlink;
+
+    let dir = TempDir::new().expect("tempdir");
+    let target = sessions_root(dir.path()).join("target");
+    let log = open(dir.path(), "target", DEFAULT_MAX_EVENTS).expect("open");
+    for event in &sample_turn() {
+        log.append(event).expect("append lifecycle");
+    }
+    log.complete().expect("complete");
+    let manifest_path = target.join("manifest.json");
+    let mut manifest: crate::SessionManifest =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("read manifest")).expect("parse manifest");
+    manifest.updated_at = "2020-01-01T00:00:00Z".to_string();
+    fs::write(&manifest_path, serde_json::to_string(&manifest).expect("serialize manifest")).expect("write manifest");
+    let link = sessions_root(dir.path()).join("linked");
+    symlink(&target, &link).expect("create symlink");
+
+    apply_retention(dir.path(), crate::retention::RetentionPolicy { max_sessions: 0, max_age_days: 30 })
+        .expect("retain");
+    assert!(!target.exists());
+    assert!(link.exists() || fs::symlink_metadata(&link).is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn retention_skips_symlink_sessions_root() {
+    use std::os::unix::fs::symlink;
+
+    let dir = TempDir::new().expect("tempdir");
+    let real_root = dir.path().join("real-sessions");
+    let linked_session = real_root.join("linked-session");
+    fs::create_dir_all(&linked_session).expect("create linked session");
+    fs::write(
+        linked_session.join("manifest.json"),
+        serde_json::json!({
+            "session_id": "linked-session",
+            "turn_count": 0,
+            "event_count": 0,
+            "status": "completed",
+            "updated_at": "2020-01-01T00:00:00Z"
+        })
+        .to_string(),
+    )
+    .expect("write linked manifest");
+
+    let sessions_parent = dir.path().join(".vtcode");
+    fs::create_dir_all(&sessions_parent).expect("create sessions parent");
+    symlink(&real_root, sessions_parent.join("sessions")).expect("create sessions root symlink");
+
+    assert_eq!(
+        apply_retention(dir.path(), crate::retention::RetentionPolicy { max_sessions: 0, max_age_days: 0 })
+            .expect("retain"),
+        0
+    );
+    assert!(linked_session.exists());
 }
 
 #[test]

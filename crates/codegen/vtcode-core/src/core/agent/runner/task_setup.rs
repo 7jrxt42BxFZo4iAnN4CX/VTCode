@@ -4,9 +4,10 @@
 //! turn loop: harness alignment, conversation building, session state
 //! creation, and orchestration planning.
 
-use anyhow::Result;
+use anyhow::{Error, Result};
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::task::spawn_blocking;
 
 use crate::core::agent::events::{ExecEventRecorder, SessionStoreSinkHandle};
 use crate::core::agent::harness_artifacts;
@@ -39,6 +40,22 @@ pub struct TaskSetup {
     pub max_revision_rounds: usize,
 }
 
+async fn finish_failed_setup(
+    event_recorder: &mut ExecEventRecorder,
+    session_id: &str,
+    error: &Error,
+    session_store_handle: SessionStoreSinkHandle,
+) {
+    event_recorder.thread_failed(session_id, &error.to_string(), 1);
+    if let Err(close_error) = session_store_handle.close().await {
+        tracing::error!(
+            session_id,
+            error = %close_error,
+            "failed to close canonical session store after setup failure"
+        );
+    }
+}
+
 impl AgentRunner {
     /// Prepare everything needed before entering the turn loop.
     ///
@@ -50,13 +67,35 @@ impl AgentRunner {
 
         let steering_receiver = self.steering_receiver.lock().take();
 
+        let retention_workspace = self.workspace().to_path_buf();
+        let retention_session_id = self.session_id.clone();
+        match spawn_blocking(move || {
+            vtcode_memory::apply_retention_preserving(
+                &retention_workspace,
+                vtcode_memory::RetentionPolicy::default(),
+                Some(retention_session_id.as_str()),
+            )
+        })
+        .await
+        {
+            Ok(Ok(removed)) if removed > 0 => {
+                tracing::debug!(removed, "pruned closed canonical sessions before AgentRunner execution");
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(error = %error, "canonical session retention failed before AgentRunner execution");
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "canonical session retention task failed before AgentRunner execution");
+            }
+        }
+
         let agent_prefix = format!("[{}]", self.agent_type);
         // Persist every recorded event to the unified per-session store so it
         // becomes the single source of truth for session state/history.
         let (session_sink, session_store_handle) =
-            crate::core::agent::events::session_store_sink_with_handle(self.workspace(), &self.session_id)
-                .map_or((None, None), |(sink, handle)| (Some(sink), Some(handle)));
-        let event_sink = crate::core::agent::events::combine_event_sinks(self.event_sink.clone(), session_sink);
+            crate::core::agent::events::session_store_sink_with_handle(self.workspace(), &self.session_id).await?;
+        let event_sink = crate::core::agent::events::combine_event_sinks(self.event_sink.clone(), Some(session_sink));
         let mut event_recorder =
             ExecEventRecorder::new(self.session_id.clone(), event_sink, Some(self.thread_handle.clone()));
         event_recorder.turn_started();
@@ -71,7 +110,13 @@ impl AgentRunner {
 
         let run_started_at = Instant::now();
         let is_simple_task = Self::is_simple_task(task, contexts);
-        let prompt_bundle = self.build_validated_runtime_prompt_bundle(is_simple_task).await?;
+        let prompt_bundle = match self.build_validated_runtime_prompt_bundle(is_simple_task).await {
+            Ok(bundle) => bundle,
+            Err(error) => {
+                finish_failed_setup(&mut event_recorder, &self.session_id, &error, session_store_handle).await;
+                return Err(error);
+            }
+        };
 
         let review_like = super::continuation::is_review_like_task(task);
         let full_auto_active = self.tool_registry.current_full_auto_allowlist().await.is_some();
@@ -120,7 +165,13 @@ impl AgentRunner {
         let orchestration_enabled = self.harness_plan_build_evaluate_enabled(full_auto_active, review_like);
 
         let planner_artifacts = if orchestration_enabled {
-            Some(self.run_planner_phase(task, &mut event_recorder).await?)
+            Some(match self.run_planner_phase(task, &mut event_recorder).await {
+                Ok(artifacts) => artifacts,
+                Err(error) => {
+                    finish_failed_setup(&mut event_recorder, &self.session_id, &error, session_store_handle).await;
+                    return Err(error);
+                }
+            })
         } else {
             None
         };
@@ -148,7 +199,10 @@ impl AgentRunner {
             )
             .await,
         );
-        continuation_controller.prepare(&effective_task).await?;
+        if let Err(error) = continuation_controller.prepare(&effective_task).await {
+            finish_failed_setup(&mut event_recorder, &self.session_id, &error, session_store_handle).await;
+            return Err(error);
+        }
 
         let max_budget_usd = self.config().agent.harness.max_budget_usd;
         let max_revision_rounds = self.config().agent.harness.max_revision_rounds;
@@ -156,7 +210,7 @@ impl AgentRunner {
         Ok(TaskSetup {
             agent_prefix,
             event_recorder,
-            session_store_handle,
+            session_store_handle: Some(session_store_handle),
             run_started_at,
             is_simple_task,
             prompt_bundle,

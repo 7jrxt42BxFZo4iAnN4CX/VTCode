@@ -1,12 +1,11 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
-use std::fs::{self, File, OpenOptions};
-use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use tokio::sync::OnceCell;
 
-use chrono::Utc;
+use uuid::Uuid;
 use vtcode_config::OpenResponsesConfig;
 use vtcode_core::core::agent::events::{
     tool_invocation_completed_event as shared_tool_invocation_completed_event,
@@ -16,68 +15,24 @@ use vtcode_core::core::agent::events::{
 };
 #[cfg(test)]
 use vtcode_core::exec::events::ThreadStartedEvent;
-use vtcode_core::exec::events::atif::{AtifAgent, AtifTrajectoryBuilder};
 use vtcode_core::exec::events::{
     AgentMessageItem, CompactionMode, CompactionTrigger, HarnessEventItem, HarnessEventKind, ItemCompletedEvent,
     ThreadCompactBoundaryEvent, ThreadCompletedEvent, ThreadCompletionSubtype, ThreadEvent, ThreadItem,
     ThreadItemDetails, ToolCallStatus, ToolOutcome, TurnCompletedEvent, TurnFailedEvent, TurnStartedEvent, Usage,
     VersionedThreadEvent,
 };
-use vtcode_core::open_responses::{OpenResponsesIntegration, SequencedEvent};
-use vtcode_core::utils::file_utils::ensure_dir_exists_sync;
 
-use crate::agent::runloop::unified::run_loop_context::TurnRunId;
+mod atif;
+mod canonical;
+mod legacy;
+mod open_responses;
+mod paths;
 
-/// Default maximum age in days for harness event log files before pruning.
-pub(crate) const HARNESS_LOG_MAX_AGE_DAYS: u64 = 30;
-
-/// Prefix for harness event log files.
-const HARNESS_LOG_PREFIX: &str = "harness-";
-
-/// Seconds per day.
-const SECONDS_PER_DAY: u64 = 86400;
-
-/// Prune harness event log files older than `max_age_days` from the given directory.
-/// Only removes files matching the `harness-*.jsonl` pattern.
-pub(crate) fn prune_old_harness_logs(log_dir: &Path, max_age_days: u64) -> Result<()> {
-    if max_age_days == 0 {
-        return Ok(());
-    }
-
-    let cutoff = match SystemTime::now().checked_sub(Duration::from_secs(max_age_days.saturating_mul(SECONDS_PER_DAY)))
-    {
-        Some(t) => t,
-        None => return Ok(()),
-    };
-
-    let entries =
-        fs::read_dir(log_dir).with_context(|| format!("failed to read harness log directory {}", log_dir.display()))?;
-
-    for entry in entries {
-        let entry =
-            entry.with_context(|| format!("failed to enumerate harness log directory {}", log_dir.display()))?;
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        if !name.starts_with(HARNESS_LOG_PREFIX) || !name.ends_with(".jsonl") {
-            continue;
-        }
-        let metadata = entry
-            .metadata()
-            .with_context(|| format!("failed to inspect harness log {}", path.display()))?;
-        let modified = metadata
-            .modified()
-            .with_context(|| format!("failed to read modification time for harness log {}", path.display()))?;
-        if modified <= cutoff {
-            fs::remove_file(&path).with_context(|| format!("failed to prune harness log {}", path.display()))?;
-        }
-    }
-    Ok(())
-}
+use atif::AtifExporter;
+use canonical::CanonicalEventSink;
+use legacy::LegacyWriter;
+use open_responses::OpenResponsesExporter;
+pub(crate) use paths::{HARNESS_LOG_MAX_AGE_DAYS, prune_old_harness_logs, resolve_event_log_path};
 
 #[derive(Clone)]
 pub(crate) struct HarnessEventEmitter {
@@ -86,42 +41,71 @@ pub(crate) struct HarnessEventEmitter {
 
 struct HarnessEventEmitterInner {
     path: PathBuf,
-    writer: Mutex<BufWriter<File>>,
-    open_responses: Mutex<Option<OpenResponsesState>>,
-    atif: Mutex<Option<AtifState>>,
-}
-
-/// State for ATIF trajectory export.
-struct AtifState {
-    builder: AtifTrajectoryBuilder,
-    output_path: PathBuf,
-}
-
-/// State for Open Responses event emission.
-struct OpenResponsesState {
-    integration: OpenResponsesIntegration,
-    writer: Option<BufWriter<File>>,
-    output_path: Option<PathBuf>,
-    sequence_counter: u64,
+    session_id: Option<String>,
+    canonical: Option<CanonicalEventSink>,
+    legacy: Mutex<Option<LegacyWriter>>,
+    open_responses: Mutex<Option<OpenResponsesExporter>>,
+    atif: Mutex<Option<AtifExporter>>,
+    dispatch_gate: Mutex<()>,
+    finalized: AtomicBool,
+    finish_result: OnceCell<std::result::Result<(), String>>,
 }
 
 impl HarnessEventEmitter {
+    /// Construct a compatibility-only emitter for tests and explicit legacy
+    /// integrations. Interactive production sessions use [`Self::new_async`]
+    /// so canonical persistence is opened before the session starts.
+    #[cfg(test)]
     pub(crate) fn new(path: PathBuf) -> Result<Self> {
-        if let Some(parent) = path.parent() {
-            ensure_dir_exists_sync(parent)
-                .with_context(|| format!("Failed to create harness log dir {}", parent.display()))?;
-        }
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .with_context(|| format!("Failed to open harness log {}", path.display()))?;
+        let legacy = LegacyWriter::new_sync(&path)?;
         Ok(Self {
             inner: Arc::new(HarnessEventEmitterInner {
                 path,
-                writer: Mutex::new(BufWriter::new(file)),
+                session_id: None,
+                canonical: None,
+                legacy: Mutex::new(Some(legacy)),
                 open_responses: Mutex::new(None),
                 atif: Mutex::new(None),
+                dispatch_gate: Mutex::new(()),
+                finalized: AtomicBool::new(false),
+                finish_result: OnceCell::new(),
+            }),
+        })
+    }
+
+    /// Construct an emitter with the workspace session store as its
+    /// authoritative sink. `legacy_path` is optional and is only used for the
+    /// explicit compatibility/export path configured by the user.
+    pub(crate) async fn new_async(workspace: &Path, session_id: &str, legacy_path: Option<PathBuf>) -> Result<Self> {
+        let canonical = CanonicalEventSink::open(workspace, session_id).await?;
+        let session_path = vtcode_memory::session_directory(workspace, session_id);
+        let legacy = match legacy_path {
+            Some(path) => match LegacyWriter::new_async(path).await {
+                Ok(writer) => Some(writer),
+                Err(error) => {
+                    tracing::warn!(
+                        target: "vtcode.harness",
+                        phase = "legacy_export_setup",
+                        error = %error,
+                        "optional legacy harness export setup failed; continuing with canonical persistence"
+                    );
+                    None
+                }
+            },
+            None => None,
+        };
+
+        Ok(Self {
+            inner: Arc::new(HarnessEventEmitterInner {
+                path: session_path.join("events.jsonl"),
+                session_id: Some(session_id.to_string()),
+                canonical: Some(canonical),
+                legacy: Mutex::new(legacy),
+                open_responses: Mutex::new(None),
+                atif: Mutex::new(None),
+                dispatch_gate: Mutex::new(()),
+                finalized: AtomicBool::new(false),
+                finish_result: OnceCell::new(),
             }),
         })
     }
@@ -129,198 +113,123 @@ impl HarnessEventEmitter {
     /// Enables Open Responses event emission with the given configuration.
     ///
     /// When enabled, events are also written in Open Responses format to a separate file.
+    #[cfg(test)]
     pub(crate) fn enable_open_responses(
         &self,
         config: OpenResponsesConfig,
         model: &str,
         output_path: Option<PathBuf>,
     ) -> Result<()> {
-        if !config.enabled {
+        let Some(exporter) = OpenResponsesExporter::new_sync(config, model, output_path)? else {
             return Ok(());
-        }
-
-        let writer = if let Some(path) = output_path.as_ref() {
-            if let Some(parent) = path.parent() {
-                ensure_dir_exists_sync(parent)?;
-            }
-            let file = OpenOptions::new().create(true).append(true).open(path)?;
-            Some(BufWriter::new(file))
-        } else {
-            None
         };
-
-        let mut integration = OpenResponsesIntegration::new(config);
-        integration.start_response(model);
-
         let mut guard = self
             .inner
             .open_responses
             .lock()
             .map_err(|e| anyhow::anyhow!("Open Responses lock poisoned: {e}"))?;
-        *guard = Some(OpenResponsesState {
-            integration,
-            writer,
-            output_path,
-            sequence_counter: 0,
-        });
+        *guard = Some(exporter);
 
+        Ok(())
+    }
+
+    /// Enables Open Responses output using the non-blocking exporter path.
+    pub(crate) async fn enable_open_responses_async(
+        &self,
+        config: OpenResponsesConfig,
+        model: &str,
+        output_path: Option<PathBuf>,
+    ) -> Result<()> {
+        let Some(exporter) = OpenResponsesExporter::new_async(config, model, output_path).await? else {
+            return Ok(());
+        };
+        let mut guard = self
+            .inner
+            .open_responses
+            .lock()
+            .map_err(|error| anyhow::anyhow!("Open Responses lock poisoned: {error}"))?;
+        *guard = Some(exporter);
         Ok(())
     }
 
     /// Enables ATIF trajectory export.
     ///
-    /// When enabled, events are collected by an `AtifTrajectoryBuilder` and
-    /// written as a single JSON file on [`finish_atif`](Self::finish_atif).
+    /// When enabled, events are collected and written as one JSON file during
+    /// asynchronous finalization.
     pub(crate) fn enable_atif(&self, model: &str, output_path: PathBuf) -> Result<()> {
-        let agent = AtifAgent::vtcode().with_model(model);
-        let builder = AtifTrajectoryBuilder::new(agent);
-
         let mut guard = self.inner.atif.lock().map_err(|e| anyhow::anyhow!("ATIF lock poisoned: {e}"))?;
-        *guard = Some(AtifState { builder, output_path });
+        *guard = Some(AtifExporter::new(model, output_path));
         Ok(())
     }
 
-    /// Finishes the ATIF trajectory and writes the JSON file to disk.
-    /// Returns (prompt_tokens, completion_tokens, cached_tokens) from the
-    /// already-computed ATIF metrics — zero clones, zero telemetry lock.
-    pub(crate) fn finish_atif(&self) -> (u64, u64, u64) {
+    /// Finishes the ATIF trajectory and writes the JSON file off the async
+    /// runtime. Returns (prompt_tokens, completion_tokens, cached_tokens).
+    async fn finish_atif(&self) -> Result<(u64, u64, u64)> {
         let state = match self.inner.atif.lock() {
             Ok(mut guard) => guard.take(),
-            Err(error) => {
-                tracing::warn!(target: "vtcode.harness", phase = "atif_finish", path = %self.inner.path.display(), error = %error, "ATIF state lock poisoned");
-                return (0, 0, 0);
-            }
+            Err(error) => return Err(anyhow::anyhow!("ATIF state lock poisoned: {error}")),
         };
         let Some(state) = state else {
-            return (0, 0, 0);
+            return Ok((0, 0, 0));
         };
-
-        let trajectory = state.builder.finish(None);
-        let (prompt, completion, cached) = trajectory
-            .final_metrics
-            .as_ref()
-            .map(|fm| {
-                (
-                    fm.total_prompt_tokens.unwrap_or(0),
-                    fm.total_completion_tokens.unwrap_or(0),
-                    fm.total_cached_tokens.unwrap_or(0),
-                )
-            })
-            .unwrap_or((0, 0, 0));
-
-        let json = match serde_json::to_string_pretty(&trajectory) {
-            Ok(j) => j,
-            Err(err) => {
-                tracing::warn!(target: "vtcode.harness", phase = "atif_serialize", path = %state.output_path.display(), error = %err, "failed to serialize ATIF trajectory");
-                return (prompt, completion, cached);
-            }
-        };
-        if let Some(parent) = state.output_path.parent() {
-            if let Err(error) = ensure_dir_exists_sync(parent) {
-                tracing::warn!(target: "vtcode.harness", phase = "atif_setup", path = %parent.display(), error = %error, "failed to create ATIF output directory");
-                return (prompt, completion, cached);
-            }
-        }
-        if let Err(err) = fs::write(&state.output_path, json) {
-            tracing::warn!(target: "vtcode.harness",
-                phase = "atif_write",
-                error = %err,
-                path = %state.output_path.display(),
-                "failed to write ATIF trajectory"
-            );
-        }
-        (prompt, completion, cached)
+        state.finish().await
     }
 
     pub(crate) fn emit(&self, event: ThreadEvent) -> Result<()> {
-        // Write to harness log (internal format)
-        let payload = VersionedThreadEvent::new(event.clone());
-        {
-            let mut writer = self
-                .inner
-                .writer
-                .lock()
-                .map_err(|e| {
-                    tracing::warn!(target: "vtcode.harness", phase = "harness_write", path = %self.inner.path.display(), error = %e, "harness log lock poisoned");
-                    anyhow::anyhow!("Harness log lock poisoned: {e}")
-                })?;
-            let serialized = serde_json::to_string(&payload).map_err(|error| {
-                tracing::warn!(target: "vtcode.harness", phase = "harness_serialize", path = %self.inner.path.display(), error = %error, "harness event serialization failed");
-                anyhow::anyhow!("Failed to serialize harness event: {error}")
-            })?;
-            writer
-                .write_all(serialized.as_bytes())
-                .map_err(|error| {
-                    tracing::warn!(target: "vtcode.harness", phase = "harness_write", path = %self.inner.path.display(), error = %error, "harness event write failed");
-                    anyhow::anyhow!("Failed to write harness event: {error}")
-                })?;
-            writer.write_all(b"\n").map_err(|error| {
-                tracing::warn!(target: "vtcode.harness", phase = "harness_write", path = %self.inner.path.display(), error = %error, "harness event newline write failed");
-                anyhow::anyhow!("Failed to write harness event newline: {error}")
-            })?;
-            writer.flush().map_err(|error| {
-                tracing::warn!(target: "vtcode.harness", phase = "harness_flush", path = %self.inner.path.display(), error = %error, "harness log flush failed");
-                anyhow::anyhow!("Failed to flush harness log: {error}")
-            })?;
+        let _dispatch = self
+            .inner
+            .dispatch_gate
+            .lock()
+            .map_err(|error| anyhow::anyhow!("harness dispatch gate poisoned: {error}"))?;
+        if self.inner.finalized.load(Ordering::Acquire) {
+            return Err(anyhow::anyhow!("harness emitter has already been finalized"));
         }
 
-        // Also emit to Open Responses format if enabled
-        match self.inner.open_responses.lock() {
-            Ok(mut guard) => {
-                if let Some(ref mut state) = *guard {
-                    state.integration.process_event(&event);
+        // Canonical persistence is the authoritative path. Its bounded handoff
+        // may apply backpressure, but it never performs filesystem I/O here.
+        if let Some(canonical) = &self.inner.canonical {
+            canonical.emit(&event)?;
+        }
 
-                    // Write any emitted Open Responses events
-                    for stream_event in state.integration.take_events() {
-                        if let Some(ref mut writer) = state.writer {
-                            let seq = state.sequence_counter;
-                            state.sequence_counter += 1;
-                            let sequenced = SequencedEvent::new(seq, &stream_event);
-
-                            // SSE format
-                            if let Err(error) = writeln!(writer, "event: {}", stream_event.event_type()) {
-                                tracing::warn!(target: "vtcode.harness", phase = "open_responses_write", path = %state.output_path.as_ref().map_or_else(|| self.inner.path.display().to_string(), |path| path.display().to_string()), error = %error, "Open Responses event write failed");
-                            }
-                            match serde_json::to_string(&sequenced) {
-                                Ok(json) => {
-                                    if let Err(error) = writeln!(writer, "data: {json}") {
-                                        tracing::warn!(target: "vtcode.harness", phase = "open_responses_write", path = %state.output_path.as_ref().map_or_else(|| self.inner.path.display().to_string(), |path| path.display().to_string()), error = %error, "Open Responses data write failed");
-                                    }
-                                }
-                                Err(error) => {
-                                    tracing::warn!(target: "vtcode.harness", phase = "open_responses_serialize", path = %state.output_path.as_ref().map_or_else(|| self.inner.path.display().to_string(), |path| path.display().to_string()), error = %error, "Open Responses event serialization failed")
-                                }
-                            }
-                            if let Err(error) = writeln!(writer) {
-                                tracing::warn!(target: "vtcode.harness", phase = "open_responses_write", path = %state.output_path.as_ref().map_or_else(|| self.inner.path.display().to_string(), |path| path.display().to_string()), error = %error, "Open Responses event terminator write failed");
-                            }
-                            if let Err(error) = writer.flush() {
-                                tracing::warn!(target: "vtcode.harness", phase = "open_responses_flush", path = %state.output_path.as_ref().map_or_else(|| self.inner.path.display().to_string(), |path| path.display().to_string()), error = %error, "Open Responses flush failed");
-                            }
+        // The legacy JSONL file is an optional compatibility export.
+        if let Ok(guard) = self.inner.legacy.lock() {
+            if let Some(writer) = guard.as_ref() {
+                match serde_json::to_string(&VersionedThreadEvent::new(event.clone())) {
+                    Ok(serialized) => {
+                        if let Err(error) = writer.write_line(serialized) {
+                            tracing::warn!(target: "vtcode.harness", phase = "legacy_export", path = %self.inner.path.display(), error = %error, "legacy harness export write failed");
                         }
+                    }
+                    Err(error) => {
+                        tracing::warn!(target: "vtcode.harness", phase = "legacy_export", path = %self.inner.path.display(), error = %error, "legacy harness event serialization failed")
                     }
                 }
             }
-            Err(poisoned) => {
-                tracing::warn!(
-                    target: "vtcode.harness",
-                    phase = "open_responses_write",
-                    path = %self.inner.path.display(),
-                    error = %poisoned,
-                    "Open Responses mutex poisoned; dropping event to avoid cascade"
-                );
-            }
+        } else {
+            tracing::warn!(target: "vtcode.harness", phase = "legacy_export", path = %self.inner.path.display(), "legacy harness exporter lock poisoned");
         }
 
-        // Also feed ATIF trajectory builder if enabled
-        match self.inner.atif.lock() {
+        // All consumers are fed while holding one gate, so their observed order
+        // is identical even when an optional exporter is slow or saturated.
+        match self.inner.open_responses.lock() {
             Ok(mut guard) => {
-                if let Some(ref mut state) = *guard {
-                    state.builder.process_event(&event);
+                if let Some(state) = guard.as_mut() {
+                    state.process_event(&event, &self.inner.path);
                 }
             }
             Err(error) => {
-                tracing::warn!(target: "vtcode.harness", phase = "atif_write", path = %self.inner.path.display(), error = %error, "ATIF state lock poisoned while processing event")
+                tracing::warn!(target: "vtcode.harness", phase = "open_responses_export", path = %self.inner.path.display(), error = %error, "Open Responses exporter lock poisoned")
+            }
+        }
+
+        match self.inner.atif.lock() {
+            Ok(mut guard) => {
+                if let Some(state) = guard.as_mut() {
+                    state.process_event(&event);
+                }
+            }
+            Err(error) => {
+                tracing::warn!(target: "vtcode.harness", phase = "atif_export", path = %self.inner.path.display(), error = %error, "ATIF exporter lock poisoned")
             }
         }
 
@@ -338,44 +247,110 @@ impl HarnessEventEmitter {
 
         self.emit(ThreadEvent::ItemCompleted(ItemCompletedEvent {
             item: ThreadItem {
-                id: format!("{turn_id}-assistant-final-{}", Utc::now().timestamp_millis()),
+                id: format!("{turn_id}-assistant-final-{}", Uuid::new_v4()),
                 details: ThreadItemDetails::AgentMessage(AgentMessageItem { text: text.to_string() }),
             },
         }))
     }
 
-    /// Finishes the Open Responses session and writes the terminal marker.
-    pub(crate) fn finish_open_responses(&self) {
-        match self.inner.open_responses.lock() {
-            Ok(mut guard) => {
-                if let Some(ref mut state) = *guard {
-                    let output_path = state
-                        .output_path
-                        .as_ref()
-                        .map_or_else(|| self.inner.path.display().to_string(), |path| path.display().to_string());
-                    if state.integration.finish_response().is_none() {
-                        tracing::warn!(target: "vtcode.harness", phase = "open_responses_finish", path = %output_path, error = "no terminal response was produced", "Open Responses finish produced no terminal response");
-                    }
-                    if let Some(ref mut writer) = state.writer {
-                        if let Err(error) = writeln!(writer, "data: [DONE]") {
-                            tracing::warn!(target: "vtcode.harness", phase = "open_responses_finish", path = %output_path, error = %error, "Open Responses terminal marker write failed");
-                        }
-                        if let Err(error) = writer.flush() {
-                            tracing::warn!(target: "vtcode.harness", phase = "open_responses_flush", path = %output_path, error = %error, "Open Responses terminal marker flush failed");
-                        }
-                    }
-                }
+    /// Finish every exporter and drain canonical persistence exactly once.
+    pub(crate) async fn finish(&self) -> Result<()> {
+        let result = self
+            .inner
+            .finish_result
+            .get_or_init(|| async { self.finish_once().await.map_err(|error| error.to_string()) })
+            .await;
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) => Err(anyhow::anyhow!(error.clone())),
+        }
+    }
+
+    async fn finish_once(&self) -> Result<()> {
+        let already_finalized = {
+            let _dispatch = self
+                .inner
+                .dispatch_gate
+                .lock()
+                .map_err(|error| anyhow::anyhow!("harness dispatch gate poisoned: {error}"))?;
+            self.inner.finalized.swap(true, Ordering::AcqRel)
+        };
+        if already_finalized {
+            return Ok(());
+        }
+
+        self.finish_open_responses_async().await;
+        if let Err(error) = self.finish_atif().await {
+            tracing::warn!(target: "vtcode.harness", phase = "atif_finish", path = %self.inner.path.display(), error = %error, "ATIF export finalization failed");
+        }
+
+        let legacy = self.inner.legacy.lock().ok().and_then(|mut guard| guard.take());
+        if let Some(writer) = legacy {
+            if let Err(error) = writer.flush().await {
+                tracing::warn!(target: "vtcode.harness", phase = "legacy_export_flush", path = %self.inner.path.display(), error = %error, "legacy harness export flush failed");
             }
-            Err(poisoned) => {
+            let diagnostics = writer.diagnostics();
+            if diagnostics.dropped_lines > 0 || diagnostics.write_failures > 0 {
                 tracing::warn!(
                     target: "vtcode.harness",
-                    phase = "open_responses_finish",
+                    phase = "legacy_export_drops",
                     path = %self.inner.path.display(),
-                    error = %poisoned,
-                    "Open Responses mutex poisoned during finish; skipping terminal marker"
+                    dropped_lines = diagnostics.dropped_lines,
+                    dropped_bytes = diagnostics.dropped_bytes,
+                    write_failures = diagnostics.write_failures,
+                    "optional legacy harness export dropped data"
                 );
             }
         }
+
+        if let Some(canonical) = &self.inner.canonical {
+            canonical.close().await.context("canonical session event drain failed")?;
+        }
+        Ok(())
+    }
+
+    async fn finish_open_responses_async(&self) {
+        let state = self.inner.open_responses.lock().ok().and_then(|mut guard| guard.take());
+        let Some(state) = state else {
+            return;
+        };
+        state.finish_async(&self.inner.path).await;
+    }
+
+    pub(crate) async fn finish_after_unexpected_exit(&self) {
+        let Some(session_id) = self.inner.session_id.clone() else {
+            return;
+        };
+        if let Err(error) = self.emit(turn_failed_event("interactive session exited before harness finalization", None))
+        {
+            tracing::error!(target: "vtcode.harness", phase = "drop_finalize", error = %error, "failed to enqueue unexpected-exit turn.failed event");
+        }
+        if let Err(error) = self.emit(thread_completed_event(
+            session_id.clone(),
+            session_id,
+            ThreadCompletionSubtype::ErrorDuringExecution,
+            "error",
+            None,
+            Some("interactive session exited before harness finalization".to_string()),
+            Usage::default(),
+            None,
+            0,
+        )) {
+            tracing::error!(target: "vtcode.harness", phase = "drop_finalize", error = %error, "failed to enqueue unexpected-exit thread.completed event");
+        }
+        if let Err(error) = self.finish().await {
+            tracing::error!(target: "vtcode.harness", phase = "drop_finalize", error = %error, "failed to finalize harness after an unexpected session exit");
+        }
+    }
+
+    /// Synchronous compatibility finalizer used by focused unit tests.
+    #[cfg(test)]
+    pub(crate) fn finish_open_responses(&self) {
+        let state = self.inner.open_responses.lock().ok().and_then(|mut guard| guard.take());
+        let Some(state) = state else {
+            return;
+        };
+        state.finish_sync(&self.inner.path);
     }
 
     #[cfg(test)]
@@ -384,18 +359,22 @@ impl HarnessEventEmitter {
     }
 }
 
-pub(crate) fn resolve_event_log_path(path: &str, run_id: &TurnRunId) -> PathBuf {
-    let mut base = PathBuf::from(path);
-    if base.extension().is_none() {
-        let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ");
-        base = base.join(format!("harness-{}-{}.jsonl", run_id.0, timestamp));
-    }
-    base
-}
+impl Drop for HarnessEventEmitter {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.inner) != 1
+            || self.inner.canonical.is_none()
+            || self.inner.finalized.load(Ordering::Acquire)
+        {
+            return;
+        }
 
-/// Returns the default harness log directory for the current VT Code session dir.
-pub(crate) fn default_harness_log_dir() -> Option<PathBuf> {
-    Some(vtcode_core::utils::session_debug::default_sessions_dir())
+        let emitter = self.clone();
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::error!(target: "vtcode.harness", phase = "drop_finalize", "cannot finalize harness after an unexpected session exit without a Tokio runtime");
+            return;
+        };
+        runtime.spawn(async move { emitter.finish_after_unexpected_exit().await });
+    }
 }
 
 pub(crate) fn tool_started_event(
@@ -510,7 +489,7 @@ pub(crate) fn harness_event(
 ) -> ThreadEvent {
     ThreadEvent::ItemCompleted(ItemCompletedEvent {
         item: ThreadItem {
-            id: format!("harness-{}", Utc::now().timestamp_millis()),
+            id: format!("harness-{}", Uuid::new_v4()),
             details: ThreadItemDetails::Harness(HarnessEventItem {
                 event,
                 message,
@@ -528,9 +507,12 @@ pub(crate) fn harness_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::runloop::unified::run_loop_context::TurnRunId;
     use serde_json::json;
+    use std::fs;
     use tempfile::TempDir;
     use vtcode_core::exec::events::ItemStartedEvent;
+    use vtcode_memory::DEFAULT_MAX_EVENTS;
 
     #[test]
     fn resolve_event_log_path_appends_jsonl_when_directory() {
@@ -625,7 +607,121 @@ mod tests {
         let or_content = fs::read_to_string(&or_path).expect("read OR");
         assert!(or_content.contains("response.created"));
         assert!(or_content.contains("response.completed"));
+        assert!(or_content.contains("\n\n"), "SSE events must be separated by a blank line");
         assert!(or_content.contains("[DONE]"));
+    }
+
+    #[tokio::test]
+    async fn async_emitter_drains_large_canonical_batch_and_uses_unique_ids() {
+        let tmp = TempDir::new().expect("temp dir");
+        let emitter = HarnessEventEmitter::new_async(tmp.path(), "large-session", None)
+            .await
+            .expect("canonical emitter");
+
+        for index in 0..3_253 {
+            emitter
+                .emit(harness_event(
+                    HarnessEventKind::ToolLatencyRecorded,
+                    Some(format!("event-{index}")),
+                    None,
+                    None,
+                    None,
+                ))
+                .expect("emit canonical event");
+        }
+        emitter.finish().await.expect("canonical drain");
+
+        let event_path = tmp.path().join(".vtcode/sessions/large-session/events.jsonl");
+        let lines = fs::read_to_string(event_path)
+            .expect("read canonical events")
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        assert_eq!(lines.len(), 3_253);
+
+        let mut ids = std::collections::HashSet::new();
+        for line in lines {
+            let event: VersionedThreadEvent = serde_json::from_str(&line).expect("decode canonical event");
+            let ThreadEvent::ItemCompleted(ItemCompletedEvent { item }) = event.into_event() else {
+                panic!("expected harness item event");
+            };
+            assert!(ids.insert(item.id), "harness item id was duplicated");
+        }
+    }
+
+    #[tokio::test]
+    async fn optional_legacy_export_setup_failure_does_not_disable_canonical_persistence() {
+        let tmp = TempDir::new().expect("temp dir");
+        let legacy_path = tmp.path().join("legacy-directory");
+        fs::create_dir(&legacy_path).expect("create legacy directory");
+
+        let emitter = HarnessEventEmitter::new_async(tmp.path(), "canonical-session", Some(legacy_path))
+            .await
+            .expect("canonical emitter should remain available");
+        emitter.emit(turn_started_event()).expect("emit canonical event");
+        emitter.finish().await.expect("canonical drain");
+
+        let event_path = tmp.path().join(".vtcode/sessions/canonical-session/events.jsonl");
+        let event_lines = fs::read_to_string(event_path).expect("read canonical events").lines().count();
+        assert_eq!(event_lines, 1);
+    }
+
+    #[tokio::test]
+    async fn async_exporters_share_order_and_finalize_once() {
+        let tmp = TempDir::new().expect("temp dir");
+        let legacy_path = tmp.path().join("legacy.jsonl");
+        let emitter = HarnessEventEmitter::new_async(tmp.path(), "ordered-session", Some(legacy_path.clone()))
+            .await
+            .expect("canonical emitter");
+        let config = OpenResponsesConfig {
+            enabled: true,
+            emit_events: true,
+            include_extensions: true,
+            map_tool_calls: true,
+            include_reasoning: true,
+        };
+        let open_responses_path = tmp.path().join("open-responses.jsonl");
+        emitter
+            .enable_open_responses_async(config, "test-model", Some(open_responses_path.clone()))
+            .await
+            .expect("Open Responses exporter");
+
+        let events = vec![
+            ThreadEvent::ThreadStarted(ThreadStartedEvent { thread_id: "ordered-thread".to_string() }),
+            turn_started_event(),
+            turn_completed_event(Usage::default()),
+        ];
+        for event in events {
+            emitter.emit(event).expect("emit ordered event");
+        }
+        emitter.finish().await.expect("finish exporters");
+        emitter.finish().await.expect("second finish is idempotent");
+
+        let canonical = fs::read_to_string(tmp.path().join(".vtcode/sessions/ordered-session/events.jsonl"))
+            .expect("read canonical events");
+        let legacy = fs::read_to_string(legacy_path).expect("read legacy events");
+        assert_eq!(canonical.lines().collect::<Vec<_>>(), legacy.lines().collect::<Vec<_>>());
+
+        let open_responses = fs::read_to_string(open_responses_path).expect("read Open Responses events");
+        assert!(open_responses.contains("response.created"));
+        assert_eq!(open_responses.matches("data: [DONE]").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn canonical_lifecycle_status_changes_only_at_thread_completion() {
+        let tmp = TempDir::new().expect("temp dir");
+        let emitter = HarnessEventEmitter::new_async(tmp.path(), "lifecycle-session", None)
+            .await
+            .expect("canonical emitter");
+        emitter
+            .emit(ThreadEvent::TurnStarted(TurnStartedEvent::default()))
+            .expect("turn start");
+        emitter.emit(turn_completed_event(Usage::default())).expect("turn completion");
+        emitter.finish().await.expect("finish active session");
+
+        let active =
+            vtcode_memory::open(tmp.path(), "lifecycle-session", DEFAULT_MAX_EVENTS).expect("open active session");
+        assert_eq!(active.manifest().status, "active");
     }
 
     #[test]

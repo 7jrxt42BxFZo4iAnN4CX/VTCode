@@ -6,7 +6,10 @@ For the full specification, see the [ATIF RFC](https://github.com/laude-institut
 
 ## Overview
 
-When enabled, VT Code exports an `atif-trajectory.json` file alongside the existing `.jsonl` trajectory log at session end. The file captures the complete session: user messages, agent responses, tool executions, observations, and per-step/aggregate LLM metrics.
+When enabled, VT Code exports an `atif-trajectory.json` file under the
+canonical session's derived artifacts at session end. The file captures the
+complete session: user messages, agent responses, tool executions,
+observations, and per-step/aggregate LLM metrics.
 
 ## Configuration
 
@@ -19,7 +22,12 @@ atif_enabled = true
 
 The ATIF export is independent of `trajectory_enabled` — you can enable one without the other.
 
-Output location: `~/.vtcode/sessions/atif-trajectory-<session-id>-<timestamp>.json`
+Output location: `<workspace>/.vtcode/sessions/<session_id>/derived/atif-trajectory.json`
+
+The canonical source stream is
+`<workspace>/.vtcode/sessions/<session_id>/events.jsonl`. Historical global
+artifacts under `~/.vtcode/sessions/` are left untouched and are not imported
+or deleted automatically.
 
 ## Schema
 

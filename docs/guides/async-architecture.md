@@ -332,7 +332,7 @@ The channel policy follows the data's correctness contract:
 
 | Data path | Backpressure policy | Shutdown policy |
 |---|---|---|
-| Authoritative session `ThreadEvent` persistence | Bounded synchronous handoff waits when full. Accepted events are ordered and are not silently dropped; a persistence failure marks the sink unavailable and is logged at error level. | The runner closes and awaits the sink after terminal events; queued events drain, and append/flush failures make the task fail rather than being reported as success. |
+| Authoritative session `ThreadEvent` persistence | One bounded non-blocking handoff (`try_send`) keeps Tokio workers responsive. The queue has event-count and estimated-byte limits; saturation fails closed and reports the persistence failure, while accepted events remain ordered and are not silently dropped. Canonical files live under `<workspace>/.vtcode/sessions/<session_id>/events.jsonl`. | The runner closes and awaits the sink after terminal events; accepted queued events drain, and queue/append/flush failures make the task fail rather than being reported as success. Optional legacy exporters are separate and do not create global files by default. |
 | Diagnostic trajectory JSONL | Bounded by channel/line count and bytes. Saturation may drop records and increments diagnostics. | `flush()` remains best-effort for compatibility; the internal result path reports actor or file failures, and actor shutdown performs a final flush. |
 | Tool/read results | Explicit non-zero concurrency, bounded in-flight work, deterministic input-order assembly. | Caller cancellation drops the in-flight futures; no extra worker pool is introduced without measured benefit. |
 

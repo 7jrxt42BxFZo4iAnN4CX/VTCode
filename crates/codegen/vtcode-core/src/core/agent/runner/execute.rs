@@ -448,7 +448,7 @@ impl AgentRunner {
         let mut revision_rounds_used = 0usize;
         let mut should_write_blocked_handoff = false;
 
-        let result = {
+        let result: Result<_> = {
             for turn in 0..self.max_turns {
                 if matches!(runtime.poll_turn_control().await, RuntimeControl::StopRequested) {
                     self.runner_println(format_args!(
@@ -1255,7 +1255,7 @@ impl AgentRunner {
                 runtime.state.total_cost_usd.and_then(serde_json::Number::from_f64),
                 runtime.state.stats.turns_executed,
             );
-            let thread_events = event_recorder.into_events();
+            let thread_events = event_recorder.take_events();
             let steering_receiver = runtime.take_steering_receiver();
             let state = std::mem::replace(
                 &mut runtime.state,
@@ -1271,6 +1271,11 @@ impl AgentRunner {
                 Ok(task_results)
             }
             Err(err) => {
+                event_recorder.thread_failed(
+                    &self.session_id,
+                    &err.to_string(),
+                    runtime.state.stats.turns_executed.max(1),
+                );
                 *self.steering_receiver.lock() = runtime.take_steering_receiver();
                 Err(err)
             }

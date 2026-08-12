@@ -64,7 +64,7 @@ python3 scripts/generate_config_field_reference.py
 | `agent.harness.context_reset_mode` | `string` | no | `"off"` | When to trigger a context reset — starting a clean session from external artifacts only, discarding conversation history. Distinct from compaction (which preserves conversational continuity). Default: `off` (carry forward history as before). |
 | `agent.harness.context_reset_stall_threshold` | `integer` | no | `2` | Number of consecutive stall turns before `on_stall` context reset triggers. Ignored unless `context_reset_mode = "on_stall"`. Default: 2. |
 | `agent.harness.continuation_policy` | `string` | no | `"all"` | Controls whether harness-managed continuation loops are enabled. |
-| `agent.harness.event_log_path` | `null \| string` | no | `null` | Optional JSONL event log path for harness events. Defaults to `~/.vtcode/sessions/` when unset. |
+| `agent.harness.event_log_path` | `null \| string` | no | `null` | Optional compatibility/export JSONL path for harness events. The canonical log is always `<workspace>/.vtcode/sessions/<session_id>/events.jsonl`; no global harness file is created when this is unset. |
 | `agent.harness.max_budget_usd` | `null \| number` | no | `null` | Optional maximum estimated API cost in USD before VT Code stops the session. |
 | `agent.harness.max_parallel_tool_calls` | `integer` | no | `4` | Maximum number of tool calls that may execute concurrently within a single parallel batch. Set to `0` to disable the cap (unlimited concurrency). Default: 4. |
 | `agent.harness.max_revision_rounds` | `integer` | no | `2` | Maximum generator revision rounds after evaluator rejection. |
@@ -697,7 +697,7 @@ python3 scripts/generate_config_field_reference.py
 | `syntax_highlighting.highlight_timeout_ms` | `integer` | no | `5000` | Performance settings - highlight timeout in milliseconds |
 | `syntax_highlighting.max_file_size_mb` | `integer` | no | `10` | Maximum file size for syntax highlighting (in MB) |
 | `syntax_highlighting.theme` | `string` | no | `"base16-ocean.dark"` | Theme to use for syntax highlighting |
-| `telemetry.atif_enabled` | `boolean` | no | `false` | Enable ATIF (Agent Trajectory Interchange Format) trajectory export. When enabled, sessions write an `atif-trajectory.json` alongside the existing `.jsonl` trajectory log. |
+| `telemetry.atif_enabled` | `boolean` | no | `false` | Enable ATIF (Agent Trajectory Interchange Format) trajectory export. When enabled by the interactive harness, the output is `<workspace>/.vtcode/sessions/<session_id>/derived/atif-trajectory.json`. |
 | `telemetry.bottleneck_tracing` | `boolean` | no | `false` | Emit bottleneck traces for slow paths |
 | `telemetry.dashboards_enabled` | `boolean` | no | `true` | Enable real-time dashboards |
 | `telemetry.perf_events` | `boolean` | no | `true` | Emit performance events for file I/O, spawns, and UI latency |

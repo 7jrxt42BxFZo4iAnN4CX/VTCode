@@ -247,7 +247,7 @@ This review covers checkpoint failures in turns `845`–`894`: incomplete plan a
 | Non-empty drafts could reach approval without strict validation. | `ValidatedPlanArtifact` validates required sections, placeholders, implementation/validation items, assumptions, and unresolved decisions before approval events or overlays. One repair synthesis is allowed; a second rejection remains in planning. |
 | Tracker creation errors were swallowed or duplicated across handoff paths. | `PlanningFinishReason::Approved` creates and verifies the tracker before disabling planning. Missing tools, tool errors, invalid results, and missing tracker files fail closed. All approval routes use `complete_approved_plan_handoff`. |
 | The session runner concentrated lifecycle and recovery wiring in one module. | `session_loop_runner/mod.rs` is a small facade. The orchestration body, harness setup, archive, metrics, plan seed, and support phases have explicit module boundaries. |
-| Optional harness sinks discarded setup and write failures. | Harness setup is centralized and warnings include phase, path, and error. Internal event logs, Open Responses, and ATIF setup/write/flush/finalization failures remain best effort but observable through tracing. |
+| Optional harness sinks discarded setup and write failures. | Compatibility exports remain best effort and observable through tracing, but canonical `ThreadEvent` persistence now fails closed: setup and drain failures prevent a successful run from being reported. |
 
 ## Runtime invariants
 
@@ -335,3 +335,59 @@ cargo nextest run --profile quick -p vtcode-core -p vtcode
 ```
 
 Result: 5,579/5,579 tests passed, 12 skipped; format and clippy clean. No new tests required for the pure DRY refactors (behavior preserved); the existing 640 preflight/remap/alias/code_search tests cover the changed paths.
+
+---
+
+## 2026-08-11 | Canonical persistence and harness stability follow-up
+
+### Scope
+
+Revisited the sampled 3,253-event session and the harness persistence paths
+after the token/context fixes. The implementation now treats the workspace
+`vtcode-memory` session store as authoritative for both interactive and exec
+runs.
+
+### Findings and disposition
+
+| Finding | Severity | Disposition |
+| --- | --- | --- |
+| Synchronous JSON serialization, file writes, and `flush()` ran on every harness event. | High | Canonical events now use one bounded non-blocking handoff with event-count and estimated-byte limits to a blocking drain; saturation fails closed instead of growing memory or silently dropping authoritative events. Explicit legacy, Open Responses, and ATIF exporters are isolated; JSONL exporters use `AsyncLineWriter`, while ATIF serialization and writes use `spawn_blocking`. |
+| Interactive harness logs and exec logs used a global default path in addition to session state. | High | Canonical events are stored at `<workspace>/.vtcode/sessions/<session_id>/events.jsonl`. `agent.harness.event_log_path` and exec `--events` are explicit compatibility exports; unset configuration creates no global harness file. |
+| Retention trusted `manifest.json.session_id` when constructing deletion paths. | High | Retention enumerates direct child directories, skips symlinks and active sessions, and deletes only validated children of `.vtcode/sessions`. Manifest IDs cannot redirect deletion. |
+| Independent exporter locks allowed consumers to observe divergent ordering. | Medium | One dispatch gate feeds canonical, legacy, Open Responses, and ATIF consumers in the same order. |
+| Millisecond-only harness IDs collided in the sampled logs. | Medium | Harness-generated item IDs use UUIDs; the 3,253-event regression test asserts uniqueness. |
+| Session status became terminal at turn boundaries. | Medium | `thread.started`/`turn.started` establish activity; only `thread.completed` makes the manifest terminal. |
+| The harness facade mixed persistence, conversion, retention, and construction. | Low | Canonical, legacy, Open Responses, ATIF, and path helpers are now sibling modules behind a thin facade. |
+
+### Persistence invariants
+
+- Canonical store open and drain failures are propagated; authoritative event
+  loss cannot be reported as a successful run.
+- Canonical events retain their existing per-session event cap. Retention keeps
+  the 50-session/30-day defaults and leaves historical global artifacts alone.
+- Optional exporter drops are reported separately and never redefine the
+  canonical event contract (`ThreadEvent`).
+- Native Codex exec emits lifecycle-only canonical events because it does not
+  have VT Code tool-event data available; it does not synthesize tool events.
+
+### Post-implementation adversarial review
+
+The second review found no Critical or High findings. The remaining Medium
+finding was concurrent finalization: a second caller could previously observe
+an empty handle and return before the first canonical drain completed. The
+canonical sink and harness facade now share one-shot completion results, so
+concurrent `close`/`finish` callers all wait for the same outcome. Unexpected
+shutdowns also log terminal-event enqueue failures before reporting drain
+failures. No actionable Medium findings remain.
+
+### Verification
+
+```text
+cargo nextest run -p vtcode-memory
+cargo nextest run -p vtcode-core -E 'test(/session_store_sink|event/)'
+cargo nextest run -p vtcode -E 'test(/harness/)'
+cargo fmt --all -- --check
+```
+
+The focused memory, sink, harness, ordering, retention, lifecycle, and
+large-batch tests pass.

@@ -27,6 +27,7 @@ Entry point for VT Code contributor workflows.
 - [Rust Performance Principles](./rust-performance-principles.md) - Rust hot-path and I/O guidance.
 - [Performance Hasher Policy](./performance-hasher-policy.md) - `rustc_hash` usage policy.
 - [Async Performance Audit](./async-performance-audit.md) - Async architecture performance findings.
+- [Session Event Persistence](./session-persistence.md) - Canonical session events, exporter boundaries, retention, and verification.
 
 ## Model Management
 

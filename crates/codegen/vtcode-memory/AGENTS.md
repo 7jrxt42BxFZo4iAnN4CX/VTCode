@@ -11,6 +11,7 @@
 - Public API uses `anyhow::Result<T>` + `.context()`; no `unwrap`/`expect` in non-test code.
 - Keep ordinary appends buffered; flush at turn boundaries, reads, cap rewrites, and close.
 - Return persistence errors to callers; do not silently discard cap-enforcement failures.
+- Retention may remove only validated direct child session directories; preserve active manifests and reject manifest-controlled paths or symlink entries.
 - `event_log.rs`: turn-lifecycle state machine is `LogState::apply_lifecycle_event` (single impl shared by `append` and `scan` via `LifecycleKind`). Serialization+rollback is `LogState::serialize_event`. Cap eviction planning is `LogState::plan_cap_eviction` (I/O stays in `enforce_event_cap`). Do not duplicate these state transitions inline.
 
 ## Dependencies

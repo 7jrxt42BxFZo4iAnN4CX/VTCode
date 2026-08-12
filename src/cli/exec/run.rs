@@ -5,11 +5,17 @@ use std::io::{self, BufWriter};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use tokio::task::spawn_blocking;
 use vtcode_core::config::VTCodeConfig;
 use vtcode_core::config::types::AgentConfig as CoreAgentConfig;
+use vtcode_core::core::agent::events::SessionStoreSink;
 use vtcode_core::core::agent::runner::{AgentRunner, RunnerSettings};
 use vtcode_core::core::agent::task::{ContextItem, Task};
 use vtcode_core::core::agent::types::AgentType;
+use vtcode_core::exec::events::{
+    ThreadCompletedEvent, ThreadCompletionSubtype, ThreadEvent, ThreadStartedEvent, TurnCompletedEvent,
+    TurnFailedEvent, TurnStartedEvent, Usage,
+};
 use vtcode_core::git_info::get_head_commit_hash_async;
 use vtcode_core::llm::provider::{FinishReason, LLMResponse};
 use vtcode_core::review::ReviewTarget;
@@ -29,6 +35,52 @@ const EXEC_TASK_INSTRUCTIONS_DRY_RUN: &str = "You are running vtcode as a non-in
 pub(super) const REVIEW_TASK_ID: &str = "review-task";
 const REVIEW_TASK_TITLE: &str = "Review Task";
 const REVIEW_TASK_INSTRUCTIONS: &str = "You are running vtcode through the non-interactive review command. Review the requested target with read-only permissions. Do not modify files, do not run mutating commands, and do not request user input. Return findings first, ordered by severity, with concrete file and line references when possible. If there are no findings, state that explicitly.";
+
+async fn open_events_writer_async(path: &Path) -> Result<BufWriter<File>> {
+    let path = path.to_path_buf();
+    spawn_blocking(move || open_events_writer(&path))
+        .await
+        .context("exec events writer setup task failed")?
+}
+
+async fn apply_exec_retention(workspace: &Path, session_id: &str) {
+    let workspace = workspace.to_path_buf();
+    let session_id = session_id.to_string();
+    match spawn_blocking(move || {
+        vtcode_memory::apply_retention_preserving(
+            &workspace,
+            vtcode_memory::RetentionPolicy::default(),
+            Some(session_id.as_str()),
+        )
+    })
+    .await
+    {
+        Ok(Ok(removed)) if removed > 0 => {
+            tracing::debug!(target: "vtcode.exec", removed, "pruned closed canonical sessions");
+        }
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => {
+            tracing::warn!(target: "vtcode.exec", error = %error, "canonical session retention failed");
+        }
+        Err(error) => {
+            tracing::warn!(target: "vtcode.exec", error = %error, "canonical session retention task failed");
+        }
+    }
+}
+
+async fn emit_canonical_event(canonical: &SessionStoreSink, event: &ThreadEvent, label: &str) -> Result<()> {
+    if let Err(error) = canonical.emit(event) {
+        let close_result = canonical.close().await;
+        let error = error.context(format!("failed to enqueue {label} canonical session event"));
+        return match close_result {
+            Ok(()) => Err(error),
+            Err(close_error) => {
+                Err(error.context(format!("failed to finalize canonical session events: {close_error}")))
+            }
+        };
+    }
+    Ok(())
+}
 
 pub(super) struct TaskSpec {
     pub(super) id: &'static str,
@@ -79,17 +131,10 @@ pub(super) fn effective_exec_events_path(
     session_id: &str,
 ) -> Option<PathBuf> {
     cli_events_path.map(Path::to_path_buf).or_else(|| {
-        let explicit = harness_event_log_path.filter(|path| !path.trim().is_empty());
-        let effective = explicit
-            .map(String::from)
-            .or_else(|| default_harness_log_dir().map(|d| d.to_string_lossy().into_owned()));
-        effective.map(|path| resolve_exec_event_log_path(&path, session_id))
+        harness_event_log_path
+            .filter(|path| !path.trim().is_empty())
+            .map(|path| resolve_exec_event_log_path(path, session_id))
     })
-}
-
-/// Returns the default harness log directory for the current VT Code data dir.
-fn default_harness_log_dir() -> Option<PathBuf> {
-    Some(vtcode_core::utils::session_debug::default_sessions_dir())
 }
 
 async fn checkpoint_exec_archive(
@@ -184,10 +229,10 @@ pub(super) async fn handle_exec_command_impl(
         options.json,
         !options.json && !run_config.quiet,
         options.json.then(io::stdout),
-        events_path
-            .as_ref()
-            .map(|path| open_events_writer(path.as_path()))
-            .transpose()?,
+        match events_path.as_ref() {
+            Some(path) => Some(open_events_writer_async(path).await?),
+            None => None,
+        },
         (!options.json && !run_config.quiet).then(io::stderr),
     )));
     let event_processor = Arc::clone(&processor);
@@ -204,10 +249,21 @@ pub(super) async fn handle_exec_command_impl(
     };
 
     let max_retries = run_vt_cfg.agent.max_task_retries;
-    let result = runner
+    let result = match runner
         .execute_task_with_retry(&task, &[] as &[ContextItem], max_retries)
         .await
-        .context("Failed to execute autonomous task after retries")?;
+        .context("Failed to execute autonomous task after retries")
+    {
+        Ok(result) => result,
+        Err(error) => {
+            let mut processor = lock_or_recover(&processor);
+            processor.finish_events_output();
+            if let Err(export_error) = processor.take_error() {
+                tracing::warn!(target: "vtcode.exec", phase = "events_export", error = %export_error, "explicit exec events export failed after task failure");
+            }
+            return Err(error);
+        }
+    };
 
     let last_message = {
         let mut processor = lock_or_recover(&processor);
@@ -256,17 +312,40 @@ async fn handle_codex_exec_command_impl(
         model_id: _,
         active_primary_agent,
         prompt,
-        session_id: _,
+        session_id,
         archive,
         thread_bootstrap,
     } = prepared;
     let task_spec = task_spec(&options.command, options.dry_run);
 
-    if options.events_path.is_some() || run_vt_cfg.agent.harness.event_log_path.is_some() {
-        tracing::warn!("provider=codex does not yet emit exec event logs; continuing without events output");
-    }
+    apply_exec_retention(&run_config.workspace, &session_id).await;
 
-    let completed = run_codex_noninteractive_with_instructions(
+    let review_target = native_review_target(&options.command, run_config.workspace.as_path()).await?;
+
+    let events_path = effective_exec_events_path(
+        options.events_path.as_deref(),
+        run_vt_cfg.agent.harness.event_log_path.as_deref(),
+        &session_id,
+    );
+    let mut event_processor = ExecEventProcessor::<io::Stdout, BufWriter<File>, io::Stderr>::new(
+        false,
+        false,
+        None,
+        match events_path.as_ref() {
+            Some(path) => Some(open_events_writer_async(path).await?),
+            None => None,
+        },
+        None,
+    );
+    let canonical = SessionStoreSink::open(&run_config.workspace, &session_id).await?;
+    let thread_started = ThreadEvent::ThreadStarted(ThreadStartedEvent { thread_id: session_id.clone() });
+    emit_canonical_event(&canonical, &thread_started, "thread.started").await?;
+    event_processor.process_event(&thread_started);
+    let turn_started = ThreadEvent::TurnStarted(TurnStartedEvent::default());
+    emit_canonical_event(&canonical, &turn_started, "turn.started").await?;
+    event_processor.process_event(&turn_started);
+
+    let codex_result = run_codex_noninteractive_with_instructions(
         &run_config,
         Some(&run_vt_cfg),
         CodexNonInteractiveRun {
@@ -276,11 +355,75 @@ async fn handle_codex_exec_command_impl(
             ephemeral: archive.is_none(),
             resume_thread_id: external_thread_id_from_bootstrap(&thread_bootstrap),
             seed_messages: thread_bootstrap.messages.iter().map(SessionMessage::from).collect(),
-            review_target: native_review_target(&options.command, run_config.workspace.as_path()).await?,
+            review_target,
         },
         codex_exec_turn_instructions(&active_primary_agent, task_spec.instructions),
     )
-    .await?;
+    .await;
+
+    let completed = match codex_result {
+        Ok(completed) => {
+            let turn_completed = ThreadEvent::TurnCompleted(TurnCompletedEvent { usage: Usage::default() });
+            emit_canonical_event(&canonical, &turn_completed, "turn.completed").await?;
+            event_processor.process_event(&turn_completed);
+            let thread_completed = ThreadEvent::ThreadCompleted(ThreadCompletedEvent {
+                thread_id: completed.thread_id.clone(),
+                session_id: session_id.clone(),
+                subtype: ThreadCompletionSubtype::Success,
+                outcome_code: "completed".to_string(),
+                result: Some(completed.output.clone()),
+                stop_reason: None,
+                usage: Usage::default(),
+                total_cost_usd: None,
+                num_turns: 1,
+            });
+            emit_canonical_event(&canonical, &thread_completed, "thread.completed").await?;
+            event_processor.process_event(&thread_completed);
+            let persistence_result = canonical.close().await.context("failed to finalize Codex session events");
+            event_processor.finish_events_output();
+            if let Err(error) = event_processor.take_error() {
+                tracing::warn!(target: "vtcode.exec", phase = "events_export", error = %error, "explicit Codex events export failed");
+            }
+            persistence_result?;
+            completed
+        }
+        Err(error) => {
+            let turn_failed = ThreadEvent::TurnFailed(TurnFailedEvent { message: error.to_string(), usage: None });
+            if let Err(event_error) = canonical.emit(&turn_failed) {
+                tracing::error!(target: "vtcode.exec", error = %event_error, "failed to enqueue turn.failed canonical session event");
+            }
+            event_processor.process_event(&turn_failed);
+            let thread_completed = ThreadEvent::ThreadCompleted(ThreadCompletedEvent {
+                thread_id: session_id.clone(),
+                session_id: session_id.clone(),
+                subtype: ThreadCompletionSubtype::ErrorDuringExecution,
+                outcome_code: "failed".to_string(),
+                result: None,
+                stop_reason: Some(error.to_string()),
+                usage: Usage::default(),
+                total_cost_usd: None,
+                num_turns: 1,
+            });
+            if let Err(event_error) = canonical.emit(&thread_completed) {
+                tracing::error!(target: "vtcode.exec", error = %event_error, "failed to enqueue thread.completed canonical session event");
+            }
+            event_processor.process_event(&thread_completed);
+            let persistence_result = canonical
+                .close()
+                .await
+                .context("failed to finalize failed Codex session events");
+            event_processor.finish_events_output();
+            if let Err(export_error) = event_processor.take_error() {
+                tracing::warn!(target: "vtcode.exec", phase = "events_export", error = %export_error, "explicit Codex events export failed");
+            }
+            if let Err(persistence_error) = persistence_result {
+                return Err(
+                    error.context(format!("failed to finalize failed Codex session events: {persistence_error}"))
+                );
+            }
+            return Err(error);
+        }
+    };
 
     if let Some(path) = &options.last_message_file {
         write_file_with_context(path, completed.output.as_str(), "last message file").await?;

@@ -59,6 +59,8 @@ struct BorrowedVersionedEvent<'a> {
 /// [`LogState::apply_lifecycle_event`], eliminating a duplicated state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LifecycleKind {
+    ThreadStarted,
+    ThreadCompleted,
     TurnStarted,
     TurnCompleted,
     TurnFailed,
@@ -70,6 +72,8 @@ impl LifecycleKind {
     #[inline]
     fn from_event(event: &ThreadEvent) -> Self {
         match event {
+            ThreadEvent::ThreadStarted(_) => Self::ThreadStarted,
+            ThreadEvent::ThreadCompleted(_) => Self::ThreadCompleted,
             ThreadEvent::TurnStarted(_) => Self::TurnStarted,
             ThreadEvent::TurnCompleted(_) => Self::TurnCompleted,
             ThreadEvent::TurnFailed(_) => Self::TurnFailed,
@@ -81,6 +85,8 @@ impl LifecycleKind {
     #[inline]
     fn from_kind(kind: &str) -> Self {
         match kind {
+            "thread.started" => Self::ThreadStarted,
+            "thread.completed" => Self::ThreadCompleted,
             "turn.started" => Self::TurnStarted,
             "turn.completed" => Self::TurnCompleted,
             "turn.failed" => Self::TurnFailed,
@@ -157,7 +163,16 @@ impl LogState {
     /// once after the full scan).
     fn apply_lifecycle_event(&mut self, kind: LifecycleKind, start: u64, end: u64) -> bool {
         match kind {
+            LifecycleKind::ThreadStarted => {
+                self.manifest.status = "active".to_string();
+                false
+            }
+            LifecycleKind::ThreadCompleted => {
+                self.manifest.status = "completed".to_string();
+                true
+            }
             LifecycleKind::TurnStarted => {
+                self.manifest.status = "active".to_string();
                 self.in_turn = true;
                 let n = self.manifest.turn_count + 1;
                 self.index.entries.push_back(TurnIndexEntry {
@@ -178,12 +193,6 @@ impl LogState {
                     self.in_turn = false;
                     self.manifest.turn_count = self.index.entries.len() as u64;
                 }
-                self.manifest.status = if kind == LifecycleKind::TurnCompleted {
-                    "completed"
-                } else {
-                    "failed"
-                }
-                .to_string();
                 true
             }
             LifecycleKind::Other => {
@@ -440,10 +449,13 @@ impl SessionEventLog {
         self.state.lock().map_err(poison).map(|s| s.index.clone()).unwrap_or_default()
     }
 
-    /// Mark the session completed and flush metadata.
+    /// Flush metadata for callers that explicitly close a log handle.
+    ///
+    /// Terminal status is intentionally controlled only by a persisted
+    /// `thread.completed` event. This method does not synthesize lifecycle
+    /// state for callers that merely release a store handle.
     pub(crate) fn complete(&self) -> Result<(), SessionStoreError> {
         let mut st = self.state.lock().map_err(poison)?;
-        st.manifest.status = "completed".to_string();
         st.manifest.updated_at = now_rfc3339();
         self.persist_meta_locked(&mut st)
     }
@@ -529,7 +541,7 @@ impl SessionEventLog {
 }
 
 fn requires_full_lifecycle_validation(kind: &str) -> bool {
-    matches!(kind, "thread.started" | "turn.started" | "turn.completed" | "turn.failed")
+    matches!(kind, "thread.started" | "thread.completed" | "turn.started" | "turn.completed" | "turn.failed")
 }
 
 impl Drop for SessionEventLog {
@@ -662,7 +674,8 @@ mod borrowed_envelope_tests {
 mod lifecycle_state_machine_tests {
     use super::{LifecycleKind, LogState};
     use vtcode_exec_events::{
-        ThreadEvent, ThreadStartedEvent, TurnCompletedEvent, TurnFailedEvent, TurnStartedEvent, Usage,
+        ThreadCompletedEvent, ThreadCompletionSubtype, ThreadEvent, ThreadStartedEvent, TurnCompletedEvent,
+        TurnFailedEvent, TurnStartedEvent, Usage,
     };
 
     fn fresh_state() -> LogState {
@@ -686,11 +699,26 @@ mod lifecycle_state_machine_tests {
             })),
             LifecycleKind::TurnFailed
         );
-        // Any non-lifecycle event maps to Other.
         assert_eq!(
             LifecycleKind::from_event(&ThreadEvent::ThreadStarted(ThreadStartedEvent { thread_id: "x".to_string() })),
-            LifecycleKind::Other
+            LifecycleKind::ThreadStarted
         );
+        assert_eq!(
+            LifecycleKind::from_event(&ThreadEvent::ThreadCompleted(ThreadCompletedEvent {
+                thread_id: "x".to_string(),
+                session_id: "x".to_string(),
+                subtype: ThreadCompletionSubtype::Success,
+                outcome_code: "completed".to_string(),
+                result: None,
+                stop_reason: None,
+                usage: Usage::default(),
+                total_cost_usd: None,
+                num_turns: 1,
+            })),
+            LifecycleKind::ThreadCompleted
+        );
+        assert_eq!(LifecycleKind::from_kind("thread.started"), LifecycleKind::ThreadStarted);
+        assert_eq!(LifecycleKind::from_kind("thread.completed"), LifecycleKind::ThreadCompleted);
     }
 
     #[test]
@@ -699,15 +727,18 @@ mod lifecycle_state_machine_tests {
         assert_eq!(LifecycleKind::from_kind("turn.completed"), LifecycleKind::TurnCompleted);
         assert_eq!(LifecycleKind::from_kind("turn.failed"), LifecycleKind::TurnFailed);
         assert_eq!(LifecycleKind::from_kind("tool.called"), LifecycleKind::Other);
-        assert_eq!(LifecycleKind::from_kind("thread.started"), LifecycleKind::Other);
+        assert_eq!(LifecycleKind::from_kind("thread.started"), LifecycleKind::ThreadStarted);
+        assert_eq!(LifecycleKind::from_kind("thread.completed"), LifecycleKind::ThreadCompleted);
     }
 
     #[test]
     fn turn_started_pushes_index_entry_and_sets_in_turn() {
         let mut st = fresh_state();
+        st.manifest.status = "completed".to_string();
         let is_boundary = st.apply_lifecycle_event(LifecycleKind::TurnStarted, 0, 100);
         assert!(!is_boundary, "TurnStarted is not a turn boundary");
         assert!(st.in_turn);
+        assert_eq!(st.manifest.status, "active");
         assert_eq!(st.index.entries.len(), 1);
         let entry = &st.index.entries[0];
         assert_eq!(entry.turn_number, 1);
@@ -740,6 +771,8 @@ mod lifecycle_state_machine_tests {
         assert!(is_boundary);
         assert!(!st.in_turn);
         assert_eq!(st.manifest.turn_count, 1);
+        assert_eq!(st.manifest.status, "active");
+        st.apply_lifecycle_event(LifecycleKind::ThreadCompleted, 300, 400);
         assert_eq!(st.manifest.status, "completed");
         let entry = &st.index.entries[0];
         assert_eq!(entry.end_offset, 300);
@@ -747,25 +780,30 @@ mod lifecycle_state_machine_tests {
     }
 
     #[test]
-    fn turn_failed_closes_turn_and_sets_status() {
+    fn turn_failed_closes_turn_without_terminal_thread_status() {
         let mut st = fresh_state();
         st.apply_lifecycle_event(LifecycleKind::TurnStarted, 0, 100);
         let is_boundary = st.apply_lifecycle_event(LifecycleKind::TurnFailed, 100, 200);
         assert!(is_boundary);
         assert!(!st.in_turn);
         assert_eq!(st.manifest.turn_count, 1);
-        assert_eq!(st.manifest.status, "failed");
+        assert_eq!(st.manifest.status, "active");
+        st.apply_lifecycle_event(LifecycleKind::ThreadCompleted, 200, 300);
+        assert_eq!(st.manifest.status, "completed");
     }
 
     #[test]
     fn turn_completed_without_turn_started_is_idempotent() {
         let mut st = fresh_state();
         // Receiving TurnCompleted without a preceding TurnStarted should not
-        // panic or corrupt the index; it only updates the manifest status.
+        // panic or corrupt the index; terminal status remains active until the
+        // thread lifecycle itself completes.
         let is_boundary = st.apply_lifecycle_event(LifecycleKind::TurnCompleted, 0, 100);
         assert!(is_boundary);
         assert!(!st.in_turn);
         assert_eq!(st.manifest.turn_count, 0, "no turn was started");
+        assert_eq!(st.manifest.status, "active");
+        st.apply_lifecycle_event(LifecycleKind::ThreadCompleted, 100, 200);
         assert_eq!(st.manifest.status, "completed");
         assert!(st.index.entries.is_empty());
     }

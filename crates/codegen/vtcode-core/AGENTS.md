@@ -10,7 +10,7 @@
 ## Rules
 - Re-export public APIs from `lib.rs`; consumers must not reach into submodules, and keep constants in `config::constants` rather than inline.
 - `exec_policy` and `command_safety` are separate policy layers.
-- Session event sinks are authoritative: preserve ordering, bounded backpressure, and await the drain handle before reporting task success. Recovery/final assistant messages must use the canonical `ThreadEvent` path rather than history-only writes.
+- Session event sinks are authoritative: preserve ordering, use one bounded non-blocking handoff with count/byte limits and fail-closed saturation, and await the shared one-shot drain result before reporting task success. `SessionStoreSink` writes the canonical workspace store; recovery/final assistant messages must use the canonical `ThreadEvent` path rather than history-only writes.
 - Trajectory logging is best effort: retain line/byte bounds and expose drops/failures through diagnostics.
 ## Workflows
 - Add tools under `tools/`, register/classify them, wire them into `core/agent/`; approved-plan task trackers deduplicate normalized step descriptions while preserving first-seen order, approval must fail closed if the tracker cannot be persisted, and plan artifacts must validate concrete targets and verification markers before writing. Add providers with `adding-llm-providers` and update model enumeration, presets, and the `llm/providers` facade. NVIDIA-style first-class providers also need startup defaults, the secret enum, lightweight routing, and generated docs metadata.

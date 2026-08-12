@@ -323,6 +323,17 @@ include_reasoning = true
 | `map_tool_calls`     | `true`  | Map tool calls to `function_call` items  |
 | `include_reasoning`  | `true`  | Include reasoning/thinking items         |
 
+### Session output path
+
+Interactive Open Responses exports are derived from the canonical session
+stream. When file output is enabled, the JSONL stream is written to
+`<workspace>/.vtcode/sessions/<session_id>/derived/open-responses.jsonl` and
+the authoritative source remains
+`<workspace>/.vtcode/sessions/<session_id>/events.jsonl`.
+
+There is no default global Open Responses artifact. Existing files under
+`~/.vtcode/sessions/` remain untouched.
+
 ### Programmatic Integration
 
 ```rust

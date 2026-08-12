@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::collections::VecDeque;
 use std::time::Instant;
 use tokio::time::{Duration, sleep, timeout};
@@ -222,7 +222,28 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
         }
         let harness_config = vt_cfg.as_ref().map(|cfg| cfg.agent.harness.clone()).unwrap_or_default();
         let turn_run_id = TurnRunId(thread_handle.thread_id().to_string());
-        let harness_emitter = super::harness::initialize_harness(vt_cfg.as_ref(), &config.model, &turn_run_id);
+        let harness_emitter =
+            super::harness::initialize_harness(&config.workspace, vt_cfg.as_ref(), &config.model, &turn_run_id).await?;
+
+        // Once canonical persistence is open, every fallible operation must
+        // finalize it before leaving this session iteration. The normal path
+        // emits `thread.completed`; this macro emits an error terminal event
+        // and drains the canonical sink for early error exits.
+        macro_rules! harness_try {
+            ($expression:expr) => {{
+                match $expression {
+                    Ok(value) => value,
+                    Err(error) => {
+                        let error: anyhow::Error = error.into();
+                        if let Some(emitter) = harness_emitter.as_ref() {
+                            emitter.finish_after_unexpected_exit().await;
+                        }
+                        return Err(error);
+                    }
+                }
+            }};
+        }
+
         let steering_sender = if steering_receiver.is_none() {
             let (sender, receiver) = mpsc::unbounded_channel();
             *steering_receiver = Some(receiver);
@@ -244,7 +265,8 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                 steering_sender,
             },
         )
-        .await?;
+        .await;
+        let ui_setup = harness_try!(ui_setup);
         vtcode_commons::startup_trace::record_phase("session_setup", session_setup_phase);
         let mut renderer = ui_setup.renderer;
         let mut session = ui_setup.session;
@@ -391,10 +413,11 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                 true,
             )
             .await;
-            render_planning_workflow_next_step_hint(&mut renderer)?;
+            harness_try!(render_planning_workflow_next_step_hint(&mut renderer));
         } else if planning_entry_source.requires_startup_prompt() && resume_ref.is_none() {
-            let should_enter =
-                prompt_startup_planning_workflow(&handle, &mut session, &ctrl_c_state, &ctrl_c_notify).await?;
+            let should_enter = harness_try!(
+                prompt_startup_planning_workflow(&handle, &mut session, &ctrl_c_state, &ctrl_c_notify).await
+            );
             if should_enter {
                 transition_to_planning_workflow(
                     &tool_registry,
@@ -408,7 +431,7 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                     true,
                 )
                 .await;
-                render_planning_workflow_next_step_hint(&mut renderer)?;
+                harness_try!(render_planning_workflow_next_step_hint(&mut renderer));
             }
         }
         let mut linked_directories: Vec<LinkedDirectory> = Vec::with_capacity(4);
@@ -429,7 +452,7 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
         let mut last_mcp_refresh = Instant::now();
         let startup_update_requested_restart = if let Some(notice) = startup_update_cached_notice.as_ref() {
             display_update_notice(&handle, &mut header_context, renderer.should_use_unicode_formatting(), notice);
-            matches!(
+            let update_outcome = harness_try!(
                 run_inline_update_prompt(
                     &mut renderer,
                     &handle,
@@ -439,9 +462,9 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                     config.workspace.as_path(),
                     notice,
                 )
-                .await?,
-                InlineUpdateOutcome::RestartRequested
-            )
+                .await
+            );
+            matches!(update_outcome, InlineUpdateOutcome::RestartRequested)
         } else {
             false
         };
@@ -485,10 +508,10 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                         {
                             Ok(plan) => plan,
                             Err(error) => {
-                                renderer.line(
+                                harness_try!(renderer.line(
                                     MessageStyle::Error,
                                     &format!("Approved-plan execution is blocked: {error}"),
-                                )?;
+                                ));
                                 continue;
                             }
                         };
@@ -504,8 +527,10 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                             )
                             .await
                         {
-                            renderer
-                                .line(MessageStyle::Error, &format!("Approved-plan execution is blocked: {error}"))?;
+                            harness_try!(
+                                renderer
+                                    .line(MessageStyle::Error, &format!("Approved-plan execution is blocked: {error}"))
+                            );
                             continue;
                         }
                     }
@@ -521,12 +546,13 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                         Some(current_agent.as_str()),
                         configured_default,
                     )
-                    .await?;
+                    .await;
+                    let execution_agent = harness_try!(execution_agent);
                     if current_agent != execution_agent {
-                        renderer.line(
+                        harness_try!(renderer.line(
                             MessageStyle::Info,
                             &format!("Approved plan requires a write-capable agent; switching to {execution_agent}."),
-                        )?;
+                        ));
                     }
                     if let Err(err) = force_reload_workspace_config_for_execution(
                         config.workspace.as_path(),
@@ -538,7 +564,9 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                     .await
                     {
                         tracing::warn!(error = %err, "Failed to reload workspace configuration before approved-plan execution");
-                        renderer.line(MessageStyle::Error, &format!("Failed to reload configuration: {err}"))?;
+                        harness_try!(
+                            renderer.line(MessageStyle::Error, &format!("Failed to reload configuration: {err}"))
+                        );
                     }
                     sync_primary_agent_permissions(&mut vt_cfg, active_primary_agent.active());
                     apply_primary_agent_tool_policy_overrides(&tool_registry, active_primary_agent.active()).await;
@@ -556,7 +584,7 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                         pending_mcp_refresh: &mut pending_mcp_refresh,
                         provider_client: &*provider_client,
                     };
-                    sync_primary_agent_runtime(&mut runtime_sync).await?;
+                    harness_try!(sync_primary_agent_runtime(&mut runtime_sync).await);
                     let display = active_primary_agent.active().display_name.clone();
                     let color = active_primary_agent.active().color.clone().filter(|c| !c.trim().is_empty());
                     handle.set_primary_agent(Some(display), color);
@@ -646,11 +674,13 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                             inline_prompt_cost_notice_shown: &mut inline_prompt_cost_notice_shown,
                         };
 
-                    crate::agent::runloop::unified::turn::session::interaction_loop::run_interaction_loop(
-                        &mut interaction_ctx,
-                        &mut interaction_state,
+                    harness_try!(
+                        crate::agent::runloop::unified::turn::session::interaction_loop::run_interaction_loop(
+                            &mut interaction_ctx,
+                            &mut interaction_state,
+                        )
+                        .await
                     )
-                    .await?
                 };
                 let (next_turn_input, completed_turn_prompt_message_index) = match interaction_outcome {
                     InteractionOutcome::Exit { reason } => {
@@ -693,10 +723,10 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                         let plan_seed = load_active_plan_seed(&tool_registry).await;
                         if fresh_context && plan_seed.is_none() {
                             handle.set_activity_state(ActivityState::Idle);
-                            renderer.line(
+                            harness_try!(renderer.line(
                                 MessageStyle::Error,
                                 "Fresh execution could not start because the approved plan was not found. The plan was retained; please retry approval.",
-                            )?;
+                            ));
                             transition_to_planning_workflow(
                                 &tool_registry,
                                 &mut session_stats,
@@ -757,10 +787,10 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                             Ok(agent) => agent,
                             Err(err) if fresh_context => {
                                 handle.set_activity_state(ActivityState::Idle);
-                                renderer.line(
+                                harness_try!(renderer.line(
                                     MessageStyle::Error,
                                     &format!("Fresh execution could not select a build agent: {err}"),
-                                )?;
+                                ));
                                 transition_to_planning_workflow(
                                     &tool_registry,
                                     &mut session_stats,
@@ -775,7 +805,11 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                                 .await;
                                 continue;
                             }
-                            Err(err) => return Err(err),
+                            Err(err) => {
+                                tracing::error!(error = %err, "approved-plan execution agent selection failed");
+                                session_end_reason = SessionEndReason::Error;
+                                break;
+                            }
                         };
                         if requested_agent != Some(resolved_execution_agent.as_str()) {
                             tracing::warn!(
@@ -783,13 +817,13 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                                 resolved_agent = ?resolved_execution_agent,
                                 "Approved plan requested a non-executable primary agent; using a write-capable agent"
                             );
-                            renderer.line(
+                            harness_try!(renderer.line(
                                 MessageStyle::Info,
                                 &format!(
                                     "Approved plan requires a write-capable agent; switching to {}.",
                                     resolved_execution_agent
                                 ),
-                            )?;
+                            ));
                         }
                         if let Err(err) = force_reload_workspace_config_for_execution(
                             config.workspace.as_path(),
@@ -801,7 +835,9 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                         .await
                         {
                             tracing::warn!("Failed to reload workspace configuration at plan approval: {}", err);
-                            renderer.line(MessageStyle::Error, &format!("Failed to reload configuration: {err}"))?;
+                            harness_try!(
+                                renderer.line(MessageStyle::Error, &format!("Failed to reload configuration: {err}"))
+                            );
                         }
 
                         sync_primary_agent_permissions(&mut vt_cfg, active_primary_agent.active());
@@ -823,10 +859,10 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                         if let Err(err) = sync_primary_agent_runtime(&mut runtime_sync).await {
                             if fresh_context {
                                 handle.set_activity_state(ActivityState::Idle);
-                                renderer.line(
+                                harness_try!(renderer.line(
                                     MessageStyle::Error,
                                     &format!("Fresh execution could not restore the build runtime: {err}"),
-                                )?;
+                                ));
                                 transition_to_planning_workflow(
                                     &tool_registry,
                                     &mut session_stats,
@@ -841,7 +877,9 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                                 .await;
                                 continue;
                             }
-                            return Err(err);
+                            tracing::error!(error = %err, "approved-plan runtime restoration failed");
+                            session_end_reason = SessionEndReason::Error;
+                            break;
                         }
                         let execution_display = active_primary_agent.active().display_name.clone();
                         let execution_color =
@@ -852,7 +890,7 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                         if fresh_context {
                             handle.set_activity_state(ActivityState::StartingBuild);
                         }
-                        renderer.line(MessageStyle::Info, "Executing approved plan...")?;
+                        harness_try!(renderer.line(MessageStyle::Info, "Executing approved plan..."));
 
                         let execution_directive =
                             build_approved_plan_execution_prompt(execution_context, plan_seed.as_deref());
@@ -1083,17 +1121,18 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                         Some(requested_agent.as_str()),
                         configured_default,
                     )
-                    .await?;
+                    .await;
+                    let execution_agent = harness_try!(execution_agent);
                     if execution_agent != requested_agent {
                         tracing::warn!(
                             requested_agent = %requested_agent,
                             resolved_agent = %execution_agent,
                             "Approved plan requested a non-executable primary agent; using a write-capable agent"
                         );
-                        renderer.line(
+                        harness_try!(renderer.line(
                             MessageStyle::Info,
                             &format!("Approved plan requires a write-capable agent; switching to {}.", execution_agent),
-                        )?;
+                        ));
                     }
                     // The approval choice, rather than the destination agent
                     // name, owns confirmation policy. This keeps a manual
@@ -1117,7 +1156,7 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                         pending_mcp_refresh: &mut pending_mcp_refresh,
                         provider_client: &*provider_client,
                     };
-                    sync_primary_agent_runtime(&mut runtime_sync).await?;
+                    harness_try!(sync_primary_agent_runtime(&mut runtime_sync).await);
                     let display = active_primary_agent.active().display_name.clone();
                     let color = active_primary_agent.active().color.clone().filter(|c| !c.trim().is_empty());
                     handle.set_primary_agent(Some(display), color);
@@ -1142,10 +1181,10 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                     let mut plan_seed = load_active_plan_seed(&tool_registry).await;
                     if fresh_context && plan_seed.is_none() {
                         handle.set_activity_state(ActivityState::Idle);
-                        renderer.line(
+                        harness_try!(renderer.line(
                             MessageStyle::Error,
                             "Fresh execution could not start because the approved plan was not found. The plan was retained; please retry approval.",
-                        )?;
+                        ));
                         continue;
                     }
                     if fresh_context {
@@ -1394,22 +1433,19 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                 total_cost_usd,
                 session_stats.total_turns(),
             );
-            if let Err(err) = emitter.emit(event) {
-                tracing::debug!(error = %err, "harness thread.completed event emission failed");
-            }
+            harness_try!(emitter.emit(event).context("failed to emit canonical thread.completed event"));
             // Fire one best-effort session-completion notification, mirroring the
             // per-turn outcome helper. Reuses the same completion_success/failure
             // gates as turn completion (no separate session config).
             super::notifications::emit_session_completion_notification(subtype, session_stats.total_turns()).await;
         }
-        // `finish_atif` is retained for its side effect of writing the ATIF
-        // trajectory JSON file to disk; its returned token counts are no
-        // longer used for the exit summary (see the `session_total_usage`
-        // read below), which needs a normalized basis shared with the cache
-        // hit-rate calculation.
         if let Some(emitter) = harness_emitter.as_ref() {
-            emitter.finish_open_responses();
-            emitter.finish_atif();
+            harness_try!(
+                emitter
+                    .finish()
+                    .await
+                    .context("failed to finalize canonical session persistence")
+            );
         }
         agent_touched_paths.extend(context_manager.tracked_instruction_activity_paths());
         // Skip persistent memory on interrupt-exits (it makes LLM API calls which

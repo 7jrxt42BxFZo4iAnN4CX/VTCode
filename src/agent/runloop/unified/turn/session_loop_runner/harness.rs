@@ -1,74 +1,103 @@
-use std::path::{Path, PathBuf};
+use anyhow::{Context, Result};
+use std::path::Path;
 
-use chrono::Utc;
+use tokio::task::spawn_blocking;
 use vtcode_config::loader::VTCodeConfig;
 use vtcode_core::core::agent::features::FeatureSet;
 use vtcode_core::exec::events::{ThreadEvent, ThreadStartedEvent};
+use vtcode_memory::RetentionPolicy;
 
 use crate::agent::runloop::unified::inline_events::harness::{
-    HARNESS_LOG_MAX_AGE_DAYS, HarnessEventEmitter, default_harness_log_dir, prune_old_harness_logs,
-    resolve_event_log_path,
+    HARNESS_LOG_MAX_AGE_DAYS, HarnessEventEmitter, prune_old_harness_logs, resolve_event_log_path,
 };
 use crate::agent::runloop::unified::run_loop_context::TurnRunId;
 
-pub(super) fn initialize_harness(
+pub(super) async fn initialize_harness(
+    workspace: &Path,
     vt_cfg: Option<&VTCodeConfig>,
     model: &str,
     turn_run_id: &TurnRunId,
-) -> Option<HarnessEventEmitter> {
+) -> Result<Option<HarnessEventEmitter>> {
     let harness_config = vt_cfg.map(|cfg| cfg.agent.harness.clone()).unwrap_or_default();
-    let effective_log_path = harness_config
+    let legacy_path = harness_config
         .event_log_path
         .as_deref()
         .filter(|path| !path.trim().is_empty())
-        .map(PathBuf::from)
-        .or_else(default_harness_log_dir);
-    let Some(log_path) = effective_log_path else {
-        tracing::warn!(target: "vtcode.harness", phase = "setup", error = "no log path", "harness setup skipped");
-        return None;
-    };
+        .map(|path| resolve_event_log_path(path, turn_run_id));
 
-    let log_dir = if log_path.extension().is_some() {
-        log_path.parent().unwrap_or(Path::new(".")).to_path_buf()
-    } else {
-        log_path.clone()
-    };
-    if let Err(error) = prune_old_harness_logs(&log_dir, HARNESS_LOG_MAX_AGE_DAYS) {
-        tracing::warn!(target: "vtcode.harness", phase = "harness_prune", path = %log_dir.display(), error = %error, "harness log pruning failed");
+    if let Some(log_path) = legacy_path.as_ref() {
+        let log_dir = if log_path.extension().is_some() {
+            log_path.parent().unwrap_or(Path::new(".")).to_path_buf()
+        } else {
+            log_path.clone()
+        };
+        let prune_result = spawn_blocking(move || {
+            if log_dir.is_dir() {
+                prune_old_harness_logs(&log_dir, HARNESS_LOG_MAX_AGE_DAYS)
+            } else {
+                Ok(())
+            }
+        })
+        .await
+        .context("harness retention task failed")?;
+        if let Err(error) = prune_result {
+            tracing::warn!(target: "vtcode.harness", phase = "legacy_prune", path = %log_path.display(), error = %error, "legacy harness log pruning failed");
+        }
     }
 
-    let resolved_path = resolve_event_log_path(&log_path.to_string_lossy(), turn_run_id);
-    let emitter = match HarnessEventEmitter::new(resolved_path.clone()) {
-        Ok(emitter) => emitter,
-        Err(error) => {
-            tracing::warn!(target: "vtcode.harness", phase = "setup", path = %resolved_path.display(), error = %error, "harness emitter setup failed");
-            return None;
+    let retention_workspace = workspace.to_path_buf();
+    let retention_session_id = turn_run_id.0.clone();
+    match spawn_blocking(move || {
+        vtcode_memory::apply_retention_preserving(
+            &retention_workspace,
+            RetentionPolicy::default(),
+            Some(retention_session_id.as_str()),
+        )
+    })
+    .await
+    {
+        Ok(Ok(removed)) if removed > 0 => {
+            tracing::debug!(target: "vtcode.harness", removed, "pruned closed canonical sessions");
         }
-    };
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => {
+            tracing::warn!(target: "vtcode.harness", phase = "canonical_retention", error = %error, "canonical session retention failed")
+        }
+        Err(error) => {
+            tracing::warn!(target: "vtcode.harness", phase = "canonical_retention", error = %error, "canonical session retention task failed")
+        }
+    }
 
+    // Canonical persistence is mandatory. Setup errors propagate instead of
+    // silently downgrading the run to an unpersisted session.
+    let emitter = HarnessEventEmitter::new_async(workspace, &turn_run_id.0, legacy_path).await?;
+
+    let session_derived = vtcode_memory::session_directory(workspace, &turn_run_id.0).join("derived");
     let features = FeatureSet::from_config(vt_cfg);
     if features.open_responses.emit_events {
         let open_responses_config = vt_cfg.map(|cfg| cfg.agent.open_responses.clone()).unwrap_or_default();
-        let parent = log_path.parent().unwrap_or(Path::new("."));
-        let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ");
-        let output_path = parent.join(format!("open-responses-{}-{}.jsonl", turn_run_id.0, timestamp));
-        if let Err(error) = emitter.enable_open_responses(open_responses_config, model, Some(output_path.clone())) {
+        let output_path = session_derived.join("open-responses.jsonl");
+        if let Err(error) = emitter
+            .enable_open_responses_async(open_responses_config, model, Some(output_path.clone()))
+            .await
+        {
             tracing::warn!(target: "vtcode.harness", phase = "open_responses_setup", path = %output_path.display(), error = %error, "Open Responses setup failed");
         }
     }
 
     if vt_cfg.is_some_and(|cfg| cfg.telemetry.atif_enabled) {
-        let atif_path =
-            log_dir.join(format!("atif-trajectory-{}-{}.json", turn_run_id.0, Utc::now().format("%Y%m%dT%H%M%SZ")));
+        let atif_path = session_derived.join("atif-trajectory.json");
         if let Err(error) = emitter.enable_atif(model, atif_path.clone()) {
             tracing::warn!(target: "vtcode.harness", phase = "atif_setup", path = %atif_path.display(), error = %error, "ATIF setup failed");
         }
     }
 
-    if let Err(error) =
-        emitter.emit(ThreadEvent::ThreadStarted(ThreadStartedEvent { thread_id: turn_run_id.0.clone() }))
+    if let Err(error) = emitter
+        .emit(ThreadEvent::ThreadStarted(ThreadStartedEvent { thread_id: turn_run_id.0.clone() }))
+        .context("failed to emit canonical thread.started event")
     {
-        tracing::warn!(target: "vtcode.harness", phase = "thread_start", path = %resolved_path.display(), error = %error, "harness thread-start event failed");
+        emitter.finish_after_unexpected_exit().await;
+        return Err(error);
     }
-    Some(emitter)
+    Ok(Some(emitter))
 }

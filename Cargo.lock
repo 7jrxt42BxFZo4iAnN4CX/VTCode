@@ -7526,6 +7526,7 @@ dependencies = [
  "tracing-subscriber",
  "unicode-width 0.2.2",
  "url",
+ "uuid",
  "vtcode-acp",
  "vtcode-agent-plugins",
  "vtcode-auth",

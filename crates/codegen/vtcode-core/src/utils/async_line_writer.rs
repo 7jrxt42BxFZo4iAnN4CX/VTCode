@@ -38,10 +38,10 @@ struct Diagnostics {
     write_failures: AtomicUsize,
 }
 
-/// Internal snapshot of best-effort trajectory writer health.
+/// Snapshot of best-effort exporter writer health.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
-pub(crate) struct AsyncLineWriterDiagnostics {
+pub struct AsyncLineWriterDiagnostics {
     pub dropped_lines: usize,
     pub dropped_bytes: usize,
     pub write_failures: usize,
@@ -183,7 +183,7 @@ impl AsyncLineWriter {
     /// [`Self::flush`] remains the compatibility API for best-effort callers;
     /// this companion method lets lifecycle code and diagnostics distinguish a
     /// successful drain from a closed actor or failed file write.
-    pub(crate) async fn flush_result(&self) -> std::io::Result<()> {
+    pub async fn flush_result(&self) -> std::io::Result<()> {
         let (tx, rx) = oneshot::channel();
         self.sender
             .send(LogMessage::Flush(tx))
@@ -199,7 +199,7 @@ impl AsyncLineWriter {
     }
 
     #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
-    pub(crate) fn diagnostics(&self) -> AsyncLineWriterDiagnostics {
+    pub fn diagnostics(&self) -> AsyncLineWriterDiagnostics {
         AsyncLineWriterDiagnostics {
             dropped_lines: self.diagnostics.dropped_lines.load(Ordering::Relaxed),
             dropped_bytes: self.diagnostics.dropped_bytes.load(Ordering::Relaxed),

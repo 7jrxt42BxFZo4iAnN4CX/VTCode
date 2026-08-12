@@ -484,8 +484,9 @@ pub struct AgentHarnessConfig {
     /// Default: 2.
     #[serde(default = "default_harness_context_reset_stall_threshold")]
     pub context_reset_stall_threshold: u32,
-    /// Optional JSONL event log path for harness events.
-    /// Defaults to `~/.vtcode/sessions/` when unset.
+    /// Optional compatibility/export JSONL path for harness events.
+    /// Canonical events are always stored under the workspace session store;
+    /// unset configuration creates no global harness file.
     #[serde(default)]
     pub event_log_path: Option<String>,
     /// Select the exec/full-auto harness orchestration path.

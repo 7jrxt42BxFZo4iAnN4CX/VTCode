@@ -45,7 +45,7 @@ pub use progress::{
     GoalTracker, Milestone, MilestoneStatus, ProgressLedger, load_progress, progress_path, save_progress,
 };
 pub use query::{FactRecord, MemorySearchResult, SessionSummary, query_facts, recent_sessions, search_memory};
-pub use retention::{RetentionPolicy, apply_retention, gc_legacy};
+pub use retention::{RetentionPolicy, apply_retention, apply_retention_preserving, gc_legacy};
 
 use std::path::{Path, PathBuf};
 
@@ -68,6 +68,16 @@ pub(crate) fn sessions_root(workspace: &Path) -> PathBuf {
 #[must_use]
 pub(crate) fn session_dir(workspace: &Path, session_id: &str) -> PathBuf {
     sessions_root(workspace).join(sanitize_id(session_id))
+}
+
+/// Return the canonical directory for a session.
+///
+/// Derived exporters and diagnostics must live beneath this directory so the
+/// session store remains the single persistence root for interactive and exec
+/// sessions.
+#[must_use]
+pub fn session_directory(workspace: &Path, session_id: &str) -> PathBuf {
+    session_dir(workspace, session_id)
 }
 
 /// Open (creating if necessary) the event log for a session.

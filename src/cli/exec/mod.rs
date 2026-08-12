@@ -238,17 +238,13 @@ mod tests {
     }
 
     #[test]
-    fn effective_exec_events_path_falls_back_to_default_harness_dir() {
+    fn effective_exec_events_path_does_not_create_default_harness_artifact() {
         let resolved = effective_exec_events_path(None, Some(""), "session-123");
-        // Falls back to ~/.vtcode/sessions/ when config path is empty
-        if let Some(ref path) = resolved {
-            let parent = path.parent().expect("parent dir");
-            assert!(parent.ends_with("sessions"));
-            let file_name = path.file_name().and_then(|v| v.to_str()).expect("file name");
-            assert!(file_name.starts_with("harness-session-123-"));
-            assert!(file_name.ends_with(".jsonl"));
-        }
-        // On systems without a home dir, resolved may be None – that's acceptable
+        assert!(resolved.is_none(), "empty config must not select a global harness path");
+        assert!(
+            effective_exec_events_path(None, None, "session-123").is_none(),
+            "unset config must not select a global harness path"
+        );
     }
 
     #[test]

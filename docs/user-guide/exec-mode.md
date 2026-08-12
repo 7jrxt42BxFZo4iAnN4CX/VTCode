@@ -98,8 +98,16 @@ Supported item payloads:
 These events align with the published Codex non-interactive schema so downstream automation, dashboards, or log shippers can reuse
 existing parsers without modification.
 
-If `--events` is not provided, exec mode also respects `agent.harness.event_log_path`. Relative or absolute file paths write JSONL
-events directly; directory paths get a timestamped `harness-<session>-<timestamp>.jsonl` file.
+Every exec run persists its authoritative `ThreadEvent` stream at
+`.vtcode/sessions/<session_id>/events.jsonl` beneath the workspace. The store is
+drained before a successful run is reported and is retained independently of
+optional exports.
+
+`--events` remains an explicit compatibility export. If it is omitted, exec
+also respects `agent.harness.event_log_path`; relative or absolute file paths
+write JSONL events directly, while directory paths get a timestamped
+`harness-<session>-<timestamp>.jsonl` file. Neither option creates a global
+`~/.vtcode/sessions` harness file by default.
 
 `agent.harness.max_budget_usd` applies to exec mode as well as interactive runs.
 If model pricing metadata is unavailable, VT Code leaves `total_cost_usd` unset

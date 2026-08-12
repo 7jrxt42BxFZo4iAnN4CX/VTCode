@@ -292,6 +292,7 @@ memchr = { workspace = true }
 tempfile = { workspace = true }
 once_cell = { workspace = true }
 chrono = { workspace = true } # For timestamp handling in CLI
+uuid = { workspace = true, features = ["v4"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 async-trait = { workspace = true }

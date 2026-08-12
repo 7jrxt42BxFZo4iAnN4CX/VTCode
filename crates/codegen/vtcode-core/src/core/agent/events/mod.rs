@@ -9,20 +9,23 @@ pub use lifecycle::{
 
 use crate::core::threads::{SubmissionId, ThreadRuntimeHandle};
 use crate::exec::events::{
-    CommandExecutionItem, CommandExecutionStatus, CompactionMode, CompactionTrigger, ErrorItem, FileChangeItem,
-    FileUpdateChange, HarnessEventItem, HarnessEventKind, ItemCompletedEvent, ItemStartedEvent, PatchApplyStatus,
-    PatchChangeKind, ThreadCompactBoundaryEvent, ThreadCompletedEvent, ThreadCompletionSubtype, ThreadEvent,
-    ThreadItem, ThreadItemDetails, ThreadStartedEvent, ToolOutcome, TurnCompletedEvent, TurnFailedEvent,
+    CommandExecutionItem, CommandExecutionStatus, CompactionMode, CompactionTrigger, EVENT_SCHEMA_VERSION, ErrorItem,
+    FileChangeItem, FileUpdateChange, HarnessEventItem, HarnessEventKind, ItemCompletedEvent, ItemStartedEvent,
+    PatchApplyStatus, PatchChangeKind, ThreadCompactBoundaryEvent, ThreadCompletedEvent, ThreadCompletionSubtype,
+    ThreadEvent, ThreadItem, ThreadItemDetails, ThreadStartedEvent, ToolOutcome, TurnCompletedEvent, TurnFailedEvent,
     TurnStartedEvent, Usage, tool_outcome_from_status,
 };
 use anyhow::{Context, Result, anyhow};
 use parking_lot::Mutex;
+use serde::Serialize;
 use serde_json::Value;
+use std::io::{self, Write};
+use std::mem::size_of;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::time::Duration;
+use std::sync::mpsc::{self, Receiver, TrySendError};
+use tokio::sync::OnceCell;
 use tokio::task::JoinHandle;
 use tokio::task::spawn_blocking;
 use uuid::Uuid;
@@ -30,6 +33,7 @@ use uuid::Uuid;
 use vtcode_memory::event_log::DEFAULT_MAX_EVENTS;
 
 const SESSION_STORE_DRAIN_CAPACITY: usize = 8192;
+const SESSION_STORE_DRAIN_MAX_BYTES: usize = 16 * 1024 * 1024;
 
 /// Callback type alias for streaming structured events.
 pub type EventSink = Arc<Mutex<Box<dyn FnMut(&ThreadEvent) + Send>>>;
@@ -39,9 +43,9 @@ struct SessionStoreSinkHealth {
     accepted_events: AtomicU64,
     persisted_events: AtomicU64,
     append_failures: AtomicU64,
+    serialization_failures: AtomicU64,
     channel_failures: AtomicU64,
     failed: AtomicBool,
-    closing: AtomicBool,
 }
 
 #[cfg(test)]
@@ -50,6 +54,7 @@ struct SessionStoreSinkHealthSnapshot {
     accepted_events: u64,
     persisted_events: u64,
     append_failures: u64,
+    serialization_failures: u64,
     channel_failures: u64,
     failed: bool,
 }
@@ -61,10 +66,23 @@ impl SessionStoreSinkHealth {
             accepted_events: self.accepted_events.load(Ordering::Relaxed),
             persisted_events: self.persisted_events.load(Ordering::Relaxed),
             append_failures: self.append_failures.load(Ordering::Relaxed),
+            serialization_failures: self.serialization_failures.load(Ordering::Relaxed),
             channel_failures: self.channel_failures.load(Ordering::Relaxed),
             failed: self.failed.load(Ordering::Relaxed),
         }
     }
+}
+
+struct QueuedSessionEvent {
+    event: ThreadEvent,
+    reserved_bytes: usize,
+}
+
+struct SessionStoreSinkState {
+    sender: Mutex<Option<mpsc::SyncSender<QueuedSessionEvent>>>,
+    reserved_bytes: AtomicU64,
+    max_bytes: usize,
+    health: Arc<SessionStoreSinkHealth>,
 }
 
 /// Owns the session persistence drain and exposes its final health result.
@@ -73,18 +91,87 @@ impl SessionStoreSinkHealth {
 /// retains this handle so a completed task cannot report success before its
 /// authoritative event queue has drained.
 pub(crate) struct SessionStoreSinkHandle {
-    health: Arc<SessionStoreSinkHealth>,
-    drain: JoinHandle<Result<()>>,
+    state: Arc<SessionStoreSinkState>,
+    drain: Option<JoinHandle<()>>,
 }
 
 impl SessionStoreSinkHandle {
-    pub(crate) async fn close(self) -> Result<()> {
-        self.health.closing.store(true, Ordering::Release);
-        self.drain.await.context("session event drain task failed")??;
-        if self.health.failed.load(Ordering::Acquire) {
+    pub(crate) async fn close(mut self) -> Result<()> {
+        self.state.sender.lock().take();
+        if let Some(drain) = self.drain.take() {
+            drain.await.context("session event drain task failed")?;
+        }
+        if self.state.health.failed.load(Ordering::Acquire) {
             return Err(anyhow!("session event persistence failed"));
         }
         Ok(())
+    }
+}
+
+impl Drop for SessionStoreSinkHandle {
+    fn drop(&mut self) {
+        self.state.sender.lock().take();
+    }
+}
+
+/// Authoritative event sink for one canonical session store.
+///
+/// Events are accepted in order through one bounded, non-blocking queue owned
+/// by a blocking drain actor. The queue is bounded both by event count and by
+/// an estimated serialized payload budget, so a burst of large tool outputs
+/// cannot retain unbounded memory. If the queue or store fails, the sink fails
+/// closed and [`Self::close`] reports the loss. Call [`Self::close`] exactly
+/// once after the terminal event and propagate its error before reporting a
+/// successful run.
+pub struct SessionStoreSink {
+    state: Arc<SessionStoreSinkState>,
+    handle: Arc<Mutex<Option<SessionStoreSinkHandle>>>,
+    close_result: Arc<OnceCell<std::result::Result<(), String>>>,
+}
+
+impl SessionStoreSink {
+    /// Open the canonical session store and start its bounded drain.
+    pub async fn open(workspace: &Path, session_id: &str) -> Result<Self> {
+        let (state, handle) = open_session_store_sink(workspace, session_id, SESSION_STORE_DRAIN_CAPACITY).await?;
+        Ok(Self {
+            state,
+            handle: Arc::new(Mutex::new(Some(handle))),
+            close_result: Arc::new(OnceCell::new()),
+        })
+    }
+
+    /// Enqueue one event for canonical persistence.
+    pub fn emit(&self, event: &ThreadEvent) -> Result<()> {
+        enqueue_session_event(&self.state, event)
+    }
+
+    /// Return the callback form used by the core event recorder.
+    pub fn event_sink(&self) -> EventSink {
+        event_sink_for_state(Arc::clone(&self.state))
+    }
+
+    /// Drain and close the canonical persistence task.
+    pub async fn close(&self) -> Result<()> {
+        let result = self
+            .close_result
+            .get_or_init(|| async {
+                let handle = self.handle.lock().take();
+                match handle {
+                    Some(handle) => handle.close().await.map_err(|error| error.to_string()),
+                    None => Ok(()),
+                }
+            })
+            .await;
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) => Err(anyhow!(error.clone())),
+        }
+    }
+}
+
+impl Drop for SessionStoreSink {
+    fn drop(&mut self) {
+        self.state.sender.lock().take();
     }
 }
 
@@ -97,116 +184,220 @@ where
 }
 
 /// Build an event sink that persists every recorded event to the unified
-/// per-session store ([`vtcode_memory`]), making it the canonical
-/// source of truth for session state/history. Returns `None` (non-fatally) if
-/// the store cannot be opened.
+/// per-session store ([`vtcode_memory`]), making it the canonical source of
+/// truth for session state/history.
 ///
-/// The sink hands events to a bounded background drain. The handoff waits
-/// when the queue is full because session events are authoritative and must
-/// not be silently dropped; disk I/O and manifest writes remain off the
-/// Tokio runtime worker through `spawn_blocking`.
-pub fn session_store_sink(workspace: &Path, session_id: &str) -> Option<EventSink> {
-    session_store_sink_with_capacity_handle(workspace, session_id, SESSION_STORE_DRAIN_CAPACITY).map(|(sink, _)| sink)
+/// The sink hands events to one bounded, non-blocking queue and a blocking
+/// background drain. If the queue cannot accept an event, the sink records a
+/// fatal persistence failure and `close()` fails the run. Disk I/O and
+/// manifest writes remain off the Tokio runtime worker through `spawn_blocking`.
+pub async fn session_store_sink(workspace: &Path, session_id: &str) -> Result<SessionStoreSink> {
+    SessionStoreSink::open(workspace, session_id).await
 }
 
-pub(crate) fn session_store_sink_with_handle(
+pub(crate) async fn session_store_sink_with_handle(
     workspace: &Path,
     session_id: &str,
-) -> Option<(EventSink, SessionStoreSinkHandle)> {
-    session_store_sink_with_capacity_handle(workspace, session_id, SESSION_STORE_DRAIN_CAPACITY)
+) -> Result<(EventSink, SessionStoreSinkHandle)> {
+    let (state, handle) = open_session_store_sink(workspace, session_id, SESSION_STORE_DRAIN_CAPACITY).await?;
+    Ok((event_sink_for_state(state), handle))
 }
 
-fn session_store_sink_with_capacity_handle(
+async fn open_session_store_sink(
     workspace: &Path,
     session_id: &str,
     capacity: usize,
-) -> Option<(EventSink, SessionStoreSinkHandle)> {
-    let log = match vtcode_memory::open(workspace, session_id, DEFAULT_MAX_EVENTS) {
-        Ok(log) => log,
-        Err(err) => {
-            tracing::warn!("session store unavailable for {session_id}: {err}");
-            return None;
-        }
-    };
+) -> Result<(Arc<SessionStoreSinkState>, SessionStoreSinkHandle)> {
+    open_session_store_sink_with_limits(workspace, session_id, capacity, SESSION_STORE_DRAIN_MAX_BYTES).await
+}
 
-    let (tx, rx) = mpsc::sync_channel::<ThreadEvent>(capacity.max(1));
+async fn open_session_store_sink_with_limits(
+    workspace: &Path,
+    session_id: &str,
+    capacity: usize,
+    max_bytes: usize,
+) -> Result<(Arc<SessionStoreSinkState>, SessionStoreSinkHandle)> {
+    let workspace = workspace.to_path_buf();
+    let session_id_owned = session_id.to_string();
+    let log = spawn_blocking(move || vtcode_memory::open(&workspace, &session_id_owned, DEFAULT_MAX_EVENTS))
+        .await
+        .context("canonical session store open task failed")??;
+
+    let queue_capacity = capacity.max(1);
+    let (sender, receiver) = mpsc::sync_channel::<QueuedSessionEvent>(queue_capacity);
     let health = Arc::new(SessionStoreSinkHealth::default());
-    let drain_health = Arc::clone(&health);
-    let drain_session_id = session_id.to_string();
-
-    // Start the blocking receiver directly so a full synchronous handoff
-    // cannot wait for a Tokio worker that is currently doing the send.
-    let drain_handle = spawn_blocking(move || drain_session_events(rx, log, drain_session_id, drain_health));
-    let drain = tokio::spawn(async move {
-        drain_handle.await.context("blocking session event drain failed")?;
-        Ok::<(), anyhow::Error>(())
+    let state = Arc::new(SessionStoreSinkState {
+        sender: Mutex::new(Some(sender)),
+        reserved_bytes: AtomicU64::new(0),
+        max_bytes: max_bytes.max(1),
+        health: Arc::clone(&health),
     });
+    let drain_state = Arc::clone(&state);
+    let drain_session_id = session_id.to_string();
+    let drain = spawn_blocking(move || drain_session_events(receiver, log, drain_session_id, drain_state));
 
-    let sink_health = Arc::clone(&health);
-    Some((
-        event_sink(move |event: &ThreadEvent| {
-            if sink_health.failed.load(Ordering::Acquire) || sink_health.closing.load(Ordering::Acquire) {
-                sink_health.channel_failures.fetch_add(1, Ordering::Relaxed);
-                tracing::error!("session event persistence is unavailable; event was not accepted");
-                return;
-            }
-            match tx.send(event.clone()) {
-                Ok(()) => {
-                    sink_health.accepted_events.fetch_add(1, Ordering::Relaxed);
-                }
-                Err(err) => {
-                    sink_health.failed.store(true, Ordering::Release);
-                    sink_health.channel_failures.fetch_add(1, Ordering::Relaxed);
-                    tracing::error!(
-                        error = %err,
-                        "session event persistence channel closed before event was accepted"
-                    );
-                }
-            }
-        }),
-        SessionStoreSinkHandle { health, drain },
-    ))
+    Ok((state.clone(), SessionStoreSinkHandle { state, drain: Some(drain) }))
+}
+
+#[cfg(test)]
+async fn session_store_sink_with_capacity_handle(
+    workspace: &Path,
+    session_id: &str,
+    capacity: usize,
+) -> Result<(EventSink, SessionStoreSinkHandle)> {
+    let (state, handle) = open_session_store_sink(workspace, session_id, capacity).await?;
+    Ok((event_sink_for_state(state), handle))
+}
+
+fn event_sink_for_state(state: Arc<SessionStoreSinkState>) -> EventSink {
+    event_sink(move |event: &ThreadEvent| {
+        if let Err(error) = enqueue_session_event(&state, event) {
+            tracing::error!(error = %error, "canonical session event was not accepted");
+        }
+    })
 }
 
 fn drain_session_events(
-    rx: Receiver<ThreadEvent>,
+    rx: Receiver<QueuedSessionEvent>,
     log: vtcode_memory::SessionEventLog,
     session_id: String,
-    health: Arc<SessionStoreSinkHealth>,
+    state: Arc<SessionStoreSinkState>,
 ) {
-    loop {
-        let event = match rx.recv_timeout(Duration::from_millis(10)) {
-            Ok(event) => event,
-            Err(RecvTimeoutError::Timeout) if health.closing.load(Ordering::Acquire) => break,
-            Err(RecvTimeoutError::Timeout) => continue,
-            Err(RecvTimeoutError::Disconnected) => break,
-        };
-        match log.append(&event) {
+    while let Ok(queued) = rx.recv() {
+        let reserved_bytes = queued.reserved_bytes;
+        match log.append(&queued.event) {
             Ok(()) => {
-                health.persisted_events.fetch_add(1, Ordering::Relaxed);
+                state.health.persisted_events.fetch_add(1, Ordering::Relaxed);
             }
             Err(err) => {
-                health.append_failures.fetch_add(1, Ordering::Relaxed);
-                health.failed.store(true, Ordering::Release);
+                state.health.append_failures.fetch_add(1, Ordering::Relaxed);
+                state.health.failed.store(true, Ordering::Release);
                 tracing::error!(
                     session_id = %session_id,
                     error = %err,
                     "failed to persist session event; stopping authoritative drain"
                 );
+                release_reserved_bytes(&state, reserved_bytes);
+                while let Ok(queued) = rx.try_recv() {
+                    release_reserved_bytes(&state, queued.reserved_bytes);
+                }
                 break;
             }
         }
+        release_reserved_bytes(&state, reserved_bytes);
     }
 
     if let Err(err) = log.flush() {
-        health.append_failures.fetch_add(1, Ordering::Relaxed);
-        health.failed.store(true, Ordering::Release);
+        state.health.append_failures.fetch_add(1, Ordering::Relaxed);
+        state.health.failed.store(true, Ordering::Release);
         tracing::error!(
             session_id = %session_id,
             error = %err,
             "failed to flush session event log during drain shutdown"
         );
     }
+}
+
+fn enqueue_session_event(state: &SessionStoreSinkState, event: &ThreadEvent) -> Result<()> {
+    if state.health.failed.load(Ordering::Acquire) {
+        state.health.channel_failures.fetch_add(1, Ordering::Relaxed);
+        return Err(anyhow!("canonical session event sink has failed"));
+    }
+
+    let serialized_bytes = match serialized_event_size(event, state.max_bytes) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            state.health.serialization_failures.fetch_add(1, Ordering::Relaxed);
+            state.health.failed.store(true, Ordering::Release);
+            return Err(error.context("failed to serialize canonical session event for bounded handoff"));
+        }
+    };
+    let reserved_bytes = serialized_bytes.saturating_mul(2).saturating_add(size_of::<ThreadEvent>());
+    if reserved_bytes > state.max_bytes {
+        state.health.serialization_failures.fetch_add(1, Ordering::Relaxed);
+        state.health.failed.store(true, Ordering::Release);
+        return Err(anyhow!(
+            "canonical session event exceeds the bounded persistence budget ({reserved_bytes} > {})",
+            state.max_bytes
+        ));
+    }
+    if !reserve_bytes(&state.reserved_bytes, reserved_bytes, state.max_bytes) {
+        state.health.failed.store(true, Ordering::Release);
+        state.health.channel_failures.fetch_add(1, Ordering::Relaxed);
+        return Err(anyhow!("canonical session event queue reached its bounded byte capacity"));
+    }
+
+    let queued = QueuedSessionEvent { event: event.clone(), reserved_bytes };
+    let sender = state.sender.lock();
+    let Some(sender) = sender.as_ref() else {
+        release_reserved_bytes(state, reserved_bytes);
+        state.health.failed.store(true, Ordering::Release);
+        state.health.channel_failures.fetch_add(1, Ordering::Relaxed);
+        return Err(anyhow!("canonical session event sink is closed"));
+    };
+    match sender.try_send(queued) {
+        Ok(()) => {
+            state.health.accepted_events.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+        Err(TrySendError::Full(queued) | TrySendError::Disconnected(queued)) => {
+            release_reserved_bytes(state, queued.reserved_bytes);
+            state.health.failed.store(true, Ordering::Release);
+            state.health.channel_failures.fetch_add(1, Ordering::Relaxed);
+            Err(anyhow!("canonical session event queue could not accept the event"))
+        }
+    }
+}
+
+fn reserve_bytes(reserved_bytes: &AtomicU64, bytes: usize, max_bytes: usize) -> bool {
+    let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+    let max_bytes = u64::try_from(max_bytes).unwrap_or(u64::MAX);
+    reserved_bytes
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            current.checked_add(bytes).filter(|next| *next <= max_bytes)
+        })
+        .is_ok()
+}
+
+fn release_reserved_bytes(state: &SessionStoreSinkState, bytes: usize) {
+    let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+    state.reserved_bytes.fetch_sub(bytes, Ordering::AcqRel);
+}
+
+#[derive(Serialize)]
+struct BorrowedVersionedThreadEvent<'a> {
+    schema_version: &'static str,
+    event: &'a ThreadEvent,
+}
+
+struct LimitedByteCounter {
+    bytes: usize,
+    limit: usize,
+}
+
+impl Write for LimitedByteCounter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let next = self
+            .bytes
+            .checked_add(bytes.len())
+            .ok_or_else(|| io::Error::other("canonical event size overflow"))?;
+        if next > self.limit {
+            return Err(io::Error::other("canonical event exceeds bounded size"));
+        }
+        self.bytes = next;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn serialized_event_size(event: &ThreadEvent, limit: usize) -> Result<usize> {
+    let mut counter = LimitedByteCounter { bytes: 0, limit };
+    serde_json::to_writer(&mut counter, &BorrowedVersionedThreadEvent { schema_version: EVENT_SCHEMA_VERSION, event })
+        .context("canonical event serialization failed")?;
+    counter.bytes.checked_add(1).context("canonical event size overflow")
 }
 
 /// Combine two optional event sinks into one that fans out to both.
@@ -368,6 +559,21 @@ impl ExecEventRecorder {
             total_cost_usd,
             num_turns,
         }));
+    }
+
+    /// Record the terminal lifecycle events for an execution failure.
+    pub fn thread_failed(&mut self, session_id: &str, message: &str, num_turns: usize) {
+        self.turn_failed(message, None);
+        self.thread_completed(
+            session_id,
+            ThreadCompletionSubtype::ErrorDuringExecution,
+            "error",
+            None,
+            Some(message),
+            Usage::default(),
+            None,
+            num_turns,
+        );
     }
 
     pub fn compact_boundary(
@@ -703,10 +909,16 @@ impl ExecEventRecorder {
         );
     }
 
-    pub fn into_events(mut self) -> Vec<ThreadEvent> {
+    /// Drain the collected events while keeping the recorder available for a
+    /// terminal failure path that may run after the normal result assembly.
+    pub fn take_events(&mut self) -> Vec<ThreadEvent> {
         self.lifecycle.complete_open_items();
         self.record_pending_lifecycle_events();
-        self.events
+        std::mem::take(&mut self.events)
+    }
+
+    pub fn into_events(mut self) -> Vec<ThreadEvent> {
+        self.take_events()
     }
 }
 
@@ -717,6 +929,7 @@ mod tests {
     use std::fs;
     use std::time::Duration;
     use tempfile::TempDir;
+    use tokio::sync::oneshot;
     use tokio::time::timeout;
 
     fn make_recorder() -> ExecEventRecorder {
@@ -726,20 +939,29 @@ mod tests {
     #[tokio::test]
     async fn session_store_sink_preserves_order_when_queue_is_small() {
         let workspace = TempDir::new().expect("workspace");
-        let (sink, handle) =
-            session_store_sink_with_capacity_handle(workspace.path(), "session", 1).expect("session sink");
-        let health = Arc::clone(&handle.health);
+        let (sink, handle) = session_store_sink_with_capacity_handle(workspace.path(), "session", 1)
+            .await
+            .expect("session sink");
+        let health = Arc::clone(&handle.state.health);
         let events = vec![
             ThreadEvent::ThreadStarted(ThreadStartedEvent { thread_id: "thread".to_string() }),
             ThreadEvent::TurnStarted(TurnStartedEvent::default()),
             ThreadEvent::TurnCompleted(TurnCompletedEvent { usage: Usage::default() }),
         ];
 
-        {
-            let mut callback = sink.lock();
-            for event in &events {
-                callback(event);
+        for (index, event) in events.iter().enumerate() {
+            if index > 0 {
+                timeout(Duration::from_secs(5), async {
+                    while health.snapshot().persisted_events < index as u64 {
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .expect("bounded queue should keep draining");
             }
+            let mut callback = sink.lock();
+            callback(event);
+            assert_eq!(health.snapshot().accepted_events, index as u64 + 1);
         }
         drop(sink);
 
@@ -764,6 +986,113 @@ mod tests {
         assert!(!health.snapshot().failed);
     }
 
+    #[tokio::test]
+    async fn session_store_sink_open_failure_is_propagated() {
+        let temp_dir = TempDir::new().expect("workspace");
+        let workspace_file = temp_dir.path().join("workspace-file");
+        fs::write(&workspace_file, "not a directory").expect("workspace file");
+
+        let result = SessionStoreSink::open(&workspace_file, "session").await;
+        assert!(result.is_err(), "canonical store setup must fail closed");
+    }
+
+    #[tokio::test]
+    async fn session_store_sink_drain_failure_is_propagated() {
+        let health = Arc::new(SessionStoreSinkHealth::default());
+        health.failed.store(true, Ordering::Release);
+        let state = Arc::new(SessionStoreSinkState {
+            sender: Mutex::new(None),
+            reserved_bytes: AtomicU64::new(0),
+            max_bytes: SESSION_STORE_DRAIN_MAX_BYTES,
+            health,
+        });
+        let drain = tokio::spawn(async {});
+        let handle = SessionStoreSinkHandle { state, drain: Some(drain) };
+
+        let result = handle.close().await;
+        assert!(result.is_err(), "canonical drain failures must fail closed");
+    }
+
+    #[tokio::test]
+    async fn session_store_sink_concurrent_close_waits_for_shared_completion() {
+        let health = Arc::new(SessionStoreSinkHealth::default());
+        let state = Arc::new(SessionStoreSinkState {
+            sender: Mutex::new(None),
+            reserved_bytes: AtomicU64::new(0),
+            max_bytes: SESSION_STORE_DRAIN_MAX_BYTES,
+            health,
+        });
+        let (started_sender, started_receiver) = oneshot::channel();
+        let (release_sender, release_receiver) = oneshot::channel();
+        let drain = tokio::spawn(async move {
+            started_sender.send(()).expect("notify drain start");
+            release_receiver.await.expect("release drain");
+        });
+        let handle = SessionStoreSinkHandle { state: Arc::clone(&state), drain: Some(drain) };
+        let sink = Arc::new(SessionStoreSink {
+            state,
+            handle: Arc::new(Mutex::new(Some(handle))),
+            close_result: Arc::new(OnceCell::new()),
+        });
+
+        let first = {
+            let sink = Arc::clone(&sink);
+            tokio::spawn(async move { sink.close().await })
+        };
+        started_receiver.await.expect("drain should start");
+        let second = {
+            let sink = Arc::clone(&sink);
+            tokio::spawn(async move { sink.close().await })
+        };
+        tokio::task::yield_now().await;
+        assert!(!second.is_finished(), "concurrent close must wait for the first drain");
+
+        release_sender.send(()).expect("release drain");
+        assert!(first.await.expect("first close task").is_ok());
+        assert!(second.await.expect("second close task").is_ok());
+    }
+
+    #[tokio::test]
+    async fn session_store_sink_rejects_events_over_byte_budget() {
+        let workspace = TempDir::new().expect("workspace");
+        let (state, handle) = open_session_store_sink_with_limits(workspace.path(), "session", 4, 128)
+            .await
+            .expect("session sink");
+        let health = Arc::clone(&state.health);
+        let event = ThreadEvent::ThreadStarted(ThreadStartedEvent { thread_id: "x".repeat(256) });
+
+        let result = enqueue_session_event(&state, &event);
+        assert!(result.is_err(), "oversized events must fail closed");
+        handle.close().await.expect_err("failed sink must not close successfully");
+
+        let snapshot = health.snapshot();
+        assert_eq!(snapshot.accepted_events, 0);
+        assert_eq!(snapshot.serialization_failures, 1);
+        assert!(snapshot.failed);
+    }
+
+    #[test]
+    fn session_store_sink_saturation_fails_closed() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let state = SessionStoreSinkState {
+            sender: Mutex::new(Some(sender)),
+            reserved_bytes: AtomicU64::new(0),
+            max_bytes: SESSION_STORE_DRAIN_MAX_BYTES,
+            health: Arc::new(SessionStoreSinkHealth::default()),
+        };
+        let first = ThreadEvent::TurnStarted(TurnStartedEvent::default());
+        let second = ThreadEvent::TurnCompleted(TurnCompletedEvent { usage: Usage::default() });
+
+        enqueue_session_event(&state, &first).expect("first event should fit");
+        assert!(enqueue_session_event(&state, &second).is_err(), "queue saturation must fail closed");
+
+        let snapshot = state.health.snapshot();
+        assert_eq!(snapshot.accepted_events, 1);
+        assert_eq!(snapshot.channel_failures, 1);
+        assert!(snapshot.failed);
+        drop(receiver);
+    }
+
     #[test]
     fn closed_session_store_channel_is_observable() {
         let (sender, receiver) = mpsc::sync_channel(1);
@@ -786,6 +1115,26 @@ mod tests {
         recorder.agent_message_stream_complete();
         let events = recorder.into_events();
         assert!(events.iter().any(|event| matches!(event, ThreadEvent::ItemCompleted(_))));
+    }
+
+    #[test]
+    fn thread_failure_emits_terminal_lifecycle_events() {
+        let mut recorder = make_recorder();
+        recorder.turn_started();
+        recorder.thread_failed("session", "setup failed", 1);
+        let events = recorder.into_events();
+
+        assert!(events.iter().any(|event| matches!(event, ThreadEvent::TurnFailed(_))));
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                ThreadEvent::ThreadCompleted(ThreadCompletedEvent {
+                    subtype: ThreadCompletionSubtype::ErrorDuringExecution,
+                    outcome_code,
+                    ..
+                }) if outcome_code == "error"
+            )
+        }));
     }
 
     #[test]

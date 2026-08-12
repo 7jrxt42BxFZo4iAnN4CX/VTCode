@@ -107,14 +107,20 @@ where
             self.capture_error(err);
         }
 
-        if let Some(writer) = self.events_writer.as_mut()
-            && let Err(err) = writer.flush().context("Failed to flush exec events file")
-        {
-            self.capture_error(err);
-        }
+        self.finish_events_output();
 
         if let Some(writer) = self.stderr.as_mut()
             && let Err(err) = writer.flush().context("Failed to flush exec human output")
+        {
+            self.capture_error(err);
+        }
+    }
+
+    /// Flush the explicit compatibility events file without requiring a full
+    /// task result. Native Codex exec emits lifecycle events only.
+    pub(super) fn finish_events_output(&mut self) {
+        if let Some(writer) = self.events_writer.as_mut()
+            && let Err(err) = writer.flush().context("Failed to flush exec events file")
         {
             self.capture_error(err);
         }
