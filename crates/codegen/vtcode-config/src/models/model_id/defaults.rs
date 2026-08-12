@@ -55,7 +55,7 @@ impl ModelId {
             Provider::StepFun => ModelId::StepFun37Flash,
             Provider::Evolink => ModelId::EvolinkGpt52,
             Provider::Poolside => ModelId::PoolsideLagunaS21,
-            Provider::XAI => ModelId::XaiGrok45,
+            Provider::XAI => ModelId::XaiGrok46,
             Provider::NVIDIA => ModelId::NvidiaNemotron3Ultra550bA55b,
         }
     }
@@ -86,7 +86,7 @@ impl ModelId {
             Provider::StepFun => ModelId::StepFun37Flash,
             Provider::Evolink => ModelId::EvolinkGpt52,
             Provider::Poolside => ModelId::PoolsideLagunaXs2,
-            Provider::XAI => ModelId::XaiGrokBuild01,
+            Provider::XAI => ModelId::XaiGrok46,
             Provider::NVIDIA => ModelId::NvidiaNemotron3Ultra550bA55b,
         }
     }

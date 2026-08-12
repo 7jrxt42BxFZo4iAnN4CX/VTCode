@@ -339,6 +339,8 @@ pub enum ModelId {
     OpenRouterTencentHy3Preview,
     /// Grok Build 0.1 - xAI's fast coding model for agentic software engineering via OpenRouter
     OpenRouterXAiGrokBuild01,
+    /// Grok 4.6 - xAI's flagship reasoning model with reasoning_effort support via OpenRouter
+    OpenRouterXAiGrok46,
     /// MiMo-V2.5 - Xiaomi's omnimodal agentic model for complex software engineering via OpenRouter
     OpenRouterXiaomiMimoV25,
     /// MiMo-V2.5-Pro - Xiaomi's flagship agentic model for complex software engineering via OpenRouter
@@ -361,6 +363,8 @@ pub enum ModelId {
     // xAI models
     /// Grok Build 0.1 - xAI's fast coding model for agentic software engineering
     XaiGrokBuild01,
+    /// Grok 4.6 - xAI's flagship reasoning model with reasoning_effort support (500k context)
+    XaiGrok46,
     /// Grok 4.5 - xAI's flagship reasoning model with reasoning_effort support (500k context)
     XaiGrok45,
     /// Grok 4.3 - xAI's balanced model with 1M context

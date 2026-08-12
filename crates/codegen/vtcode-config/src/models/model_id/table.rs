@@ -899,6 +899,13 @@ model_id_table! {
         display: "Grok Build 0.1",
         description: "xAI's fast coding model for agentic software engineering (256k context)",
     },
+    XaiGrok46 {
+        provider: XAI,
+        id: models::xai::GROK_4_6,
+        parse: [models::xai::GROK_4_6],
+        display: "Grok 4.6",
+        description: "xAI's flagship reasoning model with reasoning_effort support (500k context)",
+    },
     XaiGrok45 {
         provider: XAI,
         id: models::xai::GROK_4_5,

@@ -103,6 +103,20 @@ See the [Configuration guide](../config/config.md#custom_providers) for full det
 -   Key management and defaults mirror the Gemini/OpenAI flow in [Getting Started](../user-guide/getting-started.md#api-requirements).
 -   Supported model IDs live in [`crates/codegen/vtcode-core/src/config/constants.rs`](../../crates/codegen/vtcode-core/src/config/constants.rs).
 
+## xAI (Grok)
+
+-   **Official docs:** [xAI Docs](https://docs.x.ai) · [Models](https://docs.x.ai/developers/models)
+-   **Provider key:** `xai`
+-   **Authentication:** `XAI_API_KEY` environment variable
+-   **Setup:** Set `XAI_API_KEY` from the [xAI Console](https://console.x.ai/), then configure `provider = "xai"` in `vtcode.toml`
+-   **Default model:** `grok-4.6`
+-   **Curated models:**
+    -   `grok-4.6` — flagship reasoning model, 500k context, reasoning_effort (low/medium/high/xhigh)
+    -   `grok-4.5` — previous flagship reasoning model, 500k context
+    -   `grok-4.3` — balanced general-purpose model, 1M context
+    -   `grok-build-0.1` — fast coding model for agentic software engineering, 256k context
+-   **Features:** Streaming, tool calls, structured output, image input, configurable reasoning effort, and 500k-token context
+
 ## Meta AI
 
 -   **Guide:** [Meta AI Integration](./meta.md)

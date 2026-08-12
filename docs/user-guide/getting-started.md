@@ -39,6 +39,10 @@ Choose one of the supported LLM providers:
     -   Get from [OpenAI Platform](https://platform.openai.com/api-keys)
     -   **ChatGPT subscription (no API key needed):** Run `vtcode login openai` or use `/login openai` in the TUI. VT Code performs an in-process PKCE browser login — the Codex CLI is **not** required. By default, VT Code reuses Codex's public OAuth client identity as an **unofficial compatibility mechanism** (OpenAI has not documented or guaranteed third-party reuse; a public client ID is not authorization to reuse another tool's registration). If you have Codex CLI installed, VT Code can also reuse its `~/.codex/auth.json` via `vtcode login openai --from-codex`. See the [OAuth guide](../guides/oauth-authentication.md) for details.
 
+-   **xAI (Grok)**: `export XAI_API_KEY=your_key_here`
+    -   Get from the [xAI Console](https://console.x.ai/)
+    -   Default model: `grok-4.6`; see the [xAI provider guide](../providers/PROVIDER_GUIDES.md#xai-grok)
+
 -   **Anthropic**: `export ANTHROPIC_API_KEY=your_key_here`
     -   Get from [Anthropic Console](https://console.anthropic.com/)
 

@@ -309,6 +309,27 @@ mod tests {
     }
 
     #[test]
+    fn xai_presets_exist_and_default_to_grok46() {
+        let presets = presets::xai_presets();
+        assert!(presets.iter().any(|preset| preset.model == "grok-4.6"));
+
+        let default = presets.iter().find(|preset| preset.is_default).expect("xAI default preset");
+        assert_eq!(default.model, "grok-4.6");
+        assert_eq!(default.context_window, Some(500_000));
+        assert!(
+            default
+                .supported_reasoning_efforts
+                .iter()
+                .any(|effort| effort.effort == ReasoningEffortLevel::XHigh)
+        );
+        assert!(
+            presets
+                .iter()
+                .all(|preset| preset.provider == Provider::XAI && preset.show_in_picker)
+        );
+    }
+
+    #[test]
     fn nvidia_presets_expose_curated_models_and_default() {
         let presets = presets::nvidia_presets();
         assert_eq!(presets.len(), 5);

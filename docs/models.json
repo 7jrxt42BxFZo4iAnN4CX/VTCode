@@ -2884,6 +2884,38 @@
           "doc_comment": "Grok Build 0.1 - xAI's fast coding model for agentic software engineering via OpenRouter"
         }
       },
+      "x-ai/grok-4.6": {
+        "id": "x-ai/grok-4.6",
+        "name": "xAI: Grok 4.6",
+        "description": "Grok 4.6 is xAI's flagship reasoning model with reasoning_effort support, focused on long-running agents and complex software engineering.",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text",
+            "image"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 500000,
+        "cost": {
+          "input": 2e-06,
+          "output": 6e-06
+        },
+        "vtcode": {
+          "variant": "OpenRouterXAiGrok46",
+          "constant": "X_AI_GROK_4_6",
+          "vendor": "xai",
+          "display": "Grok 4.6",
+          "description": "xAI Grok 4.6 flagship reasoning model for long-running agents and software engineering via OpenRouter",
+          "efficient": false,
+          "top_tier": true,
+          "generation": "4.6",
+          "doc_comment": "Grok 4.6 - xAI's flagship reasoning model with reasoning_effort support via OpenRouter"
+        }
+      },
       "xiaomi/mimo-v2.5-pro": {
         "id": "xiaomi/mimo-v2.5-pro",
         "name": "Xiaomi: MiMo-V2.5-Pro",
@@ -4265,7 +4297,7 @@
     "api": "https://api.x.ai/v1",
     "name": "xAI",
     "doc": "https://docs.x.ai",
-    "default_model": "grok-build-0.1",
+    "default_model": "grok-4.6",
     "models": {
       "grok-build-0.1": {
         "id": "grok-build-0.1",
@@ -4283,6 +4315,29 @@
           ]
         },
         "context": 256000,
+        "capabilities": {
+          "streaming": true,
+          "function_calling": true,
+          "structured_output": true
+        }
+      },
+      "grok-4.6": {
+        "id": "grok-4.6",
+        "name": "Grok 4.6",
+        "description": "xAI's flagship reasoning model with reasoning_effort support (500k context)",
+        "version": "4.6",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text",
+            "image"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 500000,
         "capabilities": {
           "streaming": true,
           "function_calling": true,
@@ -4339,6 +4394,52 @@
         "id": "grok-4.20-0309-reasoning",
         "name": "Grok 4.20 Reasoning",
         "description": "xAI's reasoning-optimized model with chain-of-thought (1M context)",
+        "version": "4.20",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text",
+            "image"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 1000000,
+        "capabilities": {
+          "streaming": true,
+          "function_calling": true,
+          "structured_output": true
+        }
+      },
+      "grok-4.20-0309-non-reasoning": {
+        "id": "grok-4.20-0309-non-reasoning",
+        "name": "Grok 4.20 Non-Reasoning",
+        "description": "xAI's fast non-reasoning variant of Grok 4.20 (1M context)",
+        "version": "4.20",
+        "reasoning": false,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text",
+            "image"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 1000000,
+        "capabilities": {
+          "streaming": true,
+          "function_calling": true,
+          "structured_output": true
+        }
+      },
+      "grok-4.20-multi-agent-0309": {
+        "id": "grok-4.20-multi-agent-0309",
+        "name": "Grok 4.20 Multi-Agent",
+        "description": "xAI's multi-agent model with reasoning_effort controlling agent count (1M context)",
         "version": "4.20",
         "reasoning": true,
         "tool_call": true,

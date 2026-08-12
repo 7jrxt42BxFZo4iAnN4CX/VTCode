@@ -186,7 +186,7 @@ impl ModelId {
             | ModelId::EvolinkClaudeSonnet46
             | ModelId::EvolinkClaudeOpus48
             | ModelId::EvolinkClaudeHaiku45 => None,
-            ModelId::XaiGrok45 | ModelId::XaiGrok420Reasoning => Some(ModelId::XaiGrokBuild01),
+            ModelId::XaiGrok46 | ModelId::XaiGrok45 | ModelId::XaiGrok420Reasoning => Some(ModelId::XaiGrokBuild01),
             ModelId::PoolsideLagunaM1 => Some(ModelId::PoolsideLagunaXs2),
             ModelId::PoolsideLagunaS21 => Some(ModelId::PoolsideLagunaXs2),
             _ => None,
@@ -334,6 +334,7 @@ impl ModelId {
                 | ModelId::MoonshotKimiK27Code
                 | ModelId::PoolsideLagunaM1
                 | ModelId::PoolsideLagunaS21
+                | ModelId::XaiGrok46
                 | ModelId::XaiGrok45
                 | ModelId::XaiGrok420Reasoning
         )
@@ -421,6 +422,7 @@ impl ModelId {
                 | ModelId::PoolsideLagunaM1
                 | ModelId::PoolsideLagunaS21
                 | ModelId::OllamaGlm52Cloud
+                | ModelId::XaiGrok46
                 | ModelId::XaiGrok45
                 | ModelId::XaiGrok420Reasoning
         )
@@ -532,6 +534,7 @@ impl ModelId {
             ModelId::HuggingFaceStep35Flash => "3.5",
             // xAI models
             ModelId::XaiGrokBuild01 => "build-0.1",
+            ModelId::XaiGrok46 => "4.6",
             ModelId::XaiGrok45 => "4.5",
             ModelId::XaiGrok43 => "4.3",
             ModelId::XaiGrok420Reasoning => "4.20",

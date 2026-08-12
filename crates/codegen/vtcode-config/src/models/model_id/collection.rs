@@ -151,6 +151,7 @@ impl ModelId {
             ModelId::OpenRouterZaiGlm52,
             // xAI models
             ModelId::XaiGrokBuild01,
+            ModelId::XaiGrok46,
             ModelId::XaiGrok45,
             ModelId::XaiGrok43,
             ModelId::XaiGrok420Reasoning,
