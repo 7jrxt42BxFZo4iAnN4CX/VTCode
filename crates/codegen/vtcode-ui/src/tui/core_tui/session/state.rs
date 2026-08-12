@@ -330,6 +330,20 @@ impl Session {
     }
 
     pub(crate) fn status_left_text(&self) -> Option<&str> {
+        // During stage states (Planning/Building), show the live activity status
+        // (e.g. "Running grep...") when the agent is actively working so the
+        // footer reflects what is happening. Fall back to the stage label
+        // ("Planning...") when idle between turns.
+        if self.activity_state.is_stage() {
+            if let Some(left) = self.input_status_left.as_deref() {
+                let trimmed = left.trim();
+                if !trimmed.is_empty() && status_requires_shimmer(trimmed) {
+                    return Some(trimmed);
+                }
+            }
+            return self.activity_state.status();
+        }
+
         self.activity_state
             .status()
             .or(self.input_status_left.as_deref())
@@ -347,9 +361,10 @@ impl Session {
 
     /// Status text used to decide whether the footer should animate.
     ///
-    /// During a stage state (Planning/Building) the displayed text is the stage
-    /// label, so the raw input status (e.g. "Running tool: ...") is inspected
-    /// instead so the spinner keeps animating while tools execute.
+    /// During a stage state (Planning/Building) the displayed text may be the
+    /// stage label when idle, so the raw input status (e.g. "Running tool:
+    /// ...") is inspected directly so the spinner keeps animating while tools
+    /// execute even before the displayed text has been updated.
     fn animation_status_text(&self) -> &str {
         if self.activity_state.is_stage() {
             self.input_status_left.as_deref().unwrap_or("")

@@ -265,7 +265,7 @@ fn stage_states_keep_input_enabled() {
 }
 
 #[test]
-fn stage_state_with_running_tool_animates_spinner() {
+fn stage_state_with_running_tool_shows_tool_status() {
     let mut session = Session::new(InlineTheme::default(), None, VIEW_ROWS);
     session.handle_command(InlineCommand::SetActivityState(ActivityState::Planning));
     session.handle_command(InlineCommand::SetInputStatus {
@@ -273,10 +273,25 @@ fn stage_state_with_running_tool_animates_spinner() {
         right: None,
     });
 
-    assert_eq!(session.status_left_text(), Some("Planning..."));
+    // The live tool status must replace the stage label so the footer
+    // reflects what the agent is actually doing, not a frozen "Planning...".
+    assert_eq!(session.status_left_text(), Some("Running tool: edit_file"));
     assert!(session.has_status_spinner(), "stage label must animate while a tool runs");
     assert!(session.is_running_activity());
     assert!(session.input_enabled(), "stage states keep input usable mid-tool");
+}
+
+#[test]
+fn stage_state_idle_shows_stage_label() {
+    let mut session = Session::new(InlineTheme::default(), None, VIEW_ROWS);
+    session.handle_command(InlineCommand::SetActivityState(ActivityState::Planning));
+    // No active tool — the status refresh may set a git-branch left text that
+    // does not indicate active work. The stage label must still be shown.
+    session.handle_command(InlineCommand::SetInputStatus { left: Some("main*".to_string()), right: None });
+
+    assert_eq!(session.status_left_text(), Some("Planning..."));
+    assert!(!session.has_status_spinner(), "idle stage must not spin");
+    assert!(!session.is_running_activity());
 }
 
 #[test]
