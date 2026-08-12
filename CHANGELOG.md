@@ -2,6 +2,23 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.143.1 - 2026-08-12
+
+### Highlights
+#### Documentation
+
+- Document Meta AI Muse and NVIDIA NIM in guides and CLI help (ed8e7d1c) 
+#### Features
+
+- Add uuid dependency and update event_log_path docs (89916761) 
+### Other Changes
+#### Other
+
+- Update readme (2e9d215a) (@vinhnx)
+- Update README (83293df5) 
+#### Refactors
+
+- Optimize preflight/tool-exec path and deduplicate harness state (3e8e1dc1) 
 ## 0.143.0 - 2026-08-11
 
 ### Highlights
