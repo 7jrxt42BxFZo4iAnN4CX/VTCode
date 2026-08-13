@@ -2,6 +2,18 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.143.3 - 2026-08-13
+
+### Highlights
+#### Bug Fixes
+
+- Tolerate common Markdown variants in plan validation and close dead-end turns (8450898b) 
+- Show live tool status during stage states (5d9e5027) 
+- Correct read-only agent permissions to include required tools (f0361040) 
+#### Features
+
+- Add grok-4.6 to xai and openrouter (af4e4823) 
+### Other Changes
 ## 0.143.2 - 2026-08-12
 
 ### Highlights
