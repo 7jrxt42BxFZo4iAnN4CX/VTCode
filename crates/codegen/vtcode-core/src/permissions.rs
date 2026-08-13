@@ -1219,4 +1219,43 @@ mod tests {
             ResolvedPermissionDecision::Auto
         );
     }
+
+    /// Turn_912/913 regression: the built-in plan agent's permission rules
+    /// must keep every tool in the planning wire catalog visible — the wire
+    /// shaper hides a tool only when ALL advertised permission requests are
+    /// denied, and the old read-only allow list denied `exec_command` (Bash)
+    /// and `request_user_input` (Other), collapsing the planning catalog to
+    /// bare `code_search`. Mutation tools must stay fully denied.
+    #[test]
+    fn builtin_plan_agent_keeps_planning_catalog_wire_visible() {
+        let (_temp, workspace, cwd) = workspace_roots();
+        let global = PermissionsConfig::default();
+        let plan = vtcode_config::builtin_plan_agent();
+
+        for tool in [
+            tools::EXEC_COMMAND,
+            tools::CODE_SEARCH,
+            tools::GREP_FILE,
+            tools::READ_FILE,
+            tools::LIST_FILES,
+            tools::REQUEST_USER_INPUT,
+        ] {
+            let requests = build_advertised_permission_requests(&workspace, &cwd, tool);
+            assert!(!requests.is_empty(), "{tool} must advertise at least one permission request");
+            let any_allowed = requests.iter().any(|request| {
+                evaluate_effective_permissions(&global, &plan.permissions, &workspace, &cwd, request)
+                    != ResolvedPermissionDecision::Deny
+            });
+            assert!(any_allowed, "{tool} must survive wire shaping for the plan agent");
+        }
+
+        for tool in [tools::APPLY_PATCH, tools::WRITE_FILE, tools::EDIT_FILE] {
+            let requests = build_advertised_permission_requests(&workspace, &cwd, tool);
+            let all_denied = requests.iter().all(|request| {
+                evaluate_effective_permissions(&global, &plan.permissions, &workspace, &cwd, request)
+                    == ResolvedPermissionDecision::Deny
+            });
+            assert!(all_denied, "{tool} must stay hidden from the plan agent");
+        }
+    }
 }

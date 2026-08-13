@@ -737,9 +737,20 @@ impl ToolCatalogEntry {
 
 fn profile_allows_tool(profile: ToolProfile, tool_name: &str, planning_active: bool) -> bool {
     match profile {
-        ToolProfile::VtCode if planning_active => {
-            matches!(tool_name, tools::EXEC_COMMAND | tools::CODE_SEARCH | tools::REQUEST_USER_INPUT)
-        }
+        // Planning keeps every read-only inspection surface plus the
+        // interview tool. A `code_search`-only catalog (turn_912/913) forced
+        // planners to answer basic "read this file / list this directory"
+        // questions with repeated fuzzy searches. Mutating tools stay
+        // excluded; the planning dispatch gate also hard-blocks mutations.
+        ToolProfile::VtCode if planning_active => matches!(
+            tool_name,
+            tools::EXEC_COMMAND
+                | tools::READ_FILE
+                | tools::LIST_FILES
+                | tools::GREP_FILE
+                | tools::CODE_SEARCH
+                | tools::REQUEST_USER_INPUT
+        ),
         ToolProfile::VtCode => {
             matches!(tool_name, tools::EXEC_COMMAND | tools::WRITE_STDIN | tools::APPLY_PATCH | tools::SEARCH_TOOLS)
         }
@@ -978,6 +989,15 @@ mod tests {
             registration(tools::CODE_SEARCH)
                 .with_description("Search code")
                 .with_parameter_schema(empty_object_schema()),
+            registration(tools::READ_FILE)
+                .with_description("Read file")
+                .with_parameter_schema(empty_object_schema()),
+            registration(tools::LIST_FILES)
+                .with_description("List files")
+                .with_parameter_schema(empty_object_schema()),
+            registration(tools::GREP_FILE)
+                .with_description("Grep file")
+                .with_parameter_schema(empty_object_schema()),
             registration(tools::REQUEST_USER_INPUT)
                 .with_description("Ask the user")
                 .with_parameter_schema(empty_object_schema()),
@@ -1010,13 +1030,110 @@ mod tests {
             .with_planning_active(true),
         );
 
+        // Planning must expose the full read-only inspection surface plus the
+        // interview tool — never collapse to a bare `code_search` catalog
+        // (turn_912/913 regression). The Interactive surface additionally
+        // hides read_file/list_files (they stay reachable on AgentRunner);
+        // interactive planners read files through exec_command per the
+        // planning read-only notice.
         assert_eq!(
             planning_names,
             vec![
                 tools::EXEC_COMMAND.to_string(),
                 tools::CODE_SEARCH.to_string(),
+                tools::GREP_FILE.to_string(),
                 tools::REQUEST_USER_INPUT.to_string(),
             ]
+        );
+
+        let agent_runner_planning_names = catalog.public_tool_names(
+            SessionToolsConfig::full_public(
+                SessionSurface::AgentRunner,
+                CapabilityLevel::CodeSearch,
+                ToolDocumentationMode::Full,
+                ToolModelCapabilities::default(),
+            )
+            .with_planning_active(true),
+        );
+        assert_eq!(
+            agent_runner_planning_names,
+            vec![
+                tools::EXEC_COMMAND.to_string(),
+                tools::CODE_SEARCH.to_string(),
+                tools::READ_FILE.to_string(),
+                tools::LIST_FILES.to_string(),
+                tools::GREP_FILE.to_string(),
+                tools::REQUEST_USER_INPUT.to_string(),
+            ]
+        );
+    }
+
+    /// Turn_912/913 end-to-end regression: compose the same three wire
+    /// filters the binary runloop applies (catalog profile+surface, primary
+    /// agent tool policy, permission advertisement) for the built-in plan
+    /// agent on the Interactive surface and assert the resulting planning
+    /// catalog. Before the fix this collapsed to `["code_search"]`.
+    #[test]
+    fn plan_agent_interactive_wire_catalog_survives_all_filters() {
+        use crate::config::PermissionsConfig;
+        use crate::permissions::{build_advertised_permission_requests, evaluate_effective_permissions};
+        use crate::primary_agent::{ActivePrimaryAgent, primary_agent_allows_tool};
+
+        let registrations = [
+            tools::EXEC_COMMAND,
+            tools::CODE_SEARCH,
+            tools::GREP_FILE,
+            tools::READ_FILE,
+            tools::LIST_FILES,
+            tools::REQUEST_USER_INPUT,
+            tools::APPLY_PATCH,
+            tools::WRITE_FILE,
+        ]
+        .into_iter()
+        .map(|name| {
+            registration(name)
+                .with_description("test tool")
+                .with_parameter_schema(empty_object_schema())
+        })
+        .collect::<Vec<_>>();
+        let catalog = SessionToolCatalog::rebuild_from_registrations(registrations);
+        let names = catalog.public_tool_names(
+            SessionToolsConfig::full_public(
+                SessionSurface::Interactive,
+                CapabilityLevel::CodeSearch,
+                ToolDocumentationMode::Full,
+                ToolModelCapabilities::default(),
+            )
+            .with_planning_active(true),
+        );
+
+        let agent = ActivePrimaryAgent::from_spec(&vtcode_config::builtin_plan_agent());
+        let global = PermissionsConfig::default();
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let workspace = temp.path();
+        let visible: Vec<String> = names
+            .iter()
+            .filter(|name| primary_agent_allows_tool(&agent, name))
+            .filter(|name| {
+                let requests = build_advertised_permission_requests(workspace, workspace, name);
+                requests.is_empty()
+                    || requests.iter().any(|request| {
+                        evaluate_effective_permissions(&global, &agent.permissions, workspace, workspace, request)
+                            != crate::permissions::ResolvedPermissionDecision::Deny
+                    })
+            })
+            .cloned()
+            .collect();
+
+        assert_eq!(
+            visible,
+            vec![
+                tools::EXEC_COMMAND.to_string(),
+                tools::CODE_SEARCH.to_string(),
+                tools::GREP_FILE.to_string(),
+                tools::REQUEST_USER_INPUT.to_string(),
+            ],
+            "plan agent Interactive wire catalog must keep the read-only inspection + interview set"
         );
     }
 

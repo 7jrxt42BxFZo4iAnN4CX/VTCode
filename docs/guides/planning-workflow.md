@@ -10,6 +10,9 @@ During planning, the agent can:
 - search code with grep, structural search, and other read-only tools
 - analyse patterns and constraints before proposing changes
 - run explicitly safe inspection or validation commands when the active permission policy allows them
+- ask clarifying questions through `request_user_input`
+
+The built-in `plan` agent's permission rules allow `read`, `request_user_input`, and `bash` so its wire catalog keeps `exec_command`, `code_search`, `grep_file`, and the interview tool visible. Read-only enforcement is not delegated to those permissions: the planning dispatch gate hard-blocks every mutating tool call (and non-allow-listed shell command) before execution, so granting `bash` admits the tool without weakening plan-mode safety. The `plan` agent is also excluded by name from approved-plan execution routing — selecting it always re-enters planning, never implementation.
 
 Shell commands in plan mode are validated against a read-only allow-list. Allowed patterns include:
 

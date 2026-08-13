@@ -138,18 +138,25 @@ pub(crate) fn builtin_primary_agent_specs() -> Vec<SubagentSpec> {
 /// cannot expose mutation tools. Prefer the requested/prior agent when it is
 /// write-capable, then the configured default, then the built-in execution
 /// agents, and finally any other write-capable primary agent.
+///
+/// The `plan` agent is excluded by name, not merely by its permission
+/// heuristic: it permits read-only `bash` so `exec_command` stays on the
+/// wire while planning, which makes `is_read_only()` false — but selecting
+/// it always re-enters the planning workflow, so it can never execute an
+/// approved plan regardless of list ordering.
 pub(crate) fn resolve_approved_plan_execution_agent(
     requested_agent: Option<&str>,
     configured_default_agent: Option<&str>,
     specs: &[SubagentSpec],
 ) -> Option<String> {
+    let execution_capable =
+        |spec: &SubagentSpec| spec.is_primary() && !spec.is_read_only() && !spec.name.eq_ignore_ascii_case("plan");
     for candidate in [requested_agent, configured_default_agent, Some("build"), Some("auto")]
         .into_iter()
         .flatten()
     {
         if let Some(spec) = specs.iter().find(|spec| {
-            spec.is_primary()
-                && !spec.is_read_only()
+            execution_capable(spec)
                 && (spec.name.eq_ignore_ascii_case(candidate)
                     || spec.aliases.iter().any(|alias| alias.eq_ignore_ascii_case(candidate)))
         }) {
@@ -157,10 +164,7 @@ pub(crate) fn resolve_approved_plan_execution_agent(
         }
     }
 
-    specs
-        .iter()
-        .find(|spec| spec.is_primary() && !spec.is_read_only())
-        .map(|spec| spec.name.clone())
+    specs.iter().find(|spec| execution_capable(spec)).map(|spec| spec.name.clone())
 }
 
 #[cfg(test)]
@@ -196,6 +200,23 @@ mod tests {
         let specs = vec![builtin_primary_duck_agent()];
 
         assert_eq!(resolve_approved_plan_execution_agent(Some("duck"), None, &specs), None);
+    }
+
+    #[test]
+    fn plan_agent_is_never_an_execution_handoff_target() {
+        // The plan agent permits read-only bash (so exec_command stays on the
+        // wire while planning), which flips `is_read_only()` — but selecting
+        // it re-enters the planning workflow, so it must never receive an
+        // approved-plan implementation directive, even when it is the
+        // requested agent or the only apparent fallback.
+        let specs = vec![vtcode_config::builtin_plan_agent(), builtin_primary_build_agent()];
+        assert_eq!(
+            resolve_approved_plan_execution_agent(Some("plan"), Some("plan"), &specs),
+            Some("build".to_string())
+        );
+
+        let plan_only = vec![vtcode_config::builtin_plan_agent()];
+        assert_eq!(resolve_approved_plan_execution_agent(Some("plan"), None, &plan_only), None);
     }
 
     #[test]

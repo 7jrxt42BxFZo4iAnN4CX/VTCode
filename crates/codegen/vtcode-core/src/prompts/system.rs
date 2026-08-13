@@ -41,7 +41,14 @@ pub const PLANNING_WORKFLOW_EXIT_INSTRUCTION_LINE: &str = "Only a validated plan
 /// `file://`) — plans are read in terminals and other non-hyperlink
 /// surfaces, and a bare `path/to/file.rs:42` reference is portable while a
 /// broken pseudo-link pointing at the editor binary itself is not.
-pub const PLANNING_WORKFLOW_PLAN_QUALITY_LINE: &str = "Keep plans compact and spec-like. Emit ONE `<proposed_plan>` with these sections: `## Summary`; `## Implementation Steps` (or `## Steps`); `## Test Cases and Validation` (or `## Validation`); `## Assumptions and Defaults` (or `## Assumptions`). Every numbered implementation step must name a concrete file, symbol, behavior, or other repository target and include a non-empty `verify:`/`verification:` command or check; generic `1. Do the work` steps are not plans. Prefer file:symbol references over prose, written as plain text or inline code (e.g. `src/main.rs:42`) — never as markdown links or editor/IDE URIs (no `[label](url)`, no `vscode-file://`/`file://` schemes). Resolve placeholders and open decisions before approval; use `Next open decision:` or `Open question:` only when a decision remains unresolved.";
+/// The canonical one-line step format, mirrored from
+/// `tools::handlers::planning_workflow::artifacts::CANONICAL_STEP_FORMAT`
+/// (const contexts cannot concat!, so the sync is enforced by the
+/// `plan_quality_line_shows_canonical_step_format` test below). Showing the
+/// exact shape up front matters: the repair directive prints it only after a
+/// rejection, and turn_912/913 showed planners repeatedly failing "step lacks
+/// a concrete target or verification" without ever seeing an example.
+pub const PLANNING_WORKFLOW_PLAN_QUALITY_LINE: &str = "Keep plans compact and spec-like. Emit ONE `<proposed_plan>` with these sections: `## Summary`; `## Implementation Steps` (or `## Steps`); `## Test Cases and Validation` (or `## Validation`); `## Assumptions and Defaults` (or `## Assumptions`). Every numbered implementation step must name a concrete file, symbol, behavior, or other repository target and include a non-empty `verify:`/`verification:` command or check, written in the canonical one-line form `1. Action -> files: [path/to/file.rs] -> verify: [cargo check]`; generic `1. Do the work` steps are not plans. Prefer file:symbol references over prose, written as plain text or inline code (e.g. `src/main.rs:42`) — never as markdown links or editor/IDE URIs (no `[label](url)`, no `vscode-file://`/`file://` schemes). Resolve placeholders and open decisions before approval; use `Next open decision:` or `Open question:` only when a decision remains unresolved.";
 /// Scale research effort to the request instead of always exhaustively
 /// enumerating the repository. Checkpoint turn_647 showed a "make a simple
 /// plan to improve launch time" request burn 70+ tool calls across dozens of
@@ -860,6 +867,21 @@ mod tests {
         assert!(line.contains("never as markdown links or editor/IDE URIs"));
         assert!(line.contains("vscode-file://"));
         assert!(line.contains("plain text or inline code"));
+    }
+
+    /// The initial prompt must show the exact step grammar the validator
+    /// enforces, not just describe it — the repair directive prints the
+    /// canonical example only after a first rejection (turn_912/913 failed
+    /// every implementation step on "lacks a concrete target or verification"
+    /// without the model ever seeing an example). Keep the inline literal in
+    /// sync with the validator's canonical format.
+    #[test]
+    fn plan_quality_line_shows_canonical_step_format() {
+        assert!(
+            PLANNING_WORKFLOW_PLAN_QUALITY_LINE
+                .contains(crate::tools::handlers::planning_workflow::artifacts::CANONICAL_STEP_FORMAT),
+            "quality line must embed artifacts::CANONICAL_STEP_FORMAT verbatim"
+        );
     }
 
     #[test]

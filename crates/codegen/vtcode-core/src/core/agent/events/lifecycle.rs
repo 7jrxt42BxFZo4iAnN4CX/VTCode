@@ -198,6 +198,47 @@ fn summarize_file_list(output: &Value, files: &[Value]) -> String {
     summary
 }
 
+fn summarize_search_results(output: &Value, results: &[Value]) -> String {
+    let returned = output
+        .get("returned")
+        .or_else(|| output.get("total"))
+        .or_else(|| output.get("count"))
+        .and_then(Value::as_u64)
+        .unwrap_or(results.len() as u64);
+
+    let mut summary = if returned == 0 {
+        "No results found".to_string()
+    } else {
+        format!("Returned {returned} {}", pluralize(returned, "result", "results"))
+    };
+    if let Some(query) = trimmed_string_field(output, "query") {
+        let _ = write!(summary, " for `{query}`");
+    }
+
+    // Sample a few hits as `path:line` so archives stay legible without
+    // embedding full snippets.
+    let mut samples = Vec::new();
+    for item in results {
+        let Some(path) = match_path_text(item) else { continue };
+        let sample = match item.get("line").and_then(Value::as_u64) {
+            Some(line) => format!("{path}:{line}"),
+            None => path.to_string(),
+        };
+        if samples.iter().any(|existing: &String| existing == &sample) {
+            continue;
+        }
+        samples.push(sample);
+        if samples.len() >= 3 {
+            break;
+        }
+    }
+    if !samples.is_empty() {
+        let _ = write!(summary, ": {}", samples.join(", "));
+    }
+
+    summary
+}
+
 fn summarize_matches(output: &Value, matches: &[Value]) -> String {
     let total = output
         .get("total_match_count")
@@ -258,6 +299,12 @@ pub fn tool_output_payload_from_value(output: &Value) -> ToolOutputPayload {
         Some(summarize_file_list(output, files))
     } else if let Some(matches) = output.get("matches").and_then(Value::as_array) {
         Some(summarize_matches(output, matches))
+    } else if let Some(results) = output.get("results").and_then(Value::as_array) {
+        // `code_search`-style outputs: without this branch the archive only
+        // records "Structured result with fields: query, filters, results,
+        // returned", which made the turn_912/913 planning trajectories (54
+        // searches) illegible in session archives and ATIF exports.
+        Some(summarize_search_results(output, results))
     } else {
         output
             .as_object()
@@ -1007,6 +1054,40 @@ mod tests {
 
         assert_eq!(payload.aggregated_output, "No matches found");
         assert_eq!(payload.spool_path, None);
+    }
+
+    #[test]
+    fn tool_output_payload_summarizes_code_search_results() {
+        // Shape produced by the `code_search` tool (`CodeSearchResult`).
+        let payload = tool_output_payload_from_value(&json!({
+            "query": "startup timing",
+            "filters": {"path": "src", "file_types": null, "result_types": null, "max_results": 10},
+            "results": [
+                {"result_type": "definition", "path": "src/main.rs", "line": 42},
+                {"result_type": "usage", "path": "src/startup/mod.rs", "line": 7},
+                {"result_type": "usage", "path": "src/main.rs", "line": 42}
+            ],
+            "returned": 3
+        }));
+
+        assert_eq!(payload.spool_path, None);
+        assert!(payload.aggregated_output.contains("Returned 3 results"));
+        assert!(payload.aggregated_output.contains("for `startup timing`"));
+        assert!(payload.aggregated_output.contains("src/main.rs:42"));
+        assert!(payload.aggregated_output.contains("src/startup/mod.rs:7"));
+        // Duplicated path:line sampled once only.
+        assert_eq!(payload.aggregated_output.matches("src/main.rs:42").count(), 1);
+    }
+
+    #[test]
+    fn tool_output_payload_reports_empty_code_search_results() {
+        let payload = tool_output_payload_from_value(&json!({
+            "query": "nonexistent_symbol",
+            "results": [],
+            "returned": 0
+        }));
+
+        assert_eq!(payload.aggregated_output, "No results found for `nonexistent_symbol`");
     }
 
     #[test]

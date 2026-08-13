@@ -40,6 +40,10 @@ impl<'a> TurnProcessingContext<'a> {
         let message = format!("Plan is not ready for approval: {error}");
         self.renderer.line(MessageStyle::Warning, &message)?;
         tracing::warn!(target: "vtcode.planning_workflow", error = %error, "plan artifact rejected before approval");
+        // Keep the rejected draft in history on BOTH paths: the repair retry
+        // must see what it is fixing, and a terminal rejection must leave the
+        // draft in checkpoints/events instead of the bare planning reminder.
+        append_rejected_plan_draft_to_last_assistant(self.working_history, plan_text);
         if allow_repair && self.plan_session.plan_validation_repair_allowed() {
             self.plan_session.mark_plan_validation_repair_used();
             // The error→feedback mapping and one-shot policy prose live in the
@@ -666,6 +670,42 @@ pub(super) fn should_render_no_ready_plan_hint(denied_interview_hint_shown: bool
 /// `MessageContent::text`, which is lossless here: the message just pushed
 /// above is always built from a plain text string.
 fn append_no_ready_plan_hint_to_last_assistant(working_history: &mut [uni::Message]) {
+    append_to_last_assistant_message(
+        working_history,
+        crate::agent::runloop::unified::planning_workflow_state::PLANNING_WORKFLOW_NO_APPROVAL_READY_PLAN_HINT,
+    );
+}
+
+/// Cap for a rejected plan draft re-attached to the assistant message that
+/// produced it. Valid plans are compact by contract (<4KB), so 8KB bounds
+/// pathological drafts while never truncating a legitimate one.
+const REJECTED_PLAN_DRAFT_HISTORY_BUDGET: usize = 8 * 1024;
+
+/// Re-attach a rejected `<proposed_plan>` draft to the last assistant
+/// message. The plan block is extracted from the response text before
+/// `handle_assistant_response` stores it, so without this the draft vanishes
+/// from history on rejection: the repair retry cannot see what it is fixing,
+/// and terminal rejections leave checkpoints/events with no trace of the
+/// rejected plan (turn_912/913: the final assistant message degraded to the
+/// planning-workflow reminder bullet).
+fn append_rejected_plan_draft_to_last_assistant(working_history: &mut [uni::Message], plan_text: &str) {
+    let plan_text = plan_text.trim();
+    if plan_text.is_empty() {
+        return;
+    }
+    let bounded = if plan_text.len() > REJECTED_PLAN_DRAFT_HISTORY_BUDGET {
+        let mut end = REJECTED_PLAN_DRAFT_HISTORY_BUDGET;
+        while !plan_text.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…[truncated]", &plan_text[..end])
+    } else {
+        plan_text.to_string()
+    };
+    append_to_last_assistant_message(working_history, &format!("<proposed_plan>\n{bounded}\n</proposed_plan>"));
+}
+
+fn append_to_last_assistant_message(working_history: &mut [uni::Message], addition: &str) {
     let Some(last) = working_history
         .iter_mut()
         .rev()
@@ -673,12 +713,11 @@ fn append_no_ready_plan_hint_to_last_assistant(working_history: &mut [uni::Messa
     else {
         return;
     };
-    let hint = crate::agent::runloop::unified::planning_workflow_state::PLANNING_WORKFLOW_NO_APPROVAL_READY_PLAN_HINT;
     let text = last.content.as_text();
     let updated = if text.trim().is_empty() {
-        hint.to_string()
+        addition.to_string()
     } else {
-        format!("{}\n\n{}", text.trim_end(), hint)
+        format!("{}\n\n{}", text.trim_end(), addition)
     };
     last.content = uni::MessageContent::text(updated);
 }
@@ -1010,5 +1049,46 @@ mod tests {
         assert!(should_render_no_ready_plan_hint(false, "Here is a research summary."));
         assert!(!should_render_no_ready_plan_hint(true, "Here is a research summary."));
         assert!(!should_render_no_ready_plan_hint(false, "Which approach should I take?"));
+    }
+
+    #[test]
+    fn rejected_plan_draft_is_reattached_to_last_assistant_message() {
+        let mut history = vec![
+            uni::Message::user("make a plan".to_string()),
+            uni::Message::assistant("• Planning workflow is active.".to_string()),
+        ];
+        append_rejected_plan_draft_to_last_assistant(&mut history, "## Summary\nDo the thing");
+        let last = history.last().expect("assistant message");
+        let text = last.content.as_text();
+        assert!(
+            text.contains("Planning workflow is active")
+                && text.contains("<proposed_plan>\n## Summary\nDo the thing\n</proposed_plan>"),
+            "draft must be appended, not replace the stored text: {text:?}"
+        );
+        assert_eq!(history.len(), 2, "no new message should be pushed");
+    }
+
+    #[test]
+    fn rejected_plan_draft_replaces_empty_assistant_text_and_bounds_huge_drafts() {
+        let mut history = vec![uni::Message::assistant(String::new())];
+        append_rejected_plan_draft_to_last_assistant(&mut history, "  ## Summary\nOnly draft  ");
+        let text = history[0].content.as_text();
+        assert_eq!(text, "<proposed_plan>\n## Summary\nOnly draft\n</proposed_plan>");
+
+        let huge = "x".repeat(REJECTED_PLAN_DRAFT_HISTORY_BUDGET * 2);
+        let mut history = vec![uni::Message::assistant(String::new())];
+        append_rejected_plan_draft_to_last_assistant(&mut history, &huge);
+        let text = history[0].content.as_text();
+        assert!(text.len() < REJECTED_PLAN_DRAFT_HISTORY_BUDGET + 64);
+        assert!(text.contains("…[truncated]"));
+
+        // No assistant message → no-op, must not panic.
+        let mut history = vec![uni::Message::user("hi".to_string())];
+        append_rejected_plan_draft_to_last_assistant(&mut history, "draft");
+        assert_eq!(history.len(), 1);
+        // Empty draft → no-op.
+        let mut history = vec![uni::Message::assistant("kept".to_string())];
+        append_rejected_plan_draft_to_last_assistant(&mut history, "   ");
+        assert_eq!(history[0].content.as_text(), "kept");
     }
 }

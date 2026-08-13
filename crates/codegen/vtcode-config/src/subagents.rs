@@ -667,7 +667,7 @@ pub fn builtin_plan_agent() -> SubagentSpec {
         model: Some("inherit".to_string()),
         color: Some(ui::AGENT_COLOR_PLAN.to_string()),
         reasoning_effort: None,
-        permissions: readonly_agent_permissions(),
+        permissions: plan_agent_permissions(),
         skills: Vec::new(),
         mcp_servers: Vec::new(),
         hooks: None,
@@ -696,7 +696,7 @@ pub fn builtin_primary_duck_agent() -> SubagentSpec {
         model: Some("inherit".to_string()),
         color: Some(ui::AGENT_COLOR_DUCK.to_string()),
         reasoning_effort: None,
-        permissions: readonly_agent_permissions(),
+        permissions: readonly_interview_agent_permissions(),
         skills: Vec::new(),
         mcp_servers: Vec::new(),
         hooks: None,
@@ -716,7 +716,19 @@ pub fn builtin_primary_duck_agent() -> SubagentSpec {
 }
 
 fn builtin_readonly_tool_ids() -> Vec<String> {
-    vec![tools::CODE_SEARCH.to_string(), tools::EXEC_COMMAND.to_string()]
+    // The direct read tools must be listed explicitly: read-only agents deny
+    // `bash`, so the wire shaper hides `exec_command` for them — without
+    // grep_file/read_file/list_files their effective catalog collapses to
+    // bare `code_search` (the turn_912/913 planning failure shape). The
+    // planning profile and Interactive surface intersect this list further
+    // (e.g. read_file/list_files stay hidden on Interactive).
+    vec![
+        tools::CODE_SEARCH.to_string(),
+        tools::EXEC_COMMAND.to_string(),
+        tools::GREP_FILE.to_string(),
+        tools::READ_FILE.to_string(),
+        tools::LIST_FILES.to_string(),
+    ]
 }
 
 /// Readonly tools for primary agents that interact with the user directly.
@@ -743,6 +755,32 @@ fn auto_agent_permissions() -> AgentPermissionsConfig {
 fn readonly_agent_permissions() -> AgentPermissionsConfig {
     let mut permissions = AgentPermissionsConfig::new(PermissionDefault::Deny);
     permissions.allow = vec!["read".to_string()];
+    permissions
+}
+
+/// Read-only agents that talk to the user (duck, plan) also list
+/// `request_user_input` in their tool set, so the permission rules must
+/// allow it explicitly: the default-deny fallback otherwise rejects it
+/// (semantic kind "other") and the wire catalog filter hides the only
+/// interview tool even though `builtin_primary_readonly_tool_ids` lists it.
+fn readonly_interview_agent_permissions() -> AgentPermissionsConfig {
+    let mut permissions = readonly_agent_permissions();
+    permissions.allow.push("request_user_input".to_string());
+    permissions
+}
+
+/// Plan-agent permissions extend the read-only interview set with `bash` so
+/// `exec_command` stays on the wire and read-only shell inspection (`rg`,
+/// `cat`, `wc`, ...) works while planning. This stays read-only in practice:
+/// selecting the plan agent always activates the planning workflow, whose
+/// dispatch gate (`ToolRegistry::is_planning_active_allowed` +
+/// `assess_plan_mode_read_only_bash_command`) hard-blocks every mutating
+/// command before execution — the bash permission only admits the tool, the
+/// planning gate keeps it read-only. Explorer/duck stay bash-denied via
+/// [`readonly_agent_permissions`]/[`readonly_interview_agent_permissions`].
+fn plan_agent_permissions() -> AgentPermissionsConfig {
+    let mut permissions = readonly_interview_agent_permissions();
+    permissions.allow.push("bash".to_string());
     permissions
 }
 
@@ -1484,6 +1522,7 @@ mod tests {
         SubagentDiscoveryInput, SubagentMcpServer, SubagentMemoryScope, SubagentRuntimeLimits, SubagentSource,
         builtin_plan_agent, builtin_primary_duck_agent, builtin_subagents, classify_agent_spec_field,
         discover_subagents, load_cli_agents, load_subagent_from_file, normalize_subagent_tools,
+        readonly_agent_permissions, readonly_interview_agent_permissions,
     };
     use crate::constants::tools;
     use crate::core::permissions::PermissionDefault;
@@ -2137,12 +2176,15 @@ Hook prompt"#,
     #[test]
     fn builtin_primary_agents_are_available() {
         let builtins = builtin_subagents();
-        let expected_readonly_tools = vec![tools::CODE_SEARCH.to_string(), tools::EXEC_COMMAND.to_string()];
-        let expected_primary_readonly_tools = vec![
+        let expected_readonly_tools = vec![
             tools::CODE_SEARCH.to_string(),
             tools::EXEC_COMMAND.to_string(),
-            tools::REQUEST_USER_INPUT.to_string(),
+            tools::GREP_FILE.to_string(),
+            tools::READ_FILE.to_string(),
+            tools::LIST_FILES.to_string(),
         ];
+        let mut expected_primary_readonly_tools = expected_readonly_tools.clone();
+        expected_primary_readonly_tools.push(tools::REQUEST_USER_INPUT.to_string());
         let default = builtins
             .iter()
             .find(|spec| spec.name == "default")
@@ -2187,7 +2229,15 @@ Hook prompt"#,
                         .contains(&tools::APPLY_PATCH.to_string())
                 );
                 assert!(spec.disallowed_tools.is_empty());
-                assert_eq!(spec.permissions.allow, vec!["read".to_string()]);
+                // The allow list must keep every listed tool wire-visible:
+                // `request_user_input` for the interview, and (plan only)
+                // `bash` for read-only exec_command inspection gated by the
+                // planning dispatch checks.
+                let mut expected_allow = vec!["read".to_string(), "request_user_input".to_string()];
+                if name == "plan" {
+                    expected_allow.push("bash".to_string());
+                }
+                assert_eq!(spec.permissions.allow, expected_allow);
             }
         }
         let plan = builtins
@@ -2231,7 +2281,7 @@ Hook prompt"#,
         assert_eq!(auto.permissions.default, PermissionDefault::Auto);
         assert!(!auto.is_read_only());
 
-        for name in ["duck", "explorer", "plan"] {
+        for name in ["duck", "explorer"] {
             let spec = builtins
                 .iter()
                 .find(|spec| spec.name == name)
@@ -2239,6 +2289,23 @@ Hook prompt"#,
             assert_eq!(spec.permissions.default, PermissionDefault::Deny);
             assert!(spec.is_read_only());
         }
+
+        // `plan` permits read-only `bash` so exec_command stays wire-visible
+        // during planning, so the static `is_read_only()` heuristic
+        // classifies it as mutation-capable. Its mutations are instead
+        // blocked dynamically by the planning-workflow dispatch gate, and
+        // `resolve_approved_plan_execution_agent` excludes it by name from
+        // executing approved plans.
+        let plan = builtins
+            .iter()
+            .find(|spec| spec.name == "plan")
+            .expect("missing built-in plan agent");
+        assert_eq!(plan.permissions.default, PermissionDefault::Deny);
+        assert!(!plan.is_read_only());
+        assert!(
+            !plan.permissions.allow.iter().any(|rule| rule == "edit" || rule == "write"),
+            "plan must not gain direct file-mutation permissions"
+        );
     }
 
     #[test]
@@ -2311,6 +2378,32 @@ Legacy prompt."#,
             tools.iter().any(|t| t == tools::REQUEST_USER_INPUT),
             "plan agent should expose request_user_input for clarifying questions"
         );
+        // The wire catalog filters advertised tools through these permission
+        // rules; a static tool-list entry is not enough (turn_912 regression:
+        // the planning wire catalog collapsed to only `code_search` because
+        // `request_user_input`/`exec_command` hit the default-deny fallback).
+        assert!(
+            spec.permissions.allow.iter().any(|rule| rule == "request_user_input"),
+            "plan agent permissions must allow request_user_input so it survives wire shaping"
+        );
+        assert!(
+            spec.permissions.allow.iter().any(|rule| rule == "bash"),
+            "plan agent permissions must allow bash so exec_command survives wire shaping; \
+             the planning-workflow dispatch gate keeps execution read-only"
+        );
+    }
+
+    #[test]
+    fn readonly_permissions_allow_request_user_input_but_not_bash() {
+        let readonly = readonly_agent_permissions();
+        assert_eq!(readonly.default, PermissionDefault::Deny);
+        assert_eq!(readonly.allow, vec!["read".to_string()]);
+
+        let interview = readonly_interview_agent_permissions();
+        assert_eq!(interview.default, PermissionDefault::Deny);
+        assert!(interview.allow.iter().any(|rule| rule == "read"));
+        assert!(interview.allow.iter().any(|rule| rule == "request_user_input"));
+        assert!(!interview.allow.iter().any(|rule| rule == "bash"), "duck must keep exec_command denied");
     }
 
     #[test]

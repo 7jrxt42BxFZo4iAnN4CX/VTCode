@@ -272,6 +272,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn planning_workflow_keeps_exec_command_read_only() -> Result<()> {
+        // The plan agent's permissions allow `bash` so `exec_command` stays
+        // on the wire while planning; THIS gate is what keeps that read-only.
+        let temp_dir = TempDir::new()?;
+        let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
+        registry.enable_planning();
+
+        assert!(registry.is_planning_active_allowed(tools::EXEC_COMMAND, &json!({"cmd": "rg --files src"})));
+        assert!(registry.is_planning_active_allowed(tools::EXEC_COMMAND, &json!({"cmd": "cat Cargo.toml"})));
+        assert!(!registry.is_planning_active_allowed(tools::EXEC_COMMAND, &json!({"cmd": "rm -rf target"})));
+        assert!(!registry.is_planning_active_allowed(tools::EXEC_COMMAND, &json!({"cmd": "echo hi > file.txt"})));
+        assert!(!registry.is_planning_active_allowed(tools::EXEC_COMMAND, &json!({"cmd": "cargo build"})));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn planning_workflow_allows_cd_prefixed_exploration() -> Result<()> {
         // Checkpoint turn_810: plan mode rejected `cd <workspace> && sed …`
         // because `cd` was not allow-listed, blocking all file exploration.

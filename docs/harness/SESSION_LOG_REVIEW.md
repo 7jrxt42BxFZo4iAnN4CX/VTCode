@@ -1,5 +1,26 @@
 # Session Log Review
 
+## 2026-08-12 | Planning wire-catalog collapse (turns 912–913)
+
+### Baseline
+
+The planning turns 912 and 913 ("make a simple plan to improve vtcode launch time") each burned ~157k input tokens across 54 `code_search` calls, persisted no plan, and ended with the planning reminder bullet as the only visible assistant text.
+
+| Root cause | Fix |
+| --- | --- |
+| The plan agent's permission rules (`default: deny, allow: [read]`) denied the `exec_command` (Bash) and `request_user_input` (Other) advertisement probes, so wire shaping collapsed the planning catalog to bare `code_search`. | Split the permission ladder: `readonly_agent_permissions` (`read`), `readonly_interview_agent_permissions` (+`request_user_input`), `plan_agent_permissions` (+`bash`). Read-only enforcement stays with the planning dispatch gate, which hard-blocks mutating commands before execution; `resolve_approved_plan_execution_agent` now excludes `plan` by name since its permission heuristic no longer reads as read-only. |
+| The planning profile admitted only `exec_command`/`code_search`/`request_user_input`, and the builtin read-only tool lists omitted `grep_file`/`read_file`/`list_files`, so agent tool-policy filtering re-hid them. | Planning profile and builtin read-only tool lists now include the direct read tools (Interactive surface still hides `read_file`/`list_files`; planners read files via gated `exec_command`). Explorer gains real read tools too — it had the same latent single-tool collapse. |
+| The initial system prompt described valid plan steps but never showed the canonical grammar; the example appeared only in the post-rejection repair directive. | `PLANNING_WORKFLOW_PLAN_QUALITY_LINE` embeds `CANONICAL_STEP_FORMAT` verbatim (sync enforced by test). |
+| A rejected `<proposed_plan>` vanished from history — the repair retry could not see what it was fixing, and terminal rejections left checkpoints/events with only the planning reminder. | `reject_plan_artifact` re-attaches the bounded (8 KiB) rejected draft to the stored assistant message on both repair and terminal paths. |
+| Session archives recorded every `code_search` result as "Structured result with fields: query, filters, results, returned". | `tool_output_payload_from_value` summarizes `results` arrays (count, query, up to 3 `path:line` samples). |
+
+### Verification
+
+- `vtcode-config`: 389 tests pass, including updated builtin-agent contract tests.
+- `vtcode-core`: new `builtin_plan_agent_keeps_planning_catalog_wire_visible` (permission-layer wire shaping against the real plan spec), planning-catalog profile tests (Interactive + AgentRunner surfaces), `planning_workflow_keeps_exec_command_read_only`, prompt canonical-format guard, and `results`-summary tests.
+- Binary: rejected-draft reattachment unit tests and `plan_agent_is_never_an_execution_handoff_target`.
+- `./scripts/check-dev.sh --changed`: clean (5,634 tests).
+
 ## 2026-08-12 | Checkpoints 862–911 stabilization
 
 ### Baseline
