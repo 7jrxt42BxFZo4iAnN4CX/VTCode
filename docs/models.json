@@ -1597,6 +1597,41 @@
     "name": "Z.AI",
     "doc": "https://docs.z.ai/guides/llm/glm-5",
     "models": {
+      "glm-5.3": {
+        "id": "glm-5.3",
+        "name": "GLM-5.3",
+        "description": "Z.ai flagship coding model with frontier long-horizon agentic performance. Built on the GLM-5.2 base with post-training gains: much stronger complex coding and long-horizon task execution, using the same 1M-token context.",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 1000000,
+        "max_output_tokens": 128000,
+        "capabilities": {
+          "thinking": true,
+          "streaming": true,
+          "function_calling": true,
+          "context_caching": true,
+          "structured_output": true,
+          "tool_streaming": true
+        },
+        "vtcode": {
+          "variant": "ZaiGlm53",
+          "constant": "Z_AI_GLM_5_3",
+          "display": "GLM-5.3",
+          "description": "Z.ai flagship coding model with frontier long-horizon agentic performance and 1M context.",
+          "efficient": false,
+          "top_tier": true,
+          "generation": "5.3",
+          "doc_comment": "GLM-5.3 - Z.ai flagship coding model with frontier long-horizon agentic performance"
+        }
+      },
       "glm-5.2": {
         "id": "glm-5.2",
         "name": "GLM-5.2",

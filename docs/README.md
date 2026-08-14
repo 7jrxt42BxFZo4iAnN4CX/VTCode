@@ -64,7 +64,7 @@ VT Code has undergone significant improvements:
 - **`/checkup` Command** - Configuration diagnostics that surface reversible, confirm-before-apply optimizations (e.g. tool-result clearing, client tool search, token-efficiency warnings).
 - **GPT-5.6 Models** - Added support for OpenAI's GPT-5.6 family across configurations.
 
-- **GLM-5.2 Model Support** - Zhipu AI's latest model with cache metrics in stream handling
+- **GLM-5.3 Model Support** - Z.ai's flagship coding model with frontier long-horizon agentic performance and 1M-token context, as the new ZAI provider default
 - **Byte-Range File Reading** - Large file reading with offset and page size parameters for efficient partial reads
 - **Kimi K2.7 Code Model** - Moonshot's latest code-focused model across all configurations
 - **GPT-5-Codex Integration** - OpenAI's Codex model with Responses API support
@@ -370,7 +370,7 @@ VT Code builds upon key developments in AI agent technology:
 
 This documentation reflects version 0.133.21 of VT Code, which includes significant enhancements including:
 
-- GLM-5.2, Kimi K2.7, and GPT-5-Codex model support
+- GLM-5.3, GLM-5.2, Kimi K2.7, and GPT-5-Codex model support
 - Byte-range file reading for large files
 - Cross-platform process group management
 - Signal handling architecture with emergency exit

@@ -92,13 +92,13 @@ fn test_provider_defaults() {
     assert_eq!(ModelId::default_orchestrator_for_provider(Provider::Anthropic), ModelId::ClaudeOpus48);
     assert_eq!(ModelId::default_orchestrator_for_provider(Provider::DeepSeek), ModelId::DeepSeekV4Pro);
     assert_eq!(ModelId::default_orchestrator_for_provider(Provider::Ollama), ModelId::OllamaGptOss20b);
-    assert_eq!(ModelId::default_orchestrator_for_provider(Provider::ZAI), ModelId::ZaiGlm51);
+    assert_eq!(ModelId::default_orchestrator_for_provider(Provider::ZAI), ModelId::ZaiGlm53);
     assert_eq!(ModelId::default_orchestrator_for_provider(Provider::OpenCodeZen), ModelId::OpenCodeZenGPT54);
     assert_eq!(ModelId::default_orchestrator_for_provider(Provider::OpenCodeGo), ModelId::OpenCodeGoMinimaxM27);
 
     assert_eq!(ModelId::default_single_for_provider(Provider::DeepSeek), ModelId::DeepSeekV4Pro);
     assert_eq!(ModelId::default_single_for_provider(Provider::Ollama), ModelId::OllamaGptOss20b);
-    assert_eq!(ModelId::default_single_for_provider(Provider::ZAI), ModelId::ZaiGlm51);
+    assert_eq!(ModelId::default_single_for_provider(Provider::ZAI), ModelId::ZaiGlm53);
     assert_eq!(ModelId::default_single_for_provider(Provider::OpenCodeZen), ModelId::OpenCodeZenGPT54);
     assert_eq!(ModelId::default_single_for_provider(Provider::OpenCodeGo), ModelId::OpenCodeGoMinimaxM27);
 }

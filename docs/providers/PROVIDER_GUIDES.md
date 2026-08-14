@@ -258,10 +258,11 @@ VT Code provides compatibility with the Anthropic Messages API to help connect e
 -   **Auth:** `ZAI_API_KEY` environment variable
 -   **Setup:** Set `ZAI_API_KEY` from Z.AI platform, then configure `provider = "zai"` in `vtcode.toml`
 -   **Models:**
+    -   `glm-5.3` — flagship coding model, 1M context, reasoning + tool calls
     -   `glm-5.2` — flagship model for long-horizon tasks, 1M context, reasoning + tool calls
     -   `glm-5.1` — next-gen foundation model, reasoning + tool calls
     -   `glm-4.7` — efficient model for general tasks
--   **Default:** `glm-5.1`
+-   **Default:** `glm-5.3`
 -   **Features:** Streaming, tool calling, reasoning effort support
 
 ## Moonshot (Kimi)

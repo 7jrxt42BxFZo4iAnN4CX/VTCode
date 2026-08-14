@@ -20,6 +20,10 @@ impl FromStr for ModelId {
             return Ok(ModelId::ZaiGlm52);
         }
 
+        if trimmed == models::zai::GLM_5_3 {
+            return Ok(ModelId::ZaiGlm53);
+        }
+
         if let Some(opencode_model) = trimmed
             .strip_prefix("opencode/")
             .or_else(|| trimmed.strip_prefix("opencode-zen/"))

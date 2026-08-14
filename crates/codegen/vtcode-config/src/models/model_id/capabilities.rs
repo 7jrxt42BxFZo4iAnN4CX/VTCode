@@ -315,6 +315,7 @@ impl ModelId {
                 | ModelId::DeepSeekV4Pro
                 | ModelId::MetaMuseSpark12
                 | ModelId::EvolinkDeepseekV4Pro
+                | ModelId::ZaiGlm53
                 | ModelId::ZaiGlm52
                 | ModelId::ZaiGlm51
                 | ModelId::OpenRouterStepfunStep35FlashFree
@@ -404,6 +405,7 @@ impl ModelId {
                 | ModelId::OpenCodeGoDeepseekV4Pro
                 | ModelId::DeepSeekV4Pro
                 | ModelId::MetaMuseSpark12
+                | ModelId::ZaiGlm53
                 | ModelId::ZaiGlm52
                 | ModelId::ZaiGlm51
                 | ModelId::OpenRouterStepfunStep35FlashFree
@@ -479,6 +481,7 @@ impl ModelId {
             ModelId::MetaMuseSpark11 => "Muse-Spark-1.1",
             ModelId::MetaMuseSpark12 | ModelId::MetaMuseSpark12Contributor => "Muse-Spark-1.2",
             // Z.AI generations
+            ModelId::ZaiGlm53 => "5.3",
             ModelId::ZaiGlm52 => "5.2",
             ModelId::ZaiGlm51 => "5.1",
             ModelId::Gemini35Flash => "3.5",

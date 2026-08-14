@@ -170,6 +170,8 @@ pub enum ModelId {
     /// Claude Haiku 4.5 served through the Evolink gateway (Anthropic Messages API)
     EvolinkClaudeHaiku45,
 
+    /// GLM-5.3 - Z.ai flagship coding model with frontier long-horizon agentic performance
+    ZaiGlm53,
     /// GLM-5.2 - Z.ai flagship model for long-horizon tasks with 1M context
     ZaiGlm52,
     /// GLM-5.1 - Next-gen Z.ai foundation model with improved reasoning

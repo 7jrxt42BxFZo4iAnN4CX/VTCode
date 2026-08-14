@@ -63,6 +63,7 @@ impl ModelId {
             // Mistral models
             ModelId::MistralLarge3,
             // Z.AI models
+            ModelId::ZaiGlm53,
             ModelId::ZaiGlm52,
             ModelId::ZaiGlm51,
             // MiMo models

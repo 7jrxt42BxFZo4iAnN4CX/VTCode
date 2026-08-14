@@ -306,7 +306,7 @@ impl ModelsManager {
             Provider::Copilot => crate::config::constants::models::copilot::DEFAULT_MODEL.to_string(),
             Provider::DeepSeek => "deepseek-reasoner".to_string(),
             Provider::Meta => crate::config::constants::models::meta::DEFAULT_MODEL.to_string(),
-            Provider::ZAI => "glm-5.2".to_string(),
+            Provider::ZAI => "glm-5.3".to_string(),
             Provider::Minimax => crate::config::constants::models::minimax::DEFAULT_MODEL.to_string(),
             Provider::Mistral => crate::config::constants::models::mistral::MISTRAL_LARGE_3.to_string(),
             Provider::OpenRouter => "xiaomi/mimo-v2.5-pro".to_string(),

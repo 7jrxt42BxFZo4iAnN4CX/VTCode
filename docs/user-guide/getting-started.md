@@ -52,7 +52,8 @@ Choose one of the supported LLM providers:
 
 -   **Z.AI**: `export ZAI_API_KEY=your_key_here`
     -   Get from [Z.AI Platform](https://z.ai/docs)
-    -   Models: GLM-5.2, GLM-5.1, GLM-4.7
+    -   Models: GLM-5.3, GLM-5.2, GLM-5.1, GLM-4.7
+    -   Default model: `glm-5.3`; see the [Z.AI provider guide](../providers/PROVIDER_GUIDES.md#zai-zai)
 
 -   **Moonshot (Kimi)**: `export MOONSHOT_API_KEY=your_key_here`
     -   Get from [Moonshot Platform](https://platform.moonshot.ai/docs)

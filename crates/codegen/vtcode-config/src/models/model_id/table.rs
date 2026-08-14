@@ -554,6 +554,13 @@ model_id_table! {
         description: "Claude Haiku 4.5 served through the Evolink gateway via Anthropic Messages API.",
     },
     // Z.AI models
+    ZaiGlm53 {
+        provider: ZAI,
+        id: models::zai::GLM_5_3,
+        parse: [models::zai::GLM_5_3],
+        display: "GLM 5.3",
+        description: "Z.ai flagship coding model with frontier long-horizon agentic performance and 1M-token context",
+    },
     ZaiGlm52 {
         provider: ZAI,
         id: models::zai::GLM_5_2,

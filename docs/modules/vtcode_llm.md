@@ -29,7 +29,7 @@ Provides a unified interface for multiple LLM providers with streaming, tool cal
 | OpenAI | `providers/openai/` | GPT-5.4, GPT-5.5, GPT-5.3 Codex |
 | Anthropic | `providers/anthropic/` | Claude Opus 4.8, Claude Sonnet 4.6 |
 | DeepSeek | `providers/deepseek.rs` | DeepSeek V4 Pro, V4 Flash |
-| Z.AI | `providers/zai.rs` | GLM-5.2, GLM-5.1, GLM-4.7 |
+| Z.AI | `providers/zai.rs` | GLM-5.3, GLM-5.2, GLM-5.1, GLM-4.7 |
 | Moonshot | `providers/moonshot.rs` | Kimi K2.7 Code, K2.6, K2.5 |
 | StepFun | `providers/stepfun.rs` | Step-3.7-Flash |
 | MiniMax | `providers/minimax.rs` | MiniMax-M3, M2.7, M2.5 |
