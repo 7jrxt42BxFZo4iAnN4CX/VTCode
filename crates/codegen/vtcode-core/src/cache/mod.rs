@@ -202,6 +202,23 @@ where
         // Remove expired entries first
         Self::remove_expired_entries_inner(&mut inner);
 
+        // A zero-capacity cache must remain bounded and reject all inserts.
+        if inner.max_size == 0 {
+            return;
+        }
+
+        let size_bytes = entry.size_bytes;
+
+        // Replacements do not consume another capacity slot, so they must not
+        // evict an unrelated entry when the cache is full.
+        if let Some(current) = inner.entries.get_mut(&key) {
+            let previous = std::mem::replace(current, entry);
+            inner.stats.total_memory_bytes = inner.stats.total_memory_bytes.saturating_sub(previous.size_bytes);
+            inner.stats.current_size = inner.entries.len();
+            inner.stats.total_memory_bytes = inner.stats.total_memory_bytes.saturating_add(size_bytes);
+            return;
+        }
+
         // Batch evict if over capacity: remove 10% of entries at once
         // to avoid repeated O(n) scans on consecutive inserts
         if inner.entries.len() >= inner.max_size {
@@ -209,12 +226,9 @@ where
             Self::evict_batch_inner(&mut inner, to_remove);
         }
 
-        let size_bytes = entry.size_bytes;
-        if let Some(previous) = inner.entries.insert(key, entry) {
-            inner.stats.total_memory_bytes -= previous.size_bytes;
-        }
+        inner.entries.insert(key, entry);
         inner.stats.current_size = inner.entries.len();
-        inner.stats.total_memory_bytes += size_bytes;
+        inner.stats.total_memory_bytes = inner.stats.total_memory_bytes.saturating_add(size_bytes);
     }
 
     /// Remove expired entries based on TTL
@@ -310,7 +324,7 @@ where
 
     fn remove_inner(inner: &mut UnifiedCacheInner<K, V>, key: &K) {
         if let Some(entry) = inner.entries.remove(key) {
-            inner.stats.total_memory_bytes -= entry.size_bytes;
+            inner.stats.total_memory_bytes = inner.stats.total_memory_bytes.saturating_sub(entry.size_bytes);
             inner.stats.current_size = inner.entries.len();
         }
     }
@@ -661,6 +675,32 @@ mod tests {
         let stats = cache.stats();
         assert_eq!(stats.current_size, 1);
         assert_eq!(stats.total_memory_bytes, 18);
+    }
+
+    #[test]
+    fn replacing_entry_at_capacity_does_not_evict() {
+        let cache = UnifiedCache::new(1, DEFAULT_CACHE_TTL, EvictionPolicy::Lru);
+        let key = TestKey("replacement".into());
+
+        cache.insert(key.clone(), "old".to_string(), 3);
+        cache.insert(key.clone(), "new value".to_string(), 9);
+
+        assert_eq!(cache.get_owned(&key).as_deref(), Some("new value"));
+        let stats = cache.stats();
+        assert_eq!(stats.current_size, 1);
+        assert_eq!(stats.evictions, 0);
+        assert_eq!(stats.total_memory_bytes, 9);
+    }
+
+    #[test]
+    fn zero_capacity_cache_rejects_entries() {
+        let cache = UnifiedCache::new(0, DEFAULT_CACHE_TTL, EvictionPolicy::Lru);
+
+        cache.insert(TestKey("rejected".into()), "value".to_string(), 5);
+
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.total_memory_bytes(), 0);
+        assert_eq!(cache.stats().evictions, 0);
     }
 
     #[test]
