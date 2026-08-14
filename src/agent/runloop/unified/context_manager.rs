@@ -1,4 +1,5 @@
 use hashbrown::HashMap;
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -292,9 +293,10 @@ impl ContextManager {
     ///
     /// This keeps request assembly deterministic and trims no-op artifacts while preserving
     /// tool-calling semantics.
-    pub(crate) fn normalize_history_for_request(&self, history: &[uni::Message]) -> Vec<uni::Message> {
-        if history.is_empty() {
-            return Vec::new();
+    pub(crate) fn normalize_history_for_request<'a>(&self, history: &'a [uni::Message]) -> Cow<'a, [uni::Message]> {
+        let invariant_report = vtcode_core::core::agent::state::validate_history_invariants(history);
+        if invariant_report.is_valid() && !history_needs_message_cleanup(history) {
+            return Cow::Borrowed(history);
         }
 
         let mut normalized = history.to_vec();
@@ -321,7 +323,7 @@ impl ContextManager {
         }
 
         normalized.truncate(write);
-        normalized
+        Cow::Owned(normalized)
     }
 
     pub(crate) fn request_editor_context_message(&self) -> Option<uni::Message> {
@@ -435,6 +437,22 @@ fn can_merge_consecutive_assistant_text(previous: &uni::Message, current: &uni::
     }
 
     matches!(previous.content, uni::MessageContent::Text(_)) && matches!(current.content, uni::MessageContent::Text(_))
+}
+
+fn history_needs_message_cleanup(history: &[uni::Message]) -> bool {
+    let mut previous = None;
+    for message in history {
+        if is_empty_context_message(message) {
+            return true;
+        }
+
+        if previous.is_some_and(|previous| can_merge_consecutive_assistant_text(previous, message)) {
+            return true;
+        }
+        previous = Some(message);
+    }
+
+    false
 }
 
 fn append_assistant_text(previous: &mut uni::Message, current: &uni::Message) {

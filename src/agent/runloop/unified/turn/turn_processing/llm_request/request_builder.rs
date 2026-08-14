@@ -11,6 +11,7 @@
 //! into [`TurnRequestBuildResult`].
 
 use anyhow::Result;
+use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
@@ -173,14 +174,18 @@ pub(super) async fn build_turn_request(
     );
     let context_management = resolve_context_management(ctx, turn_snapshot, request_model);
     let continuation_messages = ctx.context_manager.normalize_history_for_request(ctx.working_history);
-    let (request_messages, previous_response_id) = prepare_responses_request_history(
+    let (prepared_request_messages, previous_response_id) = prepare_responses_request_history(
         ctx.session_stats,
         &turn_snapshot.provider_name,
         turn_snapshot.capabilities.responses_compaction,
         request_model,
         &continuation_messages,
     );
-    let request_messages = request_messages.into_owned();
+    let request_messages = match prepared_request_messages {
+        Cow::Borrowed(_) => continuation_messages.to_vec(),
+        Cow::Owned(messages) => messages,
+    };
+    let continuation_messages = continuation_messages.into_owned();
     let mut request_messages =
         prepend_request_context_message(request_messages, ctx.context_manager.request_editor_context_message());
     if let Some(few_shot_context) = few_shot_context {
