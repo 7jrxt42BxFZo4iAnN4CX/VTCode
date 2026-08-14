@@ -28,6 +28,35 @@ work. For synchronous side-channel APIs such as progress monitoring, use a
 bounded coalescing writer so callers replace stale snapshots and never wait on
 filesystem latency.
 
+### Agent-loop hot-path invariants
+
+Tool-result cache size is measured from the payload bytes, not the `String`
+container. Replacing an existing key updates the byte total in place, so a
+full cache does not evict an unrelated entry during replacement; zero-capacity
+caches reject inserts. Keep these accounting rules intact when changing cache
+entry representations.
+
+Clean request histories are borrowed and shared with continuation state through
+`Arc<Vec<Message>>`. Copy only when editor/few-shot context must be injected or
+the provider requires compaction. This keeps the common no-injection path from
+allocating multiple equivalent histories while preserving the existing
+normalization and continuation boundaries.
+
+Request envelopes retain the source tool-catalog `Arc` within a request segment.
+When model/provider/mode/prompt identity is unchanged, subsequent turns reuse
+the frozen ordered catalog without cloning, sorting, or re-hashing its schema;
+segment boundaries clear that marker before rebuilding.
+
+Read-only tool calls are batched only after per-call preflight confirms that
+each call is parallel-safe; duplicate names are not a safety signal. Batch line
+ranges still pass through the absolute read cap, so new range-reading paths
+must preserve that limit. Mutating or otherwise non-parallel calls remain
+ordered.
+
+Legacy text reads use the same bounded line reader as paged reads. This keeps
+large files and minified one-line bundles from creating an unbounded temporary
+buffer; invalid UTF-8 remains lossily decoded for compatibility.
+
 ### Serialization and event-log replay
 
 Avoid combining `#[serde(flatten)]` with `#[serde(untagged)]` on frequent,
