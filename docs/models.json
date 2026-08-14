@@ -134,6 +134,37 @@
           "thinking": true
         }
       },
+      "gemini-3.7-flash": {
+        "id": "gemini-3.7-flash",
+        "name": "Gemini 3.7 Flash",
+        "description": "Flash model with 1M context and tunable thinking levels (low, medium, high)",
+        "version": "stable",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text",
+            "image",
+            "video",
+            "audio",
+            "pdf"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 1048576,
+        "output_tokens": 65536,
+        "capabilities": {
+          "caching": true,
+          "code_execution": true,
+          "batch_api": true,
+          "structured_output": true,
+          "search_grounding": true,
+          "url_context": true,
+          "thinking": true
+        }
+      },
       "gemini-3-flash-preview": {
         "id": "gemini-3-flash-preview",
         "name": "Gemini 3 Flash",

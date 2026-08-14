@@ -25,7 +25,7 @@ Provides a unified interface for multiple LLM providers with streaming, tool cal
 
 | Provider | Module | Key Models |
 |----------|--------|------------|
-| Google Gemini | `providers/gemini/` | Gemini 3.1 Pro, Gemini 3.5 Flash |
+| Google Gemini | `providers/gemini/` | Gemini 3.7 Flash, Gemini 3.1 Pro, Gemini 3.5 Flash |
 | OpenAI | `providers/openai/` | GPT-5.4, GPT-5.5, GPT-5.3 Codex |
 | Anthropic | `providers/anthropic/` | Claude Opus 4.8, Claude Sonnet 4.6 |
 | DeepSeek | `providers/deepseek.rs` | DeepSeek V4 Pro, V4 Flash |

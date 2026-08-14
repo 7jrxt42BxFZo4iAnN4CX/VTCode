@@ -33,6 +33,7 @@ Choose one of the supported LLM providers:
 -   **Gemini** (Primary): `export GEMINI_API_KEY=your_key_here` or `export GOOGLE_API_KEY=your_key_here`
 
     -   Get from [Google AI Studio](https://aistudio.google.com/app/apikey)
+    -   Default model: `gemini-3-flash-preview`; also supports Gemini 3.7 Flash, Gemini 3.6 Flash, Gemini 3.5 Flash, and Gemini 3.1 Pro
 
 -   **OpenAI**: `export OPENAI_API_KEY=your_key_here`
 

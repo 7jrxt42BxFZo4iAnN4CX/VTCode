@@ -270,6 +270,7 @@ impl ModelId {
         matches!(
             self,
             ModelId::Gemini35Flash
+                | ModelId::Gemini37Flash
                 | ModelId::EvolinkGemini35Flash
                 | ModelId::EvolinkDeepseekV4Flash
                 | ModelId::OpenRouterStepfunStep35FlashFree
@@ -349,6 +350,7 @@ impl ModelId {
         matches!(
             self,
             ModelId::Gemini35Flash
+                | ModelId::Gemini37Flash
                 | ModelId::GPT54Mini
                 | ModelId::GPT56Luna
                 | ModelId::CopilotGPT54Mini
@@ -378,6 +380,7 @@ impl ModelId {
                 | ModelId::Gemini31ProPreviewCustomTools
                 | ModelId::OpenRouterGoogleGemini31ProPreview
                 | ModelId::Gemini35Flash
+                | ModelId::Gemini37Flash
                 | ModelId::GPT56Sol
                 | ModelId::GPT56Terra
                 | ModelId::GPT55
@@ -485,6 +488,8 @@ impl ModelId {
             ModelId::ZaiGlm52 => "5.2",
             ModelId::ZaiGlm51 => "5.1",
             ModelId::Gemini35Flash => "3.5",
+            ModelId::Gemini36Flash => "3.6",
+            ModelId::Gemini37Flash => "3.7",
             ModelId::OpenCodeZenGPT54 | ModelId::OpenCodeZenGPT54Mini => "5.4",
             ModelId::OpenCodeZenClaudeSonnet46 => "4.6",
             ModelId::OpenCodeZenGlm51 | ModelId::OpenCodeGoGlm51 => "5.1",

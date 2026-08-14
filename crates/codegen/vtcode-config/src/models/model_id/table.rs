@@ -119,6 +119,13 @@ model_id_table! {
         display: "Gemini 3.6 Flash",
         description: "Latest flash model with improved reasoning, efficiency, and factual consistency",
     },
+    Gemini37Flash {
+        provider: Gemini,
+        id: models::GEMINI_3_7_FLASH,
+        parse: [models::GEMINI_3_7_FLASH],
+        display: "Gemini 3.7 Flash",
+        description: "Flash model with 1M context and tunable thinking levels (low, medium, high)",
+    },
     // OpenAI models
     GPT56Sol {
         provider: OpenAI,

@@ -60,8 +60,17 @@ See the [Configuration guide](../config/config.md#custom_providers) for full det
 
 ## Google Gemini
 
+-   **Official docs:** [Gemini API models](https://ai.google.dev/gemini-api/docs/models) · [Gemini 3.7 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.7-flash)
+-   **Provider key:** `gemini` (env: `GEMINI_API_KEY` or `GOOGLE_API_KEY`)
+-   **Default model:** `gemini-3-flash-preview`
+-   **Curated models:**
+    -   `gemini-3.7-flash` — latest flash model, 1M context, tunable thinking (low/medium/high)
+    -   `gemini-3.6-flash` — flash model with improved reasoning and efficiency, 1M context
+    -   `gemini-3.5-flash` — high-efficiency frontier flash model, 1M context
+    -   `gemini-3.1-pro-preview` — flagship Pro model, 1M context
+-   **Features:** Streaming, tool calls, structured output, image/video/audio input, context caching, code execution, and configurable reasoning effort
 -   Configuration details are covered in the main [Getting Started guide](../user-guide/getting-started.md#api-requirements).
--   Models and constants are defined in [`crates/codegen/vtcode-core/src/config/constants.rs`](../../crates/codegen/vtcode-core/src/config/constants.rs).
+-   Models and constants are defined in [`crates/codegen/vtcode-config/src/constants/models/google.rs`](../../crates/codegen/vtcode-config/src/constants/models/google.rs).
 
 ## OpenAI
 

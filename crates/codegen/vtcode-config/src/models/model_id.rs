@@ -31,6 +31,8 @@ pub enum ModelId {
     Gemini35FlashLite,
     /// Gemini 3.6 Flash - Latest flash model with improved capabilities
     Gemini36Flash,
+    /// Gemini 3.7 Flash - Flash model with 1M context and tunable thinking levels
+    Gemini37Flash,
 
     // OpenAI models
     /// GPT-5.6 Sol - Frontier model for complex professional work in the GPT-5.6 family

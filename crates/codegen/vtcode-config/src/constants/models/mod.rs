@@ -31,6 +31,7 @@ pub const GEMINI_3_1_FLASH_LITE_PREVIEW: &str = google::GEMINI_3_1_FLASH_LITE_PR
 pub const GEMINI_3_5_FLASH: &str = google::GEMINI_3_5_FLASH;
 pub(crate) const GEMINI_3_5_FLASH_LITE: &str = google::GEMINI_3_5_FLASH_LITE;
 pub(crate) const GEMINI_3_6_FLASH: &str = google::GEMINI_3_6_FLASH;
+pub(crate) const GEMINI_3_7_FLASH: &str = google::GEMINI_3_7_FLASH;
 pub const GEMINI_3_FLASH_PREVIEW: &str = google::GEMINI_3_FLASH_PREVIEW;
 pub(crate) const GPT: &str = openai::GPT;
 pub const GPT_5: &str = openai::GPT_5;
