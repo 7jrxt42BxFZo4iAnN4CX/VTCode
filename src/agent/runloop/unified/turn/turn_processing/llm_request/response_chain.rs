@@ -11,21 +11,22 @@
 //! always see their full, untrimmed history.
 
 use std::borrow::Cow;
+use std::sync::Arc;
 
 use vtcode_core::llm::provider::{
     self as uni, prepare_responses_continuation_request, records_responses_continuation_state,
 };
 
-pub(super) fn update_previous_response_chain_after_success(
+pub(super) fn update_previous_response_chain_after_success_shared(
     session_stats: &mut crate::agent::runloop::unified::state::SessionStats,
     provider_name: &str,
     provider_supports_responses_compaction: bool,
     active_model: &str,
     response_request_id: Option<&str>,
-    messages: &[uni::Message],
+    messages: Arc<Vec<uni::Message>>,
 ) {
     if records_responses_continuation_state(provider_name, provider_supports_responses_compaction) {
-        session_stats.set_previous_response_chain(provider_name, active_model, response_request_id, messages);
+        session_stats.set_previous_response_chain_shared(provider_name, active_model, response_request_id, messages);
     }
 }
 
@@ -65,22 +66,24 @@ pub(super) fn prepend_request_context_message(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use vtcode_core::llm::provider as uni;
 
-    use super::update_previous_response_chain_after_success;
+    use super::update_previous_response_chain_after_success_shared;
 
     #[test]
     fn openai_session_stats_does_not_record_previous_response_chain() {
         let mut session_stats = crate::agent::runloop::unified::state::SessionStats::default();
         let messages = vec![uni::Message::user("hello".to_string())];
 
-        update_previous_response_chain_after_success(
+        update_previous_response_chain_after_success_shared(
             &mut session_stats,
             "openai",
             true,
             "gpt-5.4",
             Some("resp_123"),
-            &messages,
+            Arc::new(messages),
         );
 
         assert_eq!(session_stats.previous_response_chain_for("openai", "gpt-5.4"), None);

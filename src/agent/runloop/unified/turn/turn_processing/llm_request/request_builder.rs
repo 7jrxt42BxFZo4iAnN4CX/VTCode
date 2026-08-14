@@ -267,7 +267,7 @@ mod tests {
     use vtcode_core::llm::provider::{self as uni, ToolDefinition};
     use vtcode_core::{EditorContextSnapshot, EditorFileContext};
 
-    use super::super::response_chain::update_previous_response_chain_after_success;
+    use super::super::response_chain::update_previous_response_chain_after_success_shared;
     use super::super::snapshot::capture_turn_request_snapshot;
     use super::{build_turn_request, stable_system_prefix_hash};
     use crate::agent::runloop::unified::turn::turn_processing::test_support::TestTurnProcessingBacking;
@@ -1148,13 +1148,13 @@ mod tests {
         let first = build_turn_request(&mut ctx, 1, "noop-model", &snapshot, Some(320), None, false)
             .await
             .expect("first request should build");
-        update_previous_response_chain_after_success(
+        update_previous_response_chain_after_success_shared(
             ctx.session_stats,
             "openai",
             false,
             "noop-model",
             Some("resp_123"),
-            first.continuation_messages.as_slice(),
+            Arc::clone(&first.continuation_messages),
         );
 
         ctx.working_history.push(uni::Message::user("continue".to_string()));
