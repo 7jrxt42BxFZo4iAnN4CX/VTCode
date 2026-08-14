@@ -4,8 +4,6 @@
 //! read-only classification and preflight safety status. Read-only tools
 //! can be parallelized; mutating tools must be sequential.
 
-use std::collections::HashSet;
-
 use serde_json::Value;
 
 /// A single step in a fallback chain.
@@ -137,21 +135,14 @@ impl PreparedToolBatch {
 
         let mut layout = Vec::new();
         let mut parallel_batch_len = 0usize;
-        let mut parallel_tool_names = HashSet::new();
 
-        for (can_parallelize, tool_name) in calls {
+        for (can_parallelize, _) in calls {
             if !can_parallelize {
                 push_parallel_batch_layout(&mut layout, &mut parallel_batch_len);
-                parallel_tool_names.clear();
                 layout.push((PreparedToolBatchKind::Sequential, 1));
                 continue;
             }
 
-            if !parallel_tool_names.insert(tool_name) {
-                push_parallel_batch_layout(&mut layout, &mut parallel_batch_len);
-                parallel_tool_names.clear();
-                parallel_tool_names.insert(tool_name);
-            }
             parallel_batch_len += 1;
         }
 
