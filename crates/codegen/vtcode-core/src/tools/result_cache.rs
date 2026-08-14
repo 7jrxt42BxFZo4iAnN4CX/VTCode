@@ -79,7 +79,7 @@ impl ToolResultCache {
     }
 
     fn insert_owned(&mut self, key: ToolCacheKey, output: String) {
-        let size_bytes = size_of_val(&output) as u64;
+        let size_bytes = output.len() as u64;
         self.inner.insert(key, output, size_bytes);
     }
 
@@ -91,7 +91,8 @@ impl ToolResultCache {
     /// Insert an `Arc<String>`-wrapped result into the cache to avoid cloning when the caller
     /// already has an `Arc<String>` available.
     pub fn insert_arc(&mut self, key: ToolCacheKey, output: Arc<String>) {
-        self.insert_owned(key, (*output).clone());
+        let size_bytes = output.len() as u64;
+        self.inner.insert_arc(key, output, size_bytes);
     }
 
     /// Retrieve a result if cached and fresh - now returns zero-copy Arc by default
@@ -376,7 +377,19 @@ mod tests {
         let key = ToolCacheKey::new("tool", "p1", "/a");
         let arc = Arc::new("output".to_string());
         cache.insert_arc(key.clone(), Arc::clone(&arc));
-        assert_eq!(cache.get(&key).unwrap(), arc);
+        let cached = cache.get(&key).unwrap();
+        assert!(Arc::ptr_eq(&cached, &arc));
+    }
+
+    #[test]
+    fn accounts_for_tool_result_payload_bytes() {
+        let mut cache = ToolResultCache::new(10);
+        let key = ToolCacheKey::new("tool", "p1", "/a");
+        let output = "x".repeat(1024);
+
+        cache.insert(key, output.clone());
+
+        assert_eq!(cache.stats().total_memory_bytes, output.len() as u64);
     }
 
     #[test]
