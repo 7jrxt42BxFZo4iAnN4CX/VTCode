@@ -430,7 +430,7 @@ pub(crate) async fn execute_llm_request(
                     turn_snapshot.capabilities.responses_compaction,
                     &active_model,
                     response.request_id.as_deref(),
-                    &continuation_messages,
+                    continuation_messages.as_slice(),
                 );
                 llm_result = Ok((response, response_streamed));
                 _spinner.finish();
