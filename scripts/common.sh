@@ -42,6 +42,20 @@ print_error() {
     printf '%b\n' "${RED}ERROR:${NC} $1"
 }
 
+# Return success when a named profile is explicitly defined in the workspace
+# Nextest configuration. Local `.config/nextest.toml` files are intentionally
+# ignored, so scripts must not assume optional profiles exist. Avoid invoking
+# test discovery here: `show-config test-groups` can compile the workspace.
+nextest_profile_available() {
+    local profile_name="${1:?profile name is required}"
+    local script_root
+    script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    local config_file="${script_root}/.config/nextest.toml"
+
+    [ -f "$config_file" ] || return 1
+    grep -Eq "^[[:space:]]*\\[profile\\.${profile_name}(\\]|\\.)" "$config_file"
+}
+
 # Compatibility logging functions (from various scripts)
 log_info() {
     printf '%b\n' "${BLUE}ℹ${NC} $1" >&2

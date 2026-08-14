@@ -19,13 +19,13 @@ VT Code includes a multi-layered test suite designed to ensure reliability and p
 # Recommended: run all tests quickly
 cargo nextest run
 
-# TDD mode: skip integration/e2e/slow tests, fail fast
+# TDD mode: skip integration/e2e/slow tests, fail fast (when configured)
 cargo nextest run --profile quick
 
-# Full CI gate: retry flaky tests, no fail-fast
+# Full CI gate: retry flaky tests, no fail-fast (when configured)
 cargo nextest run --profile ci
 
-# Run only tests in crates changed since last commit
+# Run only tests in crates changed since last commit (when configured)
 cargo nextest run --profile changed --changed --since HEAD~1
 
 # Run tests with detailed output
@@ -52,6 +52,13 @@ CARGO_INCREMENTAL=1 cargo nextest run --profile quick
 # Or use the dev check script (handles this automatically)
 ./scripts/check-dev.sh --test
 ```
+
+The `quick` and `ci` profiles are optional workspace configuration. The check
+scripts use those profiles when available and fall back to Nextest's `default`
+profile when a local checkout does not provide them; a missing profile must not
+prevent the checks from running. `check-dev.sh --changed` performs its own
+changed-package filtering because Nextest does not provide Cargo's
+`--changed --since` selection flags.
 
 ### Structural Rule Checks
 
@@ -164,9 +171,9 @@ Tests are organized into nextest profiles and test groups for selective executio
 | Profile | Use Case | Key Settings |
 |---|---|---|
 | `default` | Local dev – everything | `fail-fast`, 30s timeout, 3 retry periods |
-| `quick` | TDD iteration | Skips integration/e2e/slow tests, 10s timeout |
+| `quick` | TDD iteration (optional) | Skips integration/e2e/slow tests, 10s timeout |
 | `changed` | Changed-crate testing | `--changed --since HEAD~1` support |
-| `ci` | Full CI gate | `fail-fast=false`, 2 retries, 60s timeout |
+| `ci` | Full CI gate (optional) | `fail-fast=false`, 2 retries, 60s timeout |
 | `ci-partition` | Parallel CI shards | Hash-based partition, 1 retry |
 
 ### Test Groups

@@ -124,14 +124,23 @@ run_check() {
 run_tests() {
     local scope_args=""
     local nextest_args=()
+    local nextest_available=false
+    local test_profile="default"
 
     if [ "$RUN_WORKSPACE" = true ]; then
         scope_args="--workspace"
         nextest_args+=("--workspace")
     fi
 
-    # Use quick profile by default for fast local iteration
-    nextest_args+=("--profile" "quick")
+    if cargo nextest --version &> /dev/null; then
+        nextest_available=true
+        if nextest_profile_available quick; then
+            test_profile="quick"
+        else
+            print_warning "nextest profile 'quick' is unavailable; using the default profile."
+        fi
+    fi
+    nextest_args+=("--profile" "$test_profile")
 
     # Changed-crate mode: only test crates with changes since HEAD~1. nextest
     # does not provide cargo's `--changed --since` flags, so resolve changed
@@ -189,7 +198,7 @@ for package in json.load(sys.stdin)["packages"]:
     print_status "Running tests ($SCOPE_LABEL)..."
     local test_exit=0
 
-    if cargo nextest --version &> /dev/null; then
+    if [ "$nextest_available" = true ]; then
         # Enable incremental compilation for local test builds to avoid full
         # recompiles on every test run. Skip this when a distributed compiler
         # wrapper such as sccache (the repo's recommended dev setup, which sets
@@ -248,7 +257,7 @@ print_usage() {
     echo "  - cargo check (compilation)"
     echo ""
     echo "Options:"
-    echo "  --test, -t          Also run tests (uses nextest --profile quick)"
+    echo "  --test, -t          Also run tests (uses nextest quick profile when available)"
     echo "  --workspace, -w     Run checks on full workspace (default: default-members only)"
     echo "  --lints, -l         Run extra lints (structured logging, agent legibility)"
     echo "  --changed, -c       Only run tests in crates changed since HEAD~1 (implies --test)"
@@ -256,7 +265,7 @@ print_usage() {
     echo ""
     echo "Examples:"
     echo "  $0                  # Fast check (default-members only)"
-    echo "  $0 --test           # Fast check + tests (quick profile)"
+    echo "  $0 --test           # Fast check + tests (quick profile when configured)"
     echo "  $0 --changed        # Tests only for crates changed since last commit"
     echo "  $0 --workspace      # Workspace-wide fast check"
     echo "  $0 -t -w -l         # Full dev check with tests, workspace, and lints"

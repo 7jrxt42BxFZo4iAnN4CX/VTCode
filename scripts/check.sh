@@ -126,8 +126,14 @@ run_tests() {
     local test_exit=0
 
     if cargo nextest --version &> /dev/null; then
-        print_status "Using cargo-nextest (ci profile)..."
-        cargo nextest run --profile ci || test_exit=$?
+        local test_profile="default"
+        if nextest_profile_available ci; then
+            test_profile="ci"
+        else
+            print_warning "nextest profile 'ci' is unavailable; using the default profile."
+        fi
+        print_status "Using cargo-nextest (${test_profile} profile)..."
+        cargo nextest run --profile "$test_profile" || test_exit=$?
     else
         print_warning "cargo-nextest not found. Falling back to cargo test."
         cargo test --workspace || test_exit=$?
