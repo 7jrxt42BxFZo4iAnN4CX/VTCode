@@ -60,6 +60,7 @@ VT Code includes several built-in security features:
 - **Path Validation**: Prevents file system access outside the designated workspace
 - **Tool Policies**: Configurable allow/deny/prompt policies for different operations
 - **Shell approval hardening**: Learned read-only command families and command preflight reject dynamic shell syntax in `find` commands, so expansion cannot turn a reviewed shape into `-exec` or another destructive option
+- **Workspace lifecycle hook approval**: Shell commands defined in workspace-controlled configuration (`vtcode.toml` / `.vtcode` in the repository) never run at session start or during lifecycle events until you explicitly approve the exact command set for that workspace; any change to those commands invalidates the approval and is skipped until reviewed
 - **PII Protection**: Automatic tokenization of sensitive data in code execution
 - **Token Management**: Secure handling of API keys and authentication tokens
 

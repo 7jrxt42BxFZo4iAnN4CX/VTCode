@@ -2,6 +2,26 @@ use anyhow::{Context, Result, ensure};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+/// All lifecycle hook event names in canonical (snake_case) form, including
+/// the deprecated aliases that `LifecycleHooksConfig::normalized()` folds into
+/// `stop`. Used to classify which events a workspace-controlled config layer
+/// defines.
+pub(crate) const LIFECYCLE_HOOK_EVENTS: &[&str] = &[
+    "session_start",
+    "session_end",
+    "subagent_start",
+    "subagent_stop",
+    "user_prompt_submit",
+    "pre_tool_use",
+    "post_tool_use",
+    "permission_request",
+    "pre_compact",
+    "stop",
+    "task_completion",
+    "task_completed",
+    "notification",
+];
+
 /// Top-level configuration for automation hooks and lifecycle events
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
@@ -98,6 +118,28 @@ impl LifecycleHooksConfig {
         normalized.task_completed.clear();
         normalized
     }
+
+    /// Return the groups stored under a canonical snake_case event name
+    /// (the literal field; deprecated aliases keep their own fields here and
+    /// are folded into `stop` only by `normalized()`).
+    pub(crate) fn groups_for_event(&self, event: &str) -> &[HookGroupConfig] {
+        match event {
+            "session_start" => &self.session_start,
+            "session_end" => &self.session_end,
+            "subagent_start" => &self.subagent_start,
+            "subagent_stop" => &self.subagent_stop,
+            "user_prompt_submit" => &self.user_prompt_submit,
+            "pre_tool_use" => &self.pre_tool_use,
+            "post_tool_use" => &self.post_tool_use,
+            "permission_request" => &self.permission_request,
+            "pre_compact" => &self.pre_compact,
+            "stop" => &self.stop,
+            "task_completion" => &self.task_completion,
+            "task_completed" => &self.task_completed,
+            "notification" => &self.notification,
+            _ => &[],
+        }
+    }
 }
 
 /// A group of hooks sharing a common execution matcher
@@ -148,6 +190,99 @@ impl HooksConfig {
     pub fn validate(&self) -> Result<()> {
         self.lifecycle.validate().context("Invalid lifecycle hooks configuration")
     }
+}
+
+/// A single lifecycle hook command whose effective configuration origin is a
+/// workspace-controlled layer (workspace-root `vtcode.toml`, the workspace
+/// `.vtcode/vtcode.toml` fallback, or a project profile inside the workspace).
+///
+/// Workspace-controlled configuration is attacker-influenceable in an
+/// untrusted repository, so these commands must never execute until the user
+/// explicitly approves the exact command set for this workspace.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceHookCommand {
+    /// Lifecycle event name in canonical snake_case form (e.g. `session_start`).
+    /// Deprecated aliases (`task_completion`, `task_completed`) are recorded as
+    /// `stop` because `LifecycleHooksConfig::normalized()` folds them there.
+    pub event: String,
+    /// Optional regex matcher of the containing group.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matcher: Option<String>,
+    /// The shell command string executed via `sh -c`.
+    pub command: String,
+    /// Optional execution timeout in seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<u64>,
+}
+
+/// Snapshot of all lifecycle hook commands sourced from workspace-controlled
+/// configuration layers, captured at configuration load time.
+///
+/// The digest binds an approval to the exact command set: any change to a
+/// workspace-controlled hook command invalidates previously granted approval,
+/// so a repository update cannot silently swap in a new command under an old
+/// approval.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceLifecycleHooks {
+    /// Workspace-controlled lifecycle hook commands in canonical event order.
+    pub commands: Vec<WorkspaceHookCommand>,
+}
+
+impl WorkspaceLifecycleHooks {
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty()
+    }
+
+    /// Stable digest over the sorted command set. Deterministic across
+    /// processes so approvals can be persisted and revalidated.
+    pub fn digest(&self) -> String {
+        let mut lines: Vec<String> = self
+            .commands
+            .iter()
+            .map(|command| {
+                format!(
+                    "{}|{}|{}|{}",
+                    command.event,
+                    command.matcher.as_deref().unwrap_or(""),
+                    command.command,
+                    command.timeout_seconds.map(|secs| secs.to_string()).unwrap_or_default()
+                )
+            })
+            .collect();
+        lines.sort();
+        format!("{:016x}", fnv1a64(lines.join("\n").as_bytes()))
+    }
+
+    /// Whether the given lifecycle command is workspace-controlled.
+    ///
+    /// `event_key` is the canonical snake_case event the engine is executing
+    /// (e.g. `stop`); deprecated aliases fold into that key, so the `stop`
+    /// family matches entries recorded under `stop`, `task_completion`, or
+    /// `task_completed`. Matchers are intentionally not compared here: the
+    /// digest binds the full command set (including matchers), while this
+    /// check only decides whether a concrete command is gated.
+    pub fn contains_command(&self, event_key: &str, command: &HookCommandConfig) -> bool {
+        let events: &[&str] = match event_key {
+            "stop" => &["stop", "task_completion", "task_completed"],
+            other => &[other],
+        };
+        self.commands.iter().any(|entry| {
+            events.contains(&entry.event.as_str())
+                && entry.command == command.command
+                && entry.timeout_seconds == command.timeout_seconds
+        })
+    }
+}
+
+fn fnv1a64(input: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in input {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 impl LifecycleHooksConfig {

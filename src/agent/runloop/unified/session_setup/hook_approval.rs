@@ -1,0 +1,112 @@
+//! Interactive approval for workspace-controlled lifecycle hooks.
+//!
+//! Workspace-controlled configuration (a workspace-root `vtcode.toml`, the
+//! workspace `.vtcode/vtcode.toml` fallback, or a project profile inside the
+//! workspace) can declare lifecycle hook commands that VT Code otherwise runs
+//! automatically via `sh -c` at session start. Because that configuration is
+//! attacker-influenceable in an untrusted repository, the commands never run
+//! until the user approves the exact command set for this workspace. This
+//! module renders that approval prompt and maps the outcome.
+
+use std::path::Path;
+use std::sync::Arc;
+
+use anyhow::Result;
+use tokio::sync::Notify;
+use vtcode_core::config::WorkspaceLifecycleHooks;
+use vtcode_core::core::interfaces::ui::UiSession;
+use vtcode_ui::tui::app::{
+    InlineHandle, InlineListItem, InlineListSelection, ListOverlayRequest, TransientRequest, TransientSubmission,
+};
+
+use crate::agent::runloop::unified::overlay_prompt::{OverlayWaitOutcome, show_overlay_and_wait};
+use crate::agent::runloop::unified::state::CtrlCState;
+
+pub(crate) enum HookApprovalDecision {
+    Approved,
+    Denied,
+}
+
+/// Present the workspace lifecycle hook approval overlay and wait for the
+/// user's choice. Any cancellation or interrupt fails closed to `Denied`.
+pub(crate) async fn prompt_workspace_hook_approval<S: UiSession + ?Sized>(
+    handle: &InlineHandle,
+    session: &mut S,
+    ctrl_c_state: &Arc<CtrlCState>,
+    ctrl_c_notify: &Arc<Notify>,
+    workspace: &Path,
+    hooks: &WorkspaceLifecycleHooks,
+) -> Result<HookApprovalDecision> {
+    let mut lines = vec![
+        "The workspace configuration defines lifecycle hook commands that VT Code".to_string(),
+        "runs automatically. They execute via `sh -c` from the workspace directory and".to_string(),
+        "are controlled by files inside the workspace (vtcode.toml / .vtcode), so an".to_string(),
+        "untrusted repository could change them. Approving runs the exact command set".to_string(),
+        "below; any later change to these commands requires a new approval.".to_string(),
+        String::new(),
+        format!("Workspace: {}", workspace.display()),
+        String::new(),
+        "Commands:".to_string(),
+    ];
+    for command in &hooks.commands {
+        let matcher = command.matcher.as_deref().unwrap_or("*");
+        lines.push(format!("  [{event}/{matcher}] {command}", event = command.event, command = command.command));
+    }
+    lines.push(String::new());
+    lines.push("Choose how to handle workspace lifecycle hooks:".to_string());
+    lines.push("Use ↑↓ or Tab to navigate • Enter to select • Esc to deny".to_string());
+
+    let items = vec![
+        InlineListItem {
+            title: "Approve".to_string(),
+            subtitle: Some(
+                "Run these workspace lifecycle hooks and remember this approval for this exact command set".to_string(),
+            ),
+            badge: None,
+            indent: 0,
+            selection: Some(InlineListSelection::ToolApproval(true)),
+            search_value: Some("approve allow yes run 1".to_string()),
+        },
+        InlineListItem {
+            title: "Deny".to_string(),
+            subtitle: Some("Skip workspace lifecycle hooks for this session".to_string()),
+            badge: None,
+            indent: 0,
+            selection: Some(InlineListSelection::ToolApproval(false)),
+            search_value: Some("deny no skip block 2".to_string()),
+        },
+    ];
+
+    let outcome = show_overlay_and_wait(
+        handle,
+        session,
+        TransientRequest::List(ListOverlayRequest {
+            title: "Workspace Lifecycle Hooks".to_string(),
+            lines,
+            footer_hint: None,
+            items,
+            selected: Some(InlineListSelection::ToolApproval(false)),
+            search: None,
+            hotkeys: Vec::new(),
+        }),
+        ctrl_c_state,
+        ctrl_c_notify,
+        |submission| match submission {
+            TransientSubmission::Selection(InlineListSelection::ToolApproval(true)) => {
+                Some(HookApprovalDecision::Approved)
+            }
+            TransientSubmission::Selection(InlineListSelection::ToolApproval(false)) => {
+                Some(HookApprovalDecision::Denied)
+            }
+            _ => None,
+        },
+    )
+    .await?;
+
+    Ok(match outcome {
+        OverlayWaitOutcome::Submitted(decision) => decision,
+        OverlayWaitOutcome::Cancelled | OverlayWaitOutcome::Interrupted | OverlayWaitOutcome::Exit => {
+            HookApprovalDecision::Denied
+        }
+    })
+}

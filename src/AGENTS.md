@@ -5,11 +5,11 @@ Detailed runloop recovery and allocator notes live in the [vtcode binary gotchas
 
 ## Modules
 
-`main.rs` binary entry | `agent/` runloop + subagent dispatch | `cli/` handlers | `startup/` onboarding | `updater/` downloads and self-replacement | `codex_app_server/` bridge | `main_helpers/` tracing and runtime init | `agent/runloop/unified/turn/session/interaction_loop_runner/status_refresh.rs` status/IDE/title cadence
+`main.rs` binary entry | `agent/` runloop + subagent dispatch | `cli/` handlers | `startup/` onboarding | `updater/` downloads and self-replacement | `codex_app_server/` bridge | `main_helpers/` tracing and runtime init | `agent/runloop/unified/turn/session/interaction_loop_runner/status_refresh.rs` status/IDE/title cadence | `agent/runloop/unified/session_setup/hook_approval.rs` workspace lifecycle-hook approval overlay
 
 ## Rules
 
-- Keep the binary thin; runtime logic belongs in `vtcode-core`.
+- Keep the binary thin; runtime logic belongs in `vtcode-core`. Always construct `LifecycleHookEngine` with `vt_cfg.workspace_lifecycle_hooks` so workspace-sourced hooks stay gated; the approval overlay lives in `session_setup/hook_approval.rs`.
 - Spool preview generation and shell activity classification belong to `vtcode-core`; the binary only serializes the typed reference.
 - `mimalloc` is the default allocator; `allocator-jemalloc` opts into `tikv-jemalloc`. Measure with `vtcode bench-allocator` before changing it; see the [allocator guide](../docs/development/ALLOCATOR_MEMORY.md).
 - Install `vtcode_ui::tui::panic_hook` before producing output.

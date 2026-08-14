@@ -64,14 +64,20 @@ pub(crate) async fn sync_primary_agent_runtime(ctx: &mut PrimaryAgentRuntimeSync
         None => None,
     };
     let hooks_config = build_primary_agent_hook_config(&cfg.hooks, ctx.active_primary_agent);
-    let next = LifecycleHookEngine::new_with_session(
+    let next = LifecycleHookEngine::new_with_session_and_workspace_hooks(
         ctx.config.workspace.clone(),
         &hooks_config,
         SessionStartTrigger::Startup,
         ctx.thread_id,
+        cfg.workspace_lifecycle_hooks.as_ref(),
     )?;
     if let (Some(hooks), Some(path)) = (next.as_ref(), transcript_path) {
         hooks.update_transcript_path(Some(path)).await;
+    }
+    if let Some(hooks) = next.as_ref() {
+        // A config reload or primary-agent switch rebuilds the engine; restore
+        // the persisted approval only when the command set is unchanged.
+        vtcode_core::hooks::restore_workspace_hook_approval(hooks, &ctx.config.workspace).await;
     }
     set_global_notification_hook_engine(next.clone());
     *ctx.lifecycle_hooks = next;

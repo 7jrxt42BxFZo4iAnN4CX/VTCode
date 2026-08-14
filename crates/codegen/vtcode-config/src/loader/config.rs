@@ -152,6 +152,14 @@ pub struct VTCodeConfig {
     #[cfg_attr(feature = "schema", schemars(skip))]
     pub runtime_agent_permissions: Option<AgentPermissionsConfig>,
 
+    /// Runtime-only snapshot of lifecycle hook commands sourced from
+    /// workspace-controlled configuration layers, populated by `ConfigManager`
+    /// at load time. Workspace-controlled hooks require explicit user approval
+    /// before execution; see [`WorkspaceLifecycleHooks`](crate::hooks::WorkspaceLifecycleHooks).
+    #[serde(skip)]
+    #[cfg_attr(feature = "schema", schemars(skip))]
+    pub workspace_lifecycle_hooks: Option<crate::hooks::WorkspaceLifecycleHooks>,
+
     /// Security settings
     #[serde(default)]
     pub security: SecurityConfig,
@@ -286,6 +294,7 @@ impl Default for VTCodeConfig {
             commands: CommandsConfig::default(),
             permissions: PermissionsConfig::default(),
             runtime_agent_permissions: None,
+            workspace_lifecycle_hooks: None,
             security: SecurityConfig::default(),
             sandbox: SandboxConfig::default(),
             ui: UiConfig::default(),

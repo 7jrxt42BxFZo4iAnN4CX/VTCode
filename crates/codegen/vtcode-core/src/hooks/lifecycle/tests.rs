@@ -813,3 +813,4 @@ async fn primary_agent_hooks_dispatch_after_global_hooks() {
 }
 
 mod hook_tooling;
+mod workspace_hook_approval;

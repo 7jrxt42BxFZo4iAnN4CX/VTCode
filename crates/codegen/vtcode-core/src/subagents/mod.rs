@@ -152,12 +152,16 @@ impl SubagentController {
     /// Creates a new controller, discovering subagent specs and loading persisted background state.
     pub async fn new(config: SubagentControllerConfig) -> Result<Self> {
         let discovered = discover_controller_subagents(&config.workspace_root).await?;
-        let lifecycle_hooks = LifecycleHookEngine::new_with_session(
+        let lifecycle_hooks = LifecycleHookEngine::new_with_session_and_workspace_hooks(
             config.workspace_root.clone(),
             &config.vt_cfg.hooks,
             SessionStartTrigger::Startup,
             config.parent_session_id.clone(),
+            config.vt_cfg.workspace_lifecycle_hooks.as_ref(),
         )?;
+        if let Some(engine) = lifecycle_hooks.as_ref() {
+            crate::hooks::lifecycle::restore_workspace_hook_approval(engine, &config.workspace_root).await;
+        }
         let background_children = load_background_state(&config.workspace_root)
             .await?
             .records

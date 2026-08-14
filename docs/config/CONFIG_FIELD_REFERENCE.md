@@ -330,7 +330,7 @@ python3 scripts/generate_config_field_reference.py
 | `hooks.lifecycle.session_end[].hooks[].timeout_seconds` | `integer \| null` | no | `null` | Optional execution timeout in seconds |
 | `hooks.lifecycle.session_end[].hooks[].type` | `string` | no | `"command"` | Type of hook command (currently only 'command' is supported) |
 | `hooks.lifecycle.session_end[].matcher` | `null \| string` | no | `null` | Optional regex matcher to filter when this group runs. Matched against context strings (e.g. tool name, project path). |
-| `hooks.lifecycle.session_start` | `array` | no | `[]` | Commands to run immediately when an agent session begins |
+| `hooks.lifecycle.session_start` | `array` | no | `[]` | Commands to run immediately when an agent session begins. Commands defined in workspace-controlled layers (workspace-root `vtcode.toml`, workspace `.vtcode/`, project profiles) require explicit per-workspace approval of the exact command set before they execute; user-level (`~/.vtcode/vtcode.toml`) hooks run without approval |
 | `hooks.lifecycle.session_start[].hooks` | `array` | no | `[]` | List of hook commands to execute sequentially in this group |
 | `hooks.lifecycle.session_start[].hooks[].command` | `string` | no | `""` | The shell command string to execute |
 | `hooks.lifecycle.session_start[].hooks[].timeout_seconds` | `integer \| null` | no | `null` | Optional execution timeout in seconds |

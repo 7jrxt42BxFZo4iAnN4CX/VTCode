@@ -105,7 +105,10 @@ pub use defaults::{
     WorkspacePathsDefaults, current_config_defaults, get_config_dir, get_data_dir, install_config_defaults_provider,
     reset_to_default_config_defaults, with_config_defaults,
 };
-pub use hooks::{HookCommandConfig, HookCommandKind, HookGroupConfig, HooksConfig, LifecycleHooksConfig};
+pub use hooks::{
+    HookCommandConfig, HookCommandKind, HookGroupConfig, HooksConfig, LifecycleHooksConfig, WorkspaceHookCommand,
+    WorkspaceLifecycleHooks,
+};
 pub use ide_context::{
     IdeContextConfig, IdeContextProviderConfig, IdeContextProviderFamily, IdeContextProviderMode,
     IdeContextProvidersConfig,

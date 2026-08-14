@@ -73,6 +73,11 @@ Complete guide to VT Code's security documentation.
 - **Documentation**: [Security Model - Shell Shape Validation](./SECURITY_MODEL.md#layer-6-shell-shape-validation-and-approval-learning)
 - **Dynamic `find` syntax**: Rejected at preflight and excluded from learned read-only families
 
+### Layer 7: Workspace Lifecycle Hook Approval
+- **Location**: `crates/codegen/vtcode-config/src/loader/manager.rs` (workspace-hook collection), `crates/codegen/vtcode-core/src/hooks/lifecycle/engine.rs` (fail-closed gate), `src/agent/runloop/unified/session_setup/hook_approval.rs` (approval overlay)
+- **Documentation**: [Security Model - Workspace Lifecycle Hook Approval](./SECURITY_MODEL.md#layer-7-workspace-lifecycle-hook-approval)
+- **Workspace-controlled hooks**: Never execute until the exact command set is approved for the workspace; digest-bound approval revalidated before every spawn and after config reload
+
 ## Configuration
 
 ### Tool Policy

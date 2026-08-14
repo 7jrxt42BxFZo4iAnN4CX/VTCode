@@ -1,4 +1,5 @@
 mod editor;
+mod hook_approval;
 mod ide_context;
 mod init;
 mod session_mode;

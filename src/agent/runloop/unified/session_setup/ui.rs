@@ -13,6 +13,7 @@ mod local_agents;
 mod persistent_memory;
 mod resume_render;
 
+use super::hook_approval;
 use super::types::{BackgroundTaskGuard, SessionState, SessionUISetup};
 use crate::agent::runloop::ResumeSession;
 use crate::agent::runloop::unified::reasoning::{model_supports_reasoning, resolve_reasoning_visibility};
@@ -103,7 +104,13 @@ pub(crate) async fn initialize_session_ui(
 
     let lifecycle_hooks = if let Some(vt) = vt_cfg {
         let hooks = build_primary_agent_hook_config(&vt.hooks, session_state.active_primary_agent.active());
-        LifecycleHookEngine::new_with_session(config.workspace.clone(), &hooks, session_trigger, session_id)?
+        LifecycleHookEngine::new_with_session_and_workspace_hooks(
+            config.workspace.clone(),
+            &hooks,
+            session_trigger,
+            session_id,
+            vt.workspace_lifecycle_hooks.as_ref(),
+        )?
     } else {
         None
     };
@@ -379,6 +386,65 @@ pub(crate) async fn initialize_session_ui(
 
     if let (Some(hooks), Some(archive)) = (&lifecycle_hooks, session_archive.as_ref()) {
         hooks.update_transcript_path(Some(archive.path().to_path_buf())).await;
+    }
+
+    // Workspace-controlled lifecycle hooks never execute without explicit
+    // approval of the exact command set for this workspace (GHSA-wqgw-crr5-cr2p).
+    // A persisted approval matching the current digest is restored silently;
+    // otherwise interactive sessions prompt, and auto/non-interactive sessions
+    // fail closed by skipping the workspace-sourced commands.
+    if let Some(hooks) = &lifecycle_hooks
+        && !hooks.workspace_hooks().is_empty()
+    {
+        let digest = hooks.workspace_hooks().digest();
+        let pre_approved = matches!(
+            vtcode_core::load_lifecycle_hook_approval(&config.workspace).await,
+            Ok(Some(record)) if record.config_digest == digest
+        );
+        if pre_approved {
+            hooks.approve_workspace_hooks(&digest).await;
+        } else if full_auto || skip_confirmations {
+            renderer.line(
+                MessageStyle::Warning,
+                "Workspace lifecycle hooks require approval and were skipped (auto/non-interactive mode). \
+                 Run an interactive session to review and approve them.",
+            )?;
+        } else {
+            match hook_approval::prompt_workspace_hook_approval(
+                &handle,
+                &mut session,
+                &ctrl_c_state,
+                &ctrl_c_notify,
+                &config.workspace,
+                hooks.workspace_hooks(),
+            )
+            .await
+            {
+                Ok(hook_approval::HookApprovalDecision::Approved) => {
+                    if let Err(err) =
+                        vtcode_core::update_lifecycle_hook_approval(&config.workspace, digest.clone()).await
+                    {
+                        tracing::warn!(
+                            error = %err,
+                            "Failed to persist workspace lifecycle hook approval; approval applies to this session only"
+                        );
+                    }
+                    hooks.approve_workspace_hooks(&digest).await;
+                }
+                Ok(hook_approval::HookApprovalDecision::Denied) => {
+                    renderer.line(
+                        MessageStyle::Warning,
+                        "Workspace lifecycle hooks were not approved and will be skipped.",
+                    )?;
+                }
+                Err(err) => {
+                    renderer.line(
+                        MessageStyle::Warning,
+                        &format!("Could not prompt for workspace lifecycle hook approval; skipping them: {err}"),
+                    )?;
+                }
+            }
+        }
     }
 
     if let Some(hooks) = &lifecycle_hooks {

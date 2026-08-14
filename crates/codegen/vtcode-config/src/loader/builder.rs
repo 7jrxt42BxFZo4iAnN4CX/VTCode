@@ -78,6 +78,8 @@ impl ConfigBuilder {
             manager.config = effective_toml
                 .try_into()
                 .context("Failed to deserialize effective configuration after runtime overrides")?;
+            manager.config.workspace_lifecycle_hooks =
+                Some(ConfigManager::collect_workspace_lifecycle_hooks(&manager.layer_stack, &manager.config.hooks));
             manager
                 .config
                 .validate()

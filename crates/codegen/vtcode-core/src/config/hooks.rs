@@ -1,3 +1,4 @@
 pub use vtcode_config::hooks::{
-    HookCommandConfig, HookCommandKind, HookGroupConfig, HooksConfig, LifecycleHooksConfig,
+    HookCommandConfig, HookCommandKind, HookGroupConfig, HooksConfig, LifecycleHooksConfig, WorkspaceHookCommand,
+    WorkspaceLifecycleHooks,
 };

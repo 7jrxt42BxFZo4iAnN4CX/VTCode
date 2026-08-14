@@ -357,9 +357,10 @@ pub use tools::registry::{
 pub use tools::{ToolRegistration, ToolRegistry};
 pub use ui::diff_renderer::DiffRenderer;
 pub use utils::dot_config::{
-    CacheConfig, DotConfig, DotManager, ProviderConfigs, UiConfig, UserPreferences, WorkspaceTrustRecord,
-    WorkspaceTrustStore, initialize_dot_folder, load_user_config, load_workspace_trust_level, save_user_config,
-    update_model_preference, update_theme_preference, update_workspace_trust,
+    CacheConfig, DotConfig, DotManager, LifecycleHookApprovalRecord, ProviderConfigs, UiConfig, UserPreferences,
+    WorkspaceTrustRecord, WorkspaceTrustStore, initialize_dot_folder, load_lifecycle_hook_approval, load_user_config,
+    load_workspace_trust_level, save_user_config, update_lifecycle_hook_approval, update_model_preference,
+    update_theme_preference, update_workspace_trust,
 };
 pub use utils::vtcodegitignore::initialize_vtcode_gitignore;
 pub use vtcode_indexer::SimpleIndexer;

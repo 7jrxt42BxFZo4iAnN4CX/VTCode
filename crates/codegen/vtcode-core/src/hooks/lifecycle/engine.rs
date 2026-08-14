@@ -10,9 +10,10 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::time;
 
-use crate::config::{HookCommandConfig, HooksConfig};
+use crate::config::{HookCommandConfig, HooksConfig, WorkspaceLifecycleHooks};
 use crate::exec::events::{CompactionMode, CompactionTrigger};
 use crate::permissions::PermissionRequest;
+use crate::utils::dot_config::load_lifecycle_hook_approval;
 
 use crate::hooks::lifecycle::compiled::CompiledLifecycleHooks;
 use crate::hooks::lifecycle::interpret::{
@@ -46,6 +47,25 @@ impl LifecycleHookEngine {
         trigger: SessionStartTrigger,
         session_id: impl Into<String>,
     ) -> Result<Option<Self>> {
+        Self::new_with_session_and_workspace_hooks(workspace, config, trigger, session_id, None)
+    }
+
+    /// Construct the engine with the set of workspace-controlled lifecycle
+    /// commands captured at configuration load time.
+    ///
+    /// Workspace-controlled commands (from a workspace-root `vtcode.toml` or
+    /// a project profile inside the workspace) never execute until the exact
+    /// command set has been explicitly approved for this workspace. Pass
+    /// `Some` whenever the originating `VTCodeConfig` is available; passing
+    /// `None` disables the gate and must only be used for non-workspace
+    /// callers (e.g. tests constructing user-sourced configs directly).
+    pub fn new_with_session_and_workspace_hooks(
+        workspace: PathBuf,
+        config: &HooksConfig,
+        trigger: SessionStartTrigger,
+        session_id: impl Into<String>,
+        workspace_hooks: Option<&WorkspaceLifecycleHooks>,
+    ) -> Result<Option<Self>> {
         if config.lifecycle.is_empty() {
             return Ok(None);
         }
@@ -61,7 +81,11 @@ impl LifecycleHookEngine {
                 session_id: session_id.into(),
                 trigger,
                 hooks: compiled,
-                state: Mutex::new(LifecycleHookState { transcript_path: None }),
+                workspace_hooks: workspace_hooks.cloned().unwrap_or_default(),
+                state: Mutex::new(LifecycleHookState {
+                    transcript_path: None,
+                    approved_workspace_digest: None,
+                }),
             }),
         }))
     }
@@ -515,12 +539,61 @@ impl LifecycleHookEngine {
         state.transcript_path.clone()
     }
 
+    /// Return the workspace-controlled lifecycle hook snapshot this engine was
+    /// built with, if any.
+    pub fn workspace_hooks(&self) -> &WorkspaceLifecycleHooks {
+        &self.inner.workspace_hooks
+    }
+
+    /// Mark the current workspace-controlled hook command set as approved for
+    /// this engine instance. The digest must equal
+    /// `workspace_hooks().digest()`; any mismatch keeps the gate closed.
+    pub async fn approve_workspace_hooks(&self, digest: &str) {
+        let mut state = self.inner.state.lock().await;
+        state.approved_workspace_digest = Some(digest.to_string());
+    }
+
+    /// Whether workspace-controlled hooks are present but not yet approved for
+    /// the current command set. The binary prompts the user before the first
+    /// lifecycle run when this is true.
+    pub async fn workspace_hooks_need_approval(&self) -> bool {
+        let hooks = &self.inner.workspace_hooks;
+        if hooks.is_empty() {
+            return false;
+        }
+        let digest = hooks.digest();
+        let state = self.inner.state.lock().await;
+        state.approved_workspace_digest.as_deref() != Some(digest.as_str())
+    }
+
+    /// Fail-closed gate: a workspace-controlled command is only executable
+    /// when the approved digest matches the current command set digest.
+    async fn workspace_hook_is_approved(&self, event_key: &str, command: &HookCommandConfig) -> bool {
+        let hooks = &self.inner.workspace_hooks;
+        if !hooks.contains_command(event_key, command) {
+            // Not a workspace-controlled command; no gate applies.
+            return true;
+        }
+        let digest = hooks.digest();
+        let state = self.inner.state.lock().await;
+        state.approved_workspace_digest.as_deref() == Some(digest.as_str())
+    }
+
     async fn execute_command(
         &self,
         event_name: &str,
         command: &HookCommandConfig,
         payload: &Value,
     ) -> Result<HookCommandResult> {
+        let event_key = hook_event_key(event_name);
+        if !self.workspace_hook_is_approved(event_key, command).await {
+            return Err(anyhow::anyhow!(
+                "skipped: command originates from workspace-controlled configuration and is not approved for this workspace. \
+                 Review and approve workspace lifecycle hooks at session start to enable `{}` (event: {event_key}).",
+                command.command
+            ));
+        }
+
         let mut process = Command::new("sh");
         process.arg("-c").arg(&command.command);
         process.current_dir(&self.inner.workspace);
@@ -606,9 +679,50 @@ struct LifecycleHookInner {
     session_id: String,
     trigger: SessionStartTrigger,
     hooks: CompiledLifecycleHooks,
+    workspace_hooks: WorkspaceLifecycleHooks,
     state: Mutex<LifecycleHookState>,
 }
 
 struct LifecycleHookState {
     transcript_path: Option<PathBuf>,
+    approved_workspace_digest: Option<String>,
+}
+
+/// Map an engine event name (e.g. `SessionStart`) to the canonical snake_case
+/// key used by `WorkspaceLifecycleHooks`.
+fn hook_event_key(event_name: &str) -> &'static str {
+    match event_name {
+        "SessionStart" => "session_start",
+        "SessionEnd" => "session_end",
+        "SubagentStart" => "subagent_start",
+        "SubagentStop" => "subagent_stop",
+        "UserPromptSubmit" => "user_prompt_submit",
+        "PreToolUse" => "pre_tool_use",
+        "PostToolUse" => "post_tool_use",
+        "PermissionRequest" => "permission_request",
+        "PreCompact" => "pre_compact",
+        "Stop" => "stop",
+        "Notification" => "notification",
+        // Unknown event names cannot be workspace-controlled; map to a key
+        // that never matches the collected workspace set.
+        _ => "unknown",
+    }
+}
+
+/// Restore a persisted workspace lifecycle-hook approval onto a freshly built
+/// engine. The persisted record only applies when its digest still matches the
+/// engine's current workspace-controlled command set; any configuration change
+/// since approval leaves the engine fail-closed.
+pub async fn restore_workspace_hook_approval(engine: &LifecycleHookEngine, workspace: &std::path::Path) {
+    let hooks = engine.workspace_hooks();
+    if hooks.is_empty() {
+        return;
+    }
+    let digest = hooks.digest();
+    let Ok(Some(record)) = load_lifecycle_hook_approval(workspace).await else {
+        return;
+    };
+    if record.config_digest == digest {
+        engine.approve_workspace_hooks(&digest).await;
+    }
 }

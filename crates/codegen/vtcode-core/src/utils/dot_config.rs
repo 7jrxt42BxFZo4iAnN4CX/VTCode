@@ -28,6 +28,9 @@ pub struct DotConfig {
     /// Workspace trust records.
     #[serde(default)]
     pub workspace_trust: WorkspaceTrustStore,
+    /// Per-workspace approvals for workspace-controlled lifecycle hooks.
+    #[serde(default)]
+    pub lifecycle_hook_approvals: HashMap<String, LifecycleHookApprovalRecord>,
     /// Dependency notice display state.
     #[serde(default)]
     pub dependency_notices: DependencyNoticeStore,
@@ -101,6 +104,20 @@ pub struct WorkspaceTrustRecord {
     pub trusted_at: u64,
 }
 
+/// Per-workspace approval record for workspace-controlled lifecycle hooks.
+///
+/// The approval is bound to a digest of the exact workspace-sourced hook
+/// command set: if the configuration changes (e.g. a repository update alters
+/// `vtcode.toml`), the digest changes and the approval no longer matches, so
+/// the new commands are skipped until the user reviews them again.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LifecycleHookApprovalRecord {
+    /// Digest of the approved workspace-controlled lifecycle hook commands.
+    pub config_digest: String,
+    /// Unix timestamp when the approval was granted.
+    pub approved_at: u64,
+}
+
 /// Store tracking which dependency notices have been shown.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DependencyNoticeStore {
@@ -167,6 +184,7 @@ impl Default for DotConfig {
             cache: CacheConfig::default(),
             ui: UiConfig::default(),
             workspace_trust: WorkspaceTrustStore::default(),
+            lifecycle_hook_approvals: HashMap::new(),
             dependency_notices: DependencyNoticeStore::default(),
         }
     }
@@ -305,6 +323,34 @@ impl DotManager {
             cfg.workspace_trust
                 .entries
                 .insert(workspace_key, WorkspaceTrustRecord { level, trusted_at });
+        })
+        .await
+    }
+
+    /// Load the lifecycle hook approval record for a workspace, if any.
+    pub async fn lifecycle_hook_approval(
+        &self,
+        workspace: &Path,
+    ) -> Result<Option<LifecycleHookApprovalRecord>, DotError> {
+        let workspace_key = workspace_trust_key(workspace);
+        let config = self.load_config().await?;
+
+        Ok(config.lifecycle_hook_approvals.get(&workspace_key).cloned())
+    }
+
+    /// Persist an approval of the current workspace-controlled lifecycle hook
+    /// command set, replacing any earlier approval for the workspace.
+    pub async fn update_lifecycle_hook_approval(
+        &self,
+        workspace: &Path,
+        config_digest: String,
+    ) -> Result<(), DotError> {
+        let workspace_key = workspace_trust_key(workspace);
+        let approved_at = unix_timestamp_secs()?;
+
+        self.update_config(|cfg| {
+            cfg.lifecycle_hook_approvals
+                .insert(workspace_key, LifecycleHookApprovalRecord { config_digest, approved_at });
         })
         .await
     }
@@ -627,6 +673,19 @@ pub async fn update_workspace_trust(workspace: &Path, level: WorkspaceTrustLevel
     manager.update_workspace_trust(workspace, level).await
 }
 
+/// Load the lifecycle hook approval record recorded for a workspace, if any.
+pub async fn load_lifecycle_hook_approval(workspace: &Path) -> Result<Option<LifecycleHookApprovalRecord>, DotError> {
+    let manager = clone_manager()?;
+    manager.lifecycle_hook_approval(workspace).await
+}
+
+/// Persist an approval of the current workspace-controlled lifecycle hook
+/// command set for a workspace.
+pub async fn update_lifecycle_hook_approval(workspace: &Path, config_digest: String) -> Result<(), DotError> {
+    let manager = clone_manager()?;
+    manager.update_lifecycle_hook_approval(workspace, config_digest).await
+}
+
 /// Persist the preferred UI theme in the user's dot configuration.
 pub async fn update_theme_preference(theme: &str) -> Result<(), DotError> {
     let manager = clone_manager()?;
@@ -689,5 +748,46 @@ mod tests {
         let loaded_config = manager.load_config().await.unwrap();
 
         assert_eq!(loaded_config.preferences.default_model, "test-model");
+    }
+
+    #[tokio::test]
+    async fn lifecycle_hook_approval_round_trip() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_dir = temp_dir.path().join(".vtcode");
+
+        let manager = DotManager {
+            config_dir: config_dir.clone(),
+            cache_dir: config_dir.join("cache"),
+            config_file: config_dir.join("config.toml"),
+        };
+        manager.initialize().await.unwrap();
+
+        let workspace = temp_dir.path().join("ws");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        assert!(
+            manager.lifecycle_hook_approval(&workspace).await.unwrap().is_none(),
+            "no approval before any is granted"
+        );
+
+        manager
+            .update_lifecycle_hook_approval(&workspace, "digest-1".to_owned())
+            .await
+            .unwrap();
+        let record = manager.lifecycle_hook_approval(&workspace).await.unwrap().unwrap();
+        assert_eq!(record.config_digest, "digest-1");
+
+        // A newer approval replaces the earlier one for the same workspace.
+        manager
+            .update_lifecycle_hook_approval(&workspace, "digest-2".to_owned())
+            .await
+            .unwrap();
+        let record = manager.lifecycle_hook_approval(&workspace).await.unwrap().unwrap();
+        assert_eq!(record.config_digest, "digest-2");
+
+        // A different workspace keeps its own (absent) record.
+        let other_workspace = temp_dir.path().join("other");
+        std::fs::create_dir_all(&other_workspace).unwrap();
+        assert!(manager.lifecycle_hook_approval(&other_workspace).await.unwrap().is_none());
     }
 }
