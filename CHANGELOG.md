@@ -2,6 +2,14 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.144.0 - 2026-08-14
+
+### Highlights
+#### Features
+
+- Add GLM-5.3 as Z.AI flagship model (cd29faed) 
+- Add gemini-3.7-flash to Gemini provider (00f417d5) 
+### Other Changes
 ## 0.143.4 - 2026-08-13
 
 ### Highlights
