@@ -122,12 +122,13 @@ pub(super) async fn build_turn_request(
         turn_snapshot.tool_free_recovery,
         turn_snapshot.request_user_input_enabled
     );
-    let request_envelope = ctx.session_stats.request_envelope(
+    let request_envelope = ctx.session_stats.request_envelope_shared(
         request_model,
         &turn_snapshot.provider_name,
         &envelope_mode,
         prompt_output.system_prompt,
-        selected_tools.map_or_else(Vec::new, Arc::unwrap_or_clone),
+        selected_tools,
+        assembled_prefix_hash,
         assembled_prefix_hash,
     );
     let ordered_wire_tools = request_envelope.ordered_tools();
