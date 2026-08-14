@@ -50,6 +50,12 @@ pub fn generate_tool_guidelines_for_profile(
     {
         lines.push(browse_guidance);
     }
+    if has_search || has_read_file || has_list_files {
+        lines.push(
+            "- Batch independent read-only inspection calls in one response; use bounded `read_file` batches for multiple files, keep dependent reads ordered, and keep mutations sequential."
+                .to_string(),
+        );
+    }
     if has_apply_patch {
         lines.push("- Use `apply_patch` for file edits after inspection; keep patches small.".to_string());
     }
@@ -591,6 +597,20 @@ mod tests {
         let guidelines = generate_tool_guidelines_for_profile(&tools, None, ResolvedShellPromptProfile::UnixLike);
         assert!(guidelines.contains("parallel"), "Should include parallel tool call guidance");
         assert!(guidelines.contains("inputs do not depend"), "Should mention independent inputs");
+    }
+
+    #[test]
+    fn test_read_only_batching_guidance_is_explicit() {
+        let tools = vec![
+            TOOL_CODE_SEARCH.to_string(),
+            TOOL_READ_FILE.to_string(),
+            TOOL_LIST_FILES.to_string(),
+        ];
+        let guidelines = generate_tool_guidelines_for_profile(&tools, None, ResolvedShellPromptProfile::UnixLike);
+
+        assert!(guidelines.contains("Batch independent read-only inspection calls"));
+        assert!(guidelines.contains("`read_file` batches"));
+        assert!(guidelines.contains("mutations sequential"));
     }
 
     #[test]
