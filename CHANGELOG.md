@@ -2,6 +2,20 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.145.0 - 2026-08-14
+
+### Highlights
+#### Bug Fixes
+
+- Fix #725: avoid blocking CPR query when clearing terminal on exit (aba4e721) (@vinhnx)
+- Require per-workspace approval for workspace lifecycle hooks (820f0016) (@vinhnx)
+- Gate whole lifecycle engine on workspace hook content (f02910ad) (@vinhnx)
+- Carry hook approval across engine rebuilds; atomic dot-config writes (30a52328) (@vinhnx)
+#### Documentation
+
+- Attribute GHSA-wqgw-crr5-cr2p reporter as security advisor (d32368d3) (@vinhnx)
+- Surface workspace lifecycle hook approval in README and security docs (0f19b6df) (@vinhnx)
+### Other Changes
 ## 0.144.0 - 2026-08-14
 
 ### Highlights
