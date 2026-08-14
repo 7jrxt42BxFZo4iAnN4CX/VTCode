@@ -197,7 +197,7 @@ impl ReadFileHandler {
     /// Read a single range from a file.
     pub(super) async fn read_range(&self, path: &Path, range: &ReadRange) -> Result<RangeResult> {
         let offset = range.offset.max(1);
-        let limit = range.limit.max(1);
+        let limit = Self::effective_line_limit(range.limit);
 
         let collected = match range.mode {
             ReadMode::Slice => slice::read(path, offset, limit).await?.lines,
@@ -221,6 +221,11 @@ impl ReadFileHandler {
     fn clamp_to_absolute_cap(requested: usize, absolute_max: usize) -> (usize, bool) {
         let capped = requested > absolute_max;
         (requested.min(absolute_max), capped)
+    }
+
+    fn effective_line_limit(requested: usize) -> usize {
+        let absolute_max = crate::tools::read_limits::absolute_line_cap();
+        Self::clamp_to_absolute_cap(requested.max(1), absolute_max).0
     }
 
     pub(crate) async fn handle_detailed(&self, args: ReadFileArgs) -> Result<ReadFileOutcome> {
@@ -543,7 +548,7 @@ mod slice {
             .iter()
             .map(|range| {
                 let offset = range.offset.max(1);
-                let limit = range.limit.max(1);
+                let limit = ReadFileHandler::effective_line_limit(range.limit);
                 (offset, offset.saturating_add(limit.saturating_sub(1)))
             })
             .collect();
@@ -1409,6 +1414,41 @@ mod tests {
         assert_eq!(ranges[1]["offset"], 10);
         assert_eq!(ranges[0]["content"], "line1\nline2\nline3");
         assert_eq!(ranges[1]["content"], "line10\nline11\nline12");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn batch_range_is_capped_by_absolute_line_limit() -> Result<()> {
+        let cap = crate::tools::read_limits::absolute_line_cap();
+        let mut temp = NamedTempFile::new()?;
+        for i in 1..=cap + 1 {
+            writeln!(temp, "line{i}")?;
+        }
+
+        let handler = ReadFileHandler;
+        let result = handler
+            .handle_batch(BatchReadArgs {
+                reads: vec![BatchReadRequest {
+                    file_path: temp.path().to_string_lossy().to_string(),
+                    range: Some(ReadRange {
+                        offset: 1,
+                        limit: cap + 1,
+                        mode: ReadMode::Slice,
+                        indentation: None,
+                    }),
+                    ranges: None,
+                }],
+                max_concurrency: 1,
+                ui_progress: false,
+            })
+            .await?;
+
+        let range = &result["items"][0]["ranges"][0];
+        assert_eq!(range["lines_read"], cap);
+
+        let content = range["content"].as_str().context("batch range content must be a string")?;
+        assert!(content.ends_with(&format!("line{cap}")));
+        assert!(!content.contains(&format!("line{}", cap + 1)));
         Ok(())
     }
 
