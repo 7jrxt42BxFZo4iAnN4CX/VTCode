@@ -814,11 +814,6 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Goal, Root Cause, Release Asset Contract, Pipeline Changes, Safety
   - **User Questions**: "What can you tell me about Legacy Updater Compatibility Release?", "How does Goal work?", "How does Root Cause work?"
 
-- **File**: `docs/superpowers/plans/2026-07-29-legacy-updater-compatibility-release.md`
-  - **Content**: Legacy Updater Compatibility Release Implementation Plan
-  - **Topics**: Global Constraints
-  - **User Questions**: "What can you tell me about Legacy Updater Compatibility Release Implementation Plan?", "How does Global Constraints work?"
-
 - **File**: `docs/build-with-claude/migrating-to-claude-opus-5.md`
   - **Content**: Migrating Claude models in VT Code
   - **Topics**: Quick navigation, Model comparison, Where to make changes in VT Code, Migrating to Claude Fable 5 / Claude Mythos 5, Migrating to Claude Opus 5

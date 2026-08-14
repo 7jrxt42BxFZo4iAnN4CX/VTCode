@@ -1,10 +1,20 @@
 //! Privacy-preserving summaries for JSONL agent traces.
 
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs::File,
+    io::{BufRead, BufReader, Cursor, Read},
+    path::Path,
+};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
 use serde_json::Value;
+
+const GENERIC_ERROR_CATEGORY: &str = "error";
+const MAX_DISTINCT_TOOL_LABELS: usize = 256;
+const MAX_TRACE_LINE_BYTES: usize = 1_048_576;
+const OTHER_TOOL_LABEL: &str = "other_tool";
 
 /// Aggregate token and prompt-cache usage found in a trace.
 #[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
@@ -17,6 +27,8 @@ pub struct TokenUsage {
     pub cached_input_tokens: u64,
     /// Total tokens used to create cache entries.
     pub cache_creation_tokens: u64,
+    /// Total generated reasoning tokens when the provider reports them.
+    pub reasoning_tokens: u64,
 }
 
 /// Statistics over recorded latency samples, in milliseconds.
@@ -28,9 +40,9 @@ pub struct LatencyStatistics {
     pub total_ms: u64,
     /// Arithmetic mean, or `None` when no samples were recorded.
     pub mean_ms: Option<f64>,
-    /// Median sample, or `None` when no samples were recorded.
+    /// Median from the bounded latency reservoir, or `None` when no samples were recorded.
     pub p50_ms: Option<u64>,
-    /// 95th percentile sample, or `None` when no samples were recorded.
+    /// 95th percentile from the bounded latency reservoir, or `None` when no samples were recorded.
     pub p95_ms: Option<u64>,
     /// Largest recorded sample, or `None` when no samples were recorded.
     pub max_ms: Option<u64>,
@@ -65,58 +77,274 @@ pub struct HarnessTraceSummary {
     pub unrecognized_lines: u64,
 }
 
-/// Analyze JSONL text while retaining only aggregate, non-sensitive facts.
-pub fn analyze_jsonl(input: &str) -> Result<HarnessTraceSummary> {
-    let mut summary = HarnessTraceSummary::default();
-    let mut latencies = Vec::new();
+#[derive(Default)]
+struct UsageAccounting {
+    per_turn: TokenUsage,
+    other: TokenUsage,
+    thread_aggregate: Option<TokenUsage>,
+    saw_per_turn_usage: bool,
+}
 
-    for line in input.lines().filter(|line| !line.trim().is_empty()) {
-        let value = match serde_json::from_str::<Value>(line) {
-            Ok(value) => value,
-            Err(_) => {
-                summary.malformed_lines = summary.malformed_lines.saturating_add(1);
-                continue;
-            }
+impl UsageAccounting {
+    fn record(&mut self, event_type: Option<&str>, object: &serde_json::Map<String, Value>) {
+        let Some(sample) = usage_sample(object) else {
+            return;
         };
 
-        if !record_value(&value, &mut summary, &mut latencies) {
-            summary.unrecognized_lines = summary.unrecognized_lines.saturating_add(1);
+        match event_type {
+            Some("thread.completed") => self.thread_aggregate = Some(sample),
+            Some("turn.completed" | "turn.failed" | "turn/end") => {
+                self.saw_per_turn_usage = true;
+                add_usage(&mut self.per_turn, &sample);
+            }
+            _ => add_usage(&mut self.other, &sample),
         }
     }
 
-    summary.latency = latency_statistics(&mut latencies);
-    Ok(summary)
+    fn finish(self) -> TokenUsage {
+        if self.saw_per_turn_usage {
+            self.per_turn
+        } else if let Some(thread_aggregate) = self.thread_aggregate {
+            thread_aggregate
+        } else {
+            self.other
+        }
+    }
+}
+
+const MAX_LATENCY_SAMPLES: usize = 4096;
+
+#[derive(Default)]
+struct LatencyAccumulator {
+    samples: Vec<u64>,
+    count: u64,
+    total_ms: u64,
+    max_ms: Option<u64>,
+}
+
+impl LatencyAccumulator {
+    fn record(&mut self, latency_ms: u64) {
+        self.count = self.count.saturating_add(1);
+        self.total_ms = self.total_ms.saturating_add(latency_ms);
+        self.max_ms = Some(self.max_ms.map_or(latency_ms, |max_ms| max_ms.max(latency_ms)));
+
+        if self.samples.len() < MAX_LATENCY_SAMPLES {
+            self.samples.push(latency_ms);
+            return;
+        }
+
+        let candidate = deterministic_reservoir_index(self.count);
+        if candidate < MAX_LATENCY_SAMPLES as u64 {
+            self.samples[candidate as usize] = latency_ms;
+        }
+    }
+
+    fn finish(mut self) -> LatencyStatistics {
+        if self.count == 0 {
+            return LatencyStatistics::default();
+        }
+
+        self.samples.sort_unstable();
+        let percentile = |percent: usize| {
+            let index = (self.samples.len() - 1).saturating_mul(percent).div_ceil(100);
+            self.samples[index]
+        };
+        LatencyStatistics {
+            count: self.count,
+            total_ms: self.total_ms,
+            mean_ms: Some(self.total_ms as f64 / self.count as f64),
+            p50_ms: Some(percentile(50)),
+            p95_ms: Some(percentile(95)),
+            max_ms: self.max_ms,
+        }
+    }
+}
+
+#[derive(Default)]
+struct LifecycleTiming {
+    pending_steps: BTreeMap<u64, u64>,
+}
+
+impl LifecycleTiming {
+    fn record(
+        &mut self,
+        event_type: Option<&str>,
+        outer: &serde_json::Map<String, Value>,
+        payload: &serde_json::Map<String, Value>,
+        latencies: &mut LatencyAccumulator,
+    ) {
+        let timestamp = number_field_from(outer, payload, &["time"]);
+        let step = number_field_from(payload, outer, &["step"]);
+        match event_type {
+            Some("step/start") => {
+                if let (Some(step), Some(timestamp)) = (step, timestamp)
+                    && self.pending_steps.len() < MAX_LATENCY_SAMPLES
+                {
+                    self.pending_steps.insert(step, timestamp);
+                }
+            }
+            Some("step/end") => {
+                if let Some(step) = step
+                    && let Some(timestamp) = timestamp
+                    && let Some(start) = self.pending_steps.remove(&step)
+                    && timestamp >= start
+                {
+                    latencies.record(timestamp - start);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+#[derive(Default)]
+struct AnalyzerState {
+    summary: HarnessTraceSummary,
+    latencies: LatencyAccumulator,
+    timing: LifecycleTiming,
+    usage: UsageAccounting,
+}
+
+impl AnalyzerState {
+    fn record_bytes(&mut self, line: &[u8]) {
+        if line.iter().all(|byte| byte.is_ascii_whitespace()) {
+            return;
+        }
+
+        let value = match serde_json::from_slice::<Value>(line) {
+            Ok(value) => value,
+            Err(_) => {
+                self.summary.malformed_lines = self.summary.malformed_lines.saturating_add(1);
+                return;
+            }
+        };
+
+        if !record_value(&value, &mut self.summary, &mut self.latencies, &mut self.timing, &mut self.usage) {
+            self.summary.unrecognized_lines = self.summary.unrecognized_lines.saturating_add(1);
+        }
+    }
+
+    fn record_oversized(&mut self) {
+        self.summary.malformed_lines = self.summary.malformed_lines.saturating_add(1);
+    }
+
+    fn finish(self) -> HarnessTraceSummary {
+        HarnessTraceSummary {
+            latency: self.latencies.finish(),
+            token_usage: self.usage.finish(),
+            ..self.summary
+        }
+    }
+}
+
+/// Analyze JSONL text while retaining only aggregate, non-sensitive facts.
+pub fn analyze_jsonl(input: &str) -> Result<HarnessTraceSummary> {
+    analyze_jsonl_reader(Cursor::new(input.as_bytes()))
+}
+
+/// Analyze a buffered JSONL source without loading the complete trace into memory.
+pub fn analyze_jsonl_reader<R: BufRead>(mut reader: R) -> Result<HarnessTraceSummary> {
+    let mut state = AnalyzerState::default();
+    let mut line = Vec::with_capacity(8 * 1024);
+    loop {
+        line.clear();
+        let bytes_read = {
+            let mut limited_reader = reader.by_ref().take((MAX_TRACE_LINE_BYTES + 1) as u64);
+            limited_reader.read_until(b'\n', &mut line).context("read JSONL trace line")?
+        };
+        if bytes_read == 0 {
+            break;
+        }
+        if line.len() > MAX_TRACE_LINE_BYTES {
+            state.record_oversized();
+            if !line.ends_with(b"\n") {
+                discard_oversized_record(&mut reader)?;
+            }
+            continue;
+        }
+        state.record_bytes(&line);
+    }
+    Ok(state.finish())
+}
+
+fn discard_oversized_record<R: BufRead>(reader: &mut R) -> Result<()> {
+    loop {
+        let buffered = reader.fill_buf().context("discard oversized JSONL trace line")?;
+        if buffered.is_empty() {
+            return Ok(());
+        }
+        if let Some(newline) = buffered.iter().position(|byte| *byte == b'\n') {
+            reader.consume(newline + 1);
+            return Ok(());
+        }
+        let buffered_len = buffered.len();
+        reader.consume(buffered_len);
+    }
 }
 
 /// Analyze a JSONL trace file and add path context to filesystem errors.
 pub fn analyze_jsonl_file(path: impl AsRef<Path>) -> Result<HarnessTraceSummary> {
     let path = path.as_ref();
-    let input = fs::read_to_string(path).with_context(|| format!("read trace file {}", path.display()))?;
-    analyze_jsonl(&input).with_context(|| format!("analyze trace file {}", path.display()))
+    let file = File::open(path).with_context(|| format!("read trace file {}", path.display()))?;
+    analyze_jsonl_reader(BufReader::new(file)).with_context(|| format!("analyze trace file {}", path.display()))
 }
 
-fn record_value(value: &Value, summary: &mut HarnessTraceSummary, latencies: &mut Vec<u64>) -> bool {
+fn record_value(
+    value: &Value,
+    summary: &mut HarnessTraceSummary,
+    latencies: &mut LatencyAccumulator,
+    timing: &mut LifecycleTiming,
+    usage: &mut UsageAccounting,
+) -> bool {
     let Some(object) = value.as_object() else {
         return false;
     };
-    let event_type = string_field(object, &["type", "event", "kind"]);
-    let is_thread_event = event_type.is_some_and(|event| {
-        event.starts_with("thread.")
-            || event.starts_with("turn.")
-            || event.starts_with("item.")
-            || matches!(event, "error" | "context.reset" | "permission.requested" | "permission.resolved")
-    });
+    let payload = object
+        .get("data")
+        .and_then(Value::as_object)
+        .or_else(|| object.get("event").and_then(Value::as_object))
+        .unwrap_or(object);
+    let event_type =
+        string_field(object, &["type", "event", "kind"]).or_else(|| string_field(payload, &["type", "event", "kind"]));
+    let is_thread_event = event_type.is_some_and(is_known_event_type);
 
     let mut recognized = is_thread_event;
-    if matches!(event_type, Some("turn.started")) {
+    let mut error_recorded = false;
+    timing.record(event_type, object, payload, latencies);
+    if matches!(event_type, Some("turn.started" | "turn/start")) {
         summary.turns = summary.turns.saturating_add(1);
     }
+    if matches!(event_type, Some("thread.completed"))
+        && let Some(num_turns) = number_field_from(object, payload, &["num_turns"])
+    {
+        summary.turns = summary.turns.max(num_turns);
+    }
     if matches!(event_type, Some("error" | "turn.failed")) {
-        add_error(summary, string_field(object, &["error_category", "category", "code"]).unwrap_or("error"));
+        add_error(summary, error_category(payload, object).unwrap_or(GENERIC_ERROR_CATEGORY));
+        recognized = true;
+        error_recorded = true;
+    }
+
+    if matches!(event_type, Some("tool/result")) {
+        if let Some(bytes) = tool_result_output_bytes(payload) {
+            summary.output_bytes = summary.output_bytes.saturating_add(bytes);
+        }
+        if let Some(category) = tool_result_error_category(payload) {
+            let category = canonical_error_category(category);
+            add_error(
+                summary,
+                if category == GENERIC_ERROR_CATEGORY {
+                    "tool_error"
+                } else {
+                    category
+                },
+            );
+            error_recorded = true;
+        }
         recognized = true;
     }
 
-    if let Some(item) = object.get("item").and_then(Value::as_object) {
+    if let Some(item) = payload.get("item").and_then(Value::as_object) {
         if matches!(event_type, Some("item.completed")) {
             recognized |= record_item(item, summary);
             if let Some(bytes) = output_bytes(item) {
@@ -127,37 +355,53 @@ fn record_value(value: &Value, summary: &mut HarnessTraceSummary, latencies: &mu
         }
     }
 
-    let deepseek_tool = string_field(object, &["tool", "tool_name", "name"]).or_else(|| {
-        object
-            .get("function")
-            .and_then(Value::as_object)
-            .and_then(|f| string_field(f, &["name"]))
-    });
-    let has_step = object.contains_key("step") || object.contains_key("step_id");
-    if deepseek_tool.is_some() || has_step {
+    let deepseek_tool = string_field_from(payload, object, &["tool", "tool_name", "name"])
+        .or_else(|| {
+            payload
+                .get("function")
+                .and_then(Value::as_object)
+                .and_then(|f| string_field(f, &["name"]))
+        })
+        .or_else(|| {
+            object
+                .get("function")
+                .and_then(Value::as_object)
+                .and_then(|f| string_field(f, &["name"]))
+        });
+    let has_step = payload.contains_key("step")
+        || payload.contains_key("step_id")
+        || object.contains_key("step")
+        || object.contains_key("step_id");
+    let is_step_start = matches!(event_type, Some("step/start"));
+    let is_synthetic_record = event_type.is_none();
+    let is_tool_call = is_synthetic_record || matches!(event_type, Some("tool" | "tool_call" | "tool/call"));
+    if is_step_start || (is_synthetic_record && (deepseek_tool.is_some() || has_step)) {
         recognized = true;
-        if has_step {
+        if is_step_start || has_step {
             summary.steps = summary.steps.saturating_add(1);
         }
-        if let Some(tool) = deepseek_tool {
-            record_tool(summary, tool);
-        }
+    }
+    if is_tool_call && let Some(tool) = deepseek_tool {
+        recognized = true;
+        record_tool(summary, tool);
     }
 
-    if let Some(latency) = number_field(object, &["latency_ms", "duration_ms", "latency"]) {
-        latencies.push(latency);
+    if let Some(latency) = number_field_from(object, payload, &["latency_ms", "duration_ms", "latency"]) {
+        latencies.record(latency);
         recognized = true;
     }
-    if let Some(bytes) = output_bytes(object) {
+    if is_tool_call && let Some(bytes) = output_bytes(payload).or_else(|| output_bytes(object)) {
         summary.output_bytes = summary.output_bytes.saturating_add(bytes);
         recognized = true;
     }
-    if let Some(category) = error_category(object) {
-        add_error(summary, &category);
+    if let Some(category) = error_category(payload, object) {
+        if !error_recorded {
+            add_error(summary, category);
+        }
         recognized = true;
     }
-    record_usage(object, &mut summary.token_usage);
-    recognized || has_usage(object)
+    usage.record(event_type, payload);
+    recognized || has_usage(payload)
 }
 
 fn record_item(item: &serde_json::Map<String, Value>, summary: &mut HarnessTraceSummary) -> bool {
@@ -206,18 +450,190 @@ fn record_item(item: &serde_json::Map<String, Value>, summary: &mut HarnessTrace
     }
 }
 
+fn is_known_event_type(event: &str) -> bool {
+    event.starts_with("thread.")
+        || event.starts_with("turn.")
+        || event.starts_with("item.")
+        || event.starts_with("turn/")
+        || event.starts_with("step/")
+        || event.starts_with("agent/")
+        || event.starts_with("agent-preset/")
+        || event.starts_with("approval/")
+        || event.starts_with("assistant/")
+        || event.starts_with("command/")
+        || event.starts_with("goal/")
+        || event.starts_with("permission/")
+        || event.starts_with("request/")
+        || event.starts_with("sandbox/")
+        || event.starts_with("session/")
+        || event.starts_with("todo/")
+        || event.starts_with("user/")
+        || event.starts_with("web/")
+        || matches!(
+            event,
+            "error"
+                | "context.reset"
+                | "permission.requested"
+                | "permission.resolved"
+                | "tool/call"
+                | "tool/result"
+                | "assistant/message"
+                | "reasoning-chunks"
+                | "session"
+                | "text-chunks"
+                | "tool-call-chunks"
+        )
+}
+
+fn string_field_from<'a>(
+    primary: &'a serde_json::Map<String, Value>,
+    fallback: &'a serde_json::Map<String, Value>,
+    names: &[&str],
+) -> Option<&'a str> {
+    string_field(primary, names).or_else(|| string_field(fallback, names))
+}
+
+fn number_field_from(
+    primary: &serde_json::Map<String, Value>,
+    fallback: &serde_json::Map<String, Value>,
+    names: &[&str],
+) -> Option<u64> {
+    number_field(primary, names).or_else(|| number_field(fallback, names))
+}
+
+fn tool_result_output_bytes(object: &serde_json::Map<String, Value>) -> Option<u64> {
+    let content = object
+        .get("message")
+        .and_then(Value::as_object)
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_array)?;
+    let mut total = 0_u64;
+    let mut found = false;
+    for block in content {
+        let Some(block) = block.as_object() else {
+            continue;
+        };
+        let Some(fragments) = block.get("content") else {
+            continue;
+        };
+        match fragments {
+            Value::String(text) => {
+                total = total.saturating_add(text.len() as u64);
+                found = true;
+            }
+            Value::Array(fragments) => {
+                for fragment in fragments {
+                    if let Some(text) = fragment.as_str().or_else(|| {
+                        fragment
+                            .as_object()
+                            .and_then(|fragment| fragment.get("text"))
+                            .and_then(Value::as_str)
+                    }) {
+                        total = total.saturating_add(text.len() as u64);
+                        found = true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    found.then_some(total)
+}
+
+fn tool_result_error_category(object: &serde_json::Map<String, Value>) -> Option<&str> {
+    let content = object
+        .get("message")
+        .and_then(Value::as_object)
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_array)?;
+    for block in content {
+        let Some(block) = block.as_object() else {
+            continue;
+        };
+        if !block.get("isError").and_then(Value::as_bool).unwrap_or(false) {
+            continue;
+        }
+        if let Some(category) = block.get("content").and_then(Value::as_array).and_then(|fragments| {
+            fragments.iter().find_map(|fragment| {
+                fragment
+                    .as_object()
+                    .and_then(|fragment| fragment.get("text"))
+                    .and_then(Value::as_str)
+                    .or_else(|| fragment.as_str())
+            })
+        }) {
+            return Some(category);
+        }
+        return Some("tool_error");
+    }
+    None
+}
+
 fn record_tool(summary: &mut HarnessTraceSummary, tool: &str) {
+    let normalized_tool = safe_tool_name(tool);
+    let tool = if summary.tool_counts.contains_key(normalized_tool)
+        || summary.tool_counts.len() < MAX_DISTINCT_TOOL_LABELS.saturating_sub(1)
+    {
+        normalized_tool
+    } else {
+        OTHER_TOOL_LABEL
+    };
     summary.tool_calls = summary.tool_calls.saturating_add(1);
     let count = summary.tool_counts.entry(tool.to_owned()).or_default();
     if *count > 0 {
         summary.repeated_calls = summary.repeated_calls.saturating_add(1);
-        *summary.repeated_tool_counts.entry(tool.to_owned()).or_default() += 1;
+        let repeated_count = summary.repeated_tool_counts.entry(tool.to_owned()).or_default();
+        *repeated_count = repeated_count.saturating_add(1);
     }
-    *count += 1;
+    *count = count.saturating_add(1);
 }
 
 fn add_error(summary: &mut HarnessTraceSummary, category: &str) {
-    *summary.error_categories.entry(category.to_owned()).or_default() += 1;
+    let category = canonical_error_category(category);
+    let count = summary.error_categories.entry(category.to_owned()).or_default();
+    *count = count.saturating_add(1);
+}
+
+fn safe_tool_name(tool: &str) -> &'static str {
+    match tool.trim() {
+        "apply_patch" => "apply_patch",
+        "bash" => "bash",
+        "code_search" => "code_search",
+        "command_execution" => "command_execution",
+        "create_goal" => "create_goal",
+        "edit_file" => "edit_file",
+        "edit" => "edit",
+        "exec" => "exec",
+        "exec_command" => "exec_command",
+        "exec_pty_cmd" => "exec_pty_cmd",
+        "fetch" => "fetch",
+        "fetch_url" => "fetch_url",
+        "get_goal" => "get_goal",
+        "grep" => "grep",
+        "grep_file" => "grep_file",
+        "job_output" => "job_output",
+        "list" => "list",
+        "list_agents" => "list_agents",
+        "list_dir" => "list_dir",
+        "list_files" => "list_files",
+        "mcp" => "mcp",
+        "mcp_tool_call" => "mcp_tool_call",
+        "read" => "read",
+        "read_file" => "read_file",
+        "search" => "search",
+        "shell" => "shell",
+        "skill" => "skill",
+        "subagent" => "subagent",
+        "task_tracker" => "task_tracker",
+        "todo_write" => "todo_write",
+        "update_goal" => "update_goal",
+        "web_fetch" => "web_fetch",
+        "web_search" => "web_search",
+        "write" => "write",
+        "write_file" => "write_file",
+        "write_stdin" => "write_stdin",
+        _ => OTHER_TOOL_LABEL,
+    }
 }
 
 fn string_field<'a>(object: &'a serde_json::Map<String, Value>, names: &[&str]) -> Option<&'a str> {
@@ -228,26 +644,50 @@ fn number_field(object: &serde_json::Map<String, Value>, names: &[&str]) -> Opti
     names.iter().find_map(|name| object.get(*name).and_then(Value::as_u64))
 }
 
+fn nested_number_field(object: &serde_json::Map<String, Value>, containers: &[&str], names: &[&str]) -> Option<u64> {
+    containers.iter().find_map(|container| {
+        object
+            .get(*container)
+            .and_then(Value::as_object)
+            .and_then(|details| number_field(details, names))
+    })
+}
+
 fn output_bytes(object: &serde_json::Map<String, Value>) -> Option<u64> {
-    ["output", "aggregated_output", "tool_output", "result"]
+    ["output", "aggregated_output", "tool_output"]
         .iter()
         .find_map(|name| object.get(*name).and_then(Value::as_str).map(|output| output.len() as u64))
 }
 
-fn error_category(object: &serde_json::Map<String, Value>) -> Option<String> {
-    if let Some(category) = string_field(object, &["error_category", "error_code"]) {
-        return Some(category.to_owned());
+fn error_category<'a>(
+    primary: &'a serde_json::Map<String, Value>,
+    fallback: &'a serde_json::Map<String, Value>,
+) -> Option<&'a str> {
+    if let Some(category) = string_field_from(primary, fallback, &["error_category", "error_code"]) {
+        return Some(category);
     }
-    match object.get("error") {
-        Some(Value::String(error)) => Some(canonical_error_category(error).to_owned()),
-        Some(Value::Object(error)) => string_field(error, &["category", "code", "type"]).map(str::to_owned),
+    match primary.get("error").or_else(|| fallback.get("error")) {
+        Some(Value::String(error)) => Some(error),
+        Some(Value::Object(error)) => string_field(error, &["category", "code", "type"]),
         _ => None,
     }
 }
 
 fn canonical_error_category(error: &str) -> &'static str {
-    let error = error.to_ascii_lowercase();
-    if error.contains("timeout") {
+    let error = error.trim().to_ascii_lowercase();
+    if error.contains("fs_not_observed") || error.contains("fs-not-observed") {
+        "fs_not_observed"
+    } else if error.contains("fs_stale_version") || error.contains("fs-stale-version") {
+        "fs_stale_version"
+    } else if error.contains("unknown_job") || error.contains("unknown-job") || error.contains("unknown job") {
+        "unknown_job"
+    } else if error.contains("invalid_goal")
+        || error.contains("invalid-goal")
+        || error.contains("invalid goal")
+        || error.contains("goal")
+    {
+        "invalid_goal_update"
+    } else if error.contains("timeout") || error.contains("timed out") {
         "timeout"
     } else if error.contains("permission") || error.contains("denied") {
         "permission_denied"
@@ -255,8 +695,14 @@ fn canonical_error_category(error: &str) -> &'static str {
         "network"
     } else if error.contains("parse") || error.contains("json") {
         "parse"
+    } else if error.contains("rate_limit") || error.contains("rate-limit") || error.contains("ratelimit") {
+        "rate_limit"
+    } else if error.contains("command_failed") || error.contains("command-failed") {
+        "command_failed"
+    } else if error.contains("tool_error") || error.contains("tool-error") {
+        "tool_error"
     } else {
-        "error"
+        GENERIC_ERROR_CATEGORY
     }
 }
 
@@ -267,44 +713,112 @@ fn usage_value(object: &serde_json::Map<String, Value>) -> Option<&serde_json::M
 }
 
 fn has_usage(object: &serde_json::Map<String, Value>) -> bool {
-    usage_value(object).is_some() || object.keys().any(|key| key.ends_with("_tokens"))
+    usage_value(object).is_some()
+        || object.keys().any(|key| {
+            key.ends_with("_tokens")
+                || matches!(key.as_str(), "inputTokens" | "outputTokens" | "cacheReadTokens" | "reasoningTokens")
+        })
 }
 
-fn record_usage(object: &serde_json::Map<String, Value>, usage: &mut TokenUsage) {
-    let source = usage_value(object).unwrap_or(object);
-    usage.input_tokens = usage
-        .input_tokens
-        .saturating_add(number_field(source, &["input", "input_tokens", "prompt_tokens"]).unwrap_or(0));
-    usage.output_tokens = usage
-        .output_tokens
-        .saturating_add(number_field(source, &["output", "output_tokens", "completion_tokens"]).unwrap_or(0));
-    usage.cached_input_tokens = usage
-        .cached_input_tokens
-        .saturating_add(number_field(source, &["cached", "cached_tokens", "cached_input_tokens"]).unwrap_or(0));
-    usage.cache_creation_tokens = usage
-        .cache_creation_tokens
-        .saturating_add(number_field(source, &["cache_creation", "cache_creation_tokens"]).unwrap_or(0));
-}
-
-fn latency_statistics(samples: &mut [u64]) -> LatencyStatistics {
-    if samples.is_empty() {
-        return LatencyStatistics::default();
+fn usage_sample(object: &serde_json::Map<String, Value>) -> Option<TokenUsage> {
+    if !has_usage(object) {
+        return None;
     }
-    samples.sort_unstable();
-    let total_ms = samples.iter().copied().sum();
-    let percentile = |percent: usize| samples[((samples.len() - 1) * percent).div_ceil(100)];
-    LatencyStatistics {
-        count: samples.len() as u64,
-        total_ms,
-        mean_ms: Some(total_ms as f64 / samples.len() as f64),
-        p50_ms: Some(percentile(50)),
-        p95_ms: Some(percentile(95)),
-        max_ms: samples.last().copied(),
+
+    let source = usage_value(object).unwrap_or(object);
+    Some(TokenUsage {
+        input_tokens: number_field(source, &["input", "input_tokens", "prompt_tokens", "inputTokens"]).unwrap_or(0),
+        output_tokens: number_field(source, &["output", "output_tokens", "completion_tokens", "outputTokens"])
+            .unwrap_or(0),
+        cached_input_tokens: number_field(
+            source,
+            &[
+                "cached",
+                "cached_tokens",
+                "cached_input_tokens",
+                "cacheReadTokens",
+                "cache_read_tokens",
+                "prompt_cache_hit_tokens",
+            ],
+        )
+        .or_else(|| {
+            nested_number_field(
+                source,
+                &["input_tokens_details", "prompt_tokens_details"],
+                &["cached_tokens", "cache_read_tokens", "cacheReadTokens"],
+            )
+        })
+        .unwrap_or(0),
+        cache_creation_tokens: number_field(
+            source,
+            &[
+                "cache_creation",
+                "cache_creation_tokens",
+                "cacheCreationTokens",
+                "prompt_cache_creation_tokens",
+                "cache_write_tokens",
+            ],
+        )
+        .or_else(|| {
+            nested_number_field(
+                source,
+                &["input_tokens_details", "prompt_tokens_details"],
+                &["cache_creation_tokens", "cache_write_tokens", "cacheWriteTokens"],
+            )
+        })
+        .unwrap_or(0),
+        reasoning_tokens: number_field(source, &["reasoning", "reasoning_tokens", "reasoningTokens"])
+            .or_else(|| {
+                nested_number_field(
+                    source,
+                    &["output_tokens_details", "completion_tokens_details"],
+                    &["reasoning_tokens", "reasoningTokens"],
+                )
+            })
+            .unwrap_or(0),
+    })
+}
+
+fn add_usage(total: &mut TokenUsage, sample: &TokenUsage) {
+    total.input_tokens = total.input_tokens.saturating_add(sample.input_tokens);
+    total.output_tokens = total.output_tokens.saturating_add(sample.output_tokens);
+    total.cached_input_tokens = total.cached_input_tokens.saturating_add(sample.cached_input_tokens);
+    total.cache_creation_tokens = total.cache_creation_tokens.saturating_add(sample.cache_creation_tokens);
+    total.reasoning_tokens = total.reasoning_tokens.saturating_add(sample.reasoning_tokens);
+}
+
+fn deterministic_reservoir_index(sample_number: u64) -> u64 {
+    let mut mixed = sample_number;
+    mixed ^= mixed >> 30;
+    mixed = mixed.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    mixed ^= mixed >> 27;
+    mixed = mixed.wrapping_mul(0x94d0_49bb_1331_11eb);
+    mixed ^= mixed >> 31;
+    mixed % sample_number.max(1)
+}
+
+#[cfg(test)]
+mod latency_tests {
+    use super::{MAX_LATENCY_SAMPLES, analyze_jsonl};
+
+    #[test]
+    fn bounds_latency_sample_storage_while_retaining_all_counts() {
+        let input = (0..(MAX_LATENCY_SAMPLES * 2))
+            .map(|latency| format!(r#"{{"latency_ms":{latency}}}"#))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let summary = analyze_jsonl(&input).expect("trace should parse");
+
+        assert_eq!(summary.latency.count, (MAX_LATENCY_SAMPLES * 2) as u64);
+        assert_eq!(summary.latency.max_ms, Some((MAX_LATENCY_SAMPLES * 2 - 1) as u64));
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::io::{BufReader, Cursor};
+
     use super::*;
 
     const THREAD_EVENT_TRACE: &str = r#"{"type":"turn.started"}
@@ -424,5 +938,161 @@ mod tests {
 
         let missing = analyze_jsonl_file("/path/that/does/not/exist.jsonl").expect_err("missing file should fail");
         assert!(missing.to_string().contains("read trace file"));
+    }
+
+    #[test]
+    fn redacts_untrusted_labels_and_counts_event_errors_once() {
+        let input = r#"{"type":"error","error":"secret command output timeout"}
+{"type":"turn.failed","error_category":"FS_STALE_VERSION","error":"private details"}
+{"step":1,"tool":"rm /sensitive/project","error":{"type":"secret_error"}}
+"#;
+
+        let summary = analyze_jsonl(input).expect("trace should parse");
+        let serialized = serde_json::to_string(&summary).expect("summary should serialize");
+
+        assert_eq!(summary.error_categories.values().sum::<u64>(), 3);
+        assert_eq!(summary.error_categories["timeout"], 1);
+        assert_eq!(summary.error_categories["fs_stale_version"], 1);
+        assert_eq!(summary.error_categories["error"], 1);
+        assert_eq!(summary.tool_counts["other_tool"], 1);
+        assert!(!serialized.contains("secret command output"));
+        assert!(!serialized.contains("/sensitive/project"));
+        assert!(!serialized.contains("secret_error"));
+    }
+
+    #[test]
+    fn saturates_latency_total_on_overflow() {
+        let input = format!("{{\"latency_ms\":{0}}}\n{{\"latency_ms\":{0}}}\n", u64::MAX);
+
+        let summary = analyze_jsonl(&input).expect("trace should parse");
+
+        assert_eq!(summary.latency.total_ms, u64::MAX);
+        assert_eq!(summary.latency.max_ms, Some(u64::MAX));
+    }
+
+    #[test]
+    fn prefers_per_turn_usage_over_thread_aggregate_and_reads_thread_turn_count() {
+        let input = r#"{"type":"turn.completed","usage":{"input_tokens":3,"cached_input_tokens":1,"output_tokens":2}}
+{"type":"thread.completed","num_turns":7,"usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":8},"result":"private assistant result"}
+"#;
+
+        let summary = analyze_jsonl(input).expect("trace should parse");
+
+        assert_eq!(summary.turns, 7);
+        assert_eq!(summary.token_usage.input_tokens, 3);
+        assert_eq!(summary.token_usage.cached_input_tokens, 1);
+        assert_eq!(summary.token_usage.output_tokens, 2);
+        assert_eq!(summary.output_bytes, 0);
+    }
+
+    #[test]
+    fn falls_back_to_thread_aggregate_usage_when_turn_usage_is_missing() {
+        let input = r#"{"type":"thread.completed","num_turns":4,"usage":{"input_tokens":10,"cached_input_tokens":4,"cache_creation_tokens":2,"output_tokens":8}}
+"#;
+
+        let summary = analyze_jsonl(input).expect("trace should parse");
+
+        assert_eq!(summary.turns, 4);
+        assert_eq!(summary.token_usage.input_tokens, 10);
+        assert_eq!(summary.token_usage.cached_input_tokens, 4);
+        assert_eq!(summary.token_usage.cache_creation_tokens, 2);
+        assert_eq!(summary.token_usage.output_tokens, 8);
+    }
+
+    #[test]
+    fn buffered_reader_api_matches_text_analysis() {
+        let input = "{\"step\":1,\"tool\":\"read_file\",\"latency_ms\":12}\n";
+
+        let from_text = analyze_jsonl(input).expect("text trace should parse");
+        let from_reader =
+            analyze_jsonl_reader(BufReader::new(Cursor::new(input.as_bytes()))).expect("buffered trace should parse");
+
+        assert_eq!(from_reader, from_text);
+    }
+
+    #[test]
+    fn parses_nested_deepseek_envelopes_and_camel_case_usage() {
+        let input = r#"{"type":"turn/start","time":100,"data":{"turn":1}}
+{"type":"step/start","time":110,"data":{"step":1,"turn":1}}
+{"type":"assistant/message","data":{"step":1,"usage":{"inputTokens":100,"outputTokens":20,"cacheReadTokens":40,"reasoningTokens":7}}}
+{"type":"tool/call","time":120,"data":{"name":"read_file","arguments":"private arguments","step":1,"turn":1}}
+{"type":"tool/result","time":150,"data":{"step":1,"turn":1,"message":{"content":[{"type":"text","content":["private output"],"isError":true}]}}}
+{"type":"step/end","time":180,"data":{"step":1,"turn":1}}
+{"type":"turn/end","time":200,"data":{"turn":1,"reason":{}}}
+"#;
+
+        let summary = analyze_jsonl(input).expect("nested trace should parse");
+        let serialized = serde_json::to_string(&summary).expect("summary should serialize");
+
+        assert_eq!(summary.turns, 1);
+        assert_eq!(summary.steps, 1);
+        assert_eq!(summary.tool_calls, 1);
+        assert_eq!(summary.tool_counts["read_file"], 1);
+        assert_eq!(summary.error_categories["tool_error"], 1);
+        assert_eq!(summary.output_bytes, 14);
+        assert_eq!(summary.latency.total_ms, 70);
+        assert_eq!(summary.token_usage.input_tokens, 100);
+        assert_eq!(summary.token_usage.output_tokens, 20);
+        assert_eq!(summary.token_usage.cached_input_tokens, 40);
+        assert_eq!(summary.token_usage.reasoning_tokens, 7);
+        assert!(!serialized.contains("private arguments"));
+        assert!(!serialized.contains("private output"));
+    }
+
+    #[test]
+    fn parses_versioned_vtcode_event_envelopes() {
+        let input = r#"{"schema_version":"0.11.0","event":{"type":"turn.started"}}
+{"schema_version":"0.11.0","event":{"type":"item.completed","item":{"id":"1","type":"tool_invocation","tool_name":"read_file","status":"completed"}}}
+{"schema_version":"0.11.0","event":{"type":"turn.completed","usage":{"input_tokens":8,"output_tokens":2}}}
+"#;
+
+        let summary = analyze_jsonl(input).expect("versioned trace should parse");
+
+        assert_eq!(summary.turns, 1);
+        assert_eq!(summary.steps, 1);
+        assert_eq!(summary.tool_counts["read_file"], 1);
+        assert_eq!(summary.token_usage.input_tokens, 8);
+        assert_eq!(summary.token_usage.output_tokens, 2);
+        assert_eq!(summary.unrecognized_lines, 0);
+    }
+
+    #[test]
+    fn terminal_usage_takes_precedence_over_intermediate_and_thread_usage() {
+        let input = r#"{"type":"assistant/message","data":{"usage":{"inputTokens":100,"outputTokens":20}}}
+{"type":"turn/end","data":{"usage":{"inputTokens":3,"outputTokens":2}}}
+{"type":"thread.completed","num_turns":1,"usage":{"input_tokens":10,"output_tokens":8}}
+"#;
+
+        let summary = analyze_jsonl(input).expect("usage trace should parse");
+
+        assert_eq!(summary.token_usage.input_tokens, 3);
+        assert_eq!(summary.token_usage.output_tokens, 2);
+    }
+
+    #[test]
+    fn parses_nested_provider_token_details() {
+        let input = r#"{"usage":{"prompt_tokens":100,"completion_tokens":20,"prompt_cache_hit_tokens":40,"input_tokens_details":{"cached_tokens":5},"output_tokens_details":{"reasoning_tokens":7}}}
+"#;
+
+        let summary = analyze_jsonl(input).expect("provider usage should parse");
+
+        assert_eq!(summary.token_usage.input_tokens, 100);
+        assert_eq!(summary.token_usage.output_tokens, 20);
+        assert_eq!(summary.token_usage.cached_input_tokens, 40);
+        assert_eq!(summary.token_usage.reasoning_tokens, 7);
+    }
+
+    #[test]
+    fn rejects_oversized_records_without_blocking_following_lines() {
+        let input = format!(
+            "{{\"payload\":\"{}\"}}\n{{\"step\":1,\"tool\":\"read_file\"}}\n",
+            "x".repeat(MAX_TRACE_LINE_BYTES)
+        );
+
+        let summary = analyze_jsonl(&input).expect("oversized trace should parse");
+
+        assert_eq!(summary.malformed_lines, 1);
+        assert_eq!(summary.steps, 1);
+        assert_eq!(summary.tool_calls, 1);
     }
 }

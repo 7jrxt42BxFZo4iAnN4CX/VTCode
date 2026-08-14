@@ -12,4 +12,6 @@ pub use metric::{EvalMetric, aggregate_metrics, compute_metric, pass_all_k, pass
 pub use report::{EvalReport, SuiteReport, TaskReport, build_task_report};
 pub use suite::EvalSuite;
 pub use task::{EvalCategory, EvalRunResult, EvalTask, RunOutcome};
-pub use trace_analyzer::{HarnessTraceSummary, analyze_jsonl, analyze_jsonl_file};
+pub use trace_analyzer::{
+    HarnessTraceSummary, LatencyStatistics, TokenUsage, analyze_jsonl, analyze_jsonl_file, analyze_jsonl_reader,
+};

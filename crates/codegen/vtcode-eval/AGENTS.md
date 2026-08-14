@@ -16,7 +16,7 @@
 
 ## Rules
 
-- `lib.rs` re-exports the public facade: types from `task`/`suite`/`metric`/`report` and `executor::{EvalExecutor, run_suite}`.
+- `lib.rs` re-exports the public facade: types from `task`/`suite`/`metric`/`report`, `executor::{EvalExecutor, run_suite}`, and `trace_analyzer` summaries.
 - `run_suite` depends only on the `EvalExecutor` trait — no file I/O, config, or trust checks. Keep it that way; the caller owns I/O.
 - The four `EvalCategory` strings (`Capability`, `Regression`) are the only valid split keys; `report` filters on `category.label()` serialization.
 - `EvalSuite` is defined once in `suite.rs` and re-exported from `lib.rs`. Do not duplicate it in `task.rs`.

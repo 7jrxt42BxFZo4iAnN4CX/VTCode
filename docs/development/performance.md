@@ -48,6 +48,22 @@ versioned envelope and `event.type`, not the full event payload. The rebuild
 path therefore skips nested payload materialization, while turn reconstruction
 continues to use the canonical `VersionedThreadEvent` decoder.
 
+### Privacy-preserving harness trace analysis
+
+Use `vtcode_eval::analyze_jsonl_file` or `analyze_jsonl_reader` for offline
+DeepSeek/VT Code harness analysis. The file and reader paths process one JSONL
+record at a time (with a 1 MiB record limit), retain only aggregate counters, and never copy prompts,
+arguments, paths, file contents, output text, or free-form error messages into
+the returned summary. Tool names and error values are mapped to bounded known
+labels; unknown values are grouped under `other_tool` or `error`.
+
+The analyzer treats `ThreadCompleted` usage as a fallback when no per-turn
+usage exists, so a normal thread trace does not double-count its aggregate.
+Latency count, total, and maximum cover the complete trace; percentile queries
+use a bounded 4,096-sample reservoir to keep memory usage stable for large
+sessions. Use the summary to compare tool repetition, error categories, token
+cache usage, and output volume before changing the runtime.
+
 ## Local Workflow
 
 ```bash
