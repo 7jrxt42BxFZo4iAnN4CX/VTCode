@@ -96,8 +96,8 @@ impl FileOpsTool {
                 return Ok((final_content, false));
             }
 
-            let line = std::str::from_utf8(&buffer).context("file content is not valid UTF-8")?;
-            let line = line.strip_suffix('\n').unwrap_or(line);
+            let line = String::from_utf8_lossy(&buffer);
+            let line = line.strip_suffix('\n').unwrap_or(line.as_ref());
             let line = line.strip_suffix('\r').unwrap_or(line);
             if line_index > 0 {
                 final_content.push('\n');

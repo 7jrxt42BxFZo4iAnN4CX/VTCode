@@ -925,6 +925,28 @@ mod read_tests {
     }
 
     #[tokio::test]
+    async fn test_read_file_paging_lines_preserves_lossy_utf8_behavior() {
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_root = temp_dir.path().to_path_buf();
+        let test_file = workspace_root.join("invalid_utf8.txt");
+        fs::write(&test_file, b"before\n\xffafter\n").unwrap();
+
+        let grep_manager = std::sync::Arc::new(GrepSearchManager::new(workspace_root.clone()));
+        let file_ops = FileOpsTool::new(workspace_root, grep_manager);
+
+        let result = file_ops
+            .read_file(json!({
+                "path": test_file.to_string_lossy().into_owned(),
+                "offset_lines": 1,
+                "page_size_lines": 1
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(result["content"].as_str().unwrap(), "\u{fffd}after");
+    }
+
+    #[tokio::test]
     async fn test_read_file_paging_bytes() {
         let temp_dir = TempDir::new().unwrap();
         let workspace_root = temp_dir.path().to_path_buf();
@@ -1021,6 +1043,43 @@ mod read_tests {
     }
 
     #[tokio::test]
+    async fn test_legacy_full_read_bounds_oversized_lines() {
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_root = temp_dir.path().to_path_buf();
+        let test_file = workspace_root.join("giant_line.txt");
+        let giant_line = "x".repeat(crate::tools::file_ops::MAX_LINE_READ_BYTES + 10_000);
+        fs::write(&test_file, format!("{giant_line}\nlast\n")).unwrap();
+
+        let grep_manager = std::sync::Arc::new(GrepSearchManager::new(workspace_root.clone()));
+        let file_ops = FileOpsTool::new(workspace_root, grep_manager);
+        let input: Input = serde_json::from_value(json!({ "path": test_file.to_string_lossy() })).unwrap();
+
+        let (content, metadata, truncated) = file_ops.read_file_legacy(&test_file, &input).await.unwrap();
+
+        assert!(!truncated);
+        assert_eq!(metadata["size_lines"], 2);
+        assert!(content.len() <= crate::tools::file_ops::MAX_LINE_READ_BYTES + "\nlast\n".len());
+        assert!(content.ends_with("\nlast\n"));
+    }
+
+    #[tokio::test]
+    async fn test_legacy_full_read_preserves_trailing_newline() {
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_root = temp_dir.path().to_path_buf();
+        let test_file = workspace_root.join("legacy_newline.txt");
+        fs::write(&test_file, "hello\n").unwrap();
+
+        let grep_manager = std::sync::Arc::new(GrepSearchManager::new(workspace_root.clone()));
+        let file_ops = FileOpsTool::new(workspace_root, grep_manager);
+        let input: Input = serde_json::from_value(json!({ "path": test_file.to_string_lossy() })).unwrap();
+
+        let (content, _metadata, truncated) = file_ops.read_file_legacy(&test_file, &input).await.unwrap();
+
+        assert_eq!(content, "hello\n");
+        assert!(!truncated);
+    }
+
+    #[tokio::test]
     async fn test_read_file_legacy_functionality() {
         let temp_dir = TempDir::new().unwrap();
         let workspace_root = temp_dir.path().to_path_buf();
@@ -1096,6 +1155,55 @@ mod read_tests {
         )]
         let expected_max_tokens = max_tokens as u64; // safe: max_tokens is positive literal
         assert_eq!(result["metadata"]["data"]["applied_max_tokens"].as_u64().unwrap(), expected_max_tokens,);
+    }
+
+    #[tokio::test]
+    async fn test_read_file_legacy_token_limit_also_clamps_explicit_max_lines() {
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_root = temp_dir.path().to_path_buf();
+        let test_file = workspace_root.join("explicit_line_limit.txt");
+        fs::write(&test_file, (1..=5).map(|i| format!("line-{i}")).collect::<Vec<_>>().join("\n")).unwrap();
+
+        let grep_manager = std::sync::Arc::new(GrepSearchManager::new(workspace_root.clone()));
+        let file_ops = FileOpsTool::new(workspace_root, grep_manager);
+
+        let result = file_ops
+            .read_file(json!({
+                "path": test_file.to_string_lossy().into_owned(),
+                "max_lines": 5,
+                "max_tokens": 30
+            }))
+            .await
+            .unwrap();
+
+        assert!(result["is_truncated"].as_bool().unwrap());
+        assert!(result["content"].as_str().unwrap().contains("... 3 lines omitted ..."));
+    }
+
+    #[tokio::test]
+    async fn test_read_file_legacy_chunking_bounds_oversized_lines() {
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_root = temp_dir.path().to_path_buf();
+        let test_file = workspace_root.join("giant_chunked_line.txt");
+        let giant_line = "x".repeat(crate::tools::file_ops::MAX_LINE_READ_BYTES + 10_000);
+        fs::write(&test_file, format!("{giant_line}\nmiddle\nlast\n")).unwrap();
+
+        let grep_manager = std::sync::Arc::new(GrepSearchManager::new(workspace_root.clone()));
+        let file_ops = FileOpsTool::new(workspace_root, grep_manager);
+
+        let result = file_ops
+            .read_file(json!({
+                "path": test_file.to_string_lossy().into_owned(),
+                "max_lines": 2
+            }))
+            .await
+            .unwrap();
+
+        let content = result["content"].as_str().unwrap();
+        assert!(result["is_truncated"].as_bool().unwrap());
+        assert!(content.lines().next().unwrap().len() <= crate::tools::file_ops::MAX_LINE_READ_BYTES);
+        assert!(content.contains("... 1 lines omitted ..."));
+        assert!(content.ends_with("last"));
     }
 
     #[tokio::test]
