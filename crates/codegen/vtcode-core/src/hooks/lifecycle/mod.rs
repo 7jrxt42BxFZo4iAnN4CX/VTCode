@@ -7,7 +7,10 @@ mod utils;
 #[cfg(test)]
 mod tests;
 
-pub use engine::{LifecycleHookCommandPreview, LifecycleHookEngine, restore_workspace_hook_approval};
+pub use engine::{
+    LifecycleHookCommandPreview, LifecycleHookEngine, carry_or_restore_workspace_hook_approval,
+    restore_workspace_hook_approval,
+};
 pub use types::{
     HookMessage, HookMessageLevel, NotificationHookType, PermissionDecisionBehavior, PermissionDecisionScope,
     PermissionRequestHookDecision, PermissionRequestHookOutcome, PermissionUpdateDestination, PermissionUpdateKind,

@@ -286,11 +286,16 @@ impl DotManager {
         toml::from_str(&content).map_err(DotError::TomlDe)
     }
 
-    /// Save configuration to disk
+    /// Save configuration to disk.
+    ///
+    /// Writes to a temporary sibling file and renames it into place so a crash
+    /// or concurrent reader never observes a torn `config.toml`.
     pub async fn save_config(&self, config: &DotConfig) -> Result<(), DotError> {
         let content = toml::to_string_pretty(config).map_err(DotError::Toml)?;
 
-        fs::write(&self.config_file, content).await.map_err(DotError::Io)?;
+        let tmp_path = temp_sibling(&self.config_file);
+        fs::write(&tmp_path, content).await.map_err(DotError::Io)?;
+        fs::rename(&tmp_path, &self.config_file).await.map_err(DotError::Io)?;
 
         Ok(())
     }
@@ -600,6 +605,12 @@ fn unix_timestamp_secs() -> Result<u64, DotError> {
 
 fn workspace_trust_key(workspace: &Path) -> String {
     canonicalize_workspace(workspace).to_string_lossy().into_owned()
+}
+
+/// A sibling path next to `path` for atomic replace via rename.
+fn temp_sibling(path: &Path) -> PathBuf {
+    let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("config.toml");
+    path.with_file_name(format!(".{file_name}.tmp"))
 }
 
 /// Global dot manager instance

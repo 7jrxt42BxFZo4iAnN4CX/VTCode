@@ -770,3 +770,30 @@ pub async fn restore_workspace_hook_approval(engine: &LifecycleHookEngine, works
         engine.approve_workspace_hooks().await;
     }
 }
+
+/// Carry an in-memory approval from a previous engine onto a rebuilt engine
+/// (primary-agent switch or config reload), falling back to the persisted
+/// record. A session-only approval that could not be persisted (e.g. dot-config
+/// write failure) survives the rebuild while the command set is unchanged,
+/// instead of being silently dropped mid-session. Fails closed in every other
+/// case: a changed command set, a previously unapproved engine, or a gated
+/// engine with no matching persisted record leaves the rebuilt engine gated.
+pub async fn carry_or_restore_workspace_hook_approval(
+    previous: Option<&LifecycleHookEngine>,
+    next: &LifecycleHookEngine,
+    workspace: &std::path::Path,
+) {
+    let previous_approved_same_set = match previous {
+        Some(prev) => {
+            prev.workspace_gated()
+                && prev.command_digest() == next.command_digest()
+                && !prev.workspace_hooks_need_approval().await
+        }
+        None => false,
+    };
+    if previous_approved_same_set {
+        next.approve_workspace_hooks().await;
+    } else {
+        restore_workspace_hook_approval(next, workspace).await;
+    }
+}

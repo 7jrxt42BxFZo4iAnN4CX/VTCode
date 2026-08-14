@@ -221,3 +221,69 @@ async fn persisted_approval_restores_only_when_digest_matches() {
 
     env_guard.restore_var("VTCODE_CONFIG", previous);
 }
+
+#[tokio::test]
+async fn carry_or_restore_keeps_session_only_approval_across_rebuild() {
+    use vtcode_commons::env_lock::lock;
+
+    let temp_dir = TempDir::new().expect("tempdir");
+    let workspace = temp_dir.path();
+    let marker = workspace.join("vt-carried-marker");
+    let command = format!("touch {}", marker.display());
+
+    // Isolate the dot config so NO persisted record exists: only the in-memory
+    // approval can survive the rebuild.
+    let env_guard = lock();
+    let previous = std::env::var_os("VTCODE_CONFIG");
+    env_guard.set_var("VTCODE_CONFIG", temp_dir.path().join("dot").to_string_lossy().into_owned());
+
+    let previous_engine = build_engine(workspace, &session_start_config(&[&command]), true);
+    previous_engine.approve_workspace_hooks().await; // in-memory only (nothing persisted)
+
+    let rebuilt = build_engine(workspace, &session_start_config(&[&command]), true);
+    carry_or_restore_workspace_hook_approval(Some(&previous_engine), &rebuilt, workspace).await;
+    assert!(!rebuilt.workspace_hooks_need_approval().await, "unchanged set must carry the approval");
+    rebuilt.run_session_start().await.expect("run session start");
+    assert!(marker.exists(), "carried approval must keep hooks running after a rebuild");
+
+    env_guard.restore_var("VTCODE_CONFIG", previous);
+}
+
+#[tokio::test]
+async fn carry_or_restore_fails_closed_on_changed_set_or_unapproved_previous() {
+    use vtcode_commons::env_lock::lock;
+
+    let temp_dir = TempDir::new().expect("tempdir");
+    let workspace = temp_dir.path();
+    let marker = workspace.join("vt-not-carried-marker");
+    let command = format!("touch {}", marker.display());
+
+    let env_guard = lock();
+    let previous = std::env::var_os("VTCODE_CONFIG");
+    env_guard.set_var("VTCODE_CONFIG", temp_dir.path().join("dot").to_string_lossy().into_owned());
+
+    // Previous engine approved, but the rebuild changed the command set: the
+    // approval must NOT carry and nothing is persisted, so the rebuild gates.
+    let previous_engine = build_engine(workspace, &session_start_config(&["echo old"]), true);
+    previous_engine.approve_workspace_hooks().await;
+
+    let rebuilt = build_engine(workspace, &session_start_config(&[&command]), true);
+    carry_or_restore_workspace_hook_approval(Some(&previous_engine), &rebuilt, workspace).await;
+    assert!(rebuilt.workspace_hooks_need_approval().await, "changed set must not carry the approval");
+    rebuilt.run_session_start().await.expect("run session start");
+    assert!(!marker.exists(), "rebuild with a changed set must stay fail-closed");
+
+    // Previous engine was gated but never approved: nothing carries.
+    let unapproved_previous = build_engine(workspace, &session_start_config(&[&command]), true);
+    let rebuilt_again = build_engine(workspace, &session_start_config(&[&command]), true);
+    carry_or_restore_workspace_hook_approval(Some(&unapproved_previous), &rebuilt_again, workspace).await;
+    assert!(rebuilt_again.workspace_hooks_need_approval().await);
+
+    // Previous engine was ungated: nothing carries into a gated rebuild.
+    let ungated_previous = build_engine(workspace, &session_start_config(&[&command]), false);
+    let gated_rebuild = build_engine(workspace, &session_start_config(&[&command]), true);
+    carry_or_restore_workspace_hook_approval(Some(&ungated_previous), &gated_rebuild, workspace).await;
+    assert!(gated_rebuild.workspace_hooks_need_approval().await);
+
+    env_guard.restore_var("VTCODE_CONFIG", previous);
+}

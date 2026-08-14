@@ -77,9 +77,16 @@ pub(crate) async fn sync_primary_agent_runtime(ctx: &mut PrimaryAgentRuntimeSync
         hooks.update_transcript_path(Some(path)).await;
     }
     if let Some(hooks) = next.as_ref() {
-        // A config reload or primary-agent switch rebuilds the engine; restore
-        // the persisted approval only when the command set is unchanged.
-        vtcode_core::hooks::restore_workspace_hook_approval(hooks, &ctx.config.workspace).await;
+        // A config reload or primary-agent switch rebuilds the engine. Carry an
+        // in-memory (possibly session-only) approval forward when the command
+        // set is unchanged, otherwise restore the persisted record; any
+        // mismatch leaves the rebuilt engine fail-closed.
+        vtcode_core::hooks::carry_or_restore_workspace_hook_approval(
+            ctx.lifecycle_hooks.as_ref(),
+            hooks,
+            &ctx.config.workspace,
+        )
+        .await;
     }
     set_global_notification_hook_engine(next.clone());
     *ctx.lifecycle_hooks = next;
