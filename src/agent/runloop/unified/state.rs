@@ -517,12 +517,26 @@ impl SessionStats {
         }
     }
 
+    #[allow(
+        dead_code,
+        reason = "retained as the allocation-owning compatibility setter for tests and callers"
+    )]
     pub(crate) fn set_previous_response_chain(
         &mut self,
         provider: &str,
         model: &str,
         response_id: Option<&str>,
         messages: &[Message],
+    ) {
+        self.set_previous_response_chain_shared(provider, model, response_id, Arc::new(messages.to_vec()));
+    }
+
+    pub(crate) fn set_previous_response_chain_shared(
+        &mut self,
+        provider: &str,
+        model: &str,
+        response_id: Option<&str>,
+        messages: Arc<Vec<Message>>,
     ) {
         let Some(key) = responses_continuation_key(provider, model) else {
             return;
@@ -532,13 +546,8 @@ impl SessionStats {
             return;
         };
 
-        self.previous_response_chains.insert(
-            key,
-            ResponsesContinuationState {
-                response_id: response_id.to_string(),
-                messages: Arc::new(messages.to_vec()),
-            },
-        );
+        self.previous_response_chains
+            .insert(key, ResponsesContinuationState { response_id: response_id.to_string(), messages });
     }
 
     pub(crate) fn clear_previous_response_chain_for(&mut self, provider: &str, model: &str) {
@@ -1164,6 +1173,25 @@ mod tests {
                 .map(|chain| chain.messages.as_slice()),
             Some(gemini_messages.as_slice())
         );
+    }
+
+    #[test]
+    fn shared_previous_response_chain_setter_preserves_message_arc() {
+        let mut stats = SessionStats::default();
+        let messages = Arc::new(vec![vtcode_core::llm::provider::Message::user("hello".to_string())]);
+
+        stats.set_previous_response_chain_shared(
+            "gemini",
+            "gemini-2.5-pro",
+            Some("resp_gemini"),
+            Arc::clone(&messages),
+        );
+
+        let stored_messages = &stats
+            .previous_response_chain_for("gemini", "gemini-2.5-pro")
+            .expect("shared response chain should be recorded")
+            .messages;
+        assert!(Arc::ptr_eq(&messages, stored_messages));
     }
 
     #[test]

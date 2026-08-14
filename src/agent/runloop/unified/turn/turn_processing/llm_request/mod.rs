@@ -24,6 +24,7 @@ mod tests;
 mod tool_shaping;
 
 use anyhow::Result;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::task;
 #[cfg(debug_assertions)]
@@ -49,7 +50,7 @@ use crate::agent::runloop::unified::wait_feedback::{
 use copilot_runtime::{CopilotRuntimeHost, prompt_session_to_stream};
 use metrics::emit_llm_retry_metrics;
 use request_builder::{build_turn_request, interrupted_provider_error};
-use response_chain::update_previous_response_chain_after_success;
+use response_chain::update_previous_response_chain_after_success_shared;
 #[cfg(test)]
 use retry::is_retryable_llm_error;
 #[cfg(test)]
@@ -424,13 +425,13 @@ pub(crate) async fn execute_llm_request(
 
         match step_result {
             Ok((response, response_streamed)) => {
-                update_previous_response_chain_after_success(
+                update_previous_response_chain_after_success_shared(
                     ctx.session_stats,
                     &turn_snapshot.provider_name,
                     turn_snapshot.capabilities.responses_compaction,
                     &active_model,
                     response.request_id.as_deref(),
-                    continuation_messages.as_slice(),
+                    Arc::clone(&continuation_messages),
                 );
                 llm_result = Ok((response, response_streamed));
                 _spinner.finish();
@@ -543,7 +544,7 @@ pub(crate) async fn execute_llm_request(
                                 )
                             };
                             let compacted = compact_tool_messages_for_retry(&request.messages);
-                            request.messages = std::sync::Arc::new(compacted);
+                            request.messages = Arc::new(compacted);
                             // Strip reasoning_effort on retry — DeepSeek's
                             // `thinking` parameter causes ExecutionError on
                             // post-tool follow-ups where tool messages are
