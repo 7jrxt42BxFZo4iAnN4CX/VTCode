@@ -54,9 +54,13 @@ pub struct CacheEntry<V> {
 
 impl<V> CacheEntry<V> {
     pub fn new(value: V, size_bytes: u64) -> Self {
+        Self::from_arc(Arc::new(value), size_bytes)
+    }
+
+    pub fn from_arc(value: Arc<V>, size_bytes: u64) -> Self {
         let now = SystemTime::now();
         Self {
-            value: Arc::new(value),
+            value,
             created_at: now,
             last_accessed: now,
             access_count: 1,
@@ -182,6 +186,15 @@ where
 
     /// Insert value into cache with automatic eviction
     pub fn insert(&self, key: K, value: V, size_bytes: u64) {
+        self.insert_entry(key, CacheEntry::new(value, size_bytes));
+    }
+
+    /// Insert an already shared value without cloning its payload.
+    pub fn insert_arc(&self, key: K, value: Arc<V>, size_bytes: u64) {
+        self.insert_entry(key, CacheEntry::from_arc(value, size_bytes));
+    }
+
+    fn insert_entry(&self, key: K, entry: CacheEntry<V>) {
         let Ok(mut inner) = self.inner.write() else {
             return;
         };
@@ -196,8 +209,10 @@ where
             Self::evict_batch_inner(&mut inner, to_remove);
         }
 
-        let entry = CacheEntry::new(value, size_bytes);
-        inner.entries.insert(key, entry);
+        let size_bytes = entry.size_bytes;
+        if let Some(previous) = inner.entries.insert(key, entry) {
+            inner.stats.total_memory_bytes -= previous.size_bytes;
+        }
         inner.stats.current_size = inner.entries.len();
         inner.stats.total_memory_bytes += size_bytes;
     }
@@ -620,6 +635,32 @@ mod tests {
         assert_eq!(stats.hits, 1);
         assert_eq!(stats.misses, 0);
         assert_eq!(stats.current_size, 1);
+    }
+
+    #[test]
+    fn insert_arc_preserves_value_arc_and_statistics() {
+        let cache = UnifiedCache::new(10, DEFAULT_CACHE_TTL, EvictionPolicy::Lru);
+        let key = TestKey("arc".into());
+        let value = Arc::new("shared value".to_string());
+
+        cache.insert_arc(key.clone(), Arc::clone(&value), value.len() as u64);
+
+        let cached = cache.get(&key).expect("inserted value should be cached");
+        assert!(Arc::ptr_eq(&cached, &value));
+        assert_eq!(cache.stats().total_memory_bytes, value.len() as u64);
+    }
+
+    #[test]
+    fn replacing_entry_updates_memory_statistics() {
+        let cache = UnifiedCache::new(10, DEFAULT_CACHE_TTL, EvictionPolicy::Lru);
+        let key = TestKey("replacement".into());
+
+        cache.insert(key.clone(), "small".to_string(), 5);
+        cache.insert(key, "larger replacement".to_string(), 18);
+
+        let stats = cache.stats();
+        assert_eq!(stats.current_size, 1);
+        assert_eq!(stats.total_memory_bytes, 18);
     }
 
     #[test]
