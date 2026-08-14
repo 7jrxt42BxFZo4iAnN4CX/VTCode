@@ -1,6 +1,9 @@
 use std::path::Path;
+
+#[cfg(test)]
 use std::time::SystemTime;
 
+#[cfg(test)]
 pub(super) fn generate_session_id() -> String {
     let nanos = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)

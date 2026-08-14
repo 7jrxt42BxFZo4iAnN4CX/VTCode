@@ -9,7 +9,7 @@ Detailed runloop recovery and allocator notes live in the [vtcode binary gotchas
 
 ## Rules
 
-- Keep the binary thin; runtime logic belongs in `vtcode-core`. Always construct `LifecycleHookEngine` with `vt_cfg.workspace_lifecycle_hooks` so workspace-sourced hooks stay gated; the approval overlay lives in `session_setup/hook_approval.rs`.
+- Keep the binary thin; runtime logic belongs in `vtcode-core`. Build `LifecycleHookEngine` with `new_with_session_gated`, passing `workspace_gated = vt_cfg.workspace_lifecycle_hooks` non-empty OR `active_primary_agent.contributes_workspace_controlled_hooks()`; the approval overlay lives in `session_setup/hook_approval.rs`.
 - Spool preview generation and shell activity classification belong to `vtcode-core`; the binary only serializes the typed reference.
 - `mimalloc` is the default allocator; `allocator-jemalloc` opts into `tikv-jemalloc`. Measure with `vtcode bench-allocator` before changing it; see the [allocator guide](../docs/development/ALLOCATOR_MEMORY.md).
 - Install `vtcode_ui::tui::panic_hook` before producing output.

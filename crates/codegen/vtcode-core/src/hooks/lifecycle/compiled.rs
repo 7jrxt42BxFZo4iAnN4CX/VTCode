@@ -51,10 +51,41 @@ impl CompiledLifecycleHooks {
             && self.stop.is_empty()
             && self.notification.is_empty()
     }
+
+    /// Visit every compiled command with its canonical snake_case event key and
+    /// the containing group's matcher pattern (if any).
+    pub(super) fn for_each_command(&self, mut visit: impl FnMut(&'static str, Option<&str>, &HookCommandConfig)) {
+        visit_groups("session_start", &self.session_start, &mut visit);
+        visit_groups("session_end", &self.session_end, &mut visit);
+        visit_groups("subagent_start", &self.subagent_start, &mut visit);
+        visit_groups("subagent_stop", &self.subagent_stop, &mut visit);
+        visit_groups("user_prompt_submit", &self.user_prompt_submit, &mut visit);
+        visit_groups("pre_tool_use", &self.pre_tool_use, &mut visit);
+        visit_groups("post_tool_use", &self.post_tool_use, &mut visit);
+        visit_groups("permission_request", &self.permission_request, &mut visit);
+        visit_groups("pre_compact", &self.pre_compact, &mut visit);
+        visit_groups("stop", &self.stop, &mut visit);
+        visit_groups("notification", &self.notification, &mut visit);
+    }
+}
+
+fn visit_groups(
+    event: &'static str,
+    groups: &[CompiledHookGroup],
+    visit: &mut impl FnMut(&'static str, Option<&str>, &HookCommandConfig),
+) {
+    for group in groups {
+        let matcher = group.matcher_pattern.as_deref();
+        for command in &group.commands {
+            visit(event, matcher, command);
+        }
+    }
 }
 
 pub(super) struct CompiledHookGroup {
     pub(super) matcher: HookMatcher,
+    /// Raw configured matcher pattern (for display); `None` when unset.
+    pub(super) matcher_pattern: Option<String>,
     pub(super) commands: Vec<HookCommandConfig>,
 }
 
@@ -89,7 +120,11 @@ fn compile_groups(groups: &[HookGroupConfig]) -> Result<Vec<CompiledHookGroup>> 
             HookMatcher::Any
         };
 
-        compiled.push(CompiledHookGroup { matcher, commands: group.hooks.clone() });
+        compiled.push(CompiledHookGroup {
+            matcher,
+            matcher_pattern: group.matcher.clone(),
+            commands: group.hooks.clone(),
+        });
     }
 
     Ok(compiled)

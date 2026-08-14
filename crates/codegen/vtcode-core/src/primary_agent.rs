@@ -83,6 +83,19 @@ impl ActivePrimaryAgent {
     pub fn name(&self) -> &str {
         &self.identity.name
     }
+
+    /// Whether this agent contributes lifecycle hooks that originate from
+    /// workspace-controlled content (project agent-spec files inside the
+    /// repository). Such hooks must be gated behind the workspace lifecycle
+    /// hook approval just like hooks declared in a workspace `vtcode.toml`.
+    #[must_use]
+    pub fn contributes_workspace_controlled_hooks(&self) -> bool {
+        self.hooks.is_some()
+            && matches!(
+                self.identity.source,
+                SubagentSource::ProjectVtcode | SubagentSource::ProjectClaude | SubagentSource::ProjectCodex
+            )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

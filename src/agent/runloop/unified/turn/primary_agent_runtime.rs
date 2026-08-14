@@ -64,12 +64,14 @@ pub(crate) async fn sync_primary_agent_runtime(ctx: &mut PrimaryAgentRuntimeSync
         None => None,
     };
     let hooks_config = build_primary_agent_hook_config(&cfg.hooks, ctx.active_primary_agent);
-    let next = LifecycleHookEngine::new_with_session_and_workspace_hooks(
+    let workspace_gated = cfg.workspace_lifecycle_hooks.as_ref().is_some_and(|hooks| !hooks.is_empty())
+        || ctx.active_primary_agent.contributes_workspace_controlled_hooks();
+    let next = LifecycleHookEngine::new_with_session_gated(
         ctx.config.workspace.clone(),
         &hooks_config,
         SessionStartTrigger::Startup,
         ctx.thread_id,
-        cfg.workspace_lifecycle_hooks.as_ref(),
+        workspace_gated,
     )?;
     if let (Some(hooks), Some(path)) = (next.as_ref(), transcript_path) {
         hooks.update_transcript_path(Some(path)).await;

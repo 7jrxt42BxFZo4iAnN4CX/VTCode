@@ -1000,11 +1000,7 @@ command = "echo user-session-end"
         assert_eq!(command.command, "echo workspace-session");
         assert_eq!(command.matcher.as_deref(), Some("startup"));
         assert_eq!(command.timeout_seconds, Some(30));
-
-        assert!(
-            collected.contains_command("session_start", &command_for("echo workspace-session").with_timeout(Some(30)))
-        );
-        assert!(!collected.contains_command("session_end", &command_for("echo user-session-end")));
+        assert!(!collected.is_empty());
     }
 
     #[test]
@@ -1015,7 +1011,6 @@ command = "echo user-session-end"
         let collected = collect(&stack);
 
         assert!(collected.is_empty());
-        assert!(!collected.contains_command("session_end", &command_for("echo user-session-end")));
     }
 
     #[test]
@@ -1038,26 +1033,16 @@ command = "echo ws-task-completion"
     }
 
     #[test]
-    fn digest_is_stable_and_tracks_command_changes() {
+    fn empty_workspace_hook_arrays_do_not_flag_content() {
         let mut stack = ConfigLayerStack::default();
-        stack.push(layer(ConfigLayerSource::Workspace { file: "/ws/vtcode.toml".into() }, WS_SESSION_START));
-
-        let first = collect(&stack);
-        let digest_a = first.digest();
-        let digest_a_again = collect(&stack).digest();
-        assert_eq!(digest_a, digest_a_again, "digest must be deterministic");
-
-        let mut changed_stack = ConfigLayerStack::default();
-        changed_stack.push(layer(
+        stack.push(layer(
             ConfigLayerSource::Workspace { file: "/ws/vtcode.toml".into() },
-            r#"
-[[hooks.lifecycle.session_start]]
-[[hooks.lifecycle.session_start.hooks]]
-command = "echo workspace-session-changed"
-"#,
+            "[hooks.lifecycle]\nsession_start = []\n",
         ));
-        let digest_b = collect(&changed_stack).digest();
-        assert_ne!(digest_a, digest_b, "a command change must invalidate the digest");
+
+        let collected = collect(&stack);
+
+        assert!(collected.is_empty(), "an empty workspace hook array is not executable content");
     }
 
     #[test]
@@ -1073,25 +1058,8 @@ command = "echo workspace-session-changed"
             .as_ref()
             .expect("workspace hooks populated at load");
 
-        assert!(
-            workspace_hooks
-                .contains_command("session_start", &command_for("echo workspace-session").with_timeout(Some(30)))
-        );
+        assert!(!workspace_hooks.is_empty());
         assert_eq!(workspace_hooks.commands.len(), 1);
-    }
-
-    fn command_for(command: &str) -> crate::hooks::HookCommandConfig {
-        crate::hooks::HookCommandConfig {
-            kind: Default::default(),
-            command: command.to_string(),
-            timeout_seconds: None,
-        }
-    }
-
-    impl crate::hooks::HookCommandConfig {
-        fn with_timeout(mut self, timeout_seconds: Option<u64>) -> Self {
-            self.timeout_seconds = timeout_seconds;
-            self
-        }
+        assert_eq!(workspace_hooks.commands[0].command, "echo workspace-session");
     }
 }

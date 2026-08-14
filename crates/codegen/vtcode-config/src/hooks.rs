@@ -219,10 +219,12 @@ pub struct WorkspaceHookCommand {
 /// Snapshot of all lifecycle hook commands sourced from workspace-controlled
 /// configuration layers, captured at configuration load time.
 ///
-/// The digest binds an approval to the exact command set: any change to a
-/// workspace-controlled hook command invalidates previously granted approval,
-/// so a repository update cannot silently swap in a new command under an old
-/// approval.
+/// The presence of any workspace-controlled hook command marks the session's
+/// lifecycle engine as gated: no lifecycle hook runs until the user explicitly
+/// approves the exact command set the engine will execute, bound to a digest
+/// of that set. Any change to the commands invalidates a previously granted
+/// approval, so a repository update cannot silently swap in a new command
+/// under an old approval.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceLifecycleHooks {
@@ -234,55 +236,6 @@ impl WorkspaceLifecycleHooks {
     pub fn is_empty(&self) -> bool {
         self.commands.is_empty()
     }
-
-    /// Stable digest over the sorted command set. Deterministic across
-    /// processes so approvals can be persisted and revalidated.
-    pub fn digest(&self) -> String {
-        let mut lines: Vec<String> = self
-            .commands
-            .iter()
-            .map(|command| {
-                format!(
-                    "{}|{}|{}|{}",
-                    command.event,
-                    command.matcher.as_deref().unwrap_or(""),
-                    command.command,
-                    command.timeout_seconds.map(|secs| secs.to_string()).unwrap_or_default()
-                )
-            })
-            .collect();
-        lines.sort();
-        format!("{:016x}", fnv1a64(lines.join("\n").as_bytes()))
-    }
-
-    /// Whether the given lifecycle command is workspace-controlled.
-    ///
-    /// `event_key` is the canonical snake_case event the engine is executing
-    /// (e.g. `stop`); deprecated aliases fold into that key, so the `stop`
-    /// family matches entries recorded under `stop`, `task_completion`, or
-    /// `task_completed`. Matchers are intentionally not compared here: the
-    /// digest binds the full command set (including matchers), while this
-    /// check only decides whether a concrete command is gated.
-    pub fn contains_command(&self, event_key: &str, command: &HookCommandConfig) -> bool {
-        let events: &[&str] = match event_key {
-            "stop" => &["stop", "task_completion", "task_completed"],
-            other => &[other],
-        };
-        self.commands.iter().any(|entry| {
-            events.contains(&entry.event.as_str())
-                && entry.command == command.command
-                && entry.timeout_seconds == command.timeout_seconds
-        })
-    }
-}
-
-fn fnv1a64(input: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in input {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
 }
 
 impl LifecycleHooksConfig {

@@ -104,12 +104,17 @@ pub(crate) async fn initialize_session_ui(
 
     let lifecycle_hooks = if let Some(vt) = vt_cfg {
         let hooks = build_primary_agent_hook_config(&vt.hooks, session_state.active_primary_agent.active());
-        LifecycleHookEngine::new_with_session_and_workspace_hooks(
+        let workspace_gated = vt.workspace_lifecycle_hooks.as_ref().is_some_and(|hooks| !hooks.is_empty())
+            || session_state
+                .active_primary_agent
+                .active()
+                .contributes_workspace_controlled_hooks();
+        LifecycleHookEngine::new_with_session_gated(
             config.workspace.clone(),
             &hooks,
             session_trigger,
             session_id,
-            vt.workspace_lifecycle_hooks.as_ref(),
+            workspace_gated,
         )?
     } else {
         None
@@ -390,19 +395,19 @@ pub(crate) async fn initialize_session_ui(
 
     // Workspace-controlled lifecycle hooks never execute without explicit
     // approval of the exact command set for this workspace (GHSA-wqgw-crr5-cr2p).
-    // A persisted approval matching the current digest is restored silently;
-    // otherwise interactive sessions prompt, and auto/non-interactive sessions
-    // fail closed by skipping the workspace-sourced commands.
+    // A persisted approval matching the current command-set digest is restored
+    // silently; otherwise interactive sessions prompt, and auto/non-interactive
+    // sessions fail closed by skipping the lifecycle hooks.
     if let Some(hooks) = &lifecycle_hooks
-        && !hooks.workspace_hooks().is_empty()
+        && hooks.workspace_hooks_need_approval().await
     {
-        let digest = hooks.workspace_hooks().digest();
+        let digest = hooks.command_digest().to_string();
         let pre_approved = matches!(
             vtcode_core::load_lifecycle_hook_approval(&config.workspace).await,
             Ok(Some(record)) if record.config_digest == digest
         );
         if pre_approved {
-            hooks.approve_workspace_hooks(&digest).await;
+            hooks.approve_workspace_hooks().await;
         } else if full_auto || skip_confirmations {
             renderer.line(
                 MessageStyle::Warning,
@@ -416,20 +421,18 @@ pub(crate) async fn initialize_session_ui(
                 &ctrl_c_state,
                 &ctrl_c_notify,
                 &config.workspace,
-                hooks.workspace_hooks(),
+                &hooks.command_previews(),
             )
             .await
             {
                 Ok(hook_approval::HookApprovalDecision::Approved) => {
-                    if let Err(err) =
-                        vtcode_core::update_lifecycle_hook_approval(&config.workspace, digest.clone()).await
-                    {
+                    if let Err(err) = vtcode_core::update_lifecycle_hook_approval(&config.workspace, digest).await {
                         tracing::warn!(
                             error = %err,
                             "Failed to persist workspace lifecycle hook approval; approval applies to this session only"
                         );
                     }
-                    hooks.approve_workspace_hooks(&digest).await;
+                    hooks.approve_workspace_hooks().await;
                 }
                 Ok(hook_approval::HookApprovalDecision::Denied) => {
                     renderer.line(
