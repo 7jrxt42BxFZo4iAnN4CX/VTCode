@@ -261,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn prepared_tool_batches_split_duplicate_parallel_tool_names() {
+    fn prepared_tool_batches_group_duplicate_parallel_tool_names() {
         let batches = PreparedToolBatch::plan(
             vec![
                 PreparedToolCall::new("read_file".to_string(), true, true, serde_json::json!({})),
@@ -270,8 +270,24 @@ mod tests {
             true,
         );
 
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].kind, PreparedToolBatchKind::ParallelReadonly);
+        assert_eq!(batches[0].calls.len(), 2);
+    }
+
+    #[test]
+    fn prepared_tool_batches_keep_duplicate_nonparallel_calls_sequential() {
+        let batches = PreparedToolBatch::plan(
+            vec![
+                PreparedToolCall::new("exec_command".to_string(), false, false, serde_json::json!({})),
+                PreparedToolCall::new("exec_command".to_string(), false, false, serde_json::json!({})),
+            ],
+            true,
+        );
+
         assert_eq!(batches.len(), 2);
         assert!(batches.iter().all(|batch| batch.kind == PreparedToolBatchKind::Sequential));
+        assert!(batches.iter().all(|batch| batch.calls.len() == 1));
     }
 
     #[test]
