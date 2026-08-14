@@ -4,7 +4,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use ratatui::{
     Terminal,
-    backend::Backend,
+    backend::{Backend, ClearType},
     crossterm::{cursor::SetCursorStyle, execute},
 };
 
@@ -62,8 +62,12 @@ pub(super) fn finalize_terminal<B: Backend>(terminal: &mut Terminal<B>) -> Resul
     terminal
         .show_cursor()
         .map_err(|e| anyhow::anyhow!("failed to show cursor after inline session: {e}"))?;
+    // Terminal::clear() snapshots the cursor via CPR (ESC[6n) to restore it afterward, which
+    // blocks ~2s once the event stream is shut down at exit. Clear the backend viewport instead;
+    // restore_tui() restores the saved cursor position right after.
     terminal
-        .clear()
+        .backend_mut()
+        .clear_region(ClearType::All)
         .map_err(|e| anyhow::anyhow!("failed to clear inline terminal after session: {e}"))?;
     terminal
         .flush()
@@ -89,5 +93,71 @@ pub(crate) fn drain_terminal_events() {
     // Subsequent polls: instant — drain whatever else is already buffered.
     while event::poll(Duration::from_millis(0)).unwrap_or(false) {
         let _ = event::read();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::backend::{TestBackend, WindowSize};
+    use ratatui::buffer::Cell;
+    use ratatui::layout::{Position, Size};
+
+    use super::*;
+
+    /// Backend that fails cursor-position reads, mimicking a live terminal after the
+    /// crossterm event reader has been shut down (the exit path in run_tui).
+    struct NoCprBackend(TestBackend);
+
+    impl Backend for NoCprBackend {
+        type Error = io::Error;
+
+        fn draw<'a, I>(&mut self, content: I) -> Result<(), Self::Error>
+        where
+            I: Iterator<Item = (u16, u16, &'a Cell)>,
+        {
+            self.0.draw(content).map_err(|never| match never {})
+        }
+
+        fn hide_cursor(&mut self) -> Result<(), Self::Error> {
+            self.0.hide_cursor().map_err(|never| match never {})
+        }
+
+        fn show_cursor(&mut self) -> Result<(), Self::Error> {
+            self.0.show_cursor().map_err(|never| match never {})
+        }
+
+        fn get_cursor_position(&mut self) -> Result<Position, Self::Error> {
+            Err(io::Error::other("cursor position unavailable"))
+        }
+
+        fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> Result<(), Self::Error> {
+            self.0.set_cursor_position(position).map_err(|never| match never {})
+        }
+
+        fn clear(&mut self) -> Result<(), Self::Error> {
+            self.0.clear().map_err(|never| match never {})
+        }
+
+        fn clear_region(&mut self, clear_type: ClearType) -> Result<(), Self::Error> {
+            self.0.clear_region(clear_type).map_err(|never| match never {})
+        }
+
+        fn size(&self) -> Result<Size, Self::Error> {
+            self.0.size().map_err(|never| match never {})
+        }
+
+        fn window_size(&mut self) -> Result<WindowSize, Self::Error> {
+            self.0.window_size().map_err(|never| match never {})
+        }
+
+        fn flush(&mut self) -> Result<(), Self::Error> {
+            self.0.flush().map_err(|never| match never {})
+        }
+    }
+
+    #[test]
+    fn finalize_terminal_does_not_query_cursor_position() {
+        let mut terminal = Terminal::new(NoCprBackend(TestBackend::new(80, 24))).unwrap();
+        assert!(finalize_terminal(&mut terminal).is_ok());
     }
 }
