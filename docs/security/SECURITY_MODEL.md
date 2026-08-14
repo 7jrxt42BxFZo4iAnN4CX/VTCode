@@ -161,6 +161,10 @@ to a SHA-256 digest of that set (the effective configuration digest):
   until the user reviews them again. The gate is revalidated immediately
   before every hook spawn and after configuration reload or primary-agent
   switches.
+- **Rebuilds preserve approvals**: when the command set is unchanged, an
+  existing approval carries over onto a rebuilt engine (including a
+  session-only approval that could not be persisted); any command-set change
+  re-gates the engine and requires a new approval.
 
 This is a deliberate fail-closed rule: workspace trust or tool-policy
 permissions are never treated as blanket approval for executable workspace

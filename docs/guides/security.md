@@ -134,6 +134,30 @@ Three-tier approval system for tool execution:
 2. **Allow for Session** - Approved for current session only
 3. **Always Allow** - Permanently saved to tool policy
 
+#### Workspace Lifecycle Hook Approval
+
+Lifecycle hooks declared in workspace-controlled configuration — a repository's
+`vtcode.toml`, `.vtcode/` files, project profiles, or agent-spec files
+(`.claude/agents/*.md`, `.vtcode/agents/*.md`, Codex TOML specs) — execute
+shell commands that an untrusted repository could change at any time. While
+such hook content is present, VT Code gates the whole lifecycle engine: **no
+lifecycle hook runs** until you approve the exact command set for that
+workspace.
+
+- **Interactive sessions** show an approval dialog listing every command (event,
+  matcher, and `sh -c` command), the workspace, and the working directory.
+  Approving persists the approval for this workspace and command set; denying
+  skips the hooks for the session.
+- **Auto / non-interactive sessions** (e.g. `vtcode ask`, `--full-auto`) skip
+  the hooks unless a previously persisted approval still matches the current
+  command set.
+- **Any change to the hook commands** — for example after a `git pull` updates
+  `vtcode.toml` or an agent spec — invalidates the approval and requires a new
+  review before anything runs again.
+
+User-level hooks in `~/.vtcode/vtcode.toml` run without approval when the
+workspace defines no lifecycle hook content of its own.
+
 ## Threat Model
 
 ### Protected Against
