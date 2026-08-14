@@ -897,6 +897,34 @@ mod read_tests {
     }
 
     #[tokio::test]
+    async fn test_read_file_paging_lines_clamps_page_size_to_absolute_cap() {
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_root = temp_dir.path().to_path_buf();
+        let test_file = workspace_root.join("over_cap.txt");
+        let absolute_cap = crate::tools::read_limits::absolute_line_cap();
+        let test_content = (1..=absolute_cap + 1)
+            .map(|line| format!("line{line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&test_file, test_content).unwrap();
+
+        let grep_manager = std::sync::Arc::new(GrepSearchManager::new(workspace_root.clone()));
+        let file_ops = FileOpsTool::new(workspace_root, grep_manager);
+
+        let result = file_ops
+            .read_file(json!({
+                "path": test_file.to_string_lossy().into_owned(),
+                "offset_lines": 0,
+                "page_size_lines": absolute_cap + 1
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(result["content"].as_str().unwrap().lines().count(), absolute_cap);
+        assert_eq!(result["truncated"], true);
+    }
+
+    #[tokio::test]
     async fn test_read_file_paging_bytes() {
         let temp_dir = TempDir::new().unwrap();
         let workspace_root = temp_dir.path().to_path_buf();

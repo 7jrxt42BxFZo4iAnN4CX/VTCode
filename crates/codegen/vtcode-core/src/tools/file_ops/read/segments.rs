@@ -3,10 +3,10 @@ use super::FileOpsTool;
 use crate::config::constants::tools;
 use crate::tools::builder::ToolResponseBuilder;
 use crate::tools::types::Input;
-use crate::utils::file_utils::read_file_with_context;
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::path::Path;
+use tokio::io::BufReader;
 
 impl FileOpsTool {
     pub(super) async fn read_file_paged(&self, file_path: &Path, input: &Input) -> Result<(String, Value, bool)> {
@@ -77,24 +77,35 @@ impl FileOpsTool {
             return Err(anyhow!("Offset_lines + page_size_lines would overflow: {offset_lines} + {page_size_lines}"));
         }
 
-        let content = read_file_with_context(file_path, "file content")
+        let page_size_lines = page_size_lines.min(crate::tools::read_limits::absolute_line_cap());
+        let file = tokio::fs::File::open(file_path)
             .await
             .with_context(|| format!("Failed to read file content: {}", file_path.display()))?;
+        let mut reader = BufReader::new(file);
+        let mut buffer = Vec::new();
 
-        let all_lines: Vec<&str> = content.lines().collect();
-        let total_lines = all_lines.len();
-
-        // Handle empty file or offset beyond bounds
-        if total_lines == 0 || offset_lines >= total_lines {
-            return Ok((String::new(), false));
+        for _ in 0..offset_lines {
+            if super::super::read_bounded_line(&mut reader, &mut buffer).await?.is_none() {
+                return Ok((String::new(), false));
+            }
         }
 
-        // Calculate end position (safe because we validated overflow above)
-        let end_pos = std::cmp::min(offset_lines + page_size_lines, total_lines);
-        let selected_lines = &all_lines[offset_lines..end_pos];
+        let mut final_content = String::new();
+        for line_index in 0..page_size_lines {
+            if super::super::read_bounded_line(&mut reader, &mut buffer).await?.is_none() {
+                return Ok((final_content, false));
+            }
 
-        let final_content = selected_lines.join("\n");
-        let is_truncated = end_pos < total_lines;
+            let line = std::str::from_utf8(&buffer).context("file content is not valid UTF-8")?;
+            let line = line.strip_suffix('\n').unwrap_or(line);
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            if line_index > 0 {
+                final_content.push('\n');
+            }
+            final_content.push_str(line);
+        }
+
+        let is_truncated = super::super::read_bounded_line(&mut reader, &mut buffer).await?.is_some();
 
         Ok((final_content, is_truncated))
     }
