@@ -7,7 +7,9 @@ use super::{
     flush_budget_synthesis_directives, validate_tool_call,
 };
 use crate::agent::runloop::unified::progress::ProgressReporter;
-use crate::agent::runloop::unified::tool_pipeline::{exec_settlement_mode_for_tool_call, run_tool_call_with_args};
+use crate::agent::runloop::unified::tool_pipeline::{
+    exec_settlement_mode_for_tool_call, execute_prevalidated_read_only_with_cache, run_tool_call_with_args,
+};
 use crate::agent::runloop::unified::turn::context::{
     PreparedAssistantToolCall, TurnHandlerOutcome, TurnProcessingContext,
 };
@@ -145,6 +147,7 @@ async fn execute_parallel_group<'a, 'b>(
     let registry = t_ctx.ctx.tool_registry.clone();
     let ctrl_c_state = std::sync::Arc::clone(t_ctx.ctx.ctrl_c_state);
     let ctrl_c_notify = std::sync::Arc::clone(t_ctx.ctx.ctrl_c_notify);
+    let tool_result_cache = std::sync::Arc::clone(t_ctx.ctx.tool_result_cache);
     let vt_cfg = t_ctx.ctx.vt_cfg;
     let group_has_exec_sessions = validated_calls
         .iter()
@@ -155,6 +158,7 @@ async fn execute_parallel_group<'a, 'b>(
         let registry = registry.clone();
         let ctrl_c_state = std::sync::Arc::clone(&ctrl_c_state);
         let ctrl_c_notify = std::sync::Arc::clone(&ctrl_c_notify);
+        let tool_result_cache = std::sync::Arc::clone(&tool_result_cache);
         let reporter = progress_reporter.clone();
         let call_id = validated_call.call_id().to_string();
         let name = validated_call.prepared.canonical_name;
@@ -164,8 +168,9 @@ async fn execute_parallel_group<'a, 'b>(
             let start_time = std::time::Instant::now();
             let max_retries = resolve_max_tool_retries(&name, vt_cfg);
             let circuit_before = snapshot_circuit_diagnostics(&registry, &name);
-            let status = crate::agent::runloop::unified::tool_pipeline::execute_tool_with_timeout_ref_prevalidated(
+            let status = execute_prevalidated_read_only_with_cache(
                 &registry,
+                &tool_result_cache,
                 &name,
                 &args,
                 &ctrl_c_state,
@@ -542,7 +547,7 @@ mod tests {
     }
 
     #[test]
-    fn build_execution_groups_splits_duplicate_parallel_tool_names() {
+    fn build_execution_groups_batches_duplicate_parallel_tool_names() {
         let stats = planned_execution_group_stats(
             &[
                 validated_call("call_1", tools::CODE_SEARCH, true, true, serde_json::json!({"query":"alpha"})),
@@ -551,7 +556,7 @@ mod tests {
             true,
         );
 
-        assert_eq!(stats, (2, 0, 1));
+        assert_eq!(stats, (1, 1, 2));
     }
 
     #[test]
