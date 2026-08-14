@@ -1,8 +1,35 @@
 use super::*;
+use std::borrow::Cow;
 use std::path::PathBuf;
 use vtcode_core::{
     EditorContextSnapshot, EditorFileContext, EditorLineRange, EditorSelectionContext, EditorSelectionRange,
 };
+
+#[test]
+fn normalize_history_for_request_borrows_clean_history() {
+    let manager = ContextManager::new("sys".into(), (), Arc::new(RwLock::new(HashMap::new())), None);
+    let history = vec![
+        uni::Message::user("hello".to_string()),
+        uni::Message::assistant("world".to_string()),
+    ];
+
+    let normalized = manager.normalize_history_for_request(&history);
+
+    assert!(matches!(normalized, Cow::Borrowed(_)));
+}
+
+#[test]
+fn normalize_history_for_request_owns_history_needing_normalization() {
+    let manager = ContextManager::new("sys".into(), (), Arc::new(RwLock::new(HashMap::new())), None);
+    let history = vec![
+        uni::Message::assistant("part one".to_string()),
+        uni::Message::assistant("part two".to_string()),
+    ];
+
+    let normalized = manager.normalize_history_for_request(&history);
+
+    assert!(matches!(normalized, Cow::Owned(_)));
+}
 
 #[test]
 fn normalize_history_for_request_drops_empty_noop_messages() {
