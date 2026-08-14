@@ -36,7 +36,7 @@ pub(super) struct TurnRequestBuildResult {
     pub request: uni::LLMRequest,
     pub has_tools: bool,
     pub runtime_tools: Option<Arc<Vec<uni::ToolDefinition>>>,
-    pub continuation_messages: Vec<uni::Message>,
+    pub continuation_messages: Arc<Vec<uni::Message>>,
 }
 
 pub(super) fn interrupted_provider_error(provider_name: &str) -> anyhow::Error {
@@ -173,26 +173,34 @@ pub(super) async fn build_turn_request(
         },
     );
     let context_management = resolve_context_management(ctx, turn_snapshot, request_model);
-    let continuation_messages = ctx.context_manager.normalize_history_for_request(ctx.working_history);
+    let continuation_messages = Arc::new(
+        ctx.context_manager
+            .normalize_history_for_request(ctx.working_history)
+            .into_owned(),
+    );
     let (prepared_request_messages, previous_response_id) = prepare_responses_request_history(
         ctx.session_stats,
         &turn_snapshot.provider_name,
         turn_snapshot.capabilities.responses_compaction,
         request_model,
-        &continuation_messages,
+        continuation_messages.as_slice(),
     );
-    let request_messages = match prepared_request_messages {
-        Cow::Borrowed(_) => continuation_messages.to_vec(),
-        Cow::Owned(messages) => messages,
+    let mut request_messages = match prepared_request_messages {
+        Cow::Borrowed(_) => Arc::clone(&continuation_messages),
+        Cow::Owned(messages) => Arc::new(messages),
     };
-    let continuation_messages = continuation_messages.into_owned();
-    let mut request_messages =
-        prepend_request_context_message(request_messages, ctx.context_manager.request_editor_context_message());
-    if let Some(few_shot_context) = few_shot_context {
-        request_messages.push(uni::Message::system(few_shot_context));
+
+    let request_context_message = ctx.context_manager.request_editor_context_message();
+    if request_context_message.is_some() || few_shot_context.is_some() {
+        let mut messages = Arc::unwrap_or_clone(request_messages);
+        messages = prepend_request_context_message(messages, request_context_message);
+        if let Some(few_shot_context) = few_shot_context {
+            messages.push(uni::Message::system(few_shot_context));
+        }
+        request_messages = Arc::new(messages);
     }
     let request_plan = build_harness_request_plan(HarnessRequestPlanInput {
-        messages: Arc::new(request_messages),
+        messages: request_messages,
         system_prompt: request_envelope.system_prompt(),
         tools: (!request_envelope.ordered_tools().is_empty()).then(|| request_envelope.ordered_tools()),
         model: turn_snapshot.active_model.clone(),
@@ -249,6 +257,7 @@ pub(super) async fn build_turn_request(
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     use serde_json::json;
     use vtcode_config::core::permissions::{AgentPermissionsConfig, PermissionDefault};
@@ -635,6 +644,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn clean_request_shares_messages_with_continuation_history() {
+        let mut backing = TestTurnProcessingBacking::new(4).await;
+        let mut ctx = backing.turn_processing_context();
+        ctx.working_history.push(uni::Message::user("hello".to_string()));
+
+        let snapshot = capture_turn_request_snapshot(&mut ctx, "noop-model", false);
+        let built = build_turn_request(&mut ctx, 1, "noop-model", &snapshot, Some(320), None, false)
+            .await
+            .expect("clean request should build");
+
+        assert!(Arc::ptr_eq(&built.request.messages, &built.continuation_messages));
+    }
+
+    #[tokio::test]
     async fn non_openai_responses_chain_keeps_full_history() {
         let mut backing = TestTurnProcessingBacking::new(4).await;
         let prior_messages = vec![uni::Message::user("hello".to_string())];
@@ -697,7 +720,7 @@ mod tests {
         assert!(non_runtime_messages[0].content.as_text().contains("- Active file: src/main.rs"));
         assert!(non_runtime_messages[0].content.as_text().contains("- Language: Rust"));
         assert_eq!(non_runtime_messages[1], uni::Message::user("hello".to_string()));
-        assert_eq!(built.continuation_messages, vec![uni::Message::user("hello".to_string())]);
+        assert_eq!(built.continuation_messages.as_slice(), [uni::Message::user("hello".to_string())]);
     }
 
     #[tokio::test]
@@ -756,7 +779,7 @@ mod tests {
         assert!(!runtime_context.contains("auto_permission="));
         assert!(!runtime_context.contains("permission default"));
         assert!(runtime_context.contains("Plan carefully before editing."));
-        assert_eq!(built.continuation_messages, vec![uni::Message::user("hello".to_string())]);
+        assert_eq!(built.continuation_messages.as_slice(), [uni::Message::user("hello".to_string())]);
     }
 
     #[tokio::test]
@@ -941,7 +964,7 @@ mod tests {
         };
 
         assert_eq!(request_tool_names(&built.request), vec!["apply_patch", "code_search"]);
-        assert_eq!(built.continuation_messages, vec![uni::Message::user("hello".to_string())]);
+        assert_eq!(built.continuation_messages.as_slice(), [uni::Message::user("hello".to_string())]);
     }
 
     #[tokio::test]
@@ -973,8 +996,8 @@ mod tests {
         );
         assert!(system_prompt_text(&built.request).contains("## Active Primary Agent Runtime State"));
         assert_eq!(
-            built.continuation_messages,
-            vec![
+            built.continuation_messages.as_slice(),
+            [
                 uni::Message::user("hello".to_string()),
                 uni::Message::user("continue".to_string())
             ]
@@ -1131,7 +1154,7 @@ mod tests {
             false,
             "noop-model",
             Some("resp_123"),
-            &first.continuation_messages,
+            first.continuation_messages.as_slice(),
         );
 
         ctx.working_history.push(uni::Message::user("continue".to_string()));
@@ -1164,8 +1187,8 @@ mod tests {
         assert_eq!(non_runtime_messages[1], uni::Message::user("hello".to_string()));
         assert_eq!(non_runtime_messages[2], uni::Message::user("continue".to_string()));
         assert_eq!(
-            second.continuation_messages,
-            vec![
+            second.continuation_messages.as_slice(),
+            [
                 uni::Message::user("hello".to_string()),
                 uni::Message::user("continue".to_string()),
             ]
