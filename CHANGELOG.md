@@ -2,6 +2,51 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.146.0 - 2026-08-15
+
+### Highlights
+#### Bug Fixes
+
+- Account for tool result payloads (2c9d17a0) 
+- Preserve entries on replacement (b9c1fa15) 
+- Cap batch range reads (655763a8) 
+- Stream paged line reads (6713d9b7) 
+- Harden harness trace analysis (d5932f9a) 
+- Account for tool result payloads (0ba851a8) 
+- Preserve entries on replacement (23280fa8) 
+- Cap batch range reads (c303b223) 
+- Stream paged line reads (9d5b2c1b) 
+- Tolerate missing nextest profiles (0862a858) 
+- Prevent recursive spool references (320ea48b) 
+#### Documentation
+
+- Record harness hot-path invariants (a906c7f1) 
+#### Features
+
+- Add privacy-preserving trace analyzer (c48122b6) 
+- Add OpenRouter Gemini 3.7 Flash model (fc93cd96) 
+- Add OpenRouter Qwen3.8 27B model (a5841ce3) 
+- Add new Merge Gateway model support (fa633606) 
+### Other Changes
+#### Other
+
+- Add Merge Gateway as an OpenAI-compatible provider (e4b1676d) 
+#### Performance
+
+- Borrow valid request history (c59153e8) 
+- Share request history allocation (8631be92) 
+- Batch duplicate readonly tool calls (4d4a106f) 
+- Share continuation history ownership (c996657b) 
+- Guide batched read-only inspection (1ee98fe1) 
+- Borrow valid request history (51ba4290) 
+- Share request history allocation (f4e28b72) 
+- Batch duplicate readonly tool calls (b9704812) 
+- Share continuation history ownership (110ae1d4) 
+- Cache parallel readonly results (ead97cf6) 
+- Bound legacy text reads (7c4da231) 
+- Reuse request state across turns (e17cfd0f) 
+- Guide batched read inspection (ac698404) 
+- Apply DeepSeek harness learnings (41a12a31) 
 ## 0.145.0 - 2026-08-14
 
 ### Highlights
