@@ -270,7 +270,6 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
 ) -> Result<Option<TurnHandlerOutcome>> {
     use crate::agent::runloop::unified::run_loop_context::TurnPhase;
     t_ctx.ctx.set_phase(TurnPhase::ExecutingTools);
-    t_ctx.ctx.harness_state.record_requested_tool_calls(tool_calls.len());
 
     let mut validated_calls = Vec::with_capacity(tool_calls.len());
 

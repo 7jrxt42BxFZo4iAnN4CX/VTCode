@@ -1340,3 +1340,36 @@ async fn planning_mode_allows_non_planning_tool_blocked_calls() {
     let outcome = enforce_blocked_tool_call_guard(&mut ctx, "blocked_over_cap", tool_names::READ_FILE, &args);
     assert!(matches!(outcome, Some(TurnHandlerOutcome::Break(TurnLoopResult::Blocked { .. }))));
 }
+
+#[tokio::test]
+async fn single_tool_call_dispatch_records_requested_tool_calls() {
+    // Checkpoints turn_912/913/917 showed `requested_tool_calls: 0` alongside
+    // `admitted_tool_calls: N`: only the full-auto batch path recorded the
+    // requested count. Recording moved to the shared dispatch so every path
+    // counts identically.
+    let mut backing = TestContextBacking::new(4).await;
+    let valid_file = backing.sample_file.clone();
+    let valid_args = json!({"path": valid_file.to_string_lossy()});
+    cache_tool_permission(&mut backing, tool_names::READ_FILE, &valid_args, PermissionGrant::Permanent).await;
+
+    let mut ctx = backing.turn_processing_context();
+    let mut repeated_tool_attempts = LoopTracker::new();
+    let mut turn_modified_files = BTreeSet::new();
+    let mut outcome_ctx = ToolOutcomeContext {
+        ctx: &mut ctx,
+        repeated_tool_attempts: &mut repeated_tool_attempts,
+        turn_modified_files: &mut turn_modified_files,
+    };
+    let call = PreparedAssistantToolCall::new(uni::ToolCall::function(
+        "single_call".to_string(),
+        tool_names::READ_FILE.to_string(),
+        valid_args.to_string(),
+    ));
+    handle_tool_calls(&mut outcome_ctx, &[call])
+        .await
+        .expect("single valid call should execute");
+
+    let diagnostics = ctx.harness_state.snapshot_turn_diagnostics(Default::default(), 0);
+    assert_eq!(diagnostics.requested_tool_calls, 1, "single-call dispatch must record requested tool calls");
+    assert_eq!(diagnostics.admitted_tool_calls, 1);
+}

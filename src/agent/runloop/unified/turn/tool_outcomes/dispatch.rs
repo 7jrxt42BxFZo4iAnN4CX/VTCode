@@ -12,6 +12,7 @@ pub(crate) async fn handle_tool_calls<'a, 'b>(
     if tool_calls.is_empty() {
         return Ok(None);
     }
+    t_ctx.ctx.harness_state.record_requested_tool_calls(tool_calls.len());
 
     let planning_started = Instant::now();
     let mut valid_calls = 0usize;
@@ -61,8 +62,7 @@ pub(crate) async fn handle_tool_calls<'a, 'b>(
         )
         .await?;
         if let Some(o) = outcome {
-            super::handlers::flush_interview_denial_recovery(t_ctx.ctx);
-            super::handlers::flush_preflight_circuit_recovery(t_ctx.ctx);
+            flush_dispatch_recovery(t_ctx.ctx);
             return Ok(Some(o));
         }
     } else {
@@ -76,8 +76,7 @@ pub(crate) async fn handle_tool_calls<'a, 'b>(
                     None,
                 ) {
                     super::handlers::drain_preflight_circuit_responses(t_ctx.ctx, &tool_calls[index + 1..]);
-                    super::handlers::flush_interview_denial_recovery(t_ctx.ctx);
-                    super::handlers::flush_preflight_circuit_recovery(t_ctx.ctx);
+                    flush_dispatch_recovery(t_ctx.ctx);
                     return Ok(Some(outcome));
                 }
                 continue;
@@ -90,15 +89,21 @@ pub(crate) async fn handle_tool_calls<'a, 'b>(
                 {
                     super::handlers::drain_preflight_circuit_responses(t_ctx.ctx, &tool_calls[index + 1..]);
                 }
-                super::handlers::flush_interview_denial_recovery(t_ctx.ctx);
-                super::handlers::flush_preflight_circuit_recovery(t_ctx.ctx);
+                flush_dispatch_recovery(t_ctx.ctx);
                 return Ok(Some(o));
             }
         }
     }
 
-    super::handlers::flush_interview_denial_recovery(t_ctx.ctx);
-    super::handlers::flush_preflight_circuit_recovery(t_ctx.ctx);
+    flush_dispatch_recovery(t_ctx.ctx);
 
     Ok(None)
+}
+
+/// Flush both post-dispatch recovery paths. Every dispatch exit runs these in
+/// this order so interview-denial recovery and preflight-circuit recovery are
+/// armed consistently regardless of which path produced the outcome.
+fn flush_dispatch_recovery(ctx: &mut crate::agent::runloop::unified::turn::context::TurnProcessingContext<'_>) {
+    super::handlers::flush_interview_denial_recovery(ctx);
+    super::handlers::flush_preflight_circuit_recovery(ctx);
 }

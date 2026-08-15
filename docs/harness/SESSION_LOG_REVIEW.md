@@ -1,5 +1,22 @@
 # Session Log Review
 
+## 2026-08-16 | Checkpoints 912–917 diagnostics audit
+
+### Baseline
+
+Reviewing `.vtcode/checkpoints/turn_912.json` through `turn_917.json` showed every turn that executed tools reported `requested_tool_calls: 0` alongside a non-zero `admitted_tool_calls` (26 in turn 912, 52 in turn 913, 2 in turn 917), making the requested/admitted ratio unusable for admission-rate diagnostics.
+
+| Observation | Disposition |
+| --- | --- |
+| `requested_tool_calls` stayed 0 on interactive turns while `admitted_tool_calls` grew. | `record_requested_tool_calls` was only called on the full-auto batch path (`handle_tool_call_batch_prepared`); `record_admitted_tool_call` increments in the shared permission gate reached from every path. Recording moved to the single dispatch entry point (`handle_tool_calls`) so batch and single-call paths count identically; the duplicate call in the batch handler was removed. Regression test: `single_tool_call_dispatch_records_requested_tool_calls`. |
+| Turn 917 reported `cached_input_tokens: 0, cache_creation_tokens: 0` on ~36k input. | Not a harness defect: `accumulate_turn_usage` sums usage across all calls in the turn and recovery messages are appended without mutating the history prefix; the zeros are provider-reported (endpoint does not return cache fields). |
+| Turn 916's session-memory envelope carried a task tracker from an unrelated prior objective. | By design: the task tracker is durable workspace state (`.vtcode/tasks/current_task.md`) shared across sessions for long-horizon resume. |
+| Turn 916 history contains consecutive user messages ("hello", "Hello"). | Normal resubmission after an aborted turn; the first submission stays in history. |
+
+### Verification
+
+- `cargo check --locked`: clean. `cargo nextest run --profile quick -p vtcode`: 2,356 tests pass, including the new dispatch counter regression test.
+
 ## 2026-08-12 | Planning wire-catalog collapse (turns 912–913)
 
 ### Baseline
