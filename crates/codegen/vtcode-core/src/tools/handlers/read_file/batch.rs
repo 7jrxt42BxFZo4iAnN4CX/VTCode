@@ -67,8 +67,15 @@ pub struct RangeResult {
     /// Number of lines omitted if condensed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub omitted_lines: Option<usize>,
+    /// Whether a physical source line exceeded the bounded reader limit.
+    #[serde(skip_serializing_if = "is_false")]
+    pub line_truncated: bool,
     /// The content read.
     pub content: String,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Progress tracking for batch reads.
@@ -211,7 +218,11 @@ async fn read_single_request(handler: &ReadFileHandler, request: &BatchReadReque
                 for (result, range) in results.into_iter().zip(ranges.iter()) {
                     match result {
                         Some(Ok(result)) => {
-                            range_results.push(super::range_result_from_lines(range.offset.max(1), result.lines));
+                            range_results.push(super::range_result_from_lines(
+                                range.offset.max(1),
+                                result.lines,
+                                result.line_truncated,
+                            ));
                         }
                         Some(Err(error)) => {
                             return BatchReadResult {

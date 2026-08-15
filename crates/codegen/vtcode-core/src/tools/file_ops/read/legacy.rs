@@ -59,6 +59,7 @@ impl FileOpsTool {
                 "size_bytes": file_metadata.len(),
                 "size_lines": content.lines().count(),
                 "is_truncated": truncated,
+                "line_truncated": false,
                 "type": "file",
                 "content_kind": "text",
                 "encoding": "utf8",
@@ -77,12 +78,13 @@ impl FileOpsTool {
         // materialized). `size_lines` stays accurate because every line is still
         // counted.
         let cap = crate::tools::read_limits::absolute_line_cap();
-        let (capped_content, total_lines, is_truncated) = read_bounded_text(file_path, cap).await?;
+        let (capped_content, total_lines, is_truncated, line_truncated) = read_bounded_text(file_path, cap).await?;
 
         let metadata = json!({
             "size_bytes": file_metadata.len(),
             "size_lines": total_lines,
             "is_truncated": is_truncated,
+            "line_truncated": line_truncated,
             "type": "file",
             "content_kind": "text",
             "encoding": "utf8",
@@ -129,8 +131,10 @@ impl FileOpsTool {
         let mut total_lines = 0usize;
         let mut last_line_had_newline = false;
         let mut is_truncated = false;
+        let mut line_was_truncated = false;
 
-        while super::super::read_bounded_line(&mut reader, &mut buffer).await?.is_some() {
+        while let Some(truncated) = super::super::read_bounded_line(&mut reader, &mut buffer).await? {
+            line_was_truncated |= truncated;
             total_lines = total_lines.saturating_add(1);
             let (line, has_newline) = decode_bounded_line(&buffer);
             last_line_had_newline = has_newline;
@@ -163,14 +167,15 @@ impl FileOpsTool {
             let metadata = json!({
                 "size_bytes": file_size,
                 "size_lines": total_lines,
-                "is_truncated": false,
+                "is_truncated": line_was_truncated,
+                "line_truncated": line_was_truncated,
                 "type": "file",
                 "content_kind": "text",
                 "encoding": "utf8",
                 "applied_max_lines": input.max_lines,
                 "applied_max_tokens": input.max_tokens,
             });
-            return Ok((content, metadata, false));
+            return Ok((content, metadata, line_was_truncated));
         }
 
         let omitted = total_lines.saturating_sub(head_lines + tail_lines);
@@ -197,6 +202,7 @@ impl FileOpsTool {
             "size_bytes": file_size,
             "size_lines": total_lines,
             "is_truncated": true,
+            "line_truncated": line_was_truncated,
             "type": "file",
             "content_kind": "text",
             "encoding": "utf8",
@@ -235,7 +241,7 @@ fn append_normalized_line(output: &mut String, has_output_line: &mut bool, line:
 /// without bound. Only the first `cap` lines are retained; the remainder is
 /// scanned and dropped. Invalid UTF-8 is handled lossily, identical to the
 /// previous `from_utf8_lossy` behavior.
-async fn read_bounded_text(file_path: &Path, cap: usize) -> Result<(String, usize, bool)> {
+async fn read_bounded_text(file_path: &Path, cap: usize) -> Result<(String, usize, bool, bool)> {
     let file = with_file_context(tokio::fs::File::open(file_path).await, "open file", file_path)?;
     let mut reader = tokio::io::BufReader::new(file);
     let mut buffer = Vec::new();
@@ -243,7 +249,9 @@ async fn read_bounded_text(file_path: &Path, cap: usize) -> Result<(String, usiz
     let mut total_lines = 0usize;
     let mut last_line_had_newline = false;
     let mut collected: Vec<String> = Vec::with_capacity(cap);
-    while super::super::read_bounded_line(&mut reader, &mut buffer).await?.is_some() {
+    let mut line_was_truncated = false;
+    while let Some(truncated) = super::super::read_bounded_line(&mut reader, &mut buffer).await? {
+        line_was_truncated |= truncated;
         total_lines += 1;
         if total_lines <= cap {
             let (line, has_newline) = decode_bounded_line(&buffer);
@@ -252,10 +260,10 @@ async fn read_bounded_text(file_path: &Path, cap: usize) -> Result<(String, usiz
         }
     }
 
-    let is_truncated = total_lines > cap;
+    let is_truncated = total_lines > cap || line_was_truncated;
     let mut content = collected.join("\n");
-    if !is_truncated && total_lines > 0 && last_line_had_newline {
+    if total_lines <= cap && total_lines > 0 && last_line_had_newline {
         content.push('\n');
     }
-    Ok((content, total_lines, is_truncated))
+    Ok((content, total_lines, is_truncated, line_was_truncated))
 }

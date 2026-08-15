@@ -26,4 +26,4 @@
 - `attempts >= 1` is NOT enforced by serde (suite.rs test confirms `attempts: 0` deserializes). The guardrail lives in the CLI entrypoint; `run_suite` will happily loop zero times if handed a zero-attempts suite.
 - `run_suite` is concurrency-free and sequential; parallelism is the caller's responsibility (the executor owns task execution semantics).
 - Environment verification (`EnvironmentProbe`) is a separate concern from outcome grading — `EvalExecutor` implementations decide how/whether to apply probes before returning `RunOutcome`.
-- `trace_analyzer` retains aggregate facts only; summaries must not include command arguments, file contents, or tool output.
+- `trace_analyzer` retains aggregate facts only; summaries must not include command arguments, file contents, or tool output. Its public facade delegates bounded streaming and metric accounting to private submodules.

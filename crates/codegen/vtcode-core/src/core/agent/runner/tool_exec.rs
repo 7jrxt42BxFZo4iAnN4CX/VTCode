@@ -202,12 +202,15 @@ fn apply_tool_failure_halt_policy(
     }
 }
 
-fn align_prepared_batches(calls: Vec<PreparedRunnerToolCall>, allow_parallel: bool) -> Vec<PreparedRunnerToolBatch> {
-    let layout = PreparedToolBatch::plan_layout_with_names(
-        calls
-            .iter()
-            .map(|call| (call.prepared.can_parallelize(), call.prepared.canonical_name.as_str())),
+fn align_prepared_batches(
+    calls: Vec<PreparedRunnerToolCall>,
+    allow_parallel: bool,
+    max_parallel: usize,
+) -> Vec<PreparedRunnerToolBatch> {
+    let layout = PreparedToolBatch::plan_layout_with_limit(
+        calls.iter().map(|call| call.prepared.can_parallelize()),
         allow_parallel,
+        max_parallel,
     );
     let mut calls = calls.into_iter();
 
@@ -741,7 +744,11 @@ impl AgentRunner {
             }
 
             let allow_parallel_batch = allow_parallel && batch_calls.len() > 1;
-            let planned_batches = align_prepared_batches(batch_calls, allow_parallel_batch);
+            let planned_batches = align_prepared_batches(
+                batch_calls,
+                allow_parallel_batch,
+                self.config().agent.harness.max_parallel_tool_calls,
+            );
             for batch in planned_batches {
                 self.emit_tool_batch(
                     &self.get_selected_model(),

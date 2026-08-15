@@ -1,241 +1,25 @@
 //! Privacy-preserving summaries for JSONL agent traces.
 
 use std::{
-    collections::BTreeMap,
     fs::File,
-    io::{BufRead, BufReader, Cursor, Read},
+    io::{BufRead, BufReader, Cursor},
     path::Path,
 };
 
 use anyhow::{Context, Result};
-use serde::Serialize;
 use serde_json::Value;
+
+mod metrics;
+mod model;
+mod stream;
+
+use metrics::{LatencyAccumulator, LifecycleTiming, UsageAccounting};
+pub use model::{HarnessTraceSummary, LatencyStatistics, TokenUsage};
 
 const GENERIC_ERROR_CATEGORY: &str = "error";
 const MAX_DISTINCT_TOOL_LABELS: usize = 256;
 const MAX_TRACE_LINE_BYTES: usize = 1_048_576;
 const OTHER_TOOL_LABEL: &str = "other_tool";
-
-/// Aggregate token and prompt-cache usage found in a trace.
-#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
-pub struct TokenUsage {
-    /// Total prompt/input tokens.
-    pub input_tokens: u64,
-    /// Total generated/output tokens.
-    pub output_tokens: u64,
-    /// Total prompt tokens served from cache.
-    pub cached_input_tokens: u64,
-    /// Total tokens used to create cache entries.
-    pub cache_creation_tokens: u64,
-    /// Total generated reasoning tokens when the provider reports them.
-    pub reasoning_tokens: u64,
-}
-
-/// Statistics over recorded latency samples, in milliseconds.
-#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq)]
-pub struct LatencyStatistics {
-    /// Number of latency samples.
-    pub count: u64,
-    /// Sum of latency samples.
-    pub total_ms: u64,
-    /// Arithmetic mean, or `None` when no samples were recorded.
-    pub mean_ms: Option<f64>,
-    /// Median from the bounded latency reservoir, or `None` when no samples were recorded.
-    pub p50_ms: Option<u64>,
-    /// 95th percentile from the bounded latency reservoir, or `None` when no samples were recorded.
-    pub p95_ms: Option<u64>,
-    /// Largest recorded sample, or `None` when no samples were recorded.
-    pub max_ms: Option<u64>,
-}
-
-/// Redacted aggregate facts extracted from DeepSeek or VT Code JSONL traces.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
-pub struct HarnessTraceSummary {
-    /// Number of execution turns.
-    pub turns: u64,
-    /// Number of agent steps.
-    pub steps: u64,
-    /// Number of tool calls.
-    pub tool_calls: u64,
-    /// Tool name to invocation count.
-    pub tool_counts: BTreeMap<String, u64>,
-    /// Canonical error category to count.
-    pub error_categories: BTreeMap<String, u64>,
-    /// Latency aggregate for all recognized samples.
-    pub latency: LatencyStatistics,
-    /// Total UTF-8 byte length of tool outputs, without retaining output text.
-    pub output_bytes: u64,
-    /// Number of calls after the first call for each tool name.
-    pub repeated_calls: u64,
-    /// Repeated calls grouped by tool name.
-    pub repeated_tool_counts: BTreeMap<String, u64>,
-    /// Aggregate model token usage.
-    pub token_usage: TokenUsage,
-    /// Lines that were not valid JSON objects.
-    pub malformed_lines: u64,
-    /// Valid JSON objects with no recognized trace shape.
-    pub unrecognized_lines: u64,
-}
-
-#[derive(Default)]
-struct UsageAccounting {
-    per_turn: TokenUsage,
-    other: TokenUsage,
-    thread_aggregate: Option<TokenUsage>,
-    saw_per_turn_usage: bool,
-}
-
-impl UsageAccounting {
-    fn record(&mut self, event_type: Option<&str>, object: &serde_json::Map<String, Value>) {
-        let Some(sample) = usage_sample(object) else {
-            return;
-        };
-
-        match event_type {
-            Some("thread.completed") => self.thread_aggregate = Some(sample),
-            Some("turn.completed" | "turn.failed" | "turn/end") => {
-                self.saw_per_turn_usage = true;
-                add_usage(&mut self.per_turn, &sample);
-            }
-            _ => add_usage(&mut self.other, &sample),
-        }
-    }
-
-    fn finish(self) -> TokenUsage {
-        if self.saw_per_turn_usage {
-            self.per_turn
-        } else if let Some(thread_aggregate) = self.thread_aggregate {
-            thread_aggregate
-        } else {
-            self.other
-        }
-    }
-}
-
-const MAX_LATENCY_SAMPLES: usize = 4096;
-
-#[derive(Default)]
-struct LatencyAccumulator {
-    samples: Vec<u64>,
-    count: u64,
-    total_ms: u64,
-    max_ms: Option<u64>,
-}
-
-impl LatencyAccumulator {
-    fn record(&mut self, latency_ms: u64) {
-        self.count = self.count.saturating_add(1);
-        self.total_ms = self.total_ms.saturating_add(latency_ms);
-        self.max_ms = Some(self.max_ms.map_or(latency_ms, |max_ms| max_ms.max(latency_ms)));
-
-        if self.samples.len() < MAX_LATENCY_SAMPLES {
-            self.samples.push(latency_ms);
-            return;
-        }
-
-        let candidate = deterministic_reservoir_index(self.count);
-        if candidate < MAX_LATENCY_SAMPLES as u64 {
-            self.samples[candidate as usize] = latency_ms;
-        }
-    }
-
-    fn finish(mut self) -> LatencyStatistics {
-        if self.count == 0 {
-            return LatencyStatistics::default();
-        }
-
-        self.samples.sort_unstable();
-        let percentile = |percent: usize| {
-            let index = (self.samples.len() - 1).saturating_mul(percent).div_ceil(100);
-            self.samples[index]
-        };
-        LatencyStatistics {
-            count: self.count,
-            total_ms: self.total_ms,
-            mean_ms: Some(self.total_ms as f64 / self.count as f64),
-            p50_ms: Some(percentile(50)),
-            p95_ms: Some(percentile(95)),
-            max_ms: self.max_ms,
-        }
-    }
-}
-
-#[derive(Default)]
-struct LifecycleTiming {
-    pending_steps: BTreeMap<u64, u64>,
-}
-
-impl LifecycleTiming {
-    fn record(
-        &mut self,
-        event_type: Option<&str>,
-        outer: &serde_json::Map<String, Value>,
-        payload: &serde_json::Map<String, Value>,
-        latencies: &mut LatencyAccumulator,
-    ) {
-        let timestamp = number_field_from(outer, payload, &["time"]);
-        let step = number_field_from(payload, outer, &["step"]);
-        match event_type {
-            Some("step/start") => {
-                if let (Some(step), Some(timestamp)) = (step, timestamp)
-                    && self.pending_steps.len() < MAX_LATENCY_SAMPLES
-                {
-                    self.pending_steps.insert(step, timestamp);
-                }
-            }
-            Some("step/end") => {
-                if let Some(step) = step
-                    && let Some(timestamp) = timestamp
-                    && let Some(start) = self.pending_steps.remove(&step)
-                    && timestamp >= start
-                {
-                    latencies.record(timestamp - start);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-#[derive(Default)]
-struct AnalyzerState {
-    summary: HarnessTraceSummary,
-    latencies: LatencyAccumulator,
-    timing: LifecycleTiming,
-    usage: UsageAccounting,
-}
-
-impl AnalyzerState {
-    fn record_bytes(&mut self, line: &[u8]) {
-        if line.iter().all(|byte| byte.is_ascii_whitespace()) {
-            return;
-        }
-
-        let value = match serde_json::from_slice::<Value>(line) {
-            Ok(value) => value,
-            Err(_) => {
-                self.summary.malformed_lines = self.summary.malformed_lines.saturating_add(1);
-                return;
-            }
-        };
-
-        if !record_value(&value, &mut self.summary, &mut self.latencies, &mut self.timing, &mut self.usage) {
-            self.summary.unrecognized_lines = self.summary.unrecognized_lines.saturating_add(1);
-        }
-    }
-
-    fn record_oversized(&mut self) {
-        self.summary.malformed_lines = self.summary.malformed_lines.saturating_add(1);
-    }
-
-    fn finish(self) -> HarnessTraceSummary {
-        HarnessTraceSummary {
-            latency: self.latencies.finish(),
-            token_usage: self.usage.finish(),
-            ..self.summary
-        }
-    }
-}
 
 /// Analyze JSONL text while retaining only aggregate, non-sensitive facts.
 pub fn analyze_jsonl(input: &str) -> Result<HarnessTraceSummary> {
@@ -243,43 +27,8 @@ pub fn analyze_jsonl(input: &str) -> Result<HarnessTraceSummary> {
 }
 
 /// Analyze a buffered JSONL source without loading the complete trace into memory.
-pub fn analyze_jsonl_reader<R: BufRead>(mut reader: R) -> Result<HarnessTraceSummary> {
-    let mut state = AnalyzerState::default();
-    let mut line = Vec::with_capacity(8 * 1024);
-    loop {
-        line.clear();
-        let bytes_read = {
-            let mut limited_reader = reader.by_ref().take((MAX_TRACE_LINE_BYTES + 1) as u64);
-            limited_reader.read_until(b'\n', &mut line).context("read JSONL trace line")?
-        };
-        if bytes_read == 0 {
-            break;
-        }
-        if line.len() > MAX_TRACE_LINE_BYTES {
-            state.record_oversized();
-            if !line.ends_with(b"\n") {
-                discard_oversized_record(&mut reader)?;
-            }
-            continue;
-        }
-        state.record_bytes(&line);
-    }
-    Ok(state.finish())
-}
-
-fn discard_oversized_record<R: BufRead>(reader: &mut R) -> Result<()> {
-    loop {
-        let buffered = reader.fill_buf().context("discard oversized JSONL trace line")?;
-        if buffered.is_empty() {
-            return Ok(());
-        }
-        if let Some(newline) = buffered.iter().position(|byte| *byte == b'\n') {
-            reader.consume(newline + 1);
-            return Ok(());
-        }
-        let buffered_len = buffered.len();
-        reader.consume(buffered_len);
-    }
+pub fn analyze_jsonl_reader<R: BufRead>(reader: R) -> Result<HarnessTraceSummary> {
+    stream::analyze_jsonl_reader(reader)
 }
 
 /// Analyze a JSONL trace file and add path context to filesystem errors.
@@ -681,11 +430,7 @@ fn canonical_error_category(error: &str) -> &'static str {
         "fs_stale_version"
     } else if error.contains("unknown_job") || error.contains("unknown-job") || error.contains("unknown job") {
         "unknown_job"
-    } else if error.contains("invalid_goal")
-        || error.contains("invalid-goal")
-        || error.contains("invalid goal")
-        || error.contains("goal")
-    {
+    } else if error.contains("invalid_goal") || error.contains("invalid-goal") || error.contains("invalid goal") {
         "invalid_goal_update"
     } else if error.contains("timeout") || error.contains("timed out") {
         "timeout"
@@ -799,7 +544,7 @@ fn deterministic_reservoir_index(sample_number: u64) -> u64 {
 
 #[cfg(test)]
 mod latency_tests {
-    use super::{MAX_LATENCY_SAMPLES, analyze_jsonl};
+    use super::{analyze_jsonl, metrics::MAX_LATENCY_SAMPLES};
 
     #[test]
     fn bounds_latency_sample_storage_while_retaining_all_counts() {
@@ -958,6 +703,19 @@ mod tests {
         assert!(!serialized.contains("secret command output"));
         assert!(!serialized.contains("/sensitive/project"));
         assert!(!serialized.contains("secret_error"));
+    }
+
+    #[test]
+    fn classifies_unrelated_goal_text_by_its_actual_error() {
+        let summary = analyze_jsonl(
+            r#"{"error":"goal timeout"}
+{"error":"invalid goal update"}
+"#,
+        )
+        .expect("trace should parse");
+
+        assert_eq!(summary.error_categories["timeout"], 1);
+        assert_eq!(summary.error_categories["invalid_goal_update"], 1);
     }
 
     #[test]

@@ -438,6 +438,7 @@ impl FileOpsTool {
                             content,
                             lines_read: lines_returned,
                             has_more,
+                            line_truncated,
                             capped_by_limit,
                             applied_limit,
                         } = handler.handle_detailed(read_args).await?;
@@ -459,6 +460,13 @@ impl FileOpsTool {
                             .data("size_bytes", json!(size_bytes))
                             .data("content_kind", json!("text"))
                             .data("encoding", json!("utf8"));
+
+                        if line_truncated {
+                            builder = builder
+                                .field("line_truncated", json!(true))
+                                .field("truncated", json!(true))
+                                .field("truncation_reason", json!("oversized_line"));
+                        }
 
                         if let Some(plan) = spool_plan {
                             let next_offset = plan.offset.saturating_add(lines_returned);
@@ -550,10 +558,12 @@ impl FileOpsTool {
                 || input.offset_lines.is_some()
                 || input.page_size_lines.is_some();
 
-            let (content, metadata, truncated) = if use_paging {
+            let (content, metadata, truncated, line_truncated) = if use_paging {
                 self.read_file_paged(&canonical, &input).await?
             } else {
-                self.read_file_legacy(&canonical, &input).await?
+                let (content, metadata, truncated) = self.read_file_legacy(&canonical, &input).await?;
+                let line_truncated = metadata.get("line_truncated").and_then(Value::as_bool).unwrap_or(false);
+                (content, metadata, truncated, line_truncated)
             };
 
             let mut builder = ToolResponseBuilder::new(tools::READ_FILE)
@@ -577,6 +587,9 @@ impl FileOpsTool {
             // Special legacy fields at top level
             if let Some(is_truncated) = metadata.get("is_truncated").and_then(Value::as_bool) {
                 builder = builder.field("is_truncated", json!(is_truncated));
+            }
+            if line_truncated {
+                builder = builder.field("line_truncated", json!(true));
             }
             if let Some(encoding) = metadata.get("encoding").and_then(Value::as_str) {
                 builder = builder.field("encoding", json!(encoding));
@@ -607,7 +620,14 @@ impl FileOpsTool {
                 }
                 if truncated {
                     builder = builder.field("truncated", json!(true));
-                    builder = builder.field("truncation_reason", json!("reached_end_of_file"));
+                    builder = builder.field(
+                        "truncation_reason",
+                        json!(if line_truncated {
+                            "oversized_line"
+                        } else {
+                            "reached_end_of_file"
+                        }),
+                    );
                 }
             }
 
@@ -1056,10 +1076,21 @@ mod read_tests {
 
         let (content, metadata, truncated) = file_ops.read_file_legacy(&test_file, &input).await.unwrap();
 
-        assert!(!truncated);
+        assert!(truncated, "the bounded physical line makes the response incomplete");
         assert_eq!(metadata["size_lines"], 2);
+        assert_eq!(metadata["line_truncated"], true);
         assert!(content.len() <= crate::tools::file_ops::MAX_LINE_READ_BYTES + "\nlast\n".len());
         assert!(content.ends_with("\nlast\n"));
+
+        let paged = file_ops
+            .read_file(json!({
+                "path": test_file.to_string_lossy(),
+                "offset_lines": 0,
+                "page_size_lines": 2
+            }))
+            .await
+            .unwrap();
+        assert_eq!(paged["truncation_reason"], "oversized_line");
     }
 
     #[tokio::test]
@@ -1416,6 +1447,31 @@ mod read_tests {
         // offset 1 + applied cap (default 400) lines read.
         assert_eq!(result["next_read_args"]["offset"], 401);
         assert_eq!(result["next_read_args"]["limit"], crate::tools::read_limits::read_limit_lines());
+    }
+
+    #[tokio::test]
+    async fn path_only_read_uses_configured_cap_for_continuation() {
+        let original_config = file_read_cache_config();
+        let mut configured = original_config.clone();
+        configured.max_read_lines = 800;
+        crate::tools::cache::configure_file_cache(&configured);
+
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_root = temp_dir.path().to_path_buf();
+        let test_file = workspace_root.join("configured-cap.txt");
+        let content = (1..=1000).map(|i| format!("line{i}")).collect::<Vec<_>>().join("\n");
+        fs::write(&test_file, content).unwrap();
+
+        let grep_manager = std::sync::Arc::new(GrepSearchManager::new(workspace_root.clone()));
+        let file_ops = FileOpsTool::new(workspace_root, grep_manager);
+        let result = file_ops.read_file(json!({ "path": "configured-cap.txt" })).await;
+
+        crate::tools::cache::configure_file_cache(&original_config);
+        let result = result.unwrap();
+
+        assert_eq!(result["has_more"], true);
+        assert_eq!(result["next_read_args"]["offset"], 801);
+        assert_eq!(result["next_read_args"]["limit"], 800);
     }
 
     #[tokio::test]

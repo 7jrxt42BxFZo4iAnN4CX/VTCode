@@ -672,6 +672,7 @@ async fn successful_apply_patch_invalidates_cached_code_search() {
         let mut cache = permission_cache_arc.write().await;
         cache.cache_grant(tools::CODE_SEARCH.to_string(), PermissionGrant::Permanent);
         cache.cache_grant(tools::APPLY_PATCH.to_string(), PermissionGrant::Permanent);
+        cache.cache_grant(tools::EXEC_COMMAND.to_string(), PermissionGrant::Permanent);
     }
 
     let result_cache = Arc::new(tokio::sync::RwLock::new(ToolResultCache::new(10)));
@@ -826,6 +827,25 @@ async fn successful_apply_patch_invalidates_cached_code_search() {
         result_cache.read().await.stats().hits,
         1,
         "the post-success search must execute freshly instead of hitting stale cache"
+    );
+
+    let shell_call = vtcode_core::llm::provider::ToolCall::function(
+        "successful_shell_mutation".to_string(),
+        tools::EXEC_COMMAND.to_string(),
+        json!({
+            "action": "run",
+            "command": "printf marker > shell-marker.txt"
+        })
+        .to_string(),
+    );
+    let shell = run_tool_call(&mut ctx, &shell_call, &ctrl_c_state, &ctrl_c_notify, None, None, true, None, 0, false)
+        .await
+        .expect("shell mutation should run");
+    assert!(matches!(shell.status, ToolExecutionStatus::Success { .. }));
+    assert_eq!(
+        result_cache.read().await.stats().current_size,
+        0,
+        "a shell command must invalidate cached filesystem results"
     );
 }
 

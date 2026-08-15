@@ -297,7 +297,7 @@ fn shell_task_guidance(shell_profile: ResolvedShellPromptProfile) -> &'static st
 
 fn read_only_batching_guidance(has_read_file: bool) -> &'static str {
     if has_read_file {
-        "- Batch independent read-only calls; use bounded `read_file` ranges, order dependent reads, and serialize mutations."
+        "- Batch independent read-only calls; use bounded `read_file` ranges, order dependencies, serialize mutations. On `line_truncated`, use byte or narrower ranges."
     } else {
         "- Batch independent read-only calls; order dependent reads, and serialize mutations."
     }

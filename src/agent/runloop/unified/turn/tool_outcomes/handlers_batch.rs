@@ -18,6 +18,8 @@ use crate::agent::runloop::unified::turn::tool_outcomes::helpers::{
     resolve_max_tool_retries, update_repetition_tracker,
 };
 
+const DEFAULT_MAX_PARALLEL_TOOL_CALLS: usize = 4;
+
 struct ValidatedToolCall<'a> {
     tool_call: &'a PreparedAssistantToolCall,
     prepared: PreparedToolCall,
@@ -66,19 +68,19 @@ fn planned_execution_group_stats(
     validated_calls: &[ValidatedToolCall<'_>],
     allow_parallel: bool,
 ) -> (usize, usize, usize) {
-    let layout = planned_execution_layout(validated_calls, allow_parallel);
+    let layout = planned_execution_layout(validated_calls, allow_parallel, 0);
     execution_group_stats_from_layout(&layout)
 }
 
 fn planned_execution_layout(
     validated_calls: &[ValidatedToolCall<'_>],
     allow_parallel: bool,
+    max_parallel: usize,
 ) -> Vec<(PreparedToolBatchKind, usize)> {
-    PreparedToolBatch::plan_layout_with_names(
-        validated_calls
-            .iter()
-            .map(|validated_call| (validated_call.can_parallelize(), validated_call.prepared.canonical_name.as_str())),
+    PreparedToolBatch::plan_layout_with_limit(
+        validated_calls.iter().map(ValidatedToolCall::can_parallelize),
         allow_parallel,
+        max_parallel,
     )
 }
 
@@ -313,7 +315,12 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
         return Ok(None);
     }
 
-    let planned_layout = planned_execution_layout(&validated_calls, t_ctx.ctx.full_auto);
+    let max_parallel_tool_calls = t_ctx
+        .ctx
+        .vt_cfg
+        .map(|config| config.agent.harness.max_parallel_tool_calls)
+        .unwrap_or(DEFAULT_MAX_PARALLEL_TOOL_CALLS);
+    let planned_layout = planned_execution_layout(&validated_calls, t_ctx.ctx.full_auto, max_parallel_tool_calls);
     let (groups, parallel_groups, max_group_size) = execution_group_stats_from_layout(&planned_layout);
     tracing::debug!(
         target: "vtcode.turn.metrics",

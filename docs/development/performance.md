@@ -50,12 +50,19 @@ segment boundaries clear that marker before rebuilding.
 Read-only tool calls are batched only after per-call preflight confirms that
 each call is parallel-safe; duplicate names are not a safety signal. Batch line
 ranges still pass through the absolute read cap, so new range-reading paths
-must preserve that limit. Mutating or otherwise non-parallel calls remain
-ordered.
+must preserve that limit. Unified and runner dispatch both apply
+`agent.harness.max_parallel_tool_calls`; zero is the explicit unlimited value.
+Mutating or otherwise non-parallel calls remain ordered.
 
 Legacy text reads use the same bounded line reader as paged reads. This keeps
 large files and minified one-line bundles from creating an unbounded temporary
-buffer; invalid UTF-8 remains lossily decoded for compatibility.
+buffer; invalid UTF-8 remains lossily decoded for compatibility. A physical
+line that exceeds the bound is reported as `line_truncated` so the agent can
+switch to byte ranges or targeted inspection instead of treating the preview
+as complete. Live command-output spools are never result-cached, and
+directory-scoped read caches invalidate on descendant edits. A command-cache
+miss also invalidates filesystem-derived results before shell/PTY execution,
+while completed read-only command cache hits remain reusable.
 
 ### Serialization and event-log replay
 

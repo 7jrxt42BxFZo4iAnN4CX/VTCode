@@ -152,6 +152,16 @@ impl ToolResultCache {
         });
     }
 
+    /// Invalidate filesystem-derived results after an external command runs.
+    ///
+    /// Shell and PTY commands can mutate arbitrary workspace paths without
+    /// returning a structured `modified_files` list. Keep stable tool metadata
+    /// entries, but discard every filesystem or command-derived result so a
+    /// later read cannot observe pre-command content.
+    pub fn invalidate_after_external_command(&mut self) {
+        self.inner.remove_where(|key| !is_stable_tool_catalog_lookup(&key.tool));
+    }
+
     /// Clear entire cache
     pub fn clear(&mut self) {
         self.inner.clear();
@@ -178,7 +188,21 @@ fn cache_key_overlaps_changed_path(key: &ToolCacheKey, changed_path: &str) -> bo
     let changed_path = Path::new(changed_path);
     cache_target == changed_path
         || cache_target.starts_with(changed_path)
-        || (key.tool == crate::config::constants::tools::CODE_SEARCH && changed_path.starts_with(cache_target))
+        || (is_directory_scoped_tool(&key.tool) && changed_path.starts_with(cache_target))
+}
+
+fn is_directory_scoped_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        crate::config::constants::tools::CODE_SEARCH
+            | crate::config::constants::tools::LIST_FILES
+            | "grep_search"
+            | "find_files"
+    )
+}
+
+fn is_stable_tool_catalog_lookup(tool_name: &str) -> bool {
+    matches!(tool_name, "search_tools" | "get_errors" | "agent_info")
 }
 
 #[cfg(test)]
@@ -220,6 +244,24 @@ mod tests {
         let cache = ToolResultCache::new(10);
         let key = ToolCacheKey::new(tools::CODE_SEARCH, "query=test", "/workspace");
         assert!(cache.get(&key).is_none());
+    }
+
+    #[test]
+    fn invalidates_directory_scoped_reads_when_a_child_changes() {
+        let mut cache = ToolResultCache::new(10);
+        let list_key = ToolCacheKey::new(tools::LIST_FILES, "path=/workspace", "/workspace");
+        let grep_key = ToolCacheKey::new("grep_search", "query=test", "/workspace/src");
+        let unrelated_key = ToolCacheKey::new(tools::LIST_FILES, "path=/other", "/other");
+
+        cache.insert(list_key.clone(), "list".to_string());
+        cache.insert(grep_key.clone(), "grep".to_string());
+        cache.insert(unrelated_key.clone(), "other".to_string());
+
+        cache.invalidate_for_path("/workspace/src/main.rs");
+
+        assert!(cache.get(&list_key).is_none());
+        assert!(cache.get(&grep_key).is_none());
+        assert_eq!(cache.get_owned(&unrelated_key).as_deref(), Some("other"));
     }
 
     #[test]
@@ -321,6 +363,24 @@ mod tests {
         assert!(cache.get(&key1).is_none());
         assert!(cache.get(&key3).is_none());
         assert_eq!(cache.get(&key2).unwrap().as_ref(), "out2");
+    }
+
+    #[test]
+    fn external_command_invalidates_filesystem_results_but_keeps_catalog_entries() {
+        let mut cache = ToolResultCache::new(10);
+        let read_key = ToolCacheKey::new(tools::READ_FILE, "path=src/main.rs", "/workspace/src/main.rs");
+        let search_key = ToolCacheKey::new(tools::CODE_SEARCH, "query=Widget", "/workspace");
+        let catalog_key = ToolCacheKey::new("search_tools", "query=read", "/workspace");
+
+        cache.insert(read_key.clone(), "old file".to_string());
+        cache.insert(search_key.clone(), "old search".to_string());
+        cache.insert(catalog_key.clone(), "catalog".to_string());
+
+        cache.invalidate_after_external_command();
+
+        assert!(cache.get(&read_key).is_none());
+        assert!(cache.get(&search_key).is_none());
+        assert_eq!(cache.get(&catalog_key).as_deref().map(String::as_str), Some("catalog"));
     }
 
     #[test]

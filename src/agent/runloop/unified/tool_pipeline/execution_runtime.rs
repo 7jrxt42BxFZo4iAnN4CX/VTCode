@@ -1,6 +1,7 @@
 use anstyle::Color;
 use serde_json::Value;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Notify;
 use tracing::warn;
 use vtcode_core::config::loader::VTCodeConfig;
@@ -48,14 +49,9 @@ impl Drop for ProgressCallbackGuard<'_> {
     }
 }
 
-struct StreamingToolOutput {
-    started_emitted: bool,
-    output: String,
-}
-
 #[derive(Clone)]
 struct StreamingOutputCoalescer {
-    state: Arc<StdMutex<StreamingToolOutput>>,
+    started_emitted: Arc<AtomicBool>,
     harness_emitter: HarnessEventEmitter,
     tool_item_id: String,
     tool_call_id: String,
@@ -64,7 +60,7 @@ struct StreamingOutputCoalescer {
 impl StreamingOutputCoalescer {
     fn new(harness_emitter: HarnessEventEmitter, tool_item_id: String, tool_call_id: String) -> Self {
         Self {
-            state: Arc::new(StdMutex::new(StreamingToolOutput { started_emitted: false, output: String::new() })),
+            started_emitted: Arc::new(AtomicBool::new(false)),
             harness_emitter,
             tool_item_id,
             tool_call_id,
@@ -75,13 +71,7 @@ impl StreamingOutputCoalescer {
         if chunk.is_empty() {
             return;
         }
-        let emit_started = {
-            let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let emit_started = !state.started_emitted;
-            state.started_emitted = true;
-            state.output.push_str(chunk);
-            emit_started
-        };
+        let emit_started = !self.started_emitted.swap(true, Ordering::AcqRel);
 
         if emit_started {
             let _ = self
@@ -225,6 +215,15 @@ async fn execute_with_cache_and_streaming_inner(
                 .await
     {
         return into_runtime_tool_execution(name, args_val, cached_status);
+    }
+
+    // Command and PTY calls can mutate arbitrary files without returning a
+    // structured modified_files list. Invalidate filesystem-derived results
+    // before executing a cache miss, while preserving cache hits for genuinely
+    // read-only command results such as path-scoped `git diff`.
+    if is_command_tool(name) {
+        let mut cache = tool_result_cache.write().await;
+        cache.invalidate_after_external_command();
     }
 
     handle.force_redraw();
