@@ -3,12 +3,10 @@
 //! This module provides fuzzy entity matching to resolve vague terms like
 //! "the sidebar" or "that button" to actual workspace entities (files, components, etc.)
 
-use anyhow::{Context, Result};
 use hashbrown::HashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::path::{Path, PathBuf};
-use vtcode_commons::fs::{read_file_with_context, write_file_with_context};
+use std::path::PathBuf;
 use vtcode_commons::utils::current_timestamp;
 
 /// Maximum number of entity matches to return
@@ -104,38 +102,10 @@ impl Default for EntityIndex {
     }
 }
 
-impl EntityIndex {
-    /// Record an entity mention for recency tracking
-    pub fn record_mention(&mut self, entity: &str) {
-        self.last_mentioned.insert(entity.to_lowercase(), current_timestamp());
-    }
-
-    /// Record a recent edit
-    pub fn record_edit(&mut self, entity: String, file: PathBuf) {
-        let reference = EntityReference { entity, file, timestamp: current_timestamp() };
-
-        self.recent_edits.push_back(reference);
-
-        // Keep bounded
-        while self.recent_edits.len() > MAX_RECENT_EDITS {
-            self.recent_edits.pop_front();
-        }
-    }
-
-    /// Check if file was recently edited
-    pub fn was_recently_edited(&self, file: &Path, within_seconds: u64) -> bool {
-        let cutoff = current_timestamp().saturating_sub(within_seconds);
-        self.recent_edits.iter().any(|r| r.file == file && r.timestamp >= cutoff)
-    }
-}
-
 /// Entity resolver for fuzzy matching
 pub struct EntityResolver {
     /// The entity index
     index: EntityIndex,
-
-    /// Cache file path
-    cache_path: Option<PathBuf>,
 }
 
 impl Default for EntityResolver {
@@ -147,42 +117,7 @@ impl Default for EntityResolver {
 impl EntityResolver {
     /// Create a new entity resolver
     pub fn new() -> Self {
-        Self { index: EntityIndex::default(), cache_path: None }
-    }
-
-    /// Create with cache file path
-    pub fn with_cache(cache_path: PathBuf) -> Self {
-        Self {
-            index: EntityIndex::default(),
-            cache_path: Some(cache_path),
-        }
-    }
-
-    /// Load index from cache file
-    pub async fn load_cache(&mut self) -> Result<()> {
-        if let Some(cache_path) = &self.cache_path
-            && tokio::fs::try_exists(cache_path).await.unwrap_or(false)
-        {
-            let content = read_file_with_context(cache_path, "entity cache")
-                .await
-                .with_context(|| format!("Failed to read entity cache at {cache_path:?}"))?;
-
-            self.index = serde_json::from_str(&content).with_context(|| "Failed to deserialize entity cache")?;
-        }
-        Ok(())
-    }
-
-    /// Save index to cache file
-    pub async fn save_cache(&self) -> Result<()> {
-        if let Some(cache_path) = &self.cache_path {
-            let content =
-                serde_json::to_string_pretty(&self.index).with_context(|| "Failed to serialize entity cache")?;
-
-            write_file_with_context(cache_path, &content, "entity cache")
-                .await
-                .with_context(|| format!("Failed to write entity cache to {cache_path:?}"))?;
-        }
-        Ok(())
+        Self { index: EntityIndex::default() }
     }
 
     /// Check if the entity index is empty
@@ -306,24 +241,9 @@ impl EntityResolver {
         0.0
     }
 
-    /// Record a mention for recency tracking
-    pub fn record_mention(&mut self, entity: &str) {
-        self.index.record_mention(entity);
-    }
-
-    /// Record an edit for recency tracking
-    pub fn record_edit(&mut self, entity: String, file: PathBuf) {
-        self.index.record_edit(entity, file);
-    }
-
     /// Get mutable access to the index for building
     pub fn index_mut(&mut self) -> &mut EntityIndex {
         &mut self.index
-    }
-
-    /// Get read-only access to the index
-    pub fn index(&self) -> &EntityIndex {
-        &self.index
     }
 }
 
