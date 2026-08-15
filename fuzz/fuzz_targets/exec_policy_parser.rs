@@ -2,7 +2,7 @@
 
 use libfuzzer_sys::fuzz_target;
 use std::path::Path;
-use vtcode_core::exec_policy::{Policy, PolicyParser};
+use vtcode_core::exec_policy::PolicyParser;
 
 const MAX_INPUT_BYTES: usize = 4096;
 
@@ -15,19 +15,6 @@ fn bounded_input(data: &[u8]) -> String {
     String::from_utf8_lossy(slice).into_owned()
 }
 
-fn add_rules_to_policy(
-    patterns: impl Iterator<Item = (String, vtcode_core::exec_policy::Decision)>,
-) {
-    let mut policy = Policy::empty();
-    for (pattern, decision) in patterns {
-        let parsed: Vec<String> = pattern
-            .split_whitespace()
-            .map(ToString::to_string)
-            .collect();
-        let _ = policy.add_prefix_rule(&parsed, decision);
-    }
-}
-
 fuzz_target!(|data: &[u8]| {
     if data.is_empty() {
         return;
@@ -35,41 +22,17 @@ fuzz_target!(|data: &[u8]| {
 
     let mode = data[0] % 3;
     let input = bounded_input(&data[1..]);
-    let parser = PolicyParser::new();
+    let parser = PolicyParser::default();
 
-    match mode {
-        0 => {
-            if let Ok(rules) = parser.parse_simple(&input) {
-                let iter = rules.into_iter().map(|rule| {
-                    let joined = rule.pattern.join(" ");
-                    (joined, rule.decision)
-                });
-                add_rules_to_policy(iter);
-            }
-
-            let _ = parser.load_from_content(&input, Path::new("policy.rules"));
-        }
-        1 => {
-            if let Ok(file) = parser.parse_toml(&input) {
-                let iter = file
-                    .rules
-                    .into_iter()
-                    .map(|rule| (rule.pattern, rule.decision));
-                add_rules_to_policy(iter);
-            }
-
-            let _ = parser.load_from_content(&input, Path::new("policy.toml"));
-        }
-        _ => {
-            if let Ok(file) = parser.parse_json(&input) {
-                let iter = file
-                    .rules
-                    .into_iter()
-                    .map(|rule| (rule.pattern, rule.decision));
-                add_rules_to_policy(iter);
-            }
-
-            let _ = parser.load_from_content(&input, Path::new("policy.json"));
-        }
-    }
+    // Fuzz the public policy-loading surface; the format is selected by the
+    // file extension (toml/json/line-based) exactly as production callers do.
+    // load_from_content exercises the full parse -> rule -> policy pipeline,
+    // including Policy::add_prefix_rule, so the private per-format parsers do
+    // not need to be exposed for fuzzing.
+    let path = match mode {
+        0 => Path::new("policy.rules"),
+        1 => Path::new("policy.toml"),
+        _ => Path::new("policy.json"),
+    };
+    let _ = parser.load_from_content(&input, path);
 });
