@@ -7,6 +7,10 @@ pub(super) fn normalize_tool_output(mut val: Value) -> Value {
     let Some(obj) = val.as_object_mut() else {
         return json!({ "success": true, "result": val });
     };
+    let has_spool_reference = obj
+        .get("spool_path")
+        .and_then(Value::as_str)
+        .is_some_and(|path| !path.is_empty());
     obj.entry("success").or_insert(json!(true));
     let should_remove_stdout = {
         let is_command_like = is_command_like_output(obj);
@@ -69,10 +73,12 @@ pub(super) fn normalize_tool_output(mut val: Value) -> Value {
         "next_poll_args",
         "preferred_next_action",
         "spool_hint",
-        "spooled_bytes",
         "spooled_to_file",
     ] {
         obj.remove(deprecated_key);
+    }
+    if !has_spool_reference {
+        obj.remove("spooled_bytes");
     }
     obj.remove("raw_output");
     val
@@ -210,6 +216,17 @@ mod tests {
         assert!(normalized.get("follow_up_prompt").is_none());
         assert!(normalized.get("next_poll_args").is_none());
         assert!(normalized.get("preferred_next_action").is_none());
+    }
+
+    #[test]
+    fn preserves_spooled_bytes_for_spool_reference() {
+        let normalized = normalize_tool_output(json!({
+            "output": "preview\n",
+            "spool_path": ".vtcode/context/tool_outputs/run-123.txt",
+            "spooled_bytes": 4096
+        }));
+
+        assert_eq!(normalized["spooled_bytes"], 4096);
     }
 
     #[test]

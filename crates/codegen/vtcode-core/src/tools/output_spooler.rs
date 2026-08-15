@@ -206,6 +206,64 @@ impl<'a> SpooledOutputReference<'a> {
     }
 }
 
+/// Fill in the bounded metadata required by a model-facing spool reference.
+///
+/// Command-session spools are written by the session manager rather than this
+/// spooler, so they arrive with the storage marker but without the regular
+/// spooler envelope. Keep that normalization at the spooler boundary so all
+/// reference producers share the same preview and recovery metadata.
+pub(crate) fn ensure_spooled_reference_metadata(value: &mut Value) {
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    let Some(spool_path) = object
+        .get("spool_path")
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+    else {
+        return;
+    };
+
+    let preview_source = ["preview", "output", "raw_output", "stdout", "content"]
+        .into_iter()
+        .find_map(|field| {
+            object
+                .get(field)
+                .and_then(Value::as_str)
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned)
+        });
+    if object
+        .get("preview")
+        .and_then(Value::as_str)
+        .is_none_or(|preview| preview.is_empty())
+        && let Some(preview) = preview_source.as_deref()
+    {
+        object.insert("preview".to_string(), Value::String(preview.to_string()));
+    }
+
+    let spooled_bytes = object
+        .get("spooled_bytes")
+        .and_then(Value::as_u64)
+        .or_else(|| object.get("total_output_bytes").and_then(Value::as_u64))
+        .or_else(|| preview_source.as_ref().map(|preview| preview.len() as u64));
+    if let Some(bytes) = spooled_bytes {
+        object.entry("spooled_bytes").or_insert_with(|| json!(bytes));
+        object.entry("spool_note").or_insert_with(|| {
+            json!(format!(
+                "Large output ({bytes} bytes) spooled to `{spool_path}`. Use exec_command with cat, sed, or rg to inspect only the sections you need."
+            ))
+        });
+    } else {
+        object.entry("spool_note").or_insert_with(|| {
+            json!(format!(
+                "Large output spooled to `{spool_path}`. Use exec_command with cat, sed, or rg to inspect only the sections you need."
+            ))
+        });
+    }
+}
+
 /// How often (in number of spool operations) to run age-based cleanup.
 const CLEANUP_EVERY_N_SPOOLS: u64 = 50;
 

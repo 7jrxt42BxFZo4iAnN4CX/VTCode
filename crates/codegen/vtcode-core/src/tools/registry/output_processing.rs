@@ -4,79 +4,11 @@ use serde_json::{Value, json};
 use vtcode_commons::sanitizer::redact_secrets;
 
 use super::ToolRegistry;
-
-const PTY_FORCE_SPOOL_MIN_BYTES: usize = 12_000;
-
-fn is_pty_output_tool(tool_name: &str) -> bool {
-    crate::tools::tool_intent::canonical_command_session_tool_name(tool_name).is_some()
-}
-
-fn output_field_bytes(value: &Value) -> usize {
-    value
-        .get("raw_output")
-        .and_then(|v| v.as_str())
-        .map(str::len)
-        .or_else(|| value.get("output").and_then(|v| v.as_str()).map(str::len))
-        .or_else(|| value.get("stdout").and_then(|v| v.as_str()).map(str::len))
-        .unwrap_or(0)
-}
-
-fn should_force_spool(
-    tool_name: &str,
-    value: &Value,
-    is_mcp: bool,
-    spooling_enabled: bool,
-    max_output_tokens: usize,
-) -> bool {
-    if !spooling_enabled {
-        return false;
-    }
-    if value.to_string().len()
-        > max_output_tokens.saturating_mul(crate::tools::output_limits::OUTPUT_PREVIEW_CHARS_PER_TOKEN)
-    {
-        return true;
-    }
-    if value.get("no_spool").and_then(|v| v.as_bool()).unwrap_or(false) {
-        return false;
-    }
-    if is_mcp || !is_pty_output_tool(tool_name) {
-        return false;
-    }
-    if value.get("truncated").and_then(|v| v.as_bool()).unwrap_or(false) {
-        return true;
-    }
-    output_field_bytes(value) >= PTY_FORCE_SPOOL_MIN_BYTES
-}
-
-fn limit_spooled_preview(mut value: Value, max_output_tokens: usize) -> Value {
-    if value.get("spool_path").and_then(Value::as_str).is_none() {
-        return value;
-    }
-    let max_preview_bytes = max_output_tokens
-        .saturating_mul(crate::tools::output_limits::OUTPUT_PREVIEW_CHARS_PER_TOKEN)
-        .max(1);
-    let Some(object) = value.as_object_mut() else {
-        return value;
-    };
-    let mut preview_truncated = false;
-    for field in ["raw_output", "output", "stdout", "content", "preview"] {
-        let Some(text) = object.get(field).and_then(Value::as_str) else {
-            continue;
-        };
-        if text.len() > max_preview_bytes {
-            object.insert(
-                field.to_string(),
-                Value::String(vtcode_commons::formatting::truncate_byte_budget(text, max_preview_bytes, "")),
-            );
-            preview_truncated = true;
-        }
-    }
-    if preview_truncated {
-        object.insert("truncated".to_string(), Value::Bool(true));
-        object.insert("preview_truncated".to_string(), Value::Bool(true));
-    }
-    value
-}
+use super::spool_processing::{
+    limit_output_preview, limit_spooled_preview, preview_budget_bytes, should_force_spool,
+    should_keep_inline_pty_output,
+};
+use crate::tools::output_spooler::ensure_spooled_reference_metadata;
 
 fn redact_value_strings(value: &mut Value) {
     match value {
@@ -225,10 +157,27 @@ impl ToolRegistry {
         max_output_tokens: usize,
     ) -> Value {
         if value.get("output_spooled").and_then(Value::as_bool) == Some(true) {
+            redact_value_strings(&mut value);
+            if value.get("no_spool").and_then(Value::as_bool) == Some(true) {
+                if let Some(object) = value.as_object_mut() {
+                    for field in [
+                        "output_spooled",
+                        "spool_path",
+                        "spool_complete",
+                        "spool_pending",
+                        "spooled_bytes",
+                        "spool_note",
+                    ] {
+                        object.remove(field);
+                    }
+                }
+                return limit_output_preview(value, max_output_tokens);
+            }
+
             // A producer may have supplied both a spool marker and inline
             // fields. Sanitize those fields before trusting the marker; the
             // marker only describes storage, not the safety of the payload.
-            redact_value_strings(&mut value);
+            ensure_spooled_reference_metadata(&mut value);
             if let Some(object) = value.as_object_mut() {
                 object.remove("output_spooled");
             }
@@ -247,9 +196,7 @@ impl ToolRegistry {
                     value.clone(),
                     is_mcp,
                     force_spool,
-                    max_output_tokens
-                        .saturating_mul(crate::tools::output_limits::OUTPUT_PREVIEW_CHARS_PER_TOKEN)
-                        .max(1),
+                    preview_budget_bytes(max_output_tokens),
                 )
                 .await
             {
@@ -263,6 +210,11 @@ impl ToolRegistry {
                     );
                 }
             }
+        }
+
+        if should_keep_inline_pty_output(tool_name, &value, max_output_tokens) {
+            redact_value_strings(&mut value);
+            return limit_output_preview(value, max_output_tokens);
         }
 
         Self::sanitize_tool_output(value, is_mcp, max_output_tokens)
@@ -292,7 +244,7 @@ mod tests {
     #[test]
     fn force_spool_for_large_pty_output() {
         let value = json!({
-            "output": "x".repeat(PTY_FORCE_SPOOL_MIN_BYTES + 1)
+            "output": "x".repeat(vtcode_utility_tool_specs::DEFAULT_MAX_OUTPUT_TOKENS * 4 + 1)
         });
         assert!(should_force_spool(
             "run_pty_cmd",
@@ -306,7 +258,7 @@ mod tests {
     #[test]
     fn skip_force_spool_when_disabled_or_non_pty() {
         let no_spool_value = json!({
-            "output": "x".repeat(PTY_FORCE_SPOOL_MIN_BYTES + 1),
+            "output": "x".repeat(vtcode_utility_tool_specs::DEFAULT_MAX_OUTPUT_TOKENS * 4 + 1),
             "no_spool": true
         });
         assert!(!should_force_spool(
@@ -318,7 +270,7 @@ mod tests {
         ));
 
         let non_pty_value = json!({
-            "output": "x".repeat(PTY_FORCE_SPOOL_MIN_BYTES + 1)
+            "output": "x".repeat(1_000)
         });
         assert!(!should_force_spool(
             tools::GREP_FILE,
@@ -351,6 +303,114 @@ mod tests {
     }
 
     #[test]
+    fn zero_token_cap_still_forces_spooling_for_nonempty_pty_output() {
+        assert!(should_force_spool("run_pty_cmd", &json!({"output": "x"}), false, true, 0,));
+    }
+
+    #[test]
+    fn small_pty_output_does_not_force_spooling_from_response_metadata() {
+        let value = json!({
+            "output": "delayed-output\\n",
+            "session_id": "run-123",
+            "command": "sleep 0.5; printf delayed-output",
+            "working_directory": ".",
+            "next_continue_args": {"session_id": "run-123"},
+            "next_wait_args": {"session_id": "run-123", "action": "wait"},
+            "next_action_hint": "wait for the command to finish"
+        });
+
+        assert!(!should_force_spool("run_pty_cmd", &value, false, true, 16));
+    }
+
+    #[test]
+    fn metadata_only_command_session_output_respects_context_cap() {
+        let value = json!({
+            "sessions": [{
+                "session_id": "run-123",
+                "metadata": "x".repeat(128)
+            }]
+        });
+
+        assert!(should_force_spool("list_pty_sessions", &value, false, true, 1));
+        assert!(!should_keep_inline_pty_output("list_pty_sessions", &value, 1));
+    }
+
+    #[test]
+    fn large_secondary_output_field_cannot_hide_behind_empty_raw_output() {
+        let value = json!({
+            "raw_output": "",
+            "output": "x".repeat(128)
+        });
+
+        assert!(should_force_spool("run_pty_cmd", &value, false, true, 1));
+        assert!(!should_keep_inline_pty_output("run_pty_cmd", &value, 1));
+    }
+
+    #[tokio::test]
+    async fn small_pty_response_preserves_session_metadata_inline() {
+        let temp = tempfile::tempdir().unwrap();
+        let registry = ToolRegistry::new(temp.path().to_path_buf()).await;
+        let value = json!({
+            "success": true,
+            "output": "delayed-output\\n",
+            "session_id": "run-123",
+            "command": "sleep 0.5; printf delayed-output",
+            "working_directory": ".",
+            "next_continue_args": {"session_id": "run-123"},
+            "next_wait_args": {"session_id": "run-123", "action": "wait"},
+            "next_action_hint": "wait for the command to finish"
+        });
+
+        let result = registry.process_tool_output("run_pty_cmd", value, false, 16).await;
+
+        assert_eq!(result["session_id"], "run-123");
+        assert_eq!(result["output"], "delayed-output\\n");
+        assert!(result.get("content").is_none());
+        assert!(result.get("note").is_none());
+    }
+
+    #[tokio::test]
+    async fn small_pty_response_redacts_inline_secrets() {
+        let temp = tempfile::tempdir().unwrap();
+        let registry = ToolRegistry::new(temp.path().to_path_buf()).await;
+        let value = json!({
+            "output": "password=supersecretvalue",
+            "command": "printf password=supersecretvalue"
+        });
+
+        let result = registry.process_tool_output("run_pty_cmd", value, false, 16).await;
+
+        assert_eq!(result["output"], "password=[REDACTED_SECRET]");
+        assert_eq!(result["command"], "printf password=[REDACTED_SECRET]");
+    }
+
+    #[tokio::test]
+    async fn configured_threshold_controls_untruncated_pty_output() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("vtcode.toml"),
+            "[context.dynamic]\nenabled = true\ntool_output_threshold = 16384\n\n[workspace]\nuse_root_config = true\n",
+        )
+        .unwrap();
+        let registry = ToolRegistry::new(temp.path().to_path_buf()).await;
+        let value = json!({
+            "output": "x".repeat(16_000)
+        });
+
+        let result = registry
+            .process_tool_output(
+                "run_pty_cmd",
+                value.clone(),
+                false,
+                vtcode_utility_tool_specs::DEFAULT_MAX_OUTPUT_TOKENS,
+            )
+            .await;
+
+        assert!(result.get("spool_path").is_none());
+        assert_eq!(result["output"], value["output"]);
+    }
+
+    #[test]
     fn spooled_preview_keeps_the_full_output_reference() {
         let value = json!({
             "content": "output exceeds one token",
@@ -380,6 +440,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn no_spool_marker_still_redacts_and_bounds_inline_output() {
+        let temp = tempfile::tempdir().unwrap();
+        let registry = ToolRegistry::new(temp.path().to_path_buf()).await;
+        let value = json!({
+            "output_spooled": true,
+            "no_spool": true,
+            "spool_path": ".vtcode/context/tool_outputs/result.txt",
+            "output": "0123456789abcdef",
+            "raw_output": "0123456789abcdef",
+            "diagnostic": "password=supersecretvalue"
+        });
+
+        let result = registry.process_tool_output("run_pty_cmd", value, false, 2).await;
+
+        assert_eq!(result["diagnostic"], "password=[REDACTED_SECRET]");
+        assert!(result["output"].as_str().unwrap_or_default().len() <= 8);
+        assert!(result.get("spool_path").is_none());
+        assert!(result.get("output_spooled").is_none());
+    }
+
+    #[tokio::test]
+    async fn spooled_marker_retains_bounded_preview_and_recovery_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let registry = ToolRegistry::new(temp.path().to_path_buf()).await;
+        let value = json!({
+            "output_spooled": true,
+            "spool_path": ".vtcode/context/tool_outputs/result.txt",
+            "total_output_bytes": 12_345,
+            "output": "0123456789abcdef"
+        });
+
+        let result = registry.process_tool_output("run_pty_cmd", value, false, 2).await;
+
+        assert_eq!(result["preview"], "01234567");
+        assert_eq!(result["spooled_bytes"], 12_345);
+        assert!(result["spool_note"].as_str().unwrap_or_default().contains("result.txt"));
+        assert!(result.get("output_spooled").is_none());
+    }
+
+    #[tokio::test]
     async fn process_tool_output_skips_force_spool_when_dynamic_context_is_disabled() {
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -389,7 +489,7 @@ mod tests {
         .unwrap();
         let registry = ToolRegistry::new(temp.path().to_path_buf()).await;
         let value = json!({
-            "output": "x".repeat(PTY_FORCE_SPOOL_MIN_BYTES + 1),
+            "output": "x".repeat(vtcode_utility_tool_specs::DEFAULT_MAX_OUTPUT_TOKENS * 2 + 1),
             "truncated": true
         });
 

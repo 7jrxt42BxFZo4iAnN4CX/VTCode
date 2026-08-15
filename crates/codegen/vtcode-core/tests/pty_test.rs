@@ -179,6 +179,36 @@ async fn test_pty_shell_option_runs_through_requested_shell() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn test_exec_command_small_pipe_output_stays_inline_without_spool_reference() {
+    let (_temp, registry) = temp_registry_with_config(Some(
+        r#"[context.dynamic]
+enabled = true
+tool_output_threshold = 64
+"#,
+    ))
+    .await;
+
+    let result = registry
+        .execute_tool(
+            "exec_command",
+            json!({
+                "tty": false,
+                "cmd": "printf 'small output\\n'",
+            }),
+        )
+        .await
+        .expect("small pipe command result");
+
+    assert_eq!(result["success"], true);
+    assert_eq!(result["output"].as_str(), Some("small output\n"));
+    assert!(result.get("spool_path").is_none(), "small output leaked spool path: {result:?}");
+    assert!(result.get("output_spooled").is_none(), "small output leaked spool marker: {result:?}");
+    assert!(result.get("spool_complete").is_none(), "small output leaked spool lifecycle: {result:?}");
+    assert!(result.get("spool_pending").is_none(), "small output leaked pending metadata: {result:?}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn test_create_pty_session_uses_requested_shell() {
     let (_temp, registry) = temp_registry().await;
 
@@ -688,7 +718,7 @@ async fn test_write_stdin_wait_deadline_preserves_reusable_session() {
         .execute_tool(
             "exec_command",
             json!({
-                "cmd": "sleep 0.2; printf 'wait-output\\n'; sleep 2",
+                "cmd": "sleep 0.2; printf 'wait-output'; i=0; while [ $i -lt 9000 ]; do printf 'x'; i=$((i+1)); done; printf '\\n'; sleep 2",
                 "yield_time_ms": 0,
             }),
         )
@@ -778,6 +808,56 @@ async fn test_write_stdin_wait_spools_high_volume_pipe_output() {
     assert!(spooled.starts_with("line-00000\n"), "first pipe output chunk was lost");
     assert!(spooled.contains("line-19999\n"), "last pipe output chunk was lost");
     assert_eq!(spooled.lines().count(), 20_000);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_reading_pipe_spool_file_does_not_create_a_second_spool_reference() {
+    let (temp, registry) = temp_registry().await;
+    let start = registry
+        .execute_tool(
+            "exec_command",
+            json!({
+                "tty": false,
+                "cmd": "i=0; while [ $i -lt 20000 ]; do printf 'line-%05d\\n' \"$i\"; i=$((i+1)); done; sleep 1",
+                "yield_time_ms": 0,
+            }),
+        )
+        .await
+        .expect("start high-volume pipe command");
+    let sid = exec_session_id(&start);
+
+    let completed = registry
+        .execute_tool(
+            "write_stdin",
+            json!({
+                "action": "wait",
+                "session_id": sid.as_str(),
+                "wait_timeout_seconds": 10,
+                "max_output_tokens": 8,
+            }),
+        )
+        .await
+        .expect("wait for high-volume pipe command");
+    let spool_path = completed["spool_path"].as_str().expect("large output spool path");
+    assert!(temp.path().join(spool_path).is_file());
+
+    let read_result = registry
+        .execute_tool(
+            "exec_command",
+            json!({
+                "tty": false,
+                "cmd": format!("cat {spool_path}"),
+                "max_output_tokens": 8,
+            }),
+        )
+        .await
+        .expect("read spool file through exec command");
+
+    assert_eq!(read_result["success"], true);
+    assert!(read_result["output"].as_str().unwrap_or_default().contains("line-00000"));
+    assert!(read_result.get("spool_path").is_none(), "spool read recursively spooled: {read_result:?}");
+    assert!(read_result.get("output_spooled").is_none(), "spool read leaked marker: {read_result:?}");
 }
 
 #[cfg(unix)]

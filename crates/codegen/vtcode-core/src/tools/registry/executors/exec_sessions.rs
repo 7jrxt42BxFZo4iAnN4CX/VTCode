@@ -404,7 +404,14 @@ impl ToolRegistry {
     ) -> Result<bool> {
         if let Some(stats) = self.exec_sessions.output_stats(session_id).await? {
             let safe_to_prune = !stats.spool_available || stats.spool_complete;
-            attach_spool_metadata(response, &stats, session_exited);
+            let spooler_config = self.output_spooler.config();
+            attach_spool_metadata(
+                response,
+                &stats,
+                session_exited,
+                spooler_config.enabled,
+                spooler_config.threshold_bytes,
+            );
             return Ok(safe_to_prune);
         }
         Ok(true)
@@ -726,9 +733,20 @@ fn attach_spool_metadata(
     response: &mut Value,
     stats: &crate::tools::exec_session::PipeOutputStats,
     session_exited: bool,
+    spooling_enabled: bool,
+    spool_threshold_bytes: usize,
 ) {
     response["total_output_bytes"] = json!(stats.total_bytes);
     response["output_truncated"] = json!(stats.truncated);
+
+    let output_exceeds_threshold = stats.total_bytes > spool_threshold_bytes as u64;
+    let response_capped = ["truncated", "query_truncated"]
+        .into_iter()
+        .any(|field| response.get(field).and_then(Value::as_bool).unwrap_or(false));
+    if !spooling_enabled || !(output_exceeds_threshold || stats.truncated || response_capped) {
+        return;
+    }
+
     if stats.spool_available && (stats.spool_complete || !session_exited) {
         response["spool_path"] = json!(stats.spool_path);
         response["output_spooled"] = json!(true);
@@ -772,7 +790,7 @@ mod tests {
         };
         let mut response = json!({});
 
-        attach_spool_metadata(&mut response, &stats, true);
+        attach_spool_metadata(&mut response, &stats, true, true, 32);
 
         assert_eq!(response["total_output_bytes"], 42);
         assert_eq!(response["output_truncated"], true);
@@ -793,7 +811,7 @@ mod tests {
         };
         let mut response = json!({});
 
-        attach_spool_metadata(&mut response, &stats, false);
+        attach_spool_metadata(&mut response, &stats, false, true, 32);
 
         assert_eq!(response["spool_path"], stats.spool_path);
         assert_eq!(response["output_spooled"], true);
@@ -812,11 +830,88 @@ mod tests {
         };
         let mut response = json!({});
 
-        attach_spool_metadata(&mut response, &stats, true);
+        attach_spool_metadata(&mut response, &stats, true, true, 32);
 
         assert_eq!(response["spool_path"], stats.spool_path);
         assert_eq!(response["output_spooled"], true);
         assert_eq!(response["spool_complete"], true);
         assert!(response.get("spool_pending").is_none());
+    }
+
+    #[test]
+    fn small_output_keeps_lossless_spool_internal() {
+        let stats = PipeOutputStats {
+            total_bytes: 42,
+            truncated: false,
+            spool_path: ".vtcode/context/tool_outputs/run-1.txt".to_string(),
+            spool_available: true,
+            spool_complete: true,
+        };
+        let mut response = json!({});
+
+        attach_spool_metadata(&mut response, &stats, true, true, 64);
+
+        assert_eq!(response["total_output_bytes"], 42);
+        assert_eq!(response["output_truncated"], false);
+        assert!(response.get("spool_path").is_none());
+        assert!(response.get("output_spooled").is_none());
+        assert!(response.get("spool_complete").is_none());
+        assert!(response.get("spool_pending").is_none());
+    }
+
+    #[test]
+    fn disabled_dynamic_spooling_keeps_diagnostics_without_spool_metadata() {
+        let stats = PipeOutputStats {
+            total_bytes: 8_192,
+            truncated: true,
+            spool_path: ".vtcode/context/tool_outputs/run-1.txt".to_string(),
+            spool_available: true,
+            spool_complete: true,
+        };
+        let mut response = json!({});
+
+        attach_spool_metadata(&mut response, &stats, true, false, 64);
+
+        assert_eq!(response["total_output_bytes"], 8_192);
+        assert_eq!(response["output_truncated"], true);
+        assert!(response.get("spool_path").is_none());
+        assert!(response.get("output_spooled").is_none());
+        assert!(response.get("spool_pending").is_none());
+    }
+
+    #[test]
+    fn response_cap_advertises_spool_even_below_threshold() {
+        let stats = PipeOutputStats {
+            total_bytes: 42,
+            truncated: false,
+            spool_path: ".vtcode/context/tool_outputs/run-1.txt".to_string(),
+            spool_available: true,
+            spool_complete: true,
+        };
+        let mut response = json!({"truncated": true});
+
+        attach_spool_metadata(&mut response, &stats, true, true, 64);
+
+        assert_eq!(response["spool_path"], stats.spool_path);
+        assert_eq!(response["output_spooled"], true);
+        assert_eq!(response["spool_complete"], true);
+    }
+
+    #[test]
+    fn query_cap_advertises_spool_even_below_threshold() {
+        let stats = PipeOutputStats {
+            total_bytes: 42,
+            truncated: false,
+            spool_path: ".vtcode/context/tool_outputs/run-1.txt".to_string(),
+            spool_available: true,
+            spool_complete: true,
+        };
+        let mut response = json!({"query_truncated": true});
+
+        attach_spool_metadata(&mut response, &stats, true, true, 64);
+
+        assert_eq!(response["spool_path"], stats.spool_path);
+        assert_eq!(response["output_spooled"], true);
+        assert_eq!(response["spool_complete"], true);
     }
 }

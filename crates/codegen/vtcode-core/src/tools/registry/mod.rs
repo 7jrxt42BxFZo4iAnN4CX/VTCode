@@ -57,6 +57,7 @@ mod scheduler_facade;
 mod search_runtime_facade;
 mod shell_policy;
 mod shell_policy_facade;
+mod spool_processing;
 mod spooler_facade;
 mod subagent_facade;
 mod telemetry;

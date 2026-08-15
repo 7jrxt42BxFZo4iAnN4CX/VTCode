@@ -1,6 +1,8 @@
 use crate::tools::command_args::{is_readonly_command_string, raw_command_text};
 use serde_json::Value;
 
+const TOOL_OUTPUT_SPOOL_DIRECTORY: &str = ".vtcode/context/tool_outputs";
+
 /// Conservative allow-list of read-only inspection commands used by
 /// `command_session`. Any command that could write, move, or delete must be
 /// rejected so it is not cached or parallelized as read-only.
@@ -109,6 +111,21 @@ pub fn is_readonly_command_session_command(args: &Value) -> bool {
     raw.split("&&").all(is_readonly_segment)
 }
 
+/// Returns `true` when a safe shell inspection command reads the internal tool
+/// output spool directory. Such reads must stay inline: spooling their output
+/// again would create a recursive chain of spool references.
+pub fn is_spool_file_read_command(tool_name: &str, args: &Value) -> bool {
+    if super::classify::canonical_command_session_tool_name(tool_name).is_none() {
+        return false;
+    }
+
+    if !is_readonly_command_session_command(args) {
+        return false;
+    }
+
+    raw_command_text(args).is_some_and(|command| command.replace('\\', "/").contains(TOOL_OUTPUT_SPOOL_DIRECTORY))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,5 +224,27 @@ mod tests {
         assert!(is_readonly_command_session_command(&run_cmd("fd -e rs planner")));
         assert!(is_readonly_command_session_command(&run_cmd("stat Cargo.toml && file target")));
         assert!(is_readonly_command_session_command(&run_cmd("which cargo")));
+    }
+
+    #[test]
+    fn spool_file_reads_are_detected_only_for_readonly_commands() {
+        for command in [
+            "cat .vtcode/context/tool_outputs/run-1.txt",
+            "sed -n '1,20p' .vtcode/context/tool_outputs/run-1.txt",
+            "rg error .vtcode/context/tool_outputs",
+        ] {
+            assert!(is_spool_file_read_command("exec_command", &run_cmd(command)), "expected spool read: {command}");
+        }
+
+        for command in [
+            "cat .vtcode/context/tool_outputs/run-1.txt > copied.txt",
+            "sed -i 's/a/b/' .vtcode/context/tool_outputs/run-1.txt",
+            "rm .vtcode/context/tool_outputs/run-1.txt",
+        ] {
+            assert!(!is_spool_file_read_command("exec_command", &run_cmd(command)), "unexpected spool read: {command}");
+        }
+
+        assert!(!is_spool_file_read_command("mcp_tool", &run_cmd("cat .vtcode/context/tool_outputs/run-1.txt")));
+        assert!(is_spool_file_read_command("exec_command", &run_cmd("cat .vtcode/context/tool_outputs/run-1.txt")));
     }
 }
