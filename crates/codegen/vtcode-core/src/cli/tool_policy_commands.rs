@@ -105,23 +105,3 @@ fn display_tool_name(requested_tool: &str, normalized_tool: &str) -> String {
         format!("{requested_tool} -> {normalized_tool}")
     }
 }
-
-/// Print tool policy help
-pub fn print_tool_policy_help() {
-    println!("{}", style("Tool Policy Management").cyan().bold());
-    println!();
-    println!("Tool policies control which tools the agent can use:");
-    println!();
-    println!("  {} - Tool executes automatically without prompting", style("allow").green());
-    println!("  {} - Tool prompts for user confirmation each time", style("prompt").cyan());
-    println!("  {} - Tool is never allowed to execute", style("deny").red());
-    println!();
-    println!("Policies are stored in ~/.vtcode/tool-policy.json");
-    println!("Once you approve or deny a tool, your choice is remembered for future runs.");
-    println!();
-    println!("Examples:");
-    println!("  vtcode tool-policy status           # Show current policies");
-    println!("  vtcode tool-policy allow read_file  # Allow read_file tool");
-    println!("  vtcode tool-policy deny rm          # Deny rm tool");
-    println!("  vtcode tool-policy reset-all        # Reset all to prompt");
-}

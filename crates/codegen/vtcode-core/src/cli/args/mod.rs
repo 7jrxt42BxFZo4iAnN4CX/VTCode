@@ -1,7 +1,7 @@
 use clap::{ArgAction, ColorChoice, Parser, Subcommand, ValueHint};
 use colorchoice_clap::Color as ColorSelection;
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::config::models::ModelId;
 
@@ -40,31 +40,6 @@ pub use schema::{SchemaCommands, SchemaMode, SchemaOutputFormat};
 pub use secret::{MigrateArgs, SecretArgs, SecretProvider, SecretSubcommand};
 pub use session_store::SessionStoreCommand;
 pub use skills::{SkillsRefSubcommand, SkillsSubcommand};
-
-pub const PLANNING_WORKFLOW_READ_ONLY_HEADER: &str = "# PLANNING WORKFLOW (READ-ONLY)";
-
-pub const PLANNING_WORKFLOW_READ_ONLY_NOTICE_LINE: &str = "Mutating file edits are blocked, including `apply_patch`. Use `exec_command.cmd` only for read-only repository inspection with the active shell profile's syntax; keep `task_tracker` current. Plan artifacts under `.vtcode/plans/` are allowed.";
-
-pub const PLANNING_WORKFLOW_EXIT_INSTRUCTION_LINE: &str = "Only a validated persisted plan may be approved. Stop planning and switch to implementation after explicit approval.";
-
-pub const PLANNING_WORKFLOW_PLAN_QUALITY_LINE: &str = "Keep plans compact and spec-like. Emit ONE `<proposed_plan>` with `## Summary`, `## Implementation Steps` (or `## Steps`), `## Test Cases and Validation` (or `## Validation`), and `## Assumptions and Defaults` (or `## Assumptions`). Every numbered implementation step must name a concrete repository target and include a non-empty `verify:`/`verification:` check. Resolve placeholders and open decisions before approval; use `Next open decision:` or `Open question:` only when unresolved.";
-
-pub const PLANNING_WORKFLOW_RESEARCH_SCOPE_LINE: &str = "Scale research to the request: for a narrow or simple ask, ~5-10 targeted reads/searches is usually enough before drafting `<proposed_plan>` — do not exhaustively enumerate the whole repository. For a broad or ambiguous ask, research proportionally more, but stop and draft as soon as scope/decomposition/verification decisions are closed.";
-
-pub const PLANNING_WORKFLOW_INTERVIEW_POLICY_LINE: &str = "Use repository evidence and judgment for ordinary ambiguity. Use `request_user_input` only for material blockers; if it is unavailable or denied, do not retry it and synthesize a valid plan from existing evidence.";
-
-pub const PLANNING_WORKFLOW_NO_REQUEST_USER_INPUT_POLICY_LINE: &str = "`request_user_input` unavailable here. Continue exploring read-only, finish unblocked planning, surface blockers in plain text.";
-
-pub const PLANNING_WORKFLOW_NO_AUTO_EXIT_LINE: &str = "Do not auto-exit planning workflow. Wait for explicit approval only after a validated persisted `<proposed_plan>` exists.";
-
-pub const PLANNING_WORKFLOW_IMPLEMENTATION_PROMPT: &str = "Implement the approved plan.";
-
-pub const PLANNING_WORKFLOW_HINT: &str =
-    "Planning workflow is active; continue refining until a validated plan is persisted.";
-
-pub const PLANNING_WORKFLOW_TASK_TRACKER_LINE: &str = "`task_tracker` remains available while planning.";
-
-pub const PLANNING_WORKFLOW_IMPLEMENT_REMINDER: &str = "• Planning workflow is active with read-only permissions. Continue refining and describe what to revise; approval controls appear only after a validated plan is persisted. If a write tool is unavailable, summarize the blocker briefly.";
 
 #[derive(Parser, Debug, Clone)]
 pub struct Cli {
@@ -897,143 +872,6 @@ impl Default for Cli {
 }
 
 impl Cli {
-    /// Get the model to use, with fallback to default
-    pub fn get_model(&self) -> String {
-        self.model.clone().unwrap_or_else(|| ModelId::default().to_string())
-    }
-
-    /// Load configuration from a simple TOML-like file without external deps
-    ///
-    /// Supported keys (top-level): model, api_key_env, verbose, log_level, workspace
-    /// Example:
-    ///   model = "gemini-3-flash-preview"
-    ///   api_key_env = "GEMINI_API_KEY"
-    ///   verbose = true
-    ///   log_level = "info"
-    ///   workspace = "/path/to/workspace"
-    pub async fn load_config(&self) -> anyhow::Result<ConfigFile> {
-        use tokio::fs;
-
-        // Resolve candidate path
-        let explicit_path = self.config.iter().find_map(|entry| {
-            let trimmed = entry.trim();
-            if trimmed.contains('=') || trimmed.is_empty() {
-                None
-            } else {
-                Some(PathBuf::from(trimmed))
-            }
-        });
-
-        let path = if let Some(p) = explicit_path {
-            p
-        } else {
-            let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            let primary = cwd.join("vtcode.toml");
-            let secondary = cwd.join(".vtcode.toml");
-            if fs::try_exists(&primary).await.unwrap_or(false) {
-                primary
-            } else if fs::try_exists(&secondary).await.unwrap_or(false) {
-                secondary
-            } else {
-                // No config file; return empty config
-                return Ok(ConfigFile {
-                    model: None,
-                    provider: None,
-                    api_key_env: None,
-                    verbose: None,
-                    log_level: None,
-                    workspace: None,
-                    tools: None,
-                    context: None,
-                    logging: None,
-                    performance: None,
-                    security: None,
-                });
-            }
-        };
-
-        let text = fs::read_to_string(&path).await?;
-
-        // Very small parser: key = value, supports quoted strings, booleans, and plain paths
-        let mut cfg = ConfigFile {
-            model: None,
-            provider: None,
-            api_key_env: None,
-            verbose: None,
-            log_level: None,
-            workspace: None,
-            tools: None,
-            context: None,
-            logging: None,
-            performance: None,
-            security: None,
-        };
-
-        for raw_line in text.lines() {
-            let line = raw_line.trim();
-            if line.is_empty() || line.starts_with('#') || line.starts_with("//") {
-                continue;
-            }
-            // Strip inline comments after '#'
-            let line = match line.find('#') {
-                Some(idx) => &line[..idx],
-                None => line,
-            }
-            .trim();
-
-            // Expect key = value
-            let mut parts = line.splitn(2, '=');
-            let key = parts.next().map(|s| s.trim()).unwrap_or("");
-            let val = parts.next().map(|s| s.trim()).unwrap_or("");
-            if key.is_empty() || val.is_empty() {
-                continue;
-            }
-
-            // Remove surrounding quotes if present
-            let unquote = |s: &str| -> String {
-                let s = s.trim();
-                if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
-                    s[1..s.len() - 1].to_owned()
-                } else {
-                    s.to_owned()
-                }
-            };
-
-            match key {
-                "model" => cfg.model = Some(unquote(val)),
-                "api_key_env" => cfg.api_key_env = Some(unquote(val)),
-                "verbose" => {
-                    let v = unquote(val).to_lowercase();
-                    cfg.verbose = Some(matches!(v.as_str(), "true" | "1" | "yes"));
-                }
-                "log_level" => cfg.log_level = Some(unquote(val)),
-                "workspace" => {
-                    let v = unquote(val);
-                    let p = if Path::new(&v).is_absolute() {
-                        PathBuf::from(v)
-                    } else {
-                        // Resolve relative to config file directory
-                        let base = path.parent().unwrap_or(Path::new("."));
-                        base.join(v)
-                    };
-                    cfg.workspace = Some(p);
-                }
-                _ => {
-                    // Ignore unknown keys in this minimal parser
-                }
-            }
-        }
-
-        Ok(cfg)
-    }
-
-    /// Get the effective workspace path
-    pub fn get_workspace(&self) -> PathBuf {
-        self.workspace
-            .clone()
-            .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
-    }
-
     /// Get the effective API key environment variable
     ///
     /// Automatically infers the API key environment variable based on the provider
@@ -1045,27 +883,6 @@ impl Cli {
                 .unwrap_or(crate::config::constants::defaults::DEFAULT_PROVIDER),
             &self.api_key_env,
         )
-    }
-
-    /// Check if verbose mode is enabled
-    pub fn is_verbose(&self) -> bool {
-        self.verbose
-    }
-
-    /// Check if performance monitoring is enabled
-    /// Check if research-preview features are enabled
-    pub fn is_research_preview_enabled(&self) -> bool {
-        self.research_preview
-    }
-
-    /// Get the security level
-    pub fn get_security_level(&self) -> &str {
-        &self.security_level
-    }
-
-    /// Check if debug mode is enabled (includes verbose)
-    pub fn is_debug_mode(&self) -> bool {
-        self.debug || self.verbose
     }
 
     pub fn codex_experimental_override(&self) -> Option<bool> {

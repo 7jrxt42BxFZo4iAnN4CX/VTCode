@@ -3,10 +3,8 @@
 //! This module provides functionality to generate Unix man pages for VT Code
 //! commands and subcommands using the roff-rs library.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use roff::{Roff, bold, italic, roman};
-use std::path::Path;
-use tokio::fs;
 
 /// Man page generator for VT Code CLI
 pub struct ManPageGenerator;
@@ -595,27 +593,5 @@ impl ManPageGenerator {
             .render();
 
         Ok(page)
-    }
-
-    /// Save man page to file
-    pub async fn save_man_page(content: &str, filename: &Path) -> Result<()> {
-        fs::write(filename, content)
-            .await
-            .with_context(|| format!("Failed to write man page to {}", filename.display()))?;
-        Ok(())
-    }
-
-    /// Get list of available commands for man page generation
-    pub fn available_commands() -> Vec<&'static str> {
-        vec![
-            "chat",
-            "ask",
-            "analyze",
-            "performance",
-            "benchmark",
-            "create-project",
-            "init",
-            "man",
-        ]
     }
 }

@@ -57,37 +57,6 @@ pub enum SecretProvider {
     MergeGateway,
 }
 
-impl SecretProvider {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            SecretProvider::OpenAI => "openai",
-            SecretProvider::Anthropic => "anthropic",
-            SecretProvider::Gemini => "gemini",
-            SecretProvider::DeepSeek => "deepseek",
-            SecretProvider::Meta => "meta",
-            SecretProvider::OpenRouter => "openrouter",
-            SecretProvider::StepFun => "stepfun",
-            SecretProvider::Zai => "zai",
-            SecretProvider::Moonshot => "moonshot",
-            SecretProvider::MiniMax => "minimax",
-            SecretProvider::Mistral => "mistral",
-            SecretProvider::HuggingFace => "huggingface",
-            SecretProvider::MiMo => "mimo",
-            SecretProvider::OpenCodeZen => "opencode-zen",
-            SecretProvider::OpenCodeGo => "opencode-go",
-            SecretProvider::Qwen => "qwen",
-            SecretProvider::Evolink => "evolink",
-            SecretProvider::Poolside => "poolside",
-            SecretProvider::Ollama => "ollama",
-            SecretProvider::OllamaCloud => "ollama-cloud",
-            SecretProvider::LMStudio => "lmstudio",
-            SecretProvider::Copilot => "copilot",
-            SecretProvider::Nvidia => "nvidia",
-            SecretProvider::MergeGateway => "merge-gateway",
-        }
-    }
-}
-
 /// Secret management subcommands
 #[derive(Debug, Subcommand, Clone)]
 pub enum SecretSubcommand {
