@@ -1,6 +1,7 @@
 use anstyle::Color;
 use serde_json::Value;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Notify;
 use tracing::warn;
 use vtcode_core::config::loader::VTCodeConfig;
@@ -22,7 +23,7 @@ use crate::agent::runloop::unified::ui_interaction::PlaceholderSpinner;
 use super::{CancellationTokens, streams_pty_output};
 
 use super::cache::{cache_target_path, create_enhanced_cache_key, is_tool_cacheable, stream_command_parts};
-use super::execution_attempts::execute_tool_with_timeout_ref_prevalidated;
+use super::execution::execute_tool_with_timeout_ref_prevalidated;
 use super::execution_helpers::{build_tool_status_message, is_loop_detection_status, parse_cached_output};
 use super::file_conflict_runtime::{RuntimeToolExecution, into_runtime_tool_execution};
 use super::pty_stream::PtyStreamRuntime;
@@ -48,14 +49,9 @@ impl Drop for ProgressCallbackGuard<'_> {
     }
 }
 
-struct StreamingToolOutput {
-    started_emitted: bool,
-    output: String,
-}
-
 #[derive(Clone)]
 struct StreamingOutputCoalescer {
-    state: Arc<StdMutex<StreamingToolOutput>>,
+    started_emitted: Arc<AtomicBool>,
     harness_emitter: HarnessEventEmitter,
     tool_item_id: String,
     tool_call_id: String,
@@ -64,7 +60,7 @@ struct StreamingOutputCoalescer {
 impl StreamingOutputCoalescer {
     fn new(harness_emitter: HarnessEventEmitter, tool_item_id: String, tool_call_id: String) -> Self {
         Self {
-            state: Arc::new(StdMutex::new(StreamingToolOutput { started_emitted: false, output: String::new() })),
+            started_emitted: Arc::new(AtomicBool::new(false)),
             harness_emitter,
             tool_item_id,
             tool_call_id,
@@ -75,13 +71,7 @@ impl StreamingOutputCoalescer {
         if chunk.is_empty() {
             return;
         }
-        let emit_started = {
-            let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let emit_started = !state.started_emitted;
-            state.started_emitted = true;
-            state.output.push_str(chunk);
-            emit_started
-        };
+        let emit_started = !self.started_emitted.swap(true, Ordering::AcqRel);
 
         if emit_started {
             let _ = self
@@ -227,6 +217,15 @@ async fn execute_with_cache_and_streaming_inner(
         return into_runtime_tool_execution(name, args_val, cached_status);
     }
 
+    // Command and PTY calls can mutate arbitrary files without returning a
+    // structured modified_files list. Invalidate filesystem-derived results
+    // before executing a cache miss, while preserving cache hits for genuinely
+    // read-only command results such as path-scoped `git diff`.
+    if is_command_tool(name) {
+        let mut cache = tool_result_cache.write().await;
+        cache.invalidate_after_external_command();
+    }
+
     handle.force_redraw();
 
     let show_loading_ui = should_show_loading_ui_for_tool_call(name, args_val);
@@ -332,18 +331,78 @@ async fn execute_with_cache_and_streaming_inner(
 
     let runtime_execution = into_runtime_tool_execution(name, args_val, outcome);
 
-    if let RuntimeToolExecution::Completed(ToolExecutionStatus::Success { output, command_success, .. }) =
-        &runtime_execution
-        && is_cacheable_tool
+    if let RuntimeToolExecution::Completed(status) = &runtime_execution {
+        cache_successful_output(registry, tool_result_cache, name, args_val, &cache_target, status).await;
+    }
+
+    runtime_execution
+}
+
+#[cfg_attr(feature = "profiling", hotpath::measure)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Intentional compatibility, platform, or test-only suppression."
+)] // parallel execution path, all params needed
+pub(crate) async fn execute_prevalidated_read_only_with_cache(
+    registry: &ToolRegistry,
+    tool_result_cache: &Arc<tokio::sync::RwLock<ToolResultCache>>,
+    name: &str,
+    args_val: &Value,
+    ctrl_c_state: &Arc<CtrlCState>,
+    ctrl_c_notify: &Arc<Notify>,
+    progress_reporter: Option<&ProgressReporter>,
+    max_tool_retries: usize,
+    exec_settlement_mode: ExecSettlementMode,
+    safety_prevalidated: bool,
+) -> ToolExecutionStatus {
+    let is_cacheable_tool = is_tool_cacheable(name, args_val);
+    let cache_target = cache_target_path(name, args_val);
+    if is_cacheable_tool
+        && let Some(cached_status) =
+            lookup_cached_status(registry, tool_result_cache, name, args_val, &cache_target, CacheLookupPhase::Initial)
+                .await
+    {
+        return cached_status;
+    }
+
+    let status = execute_tool_with_timeout_ref_prevalidated(
+        registry,
+        name,
+        args_val,
+        ctrl_c_state,
+        ctrl_c_notify,
+        progress_reporter,
+        max_tool_retries,
+        exec_settlement_mode,
+        safety_prevalidated,
+    )
+    .await;
+
+    cache_successful_output(registry, tool_result_cache, name, args_val, &cache_target, &status).await;
+
+    status
+}
+
+async fn cache_successful_output(
+    registry: &ToolRegistry,
+    tool_result_cache: &Arc<tokio::sync::RwLock<ToolResultCache>>,
+    name: &str,
+    args_val: &Value,
+    cache_target: &str,
+    status: &ToolExecutionStatus,
+) {
+    if !is_tool_cacheable(name, args_val) {
+        return;
+    }
+
+    if let ToolExecutionStatus::Success { output, command_success, .. } = status
         && should_cache_success_output(name, output, *command_success)
     {
-        let (_, cache_key) = workspace_scoped_cache_key(registry, name, args_val, &cache_target);
+        let (_, cache_key) = workspace_scoped_cache_key(registry, name, args_val, cache_target);
         let output_json = serde_json::to_string(output).unwrap_or_else(|_| "{}".to_string());
         let mut cache = tool_result_cache.write().await;
         cache.insert_arc(cache_key, Arc::new(output_json));
     }
-
-    runtime_execution
 }
 
 fn pty_header_color(status: &ToolExecutionStatus) -> Color {
@@ -457,14 +516,17 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::mpsc;
     use vtcode_core::config::constants::tools;
-    use vtcode_core::tools::registry::ToolRegistry;
+    use vtcode_core::tools::registry::{ExecSettlementMode, ToolRegistry};
+    use vtcode_core::tools::result_cache::ToolResultCache;
     use vtcode_ui::tui::app::{InlineCommand, InlineHandle};
 
     use super::{
-        ProgressCallbackGuard, StreamingOutputCoalescer, extract_pty_stream_command, set_tool_execution_status,
-        should_cache_success_output, should_show_loading_ui_for_tool_call,
+        ProgressCallbackGuard, StreamingOutputCoalescer, execute_prevalidated_read_only_with_cache,
+        extract_pty_stream_command, set_tool_execution_status, should_cache_success_output,
+        should_show_loading_ui_for_tool_call,
     };
     use crate::agent::runloop::unified::inline_events::harness::HarnessEventEmitter;
+    use crate::agent::runloop::unified::state::CtrlCState;
     use tempfile::TempDir;
 
     #[test]
@@ -577,6 +639,59 @@ mod tests {
         let output = json!({"results": []});
 
         assert!(should_cache_success_output("read_file", &output, true));
+    }
+
+    #[tokio::test]
+    async fn prevalidated_read_only_execution_populates_shared_cache() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let file_path = temp_dir.path().join("fixture.txt");
+        std::fs::write(&file_path, "before\n").expect("write initial fixture");
+        let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
+        let cache = Arc::new(tokio::sync::RwLock::new(ToolResultCache::new(8)));
+        let ctrl_c_state = Arc::new(CtrlCState::new());
+        let ctrl_c_notify = Arc::new(tokio::sync::Notify::new());
+        let args = json!({"path": "fixture.txt", "line_start": 1, "line_end": 1});
+
+        let first = execute_prevalidated_read_only_with_cache(
+            &registry,
+            &cache,
+            tools::READ_FILE,
+            &args,
+            &ctrl_c_state,
+            &ctrl_c_notify,
+            None,
+            0,
+            ExecSettlementMode::Manual,
+            false,
+        )
+        .await;
+        let first_output = match first {
+            super::ToolExecutionStatus::Success { output, .. } => output,
+            other => panic!("expected first read to succeed, got {other:?}"),
+        };
+        assert_eq!(cache.read().await.stats().current_size, 1);
+
+        std::fs::write(&file_path, "after\n").expect("write updated fixture");
+        let second = execute_prevalidated_read_only_with_cache(
+            &registry,
+            &cache,
+            tools::READ_FILE,
+            &args,
+            &ctrl_c_state,
+            &ctrl_c_notify,
+            None,
+            0,
+            ExecSettlementMode::Manual,
+            false,
+        )
+        .await;
+        let second_output = match second {
+            super::ToolExecutionStatus::Success { output, .. } => output,
+            other => panic!("expected cached read to succeed, got {other:?}"),
+        };
+
+        assert_eq!(second_output, first_output);
+        assert_eq!(cache.read().await.stats().hits, 1);
     }
 
     #[test]

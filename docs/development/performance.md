@@ -28,6 +28,42 @@ work. For synchronous side-channel APIs such as progress monitoring, use a
 bounded coalescing writer so callers replace stale snapshots and never wait on
 filesystem latency.
 
+### Agent-loop hot-path invariants
+
+Tool-result cache size is measured from the payload bytes, not the `String`
+container. Replacing an existing key updates the byte total in place, so a
+full cache does not evict an unrelated entry during replacement; zero-capacity
+caches reject inserts. Keep these accounting rules intact when changing cache
+entry representations.
+
+Clean request histories are borrowed and shared with continuation state through
+`Arc<Vec<Message>>`. Copy only when editor/few-shot context must be injected or
+the provider requires compaction. This keeps the common no-injection path from
+allocating multiple equivalent histories while preserving the existing
+normalization and continuation boundaries.
+
+Request envelopes retain the source tool-catalog `Arc` within a request segment.
+When model/provider/mode/prompt identity is unchanged, subsequent turns reuse
+the frozen ordered catalog without cloning, sorting, or re-hashing its schema;
+segment boundaries clear that marker before rebuilding.
+
+Read-only tool calls are batched only after per-call preflight confirms that
+each call is parallel-safe; duplicate names are not a safety signal. Batch line
+ranges still pass through the absolute read cap, so new range-reading paths
+must preserve that limit. Unified and runner dispatch both apply
+`agent.harness.max_parallel_tool_calls`; zero is the explicit unlimited value.
+Mutating or otherwise non-parallel calls remain ordered.
+
+Legacy text reads use the same bounded line reader as paged reads. This keeps
+large files and minified one-line bundles from creating an unbounded temporary
+buffer; invalid UTF-8 remains lossily decoded for compatibility. A physical
+line that exceeds the bound is reported as `line_truncated` so the agent can
+switch to byte ranges or targeted inspection instead of treating the preview
+as complete. Live command-output spools are never result-cached, and
+directory-scoped read caches invalidate on descendant edits. A command-cache
+miss also invalidates filesystem-derived results before shell/PTY execution,
+while completed read-only command cache hits remain reusable.
+
 ### Serialization and event-log replay
 
 Avoid combining `#[serde(flatten)]` with `#[serde(untagged)]` on frequent,
@@ -47,6 +83,22 @@ Session-log index rebuilds have an even narrower requirement: they need the
 versioned envelope and `event.type`, not the full event payload. The rebuild
 path therefore skips nested payload materialization, while turn reconstruction
 continues to use the canonical `VersionedThreadEvent` decoder.
+
+### Privacy-preserving harness trace analysis
+
+Use `vtcode_eval::analyze_jsonl_file` or `analyze_jsonl_reader` for offline
+DeepSeek/VT Code harness analysis. The file and reader paths process one JSONL
+record at a time (with a 1 MiB record limit), retain only aggregate counters, and never copy prompts,
+arguments, paths, file contents, output text, or free-form error messages into
+the returned summary. Tool names and error values are mapped to bounded known
+labels; unknown values are grouped under `other_tool` or `error`.
+
+The analyzer treats `ThreadCompleted` usage as a fallback when no per-turn
+usage exists, so a normal thread trace does not double-count its aggregate.
+Latency count, total, and maximum cover the complete trace; percentile queries
+use a bounded 4,096-sample reservoir to keep memory usage stable for large
+sessions. Use the summary to compare tool repetition, error categories, token
+cache usage, and output volume before changing the runtime.
 
 ## Local Workflow
 

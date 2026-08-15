@@ -1897,6 +1897,7 @@ Use tags when helpful: `<analysis>` facts/options, `<plan>` steps, `<uncertainty
 
 ## Active Tools
 - Use `exec_command.cmd` with `ls`, `rg`, `find`, `cat`, `sed`, and `awk` for repository browsing.
+- Batch independent read-only calls; order dependent reads, and serialize mutations.
 - Use `exec_command.cmd` for build tools, test tools, `git diff -- <path>`, and shell-only tasks. In one-shot `exec_command` calls, do not use `!!`, `!$`, `!ssh`, or `fc`; write full command arguments explicitly from conversation or tool results. Interactive shells: suggest review-safe history expansion: Bash `histverify`, zsh `HIST_VERIFY`.
 - Completion is a checkpoint: keep verification resolved.
 - Advanced `code_search` takes `query`; filters `path`, `file_types`, `result_types`, `max_results`; results: definitions, exact syntactic usages. Queries use literal smart-case and `|`-separated literals. Truncated: narrow. Example: `{"query":"TurnLoop","path":"src","result_types":["definition"],"max_results":20}`. `result_types` is an array; `max_results` is an integer. Do not JSON-encode arrays or integers as strings. Use `exec_command` or a skill for syntax patterns.

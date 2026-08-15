@@ -52,7 +52,8 @@ Runs comprehensive code quality checks (same as CI pipeline).
 -   Code formatting (rustfmt)
 -   Linting (clippy)
 -   Build verification
--   Test execution (`cargo nextest run`, fallback: `cargo test --workspace`)
+-   Test execution (`cargo nextest run`; configured `ci` profile when available,
+    otherwise Nextest's `default` profile; fallback: `cargo test --workspace`)
 -   Documentation generation
 
 ### `perf/` - Local Performance Workflow

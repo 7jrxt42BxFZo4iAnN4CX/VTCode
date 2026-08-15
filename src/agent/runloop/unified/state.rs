@@ -5,6 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use vtcode_core::compaction::PrefireState;
 use vtcode_core::config::WorkspaceTrustLevel;
+use vtcode_core::core::agent::harness_kernel::hash_value;
 use vtcode_core::core::agent::request_envelope::{SegmentBoundaryReason, SessionRequestEnvelope};
 use vtcode_core::exec::events::Usage as HarnessUsage;
 use vtcode_core::llm::provider::{
@@ -92,6 +93,7 @@ pub(crate) struct SessionStats {
     prompt_cache_combined_changes: usize,
     request_envelope: Option<SessionRequestEnvelope>,
     request_envelope_identity: Option<RequestEnvelopeIdentity>,
+    request_envelope_source_tools: Option<Arc<Vec<ToolDefinition>>>,
     request_segment_sequence: u64,
     pending_request_segment_id: Option<String>,
     last_tool_catalog_observability: Option<ToolCatalogObservabilityIdentity>,
@@ -124,6 +126,7 @@ struct RequestEnvelopeIdentity {
     prefix_hash: u64,
     catalog_hash: Option<u64>,
     instruction_digest: u64,
+    stable_prompt_hash: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,6 +164,7 @@ impl SessionStats {
         self.pending_request_segment_id = Some(new_segment_id.clone());
         self.request_envelope = None;
         self.request_envelope_identity = None;
+        self.request_envelope_source_tools = None;
         RequestSegmentTransition {
             boundary_reason,
             previous_segment_id,
@@ -170,6 +174,7 @@ impl SessionStats {
         }
     }
 
+    #[allow(dead_code, reason = "retained as a Vec-based compatibility wrapper for state tests")]
     pub(crate) fn request_envelope(
         &mut self,
         model: &str,
@@ -179,7 +184,54 @@ impl SessionStats {
         tools: Vec<ToolDefinition>,
         instruction_digest: u64,
     ) -> SessionRequestEnvelope {
-        let candidate = SessionRequestEnvelope::new("candidate", system_prompt, tools, instruction_digest);
+        self.request_envelope_shared(
+            model,
+            provider,
+            mode,
+            system_prompt,
+            Some(Arc::new(tools)),
+            instruction_digest,
+            instruction_digest,
+        )
+    }
+
+    pub(crate) fn request_envelope_shared(
+        &mut self,
+        model: &str,
+        provider: &str,
+        mode: &str,
+        system_prompt: String,
+        tools: Option<Arc<Vec<ToolDefinition>>>,
+        instruction_digest: u64,
+        stable_prompt_hash: u64,
+    ) -> SessionRequestEnvelope {
+        let prefix_hash = hash_value(&system_prompt);
+        let source_matches = match (&self.request_envelope_source_tools, &tools) {
+            (None, None) => true,
+            (Some(previous), Some(current)) => Arc::ptr_eq(previous, current),
+            _ => false,
+        };
+        let identity_matches_without_catalog = self.request_envelope_identity.as_ref().is_some_and(|identity| {
+            identity.model == model
+                && identity.provider == provider
+                && identity.mode == mode
+                && identity.prefix_hash == prefix_hash
+                && identity.instruction_digest == instruction_digest
+                && identity.stable_prompt_hash == stable_prompt_hash
+        });
+        if source_matches
+            && identity_matches_without_catalog
+            && let Some(envelope) = self.request_envelope.as_ref()
+        {
+            return envelope.clone();
+        }
+
+        let candidate = SessionRequestEnvelope::new(
+            "candidate",
+            system_prompt,
+            tools.as_ref().map_or_else(Vec::new, |tools| tools.as_ref().clone()),
+            instruction_digest,
+        );
         let identity = RequestEnvelopeIdentity {
             model: model.to_string(),
             provider: provider.to_string(),
@@ -187,10 +239,12 @@ impl SessionStats {
             prefix_hash: candidate.prefix_hash(),
             catalog_hash: candidate.catalog_hash(),
             instruction_digest,
+            stable_prompt_hash,
         };
         if self.request_envelope_identity.as_ref() == Some(&identity)
             && let Some(envelope) = self.request_envelope.as_ref()
         {
+            self.request_envelope_source_tools = tools;
             return envelope.clone();
         }
 
@@ -212,6 +266,7 @@ impl SessionStats {
             instruction_digest,
         );
         self.request_envelope_identity = Some(identity);
+        self.request_envelope_source_tools = tools;
         self.request_envelope = Some(envelope.clone());
         envelope
     }
@@ -371,6 +426,7 @@ impl SessionStats {
         self.prompt_cache_combined_changes = 0;
         self.request_envelope = None;
         self.request_envelope_identity = None;
+        self.request_envelope_source_tools = None;
         self.pending_request_segment_id = None;
         self.last_tool_catalog_observability = None;
         self.recent_touched_files.clear();
@@ -633,7 +689,10 @@ fn request_identity_boundary_reason(
         SegmentBoundaryReason::Provider
     } else if previous.mode != current.mode {
         SegmentBoundaryReason::Mode
-    } else if previous.instruction_digest != current.instruction_digest || previous.prefix_hash != current.prefix_hash {
+    } else if previous.instruction_digest != current.instruction_digest
+        || previous.stable_prompt_hash != current.stable_prompt_hash
+        || previous.prefix_hash != current.prefix_hash
+    {
         SegmentBoundaryReason::Instructions
     } else if previous.catalog_hash != current.catalog_hash {
         SegmentBoundaryReason::ToolCatalogEpoch
@@ -918,6 +977,65 @@ mod tests {
         assert_eq!(first.segment_id(), second.segment_id());
         assert_eq!(first.system_prompt().as_bytes(), second.system_prompt().as_bytes());
         assert_eq!(first.catalog_hash(), second.catalog_hash());
+    }
+
+    #[test]
+    fn shared_request_envelope_reuses_catalog_until_segment_boundary() {
+        let mut stats = SessionStats::default();
+        let tools = Arc::new(vec![function_tool("exec_command"), function_tool("zeta")]);
+
+        let first = stats.request_envelope_shared(
+            "model",
+            "provider",
+            "build",
+            "fixed".to_string(),
+            Some(Arc::clone(&tools)),
+            7,
+            11,
+        );
+        let second = stats.request_envelope_shared(
+            "model",
+            "provider",
+            "build",
+            "fixed".to_string(),
+            Some(Arc::clone(&tools)),
+            7,
+            11,
+        );
+
+        assert_eq!(first.segment_id(), second.segment_id());
+        assert!(Arc::ptr_eq(stats.request_envelope_source_tools.as_ref().expect("source catalog"), &tools));
+
+        let transition = stats.begin_request_segment(SegmentBoundaryReason::Compaction);
+        assert_eq!(transition.previous_segment_id.as_deref(), Some(first.segment_id()));
+        assert!(stats.request_envelope_source_tools.is_none());
+
+        let third = stats.request_envelope_shared(
+            "model",
+            "provider",
+            "build",
+            "fixed".to_string(),
+            Some(Arc::clone(&tools)),
+            7,
+            11,
+        );
+        assert_ne!(first.segment_id(), third.segment_id());
+    }
+
+    #[test]
+    fn shared_request_envelope_preserves_equivalent_distinct_catalogs() {
+        let mut stats = SessionStats::default();
+        let first_tools = Arc::new(vec![function_tool("zeta"), function_tool("exec_command")]);
+        let second_tools = Arc::new(vec![function_tool("exec_command"), function_tool("zeta")]);
+
+        let first =
+            stats.request_envelope_shared("model", "provider", "build", "fixed".to_string(), Some(first_tools), 7, 11);
+        let second =
+            stats.request_envelope_shared("model", "provider", "build", "fixed".to_string(), Some(second_tools), 7, 11);
+
+        assert_eq!(first.segment_id(), second.segment_id());
+        assert_eq!(first.catalog_hash(), second.catalog_hash());
+        assert_eq!(first.ordered_tools(), second.ordered_tools());
     }
 
     #[test]

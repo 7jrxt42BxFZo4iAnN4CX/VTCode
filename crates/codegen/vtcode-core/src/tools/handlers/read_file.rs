@@ -35,6 +35,8 @@ pub(crate) struct ReadFileOutcome {
     pub content: String,
     pub lines_read: usize,
     pub has_more: bool,
+    /// True when a physical source line exceeded the bounded reader limit.
+    pub line_truncated: bool,
     /// True when the requested line count exceeded the absolute cap and was clamped.
     pub capped_by_limit: bool,
     /// The line count actually applied after clamping (0 for byte-range reads).
@@ -50,7 +52,7 @@ pub struct ReadFileArgs {
     /// 1-indexed line number to start reading from; defaults to 1.
     #[serde(default = "defaults::offset", deserialize_with = "deserialize_maybe_quoted")]
     pub offset: usize,
-    /// Maximum number of lines to return; defaults to 400.
+    /// Maximum number of lines to return; defaults to the configured `max_read_lines` cap.
     #[serde(default = "defaults::limit", deserialize_with = "deserialize_maybe_quoted")]
     pub limit: usize,
     /// Determines whether the handler reads a simple slice or indentation-aware block.
@@ -199,15 +201,19 @@ impl ReadFileHandler {
         let offset = range.offset.max(1);
         let limit = Self::effective_line_limit(range.limit);
 
-        let collected = match range.mode {
-            ReadMode::Slice => slice::read(path, offset, limit).await?.lines,
+        let (collected, line_truncated) = match range.mode {
+            ReadMode::Slice => {
+                let result = slice::read(path, offset, limit).await?;
+                (result.lines, result.line_truncated)
+            }
             ReadMode::Indentation => {
                 let indentation = range.indentation.clone().unwrap_or_default();
-                indentation::read_block(path, offset, limit, indentation).await?
+                let result = indentation::read_block(path, offset, limit, indentation).await?;
+                (result.lines, result.line_truncated)
             }
         };
 
-        Ok(range_result_from_lines(offset, collected))
+        Ok(range_result_from_lines(offset, collected, line_truncated))
     }
 
     /// Clamp a requested line count to the absolute per-call ceiling.
@@ -268,14 +274,15 @@ impl ReadFileHandler {
         // Byte-range reads are unaffected (they use `page_size_bytes`).
         let (applied_limit, capped_by_limit) = Self::clamp_to_absolute_cap(effective_limit, absolute_max);
 
-        let (mut collected, has_more) = match mode {
+        let (mut collected, has_more, line_truncated) = match mode {
             ReadMode::Slice => {
                 let result = slice::read(&path, offset, applied_limit).await?;
-                (result.lines, result.has_more)
+                (result.lines, result.has_more, result.line_truncated)
             }
             ReadMode::Indentation => {
                 let indentation = indentation.unwrap_or_default();
-                (indentation::read_block(&path, offset, applied_limit, indentation).await?, false)
+                let result = indentation::read_block(&path, offset, applied_limit, indentation).await?;
+                (result.lines, false, result.line_truncated)
             }
         };
         let lines_read = collected.len();
@@ -295,6 +302,7 @@ impl ReadFileHandler {
             content: collected.join("\n"),
             lines_read,
             has_more,
+            line_truncated,
             capped_by_limit,
             applied_limit,
         })
@@ -315,6 +323,7 @@ impl ReadFileHandler {
             content: result.content,
             lines_read: result.lines_read,
             has_more: result.has_more,
+            line_truncated: false,
             capped_by_limit: false,
             applied_limit: 0,
         })
@@ -352,6 +361,11 @@ impl Tool for ReadFileHandler {
         if outcome.has_more {
             response["has_more"] = json!(true);
         }
+        if outcome.line_truncated {
+            response["line_truncated"] = json!(true);
+            response["truncated"] = json!(true);
+            response["truncation_reason"] = json!("oversized_line");
+        }
 
         Ok(response)
     }
@@ -380,8 +394,8 @@ impl Tool for ReadFileHandler {
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum lines to return. Requests above the configurable absolute cap (max_read_lines, default 400) are clamped, and the response carries `next_read_args` to continue reading.",
-                    "default": 400,
+                    "description": "Maximum lines to return. Requests above the configurable absolute cap (`max_read_lines`) are clamped, and the response carries `next_read_args` to continue reading.",
+                    "default": crate::tools::read_limits::read_limit_lines(),
                     "minimum": 1
                 },
                 "mode": {
@@ -495,6 +509,7 @@ mod slice {
     pub(super) struct SliceReadResult {
         pub lines: Vec<String>,
         pub has_more: bool,
+        pub line_truncated: bool,
     }
 
     pub(super) struct SliceReadRanges {
@@ -512,12 +527,14 @@ mod slice {
         let mut seen = 0usize;
         let mut buffer = Vec::new();
         let mut reached_eof = false;
+        let mut line_truncated = false;
 
         loop {
-            let Some(line) = read_formatted_line(&mut reader, &mut buffer).await? else {
+            let Some((line, truncated)) = read_formatted_line(&mut reader, &mut buffer).await? else {
                 reached_eof = true;
                 break;
             };
+            line_truncated |= truncated;
 
             seen = seen.saturating_add(1);
 
@@ -536,7 +553,11 @@ mod slice {
             anyhow::bail!("offset exceeds file length");
         }
 
-        Ok(SliceReadResult { lines: collected, has_more: !reached_eof })
+        Ok(SliceReadResult {
+            lines: collected,
+            has_more: !reached_eof,
+            line_truncated,
+        })
     }
 
     pub(super) async fn read_ranges(path: &Path, ranges: &[ReadRange]) -> Result<SliceReadRanges> {
@@ -558,11 +579,13 @@ mod slice {
         let mut buffer = Vec::new();
         let mut line_number = 0usize;
         let mut has_lookahead = false;
+        let mut line_truncated = false;
         let mut scan_error = None;
 
         while line_number < max_line {
             match read_formatted_line(&mut reader, &mut buffer).await {
-                Ok(Some(line)) => {
+                Ok(Some((line, truncated))) => {
+                    line_truncated |= truncated;
                     line_number += 1;
                     for (index, (offset, end)) in normalized_ranges.iter().enumerate() {
                         if (*offset..=*end).contains(&line_number) {
@@ -580,7 +603,10 @@ mod slice {
 
         if scan_error.is_none() && line_number == max_line {
             match read_formatted_line(&mut reader, &mut buffer).await {
-                Ok(Some(_)) => has_lookahead = true,
+                Ok(Some((_, truncated))) => {
+                    line_truncated |= truncated;
+                    has_lookahead = true;
+                }
                 Ok(None) => {}
                 Err(error) => scan_error = Some(error),
             }
@@ -600,6 +626,7 @@ mod slice {
                     Some(Ok(SliceReadResult {
                         lines,
                         has_more: line_number > end || (line_number == end && has_lookahead),
+                        line_truncated,
                     }))
                 }
             })
@@ -607,8 +634,8 @@ mod slice {
 
         Ok(SliceReadRanges { results, error: scan_error })
     }
-    async fn read_formatted_line(reader: &mut BufReader<File>, buffer: &mut Vec<u8>) -> Result<Option<String>> {
-        let Some(_truncated) = read_bounded_line(reader, buffer).await.context("failed to read file")? else {
+    async fn read_formatted_line(reader: &mut BufReader<File>, buffer: &mut Vec<u8>) -> Result<Option<(String, bool)>> {
+        let Some(truncated) = read_bounded_line(reader, buffer).await.context("failed to read file")? else {
             return Ok(None);
         };
 
@@ -619,11 +646,11 @@ mod slice {
             }
         }
 
-        Ok(Some(format_line(buffer)))
+        Ok(Some((format_line(buffer), truncated)))
     }
 }
 
-fn range_result_from_lines(offset: usize, mut collected: Vec<String>) -> RangeResult {
+fn range_result_from_lines(offset: usize, mut collected: Vec<String>, line_truncated: bool) -> RangeResult {
     let original_len = collected.len();
     let is_paginated = offset > 1;
     let (condensed, omitted) = if is_paginated {
@@ -637,6 +664,7 @@ fn range_result_from_lines(offset: usize, mut collected: Vec<String>) -> RangeRe
         lines_read: original_len,
         condensed,
         omitted_lines: (omitted > 0).then_some(omitted),
+        line_truncated,
         content: collected.join("\n"),
     }
 }
@@ -644,7 +672,17 @@ fn range_result_from_lines(offset: usize, mut collected: Vec<String>) -> RangeRe
 mod indentation {
     use super::*;
 
-    pub async fn read_block(path: &Path, offset: usize, limit: usize, options: IndentationArgs) -> Result<Vec<String>> {
+    pub(super) struct IndentationReadResult {
+        pub lines: Vec<String>,
+        pub line_truncated: bool,
+    }
+
+    pub async fn read_block(
+        path: &Path,
+        offset: usize,
+        limit: usize,
+        options: IndentationArgs,
+    ) -> Result<IndentationReadResult> {
         let anchor_line = options.anchor_line.unwrap_or(offset);
         anyhow::ensure!(anchor_line > 0, "anchor_line must be a 1-indexed line number");
 
@@ -657,7 +695,7 @@ mod indentation {
         // prefix above it, so `anchor + guard_limit` is always sufficient and
         // prevents an unbounded full-file read of gigantic files.
         let collect_cap = anchor_line.saturating_add(guard_limit);
-        let collected = collect_file_lines(path, collect_cap).await?;
+        let (collected, line_truncated) = collect_file_lines(path, collect_cap).await?;
         anyhow::ensure!(!collected.is_empty() && anchor_line <= collected.len(), "anchor_line exceeds file length");
 
         let anchor_index = anchor_line - 1;
@@ -675,10 +713,13 @@ mod indentation {
         let final_limit = limit.min(guard_limit).min(collected.len());
 
         if final_limit == 1 {
-            return Ok(vec![format!(
-                "{}: {}",
-                collected[anchor_index].number, collected[anchor_index].display
-            )]);
+            return Ok(IndentationReadResult {
+                lines: vec![format!(
+                    "{}: {}",
+                    collected[anchor_index].number, collected[anchor_index].display
+                )],
+                line_truncated,
+            });
         }
 
         // Bidirectional cursors
@@ -756,13 +797,16 @@ mod indentation {
 
         trim_empty_lines(&mut out);
 
-        Ok(out
-            .into_iter()
-            .map(|record| format!("{}: {}", record.number, record.display))
-            .collect())
+        Ok(IndentationReadResult {
+            lines: out
+                .into_iter()
+                .map(|record| format!("{}: {}", record.number, record.display))
+                .collect(),
+            line_truncated,
+        })
     }
 
-    async fn collect_file_lines(path: &Path, max_lines: usize) -> Result<Vec<LineRecord>> {
+    async fn collect_file_lines(path: &Path, max_lines: usize) -> Result<(Vec<LineRecord>, bool)> {
         let file = File::open(path)
             .await
             .context(format!("failed to open file: {}", path.display()))?;
@@ -771,14 +815,16 @@ mod indentation {
         let mut buffer = Vec::new();
         let mut lines = Vec::new();
         let mut number = 0usize;
+        let mut line_truncated = false;
 
         while lines.len() < max_lines {
-            let Some(_truncated) = read_bounded_line(&mut reader, &mut buffer)
+            let Some(truncated) = read_bounded_line(&mut reader, &mut buffer)
                 .await
                 .context("failed to read file")?
             else {
                 break;
             };
+            line_truncated |= truncated;
 
             if buffer.last() == Some(&b'\n') {
                 buffer.pop();
@@ -794,7 +840,7 @@ mod indentation {
             lines.push(LineRecord { number, raw, display, indent });
         }
 
-        Ok(lines)
+        Ok((lines, line_truncated))
     }
 
     fn compute_effective_indents(records: &[LineRecord]) -> Vec<usize> {
@@ -931,7 +977,7 @@ mod defaults {
     }
 
     pub fn limit() -> usize {
-        400
+        crate::tools::read_limits::read_limit_lines()
     }
 
     pub fn batch_limit() -> usize {
@@ -1135,6 +1181,32 @@ mod tests {
         let lines = read(temp.path(), 1, 2).await?.lines;
         let expected_first = format!("{}{}", '\u{FFFD}', '\u{FFFD}');
         assert_eq!(lines, vec![expected_first, "plain".to_string()]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reports_oversized_physical_lines_as_truncated() -> Result<()> {
+        let mut temp = NamedTempFile::new()?;
+        let long_line = "x".repeat(crate::tools::file_ops::MAX_LINE_READ_BYTES + 1);
+        writeln!(temp, "{long_line}")?;
+        writeln!(temp, "plain")?;
+
+        let outcome = ReadFileHandler
+            .handle_detailed(ReadFileArgs {
+                file_path: temp.path().to_string_lossy().into_owned(),
+                offset: 1,
+                limit: 2,
+                mode: ReadMode::Slice,
+                indentation: None,
+                max_tokens: None,
+                condense: false,
+                offset_bytes: None,
+                page_size_bytes: None,
+            })
+            .await?;
+
+        assert!(outcome.line_truncated);
+        assert!(outcome.content.contains("plain"));
         Ok(())
     }
 

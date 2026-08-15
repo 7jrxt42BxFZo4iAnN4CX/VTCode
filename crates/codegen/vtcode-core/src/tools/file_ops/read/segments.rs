@@ -9,7 +9,7 @@ use std::path::Path;
 use tokio::io::BufReader;
 
 impl FileOpsTool {
-    pub(super) async fn read_file_paged(&self, file_path: &Path, input: &Input) -> Result<(String, Value, bool)> {
+    pub(super) async fn read_file_paged(&self, file_path: &Path, input: &Input) -> Result<(String, Value, bool, bool)> {
         // Get file metadata to verify file exists and get size
         let file_metadata = tokio::fs::metadata(file_path)
             .await
@@ -22,13 +22,14 @@ impl FileOpsTool {
         let file_size = file_metadata.len();
 
         // Calculate the final content based on whether we're using byte or line-based paging
-        let (final_content, is_truncated) = if input.offset_lines.is_some() || input.page_size_lines.is_some() {
-            // Line-based paging
-            self.read_file_by_lines(file_path, input, file_size as usize).await?
-        } else {
-            // Byte-based paging (default)
-            self.read_file_by_bytes(file_path, input, file_size).await?
-        };
+        let (final_content, is_truncated, line_truncated) =
+            if input.offset_lines.is_some() || input.page_size_lines.is_some() {
+                // Line-based paging
+                self.read_file_by_lines(file_path, input, file_size as usize).await?
+            } else {
+                // Byte-based paging (default)
+                self.read_file_by_bytes(file_path, input, file_size).await?
+            };
 
         // Create builder and metadata object
         let mut builder = ToolResponseBuilder::new(tools::READ_FILE)
@@ -38,6 +39,7 @@ impl FileOpsTool {
             .data("size_bytes", json!(file_size))
             .data("size_lines", json!(final_content.lines().count()))
             .data("is_truncated", json!(is_truncated))
+            .data("line_truncated", json!(line_truncated))
             .data("content_kind", json!("text"))
             .data("encoding", json!("utf8"));
 
@@ -55,11 +57,17 @@ impl FileOpsTool {
             builder = builder.data("page_size_lines", json!(page_size_lines));
         }
 
-        Ok((final_content, builder.build_json()["metadata"].clone(), is_truncated))
+        let metadata = builder.build_json()["metadata"]["data"].clone();
+        Ok((final_content, metadata, is_truncated, line_truncated))
     }
 
     /// Read file content by lines with offset and page size
-    async fn read_file_by_lines(&self, file_path: &Path, input: &Input, _file_size: usize) -> Result<(String, bool)> {
+    async fn read_file_by_lines(
+        &self,
+        file_path: &Path,
+        input: &Input,
+        _file_size: usize,
+    ) -> Result<(String, bool, bool)> {
         // Validate and extract parameters
         let offset_lines = input.offset_lines.unwrap_or(0);
         let page_size_lines = input.page_size_lines.unwrap_or(1000); // Reasonable default: 1000 lines
@@ -83,21 +91,24 @@ impl FileOpsTool {
             .with_context(|| format!("Failed to read file content: {}", file_path.display()))?;
         let mut reader = BufReader::new(file);
         let mut buffer = Vec::new();
+        let mut line_was_truncated = false;
 
         for _ in 0..offset_lines {
-            if super::super::read_bounded_line(&mut reader, &mut buffer).await?.is_none() {
-                return Ok((String::new(), false));
-            }
+            let Some(truncated) = super::super::read_bounded_line(&mut reader, &mut buffer).await? else {
+                return Ok((String::new(), line_was_truncated, line_was_truncated));
+            };
+            line_was_truncated |= truncated;
         }
 
         let mut final_content = String::new();
         for line_index in 0..page_size_lines {
-            if super::super::read_bounded_line(&mut reader, &mut buffer).await?.is_none() {
-                return Ok((final_content, false));
-            }
+            let Some(truncated) = super::super::read_bounded_line(&mut reader, &mut buffer).await? else {
+                return Ok((final_content, line_was_truncated, line_was_truncated));
+            };
+            line_was_truncated |= truncated;
 
-            let line = std::str::from_utf8(&buffer).context("file content is not valid UTF-8")?;
-            let line = line.strip_suffix('\n').unwrap_or(line);
+            let line = String::from_utf8_lossy(&buffer);
+            let line = line.strip_suffix('\n').unwrap_or(line.as_ref());
             let line = line.strip_suffix('\r').unwrap_or(line);
             if line_index > 0 {
                 final_content.push('\n');
@@ -105,13 +116,19 @@ impl FileOpsTool {
             final_content.push_str(line);
         }
 
-        let is_truncated = super::super::read_bounded_line(&mut reader, &mut buffer).await?.is_some();
+        let has_following_line = super::super::read_bounded_line(&mut reader, &mut buffer).await?;
+        let is_truncated = line_was_truncated || has_following_line.is_some();
 
-        Ok((final_content, is_truncated))
+        Ok((final_content, is_truncated, line_was_truncated))
     }
 
     /// Read file content by bytes with offset and page size
-    async fn read_file_by_bytes(&self, file_path: &Path, input: &Input, _file_size: u64) -> Result<(String, bool)> {
+    async fn read_file_by_bytes(
+        &self,
+        file_path: &Path,
+        input: &Input,
+        _file_size: u64,
+    ) -> Result<(String, bool, bool)> {
         let offset_bytes = input.offset_bytes.unwrap_or(0);
         let page_size_bytes = input.page_size_bytes.unwrap_or(8192);
 
@@ -121,6 +138,6 @@ impl FileOpsTool {
 
         // Legacy path: raw bytes without line numbers
         let result = read_byte_range(file_path, offset_bytes, page_size_bytes, false).await?;
-        Ok((result.content, result.has_more))
+        Ok((result.content, result.has_more, false))
     }
 }

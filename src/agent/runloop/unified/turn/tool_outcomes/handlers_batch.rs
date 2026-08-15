@@ -7,7 +7,9 @@ use super::{
     flush_budget_synthesis_directives, validate_tool_call,
 };
 use crate::agent::runloop::unified::progress::ProgressReporter;
-use crate::agent::runloop::unified::tool_pipeline::{exec_settlement_mode_for_tool_call, run_tool_call_with_args};
+use crate::agent::runloop::unified::tool_pipeline::{
+    exec_settlement_mode_for_tool_call, execute_prevalidated_read_only_with_cache, run_tool_call_with_args,
+};
 use crate::agent::runloop::unified::turn::context::{
     PreparedAssistantToolCall, TurnHandlerOutcome, TurnProcessingContext,
 };
@@ -15,6 +17,8 @@ use crate::agent::runloop::unified::turn::tool_outcomes::execution_result::handl
 use crate::agent::runloop::unified::turn::tool_outcomes::helpers::{
     resolve_max_tool_retries, update_repetition_tracker,
 };
+
+const DEFAULT_MAX_PARALLEL_TOOL_CALLS: usize = 4;
 
 struct ValidatedToolCall<'a> {
     tool_call: &'a PreparedAssistantToolCall,
@@ -64,19 +68,19 @@ fn planned_execution_group_stats(
     validated_calls: &[ValidatedToolCall<'_>],
     allow_parallel: bool,
 ) -> (usize, usize, usize) {
-    let layout = planned_execution_layout(validated_calls, allow_parallel);
+    let layout = planned_execution_layout(validated_calls, allow_parallel, 0);
     execution_group_stats_from_layout(&layout)
 }
 
 fn planned_execution_layout(
     validated_calls: &[ValidatedToolCall<'_>],
     allow_parallel: bool,
+    max_parallel: usize,
 ) -> Vec<(PreparedToolBatchKind, usize)> {
-    PreparedToolBatch::plan_layout_with_names(
-        validated_calls
-            .iter()
-            .map(|validated_call| (validated_call.can_parallelize(), validated_call.prepared.canonical_name.as_str())),
+    PreparedToolBatch::plan_layout_with_limit(
+        validated_calls.iter().map(ValidatedToolCall::can_parallelize),
         allow_parallel,
+        max_parallel,
     )
 }
 
@@ -145,6 +149,7 @@ async fn execute_parallel_group<'a, 'b>(
     let registry = t_ctx.ctx.tool_registry.clone();
     let ctrl_c_state = std::sync::Arc::clone(t_ctx.ctx.ctrl_c_state);
     let ctrl_c_notify = std::sync::Arc::clone(t_ctx.ctx.ctrl_c_notify);
+    let tool_result_cache = std::sync::Arc::clone(t_ctx.ctx.tool_result_cache);
     let vt_cfg = t_ctx.ctx.vt_cfg;
     let group_has_exec_sessions = validated_calls
         .iter()
@@ -155,6 +160,7 @@ async fn execute_parallel_group<'a, 'b>(
         let registry = registry.clone();
         let ctrl_c_state = std::sync::Arc::clone(&ctrl_c_state);
         let ctrl_c_notify = std::sync::Arc::clone(&ctrl_c_notify);
+        let tool_result_cache = std::sync::Arc::clone(&tool_result_cache);
         let reporter = progress_reporter.clone();
         let call_id = validated_call.call_id().to_string();
         let name = validated_call.prepared.canonical_name;
@@ -164,8 +170,9 @@ async fn execute_parallel_group<'a, 'b>(
             let start_time = std::time::Instant::now();
             let max_retries = resolve_max_tool_retries(&name, vt_cfg);
             let circuit_before = snapshot_circuit_diagnostics(&registry, &name);
-            let status = crate::agent::runloop::unified::tool_pipeline::execute_tool_with_timeout_ref_prevalidated(
+            let status = execute_prevalidated_read_only_with_cache(
                 &registry,
+                &tool_result_cache,
                 &name,
                 &args,
                 &ctrl_c_state,
@@ -308,7 +315,12 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
         return Ok(None);
     }
 
-    let planned_layout = planned_execution_layout(&validated_calls, t_ctx.ctx.full_auto);
+    let max_parallel_tool_calls = t_ctx
+        .ctx
+        .vt_cfg
+        .map(|config| config.agent.harness.max_parallel_tool_calls)
+        .unwrap_or(DEFAULT_MAX_PARALLEL_TOOL_CALLS);
+    let planned_layout = planned_execution_layout(&validated_calls, t_ctx.ctx.full_auto, max_parallel_tool_calls);
     let (groups, parallel_groups, max_group_size) = execution_group_stats_from_layout(&planned_layout);
     tracing::debug!(
         target: "vtcode.turn.metrics",
@@ -542,7 +554,7 @@ mod tests {
     }
 
     #[test]
-    fn build_execution_groups_splits_duplicate_parallel_tool_names() {
+    fn build_execution_groups_batches_duplicate_parallel_tool_names() {
         let stats = planned_execution_group_stats(
             &[
                 validated_call("call_1", tools::CODE_SEARCH, true, true, serde_json::json!({"query":"alpha"})),
@@ -551,7 +563,7 @@ mod tests {
             true,
         );
 
-        assert_eq!(stats, (2, 0, 1));
+        assert_eq!(stats, (1, 1, 2));
     }
 
     #[test]

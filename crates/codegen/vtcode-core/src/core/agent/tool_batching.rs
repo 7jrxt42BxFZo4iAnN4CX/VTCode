@@ -102,6 +102,16 @@ impl PreparedToolBatch {
         parallelizable: impl IntoIterator<Item = bool>,
         allow_parallel: bool,
     ) -> Vec<(PreparedToolBatchKind, usize)> {
+        Self::plan_layout_with_limit(parallelizable, allow_parallel, 0)
+    }
+
+    /// Plans contiguous execution groups while respecting an optional
+    /// parallel fan-out limit. A limit of zero means unlimited parallelism.
+    pub fn plan_layout_with_limit(
+        parallelizable: impl IntoIterator<Item = bool>,
+        allow_parallel: bool,
+        max_parallel: usize,
+    ) -> Vec<(PreparedToolBatchKind, usize)> {
         let mut layout = Vec::new();
         let mut parallel_batch_len = 0usize;
 
@@ -112,49 +122,43 @@ impl PreparedToolBatch {
             }
 
             if parallel_batch_len > 0 {
-                layout.push((PreparedToolBatchKind::ParallelReadonly, parallel_batch_len));
-                parallel_batch_len = 0;
+                push_parallel_batch_layout(&mut layout, &mut parallel_batch_len, max_parallel);
             }
             layout.push((PreparedToolBatchKind::Sequential, 1));
         }
 
-        if parallel_batch_len > 0 {
-            layout.push((PreparedToolBatchKind::ParallelReadonly, parallel_batch_len));
-        }
+        push_parallel_batch_layout(&mut layout, &mut parallel_batch_len, max_parallel);
 
         layout
     }
 
+    /// Compatibility wrapper for callers that still provide tool names.
+    ///
+    /// Scheduling is based only on the validated parallel-safety bit; tool
+    /// names never affect the layout. New callers should use
+    /// [`Self::plan_layout`] or [`Self::plan_layout_with_limit`].
+    #[deprecated(note = "tool names do not affect scheduling; use plan_layout")]
     pub fn plan_layout_with_names<'a>(
         calls: impl IntoIterator<Item = (bool, &'a str)>,
         allow_parallel: bool,
     ) -> Vec<(PreparedToolBatchKind, usize)> {
-        if !allow_parallel {
-            return calls.into_iter().map(|_| (PreparedToolBatchKind::Sequential, 1)).collect();
-        }
-
-        let mut layout = Vec::new();
-        let mut parallel_batch_len = 0usize;
-
-        for (can_parallelize, _) in calls {
-            if !can_parallelize {
-                push_parallel_batch_layout(&mut layout, &mut parallel_batch_len);
-                layout.push((PreparedToolBatchKind::Sequential, 1));
-                continue;
-            }
-
-            parallel_batch_len += 1;
-        }
-
-        push_parallel_batch_layout(&mut layout, &mut parallel_batch_len);
-        layout
+        Self::plan_layout(calls.into_iter().map(|(can_parallelize, _)| can_parallelize), allow_parallel)
     }
 
     pub fn plan(calls: impl IntoIterator<Item = PreparedToolCall>, allow_parallel: bool) -> Vec<Self> {
+        Self::plan_with_limit(calls, allow_parallel, 0)
+    }
+
+    pub fn plan_with_limit(
+        calls: impl IntoIterator<Item = PreparedToolCall>,
+        allow_parallel: bool,
+        max_parallel: usize,
+    ) -> Vec<Self> {
         let calls: Vec<_> = calls.into_iter().collect();
-        let layout = Self::plan_layout_with_names(
-            calls.iter().map(|call| (call.can_parallelize(), call.canonical_name.as_str())),
+        let layout = Self::plan_layout_with_limit(
+            calls.iter().map(PreparedToolCall::can_parallelize),
             allow_parallel,
+            max_parallel,
         );
         let mut calls = calls.into_iter();
 
@@ -165,16 +169,54 @@ impl PreparedToolBatch {
     }
 }
 
-fn push_parallel_batch_layout(layout: &mut Vec<(PreparedToolBatchKind, usize)>, parallel_batch_len: &mut usize) {
-    match *parallel_batch_len {
-        0 => {}
-        1 => layout.push((PreparedToolBatchKind::Sequential, 1)),
-        len => layout.push((PreparedToolBatchKind::ParallelReadonly, len)),
+fn push_parallel_batch_layout(
+    layout: &mut Vec<(PreparedToolBatchKind, usize)>,
+    parallel_batch_len: &mut usize,
+    max_parallel: usize,
+) {
+    let mut remaining = *parallel_batch_len;
+    let effective_limit = if max_parallel == 0 { usize::MAX } else { max_parallel };
+
+    while remaining > 0 {
+        let batch_len = remaining.min(effective_limit);
+        match batch_len {
+            1 => layout.push((PreparedToolBatchKind::Sequential, 1)),
+            len => layout.push((PreparedToolBatchKind::ParallelReadonly, len)),
+        }
+        remaining -= batch_len;
     }
+
     *parallel_batch_len = 0;
 }
 
 /// Whether all calls in a batch are parallel-safe.
 pub fn is_parallel_safe_tool_batch(calls: &[PreparedToolCall]) -> bool {
     calls.iter().all(PreparedToolCall::can_parallelize)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PreparedToolBatch, PreparedToolBatchKind};
+
+    #[test]
+    fn bounded_layout_splits_parallel_groups_without_reordering() {
+        let layout = PreparedToolBatch::plan_layout_with_limit([true, true, true, false, true], true, 2);
+
+        assert_eq!(
+            layout,
+            vec![
+                (PreparedToolBatchKind::ParallelReadonly, 2),
+                (PreparedToolBatchKind::Sequential, 1),
+                (PreparedToolBatchKind::Sequential, 1),
+                (PreparedToolBatchKind::Sequential, 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn single_parallel_call_is_serialized_when_limit_is_one() {
+        let layout = PreparedToolBatch::plan_layout_with_limit([true], true, 1);
+
+        assert_eq!(layout, vec![(PreparedToolBatchKind::Sequential, 1)]);
+    }
 }

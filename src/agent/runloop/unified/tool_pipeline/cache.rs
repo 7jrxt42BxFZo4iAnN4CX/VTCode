@@ -6,6 +6,8 @@ use vtcode_core::config::constants::tools;
 use vtcode_core::tools::result_cache::ToolCacheKey;
 use vtcode_core::tools::tool_intent;
 
+use crate::agent::runloop::unified::tool_reads::spool_chunk_read_path;
+
 /// Determine if a tool is cacheable based on tool type and arguments.
 pub(super) fn is_tool_cacheable(tool_name: &str, args: &Value) -> bool {
     if is_readonly_repo_browsing_tool(tool_name, args) {
@@ -25,6 +27,13 @@ pub(super) fn is_tool_cacheable(tool_name: &str, args: &Value) -> bool {
 }
 
 fn is_readonly_repo_browsing_tool(tool_name: &str, args: &Value) -> bool {
+    // PTY and command-session output spools are append-only while the command
+    // is running. Reusing a successful result for the same path would hide
+    // newly available output from the agent.
+    if spool_chunk_read_path(tool_name, args).is_some() {
+        return false;
+    }
+
     matches!(tool_name, tools::READ_FILE | tools::LIST_FILES | "grep_search" | "find_files")
         || tool_name == tools::CODE_SEARCH
         || (tool_name == tools::UNIFIED_FILE && tool_intent::file_operation_action_is(args, "read"))
@@ -45,7 +54,9 @@ pub(super) fn create_enhanced_cache_key(
 ) -> ToolCacheKey {
     // For file-based tools, include workspace in the target path to ensure uniqueness
     // For non-file tools, use a workspace-specific target path
-    let enhanced_target = if cache_target.starts_with('/') || cache_target.contains(':') {
+    let enhanced_target = if cache_target == "." {
+        workspace.to_string()
+    } else if cache_target.starts_with('/') || cache_target.contains(':') {
         // Absolute path or special path - keep as is
         cache_target.to_string()
     } else {
@@ -63,14 +74,18 @@ pub(super) fn create_enhanced_cache_key(
 }
 
 pub(super) fn cache_target_path<'a>(tool_name: &str, args: &'a Value) -> Cow<'a, str> {
-    if tool_name == tools::CODE_SEARCH {
-        return args
-            .get("path")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|path| !path.is_empty())
-            .map(Cow::Borrowed)
-            .unwrap_or(Cow::Borrowed("."));
+    if is_directory_scoped_tool(tool_name) {
+        for key in ["path", "root", "target_path", "dir"] {
+            if let Some(path) = args
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|path| !path.is_empty())
+            {
+                return Cow::Borrowed(path);
+            }
+        }
+        return Cow::Borrowed(".");
     }
     if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
         return Cow::Borrowed(path);
@@ -89,6 +104,10 @@ pub(super) fn cache_target_path<'a>(tool_name: &str, args: &'a Value) -> Cow<'a,
     }
 
     Cow::Owned(tool_name.to_string())
+}
+
+fn is_directory_scoped_tool(tool_name: &str) -> bool {
+    matches!(tool_name, tools::CODE_SEARCH | tools::LIST_FILES | "grep_search" | "find_files")
 }
 
 fn extract_git_diff_cache_target(tool_name: &str, args: &Value) -> Option<String> {
@@ -328,6 +347,29 @@ mod tests {
 
         assert!(is_tool_cacheable(tools::UNIFIED_FILE, &args));
         assert_eq!(cache_target_path(tools::UNIFIED_FILE, &args), "src/main.rs");
+    }
+
+    #[test]
+    fn does_not_cache_live_tool_output_spool_reads() {
+        let read_file_args = json!({
+            "path": ".vtcode\\context\\tool_outputs\\command_session_123.txt"
+        });
+        let unified_file_args = json!({
+            "action": "read",
+            "path": ".vtcode/context/tool_outputs/command_session_123.txt"
+        });
+
+        assert!(!is_tool_cacheable(tools::READ_FILE, &read_file_args));
+        assert!(!is_tool_cacheable(tools::UNIFIED_FILE, &unified_file_args));
+    }
+
+    #[test]
+    fn pathless_directory_scoped_reads_use_workspace_target() {
+        let args = json!({ "query": "Widget" });
+
+        assert_eq!(cache_target_path(tools::CODE_SEARCH, &args), ".");
+        assert_eq!(cache_target_path(tools::LIST_FILES, &args), ".");
+        assert_eq!(create_enhanced_cache_key(tools::LIST_FILES, &args, ".", "/workspace").target_path, "/workspace");
     }
 
     #[test]

@@ -50,6 +50,9 @@ pub fn generate_tool_guidelines_for_profile(
     {
         lines.push(browse_guidance);
     }
+    if has_search || has_read_file || has_list_files {
+        lines.push(read_only_batching_guidance(has_read_file).to_string());
+    }
     if has_apply_patch {
         lines.push("- Use `apply_patch` for file edits after inspection; keep patches small.".to_string());
     }
@@ -292,6 +295,14 @@ fn shell_task_guidance(shell_profile: ResolvedShellPromptProfile) -> &'static st
     }
 }
 
+fn read_only_batching_guidance(has_read_file: bool) -> &'static str {
+    if has_read_file {
+        "- Batch independent read-only calls; use bounded `read_file` ranges, order dependencies, serialize mutations. On `line_truncated`, use byte or narrower ranges."
+    } else {
+        "- Batch independent read-only calls; order dependent reads, and serialize mutations."
+    }
+}
+
 fn code_search_guidance(has_exec: bool, shell_profile: ResolvedShellPromptProfile) -> &'static str {
     match (has_exec, shell_profile) {
         (true, ResolvedShellPromptProfile::UnixLike) => {
@@ -462,7 +473,7 @@ mod tests {
         let tools = vec![TOOL_LIST_FILES.to_string(), TOOL_READ_FILE.to_string()];
         let guidelines = generate_tool_guidelines(&tools, None);
         assert!(guidelines.contains("available read-only repository tools"));
-        assert!(!guidelines.contains("read_file"));
+        assert!(guidelines.contains("bounded `read_file` ranges"));
         assert!(!guidelines.contains("list_files"));
         assert!(!guidelines.contains("offset"));
         assert!(!guidelines.contains("per_page"));
@@ -478,7 +489,7 @@ mod tests {
         let guidelines = generate_tool_guidelines(&tools, None);
         assert!(guidelines.contains("available read-only repository tools"));
         assert!(guidelines.contains("code_search"));
-        assert!(!guidelines.contains("read_file"));
+        assert!(guidelines.contains("bounded `read_file` ranges"));
     }
 
     #[test]
@@ -574,11 +585,11 @@ mod tests {
             "apply_patch".to_string(),
         ];
         let guidelines = generate_tool_guidelines_for_profile(&tools, None, ResolvedShellPromptProfile::UnixLike);
-        assert!(!guidelines.contains("read_file"));
-        assert!(!guidelines.contains("list_files"));
+        assert!(guidelines.contains("Batch independent read-only calls"));
         assert!(guidelines.contains("code_search"));
         let approx_tokens = guidelines.len() / 4;
-        assert!(approx_tokens < 310, "got ~{approx_tokens} tokens");
+        // The batching guardrail is intentionally part of the compact shared prompt.
+        assert!(approx_tokens < 340, "got ~{approx_tokens} tokens");
     }
 
     #[test]
@@ -591,6 +602,20 @@ mod tests {
         let guidelines = generate_tool_guidelines_for_profile(&tools, None, ResolvedShellPromptProfile::UnixLike);
         assert!(guidelines.contains("parallel"), "Should include parallel tool call guidance");
         assert!(guidelines.contains("inputs do not depend"), "Should mention independent inputs");
+    }
+
+    #[test]
+    fn test_read_only_batching_guidance_is_explicit() {
+        let tools = vec![
+            TOOL_CODE_SEARCH.to_string(),
+            TOOL_READ_FILE.to_string(),
+            TOOL_LIST_FILES.to_string(),
+        ];
+        let guidelines = generate_tool_guidelines_for_profile(&tools, None, ResolvedShellPromptProfile::UnixLike);
+
+        assert!(guidelines.contains("Batch independent read-only calls"));
+        assert!(guidelines.contains("`read_file` ranges"));
+        assert!(guidelines.contains("serialize mutations"));
     }
 
     #[test]
