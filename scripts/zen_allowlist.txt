@@ -39,7 +39,6 @@ vtcode-core/src/components.rs:483 | key from map.keys() must exist; iteration in
 vtcode-core/src/core/agent/session/mod.rs:453 | try_from(delta) where delta >= 0; infallible
 vtcode-core/src/core/agent/session/mod.rs:580 | serde_json::to_string on Value; infallible
 vtcode-core/src/exec/code_executor.rs:342 | builtin executor name is selected from the same registry
-vtcode-core/src/core/loop_detector.rs:102 | tokens.len() >= 2 checked above; .last() guaranteed Some
 vtcode-core/src/pods/manager.rs:528 | PodManager::new() with home directory; default impl
 vtcode-core/src/skills/executor.rs:385 | serde_json serialization of sandbox permissions; infallible
 vtcode-core/src/skills/executor.rs:389 | serde_json::to_value on merged permissions; infallible
@@ -58,7 +57,6 @@ vtcode-core/src/tools/web_search/mod.rs:340 | static regex for DuckDuckGo snippe
 vtcode-core/src/tools/web_search/mod.rs:453 | static regex for HTML tag stripping
 vtcode-llm/src/copilot/auth.rs:30 | static regex for GitHub device flow parsing
 vtcode-llm/src/providers/gemini/helpers.rs:1415 | stream payload from Gemini is always an object
-vtcode-llm/src/providers/llamacpp.rs:223 | managed server map lock; single-threaded access, no poisoning
 vtcode-llm/src/providers/ollama.rs:65 | static version requirement literal; always valid
 vtcode-llm/src/providers/openai/responses_api.rs:280 | heading_str is None only when tool_call_id is Some; correlated
 vtcode-macros/src/lib.rs:43 | proc-macro unnamed field access; guaranteed by struct definition
@@ -84,12 +82,90 @@ vtcode-ui/src/tui/ui/markdown/tables.rs:14 | from_utf8 on SPACES static bytes; a
 
 # Runtime operations that use expect() for invariant assertions
 src/agent/runloop/prompt.rs:81 | fallback_to_main_model() should succeed when called after route check
-src/agent/runloop/unified/turn/turn_processing/test_support.rs:130 | test helper TempDir; test infrastructure
-src/agent/runloop/unified/turn/turn_processing/test_support.rs:258 | test helper primary agent resolution; test infrastructure
-src/cli/exec/prep.rs:291 | required stdin prompt should always produce content in interactive mode
+src/agent/runloop/unified/turn/turn_processing/test_support.rs | test-support helpers (TempDir, primary agent resolution); line-agnostic to avoid drift
+src/cli/exec/prep.rs:257 | required stdin prompt should always produce content in interactive mode
+src/updater/release_notes.rs:70 | hardcoded release-notes regex literal compiled at startup; failure indicates programmer error
 src/cli/init.rs:197 | dialoguer recommended option; interactive CLI, user must select
 src/cli/init.rs:206 | dialoguer selected option; interactive CLI, user must select
 src/cli/init.rs:214 | dialoguer custom prompt; interactive CLI, user must respond
 src/cli/init.rs:223 | dialoguer typed input; interactive CLI, user must respond
 src/cli/update.rs:151 | is_pinned() returned true, so pinned_version() is Some
 vtcode-a2a/src/lib.rs:23 | SIGTERM handler registration at startup; guaranteed to succeed
+
+# Config cache and thread-join poison handling; single-threaded initialization.
+vtcode-config/src/loader/manager.rs | config cache lock/thread-join poison handling
+
+# Generated OpenRouter model metadata is always present.
+vtcode-config/src/models/model_id/as_str.rs:30 | generated OpenRouter model metadata
+vtcode-config/src/models/model_id/description.rs:38 | generated OpenRouter model metadata
+vtcode-config/src/models/model_id/display.rs:31 | generated OpenRouter model metadata
+
+# Adjacent-condition invariants: the guard is proven by a nearby check.
+vtcode-core/src/compaction/two_pass.rs:93 | tool_calls presence checked by the is_some guard above
+vtcode-core/src/components.rs:465 | key iterated from map.keys()
+vtcode-core/src/core/agent/session/mod.rs:439 | delta >= 0 checked above
+vtcode-core/src/core/agent/session/mod.rs:561 | serde_json::to_string on Value; infallible
+vtcode-core/src/core/loop_detector/normalization.rs:79 | tokens.len() >= 2 checked above
+vtcode-core/src/exec/code_executor.rs:324 | builtin_names implies a builtin executor
+vtcode-core/src/pods/manager.rs:446 | pod manager home directory; default impl
+vtcode-core/src/tools/registry/distributed.rs:47 | OnceCell initialized after first set() call
+vtcode-core/src/tools/search_runtime.rs:86 | cache capacity is a non-zero constant
+vtcode-core/src/tools/skills/mod.rs:635 | filtered to skills with manifests
+vtcode-core/src/tools/web_search/mod.rs:184 | elapsed < cooldown checked above
+
+# Provider/tool call mutex locks; single-threaded access, no poisoning.
+vtcode-core/src/skills/executor.rs:733 | provider calls mutex
+vtcode-core/src/skills/executor.rs:785 | provider calls mutex
+vtcode-core/src/skills/executor.rs:837 | provider calls mutex
+vtcode-core/src/skills/executor.rs:889 | provider calls mutex
+vtcode-core/src/skills/executor.rs:954 | stream calls mutex
+vtcode-core/src/skills/executor.rs:1011 | provider calls mutex
+vtcode-core/src/skills/executor.rs:1052 | provider calls mutex
+vtcode-core/src/skills/executor.rs:1095 | tool calls mutex
+vtcode-core/src/skills/executor.rs:1736 | test fixture skill creation; test infrastructure
+
+# Infallible serde serialization.
+vtcode-core/src/skills/skill_policy.rs:341 | sandbox permissions serialize
+vtcode-core/src/skills/skill_policy.rs:345 | additional permissions serialize
+
+# Non-zero constant construction; compile-time invariant.
+vtcode-core/src/tools/grep_backend.rs:24 | 5 is a non-zero constant
+vtcode-core/src/tools/grep_backend.rs:36 | 2 is a non-zero constant fallback
+vtcode-core/src/utils/gatekeeper.rs:60 | GATEKEEPER_CACHE_MAX_ENTRIES = 1024 > 0
+vtcode-memory/src/query.rs:13 | MANIFEST_CACHE_CAPACITY is a non-zero constant
+
+# Static regexes compiled at startup; failure indicates programmer error.
+vtcode-core/src/tools/web_fetch/classify_helpers.rs:40 | static status regex
+vtcode-core/src/tools/web_search/mod.rs:322 | static DDG anchor regex
+vtcode-core/src/tools/web_search/mod.rs:325 | static DDG snippet regex
+vtcode-core/src/tools/web_search/mod.rs:423 | static HTML tag regex
+vtcode-core/src/tools/registry/executors/cargo_failure_diagnostics.rs | static cargo diagnostic regexes
+vtcode-ui/src/tui/core_tui/session/input.rs:1110 | static inline image path regex
+vtcode-ui/src/tui/core_tui/session/wrapping.rs | static URL/path token regex
+vtcode-ui/src/tui/ui/markdown/links.rs:10 | static hash location regex
+vtcode-ui/src/tui/ui/markdown/parsing.rs | static transcript token regexes
+src/agent/runloop/unified/settings_interactive/docs.rs:30 | static quoted-value regex
+src/agent/runloop/unified/turn/session/slash_commands/share_log.rs:24 | static user path regex
+
+# from_utf8 on validated SSE buffer segments.
+vtcode-llm/src/providers/anthropic/stream_decoder.rs | from_utf8 on validated SSE buffer segments
+vtcode-llm/src/providers/openai/stream_decoder.rs | from_utf8 on validated SSE buffer segments
+vtcode-llm/src/providers/openresponses/provider.rs | from_utf8 on validated SSE buffer segments
+vtcode-llm/src/providers/openrouter/provider/provider_impl.rs | from_utf8 on validated SSE buffer segments
+vtcode-llm/src/providers/shared/mod.rs | from_utf8 on validated SSE buffer segments
+vtcode-llm/src/providers/shared/responses_stream.rs | from_utf8 on validated SSE buffer segments
+
+# In-memory audit sink locks; single-threaded access, no poisoning.
+vtcode-safety/src/audit_log.rs | in-memory sink lock; single-threaded access, no poisoning
+
+# UI/runtime invariants.
+vtcode-ui/src/tui/core_tui/runner/mod.rs:189 | terminal restore guard must stay armed until shutdown
+vtcode-ui/src/tui/core_tui/session/input_manager.rs:380 | rep_parts has >= 2 elements when has_newlines
+vtcode-ui/src/tui/core_tui/session/input_manager.rs:417 | rep_parts has >= 2 elements when has_newlines
+vtcode-ui/src/tui/core_tui/session/list_panel.rs:267 | show_divider implies divider_style is Some
+vtcode-llm/src/providers/openai/responses_api.rs:252 | tool_call_id present when heading_str is None
+
+# Binary invariants.
+src/agent/runloop/model_picker/rendering.rs:54 | rendering rows are laid out before draw
+src/agent/runloop/unified/session_setup/init.rs:518 | MCP config requires a loaded VTCodeConfig
+

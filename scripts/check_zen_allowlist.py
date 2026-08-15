@@ -62,8 +62,14 @@ def matches_any(pattern: str, tracked: list[str]) -> bool:
             pattern = prefix
 
     for path in tracked:
-        if fnmatch(path, pattern):
-            return True
+        # Rules use the pre-restructure short form (e.g. "vtcode-core/src/...");
+        # also match the current "crates/codegen|common/..." layout.
+        candidates = [path]
+        if path.startswith("crates/"):
+            candidates.append(path.split("/", 2)[2])
+        for candidate in candidates:
+            if fnmatch(candidate, pattern):
+                return True
     return False
 
 

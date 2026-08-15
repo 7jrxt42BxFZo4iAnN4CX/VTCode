@@ -102,11 +102,19 @@ def parse_allow_rules(path: Path) -> list[AllowRule]:
 
 
 def is_allowlisted(rel_path: str, line_no: int, rules: list[AllowRule]) -> bool:
+    # The allowlist was authored against the pre-restructure short form
+    # (e.g. "vtcode-core/src/..."); match both it and the current
+    # "crates/codegen|common/..." form so entries do not go stale when the
+    # workspace layout changes.
+    candidates = {rel_path}
+    if rel_path.startswith("crates/"):
+        candidates.add(rel_path.split("/", 2)[2])
     for rule in rules:
-        if not fnmatch(rel_path, rule.pattern):
-            continue
-        if rule.line is None or rule.line == line_no:
-            return True
+        for candidate in candidates:
+            if not fnmatch(candidate, rule.pattern):
+                continue
+            if rule.line is None or rule.line == line_no:
+                return True
     return False
 
 
@@ -127,13 +135,24 @@ def scan_file(path: Path, rules: list[AllowRule]) -> list[tuple[str, int, str]]:
         if re.search(r"#\s*\[\s*cfg\s*\([^]]*test", line):
             pending_cfg_test = True
 
-        if pending_cfg_test and re.search(r"\bmod\s+\w+\s*\{", line):
-            break
+        if pending_cfg_test:
+            if re.search(r"\bmod\s+\w+\s*\{", line):
+                break
+            if re.search(r"\bfn\s+\w+\s*\([^)]*\)\s*\{", line):
+                in_test_fn = True
+                test_fn_depth = line.count("{") - line.count("}")
+                pending_cfg_test = False
+                continue
+            if not re.search(r"#\s*\[", line):
+                # cfg(test) on a non-mod/non-fn item (const, struct, ...);
+                # its initializer may still contain unwraps, so just stop
+                # treating the following lines as test-gated.
+                pending_cfg_test = False
 
         if re.search(r"\bmod\s+\w*tests\w*\s*\{", line):
             break
 
-        if re.search(r"#\s*\[\s*test\s*\]", line):
+        if re.search(r"#\s*\[\s*(?:[a-zA-Z_]\w*(?:::[a-zA-Z_]\w*)*::)?test\s*\]", line):
             pending_test_fn = True
 
         if pending_test_fn and re.search(r"\bfn\s+\w+\s*\([^)]*\)\s*\{", line):

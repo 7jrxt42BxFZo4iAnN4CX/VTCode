@@ -14,7 +14,10 @@
 extensions/zed-extension/extension.wasm=1_000_000
 
 # Keep changelog history available while capping growth.
-CHANGELOG.md=600_000
+CHANGELOG.md=1_200_000
+
+# Vendored simdutf C++ port (patched dependency); pinned upstream source.
+patches/simdutf/cpp/simdutf.cpp=3_000_000
 
 # Project branding assets required by README/docs.
 resources/gif/vtcode.gif=2_000_000

@@ -12,6 +12,7 @@ ALLOWED_ROOT_MARKDOWN = {
     "README.md",
     "AGENTS.md",
     "CLAUDE.md",
+    "CONTEXT.md",
     "CONTRIBUTING.md",
     "CHANGELOG.md",
 }
