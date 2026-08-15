@@ -26,3 +26,4 @@
 - `command_safety::shell_parser` owns dynamic-shell-syntax detection; `find` expansion must fail closed before preflight or learned approval.
 - Sandboxed pipe/PTy and MCP stdio launches filter sensitive environment names after overrides; macOS hostname allowlists reject unenforceable policies, and unsupported Windows restrictions fail closed.
 - Keep `exec_policy_command_validation` fuzzing and traversal/symlink regression cases aligned with changes to workspace containment or command validation.
+- Windows-only `command_safety` DB builders (`windows_cmdlet_db.rs`, `windows_com_analyzer.rs`, `windows_registry_filter.rs`) use module-level `#![expect(unused_results)]` — one-shot builders deliberately discard `insert` results; cross-check with `cargo check --target x86_64-pc-windows-msvc` since Linux CI never compiles `#[cfg(windows)]` code.
