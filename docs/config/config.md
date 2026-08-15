@@ -60,7 +60,7 @@ The AI provider that VT Code should use.
 
 ```toml
 [agent]
-provider = "anthropic"  # available: openai, anthropic, google, meta, deepseek, copilot, openrouter, mimo, huggingface, zai, moonshot, minimax, mistral, qwen, stepfun, evolink, poolside, xai, nvidia, ollama, lmstudio, llamacpp
+provider = "anthropic"  # available: openai, anthropic, google, meta, deepseek, copilot, openrouter, mimo, huggingface, zai, moonshot, minimax, mistral, qwen, stepfun, evolink, poolside, xai, nvidia, merge-gateway, ollama, lmstudio, llamacpp
 default_model = "claude-sonnet-4-6"  # overrides the default model for the selected provider
 ```
 
@@ -99,6 +99,13 @@ base_url = "http://localhost:11434/v1"
 name = "NVIDIA NIM"
 base_url = "https://integrate.api.nvidia.com/v1"
 env_key = "NVIDIA_API_KEY"
+
+[agent.provider_settings.merge-gateway]
+name = "Merge Gateway"
+base_url = "https://api-gateway.merge.dev/v1/openai"
+env_key = "MERGE_GATEWAY_API_KEY"
+# Override the endpoint with MERGE_GATEWAY_BASE_URL when using a proxy.
+# The default model is default_routing; explicit provider/model routes are also valid.
 
 [agent.provider_settings.meta]
 name = "Meta AI"
@@ -907,6 +914,9 @@ EVOLINK_API_KEY=your_evolink_api_key
 STEPFUN_API_KEY=your_stepfun_api_key
 QWEN_API_KEY=your_qwen_api_key
 NVIDIA_API_KEY=your_nvidia_api_key
+MERGE_GATEWAY_API_KEY=your_merge_gateway_api_key
+# Optional Merge Gateway endpoint override:
+# MERGE_GATEWAY_BASE_URL=https://api-gateway.merge.dev/v1/openai
 OLLAMA_HOST=http://localhost:11434  # For Ollama
 ```
 
@@ -1052,7 +1062,7 @@ turn limits, and context reuse for long-running exec sessions.
 
 | Key                                     | Type / Values                                     | Notes                                                                                                                                                                         |
 | --------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agent.provider`                        | string                                            | Provider to use (e.g., `openai`, `anthropic`, `google`, `meta`, `nvidia`, `ollama`).                                                                                            |
+| `agent.provider`                        | string                                            | Provider to use (e.g., `openai`, `anthropic`, `google`, `meta`, `nvidia`, `merge-gateway`, `ollama`).                                                                          |
 | `agent.default_model`                   | string                                            | Default model for the selected provider.                                                                                                                                      |
 | `agent.context_window`                  | number                                            | Context window tokens.                                                                                                                                                        |
 | `agent.max_output_tokens`               | number                                            | Max output tokens.                                                                                                                                                            |

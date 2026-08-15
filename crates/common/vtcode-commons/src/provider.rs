@@ -71,6 +71,8 @@ pub enum Provider {
     XAI,
     /// NVIDIA NIM OpenAI-compatible models
     NVIDIA,
+    /// Merge Gateway multi-provider routing gateway
+    MergeGateway,
 }
 
 impl Provider {
@@ -102,6 +104,7 @@ impl Provider {
             Provider::Poolside => "POOLSIDE_API_KEY",
             Provider::XAI => "XAI_API_KEY",
             Provider::NVIDIA => "NVIDIA_API_KEY",
+            Provider::MergeGateway => "MERGE_GATEWAY_API_KEY",
         }
     }
 
@@ -133,6 +136,7 @@ impl Provider {
             Provider::Poolside,
             Provider::XAI,
             Provider::NVIDIA,
+            Provider::MergeGateway,
         ]
     }
 
@@ -164,6 +168,7 @@ impl Provider {
             Provider::Poolside => "Poolside",
             Provider::XAI => "xAI",
             Provider::NVIDIA => "NVIDIA",
+            Provider::MergeGateway => "Merge Gateway",
         }
     }
 
@@ -221,6 +226,7 @@ impl Provider {
             Provider::Poolside => Some("https://poolside.ai"),
             Provider::XAI => Some("https://docs.x.ai"),
             Provider::NVIDIA => Some("https://build.nvidia.com"),
+            Provider::MergeGateway => Some("https://dashboard.merge.dev"),
         }
     }
 }
@@ -253,6 +259,7 @@ impl fmt::Display for Provider {
             Provider::Poolside => write!(f, "poolside"),
             Provider::XAI => write!(f, "xai"),
             Provider::NVIDIA => write!(f, "nvidia"),
+            Provider::MergeGateway => write!(f, "merge-gateway"),
         }
     }
 }
@@ -285,6 +292,7 @@ impl AsRef<str> for Provider {
             Provider::Poolside => "poolside",
             Provider::XAI => "xai",
             Provider::NVIDIA => "nvidia",
+            Provider::MergeGateway => "merge-gateway",
         }
     }
 }
@@ -319,6 +327,7 @@ impl FromStr for Provider {
             "poolside" => Ok(Provider::Poolside),
             "xai" => Ok(Provider::XAI),
             "nvidia" | "nvidia-nim" => Ok(Provider::NVIDIA),
+            "merge-gateway" | "merge_gateway" | "mergegateway" => Ok(Provider::MergeGateway),
             _ => Err(ProviderParseError::InvalidProvider(s.to_string())),
         }
     }

@@ -72,6 +72,11 @@ Choose one of the supported LLM providers:
     -   Get from [NVIDIA Build](https://build.nvidia.com/)
     -   Models: Nemotron 3 Ultra/Super/Nano, GLM-5.2, DeepSeek V4 Flash
 
+-   **Merge Gateway**: `export MERGE_GATEWAY_API_KEY=your_key_here`
+    -   Create a key in the [Merge dashboard](https://dashboard.merge.dev/), then configure `provider = "merge-gateway"`.
+    -   Default model: `default_routing`; curated routes include `openai/gpt-5.5`, `anthropic/claude-opus-5`, and `google/gemini-3.6-flash`.
+    -   See the [Merge Gateway provider guide](../providers/merge-gateway.md) for endpoint and compatibility details.
+
 For more providers, see the [Provider Guides](../providers/PROVIDER_GUIDES.md).
 
 ## Installation

@@ -23,6 +23,7 @@ pub fn supported_for(provider: &str) -> Option<&'static [&'static str]> {
         "poolside" => Some(models::poolside::SUPPORTED_MODELS),
         "xai" => Some(models::xai::SUPPORTED_MODELS),
         "nvidia" => Some(models::nvidia::SUPPORTED_MODELS),
+        "merge-gateway" => Some(models::merge_gateway::SUPPORTED_MODELS),
         "meta" | "meta-ai" => Some(models::meta::SUPPORTED_MODELS),
         _ => None,
     }
@@ -51,6 +52,7 @@ pub fn default_for(provider: &str) -> Option<&'static str> {
         "poolside" => Some(models::poolside::DEFAULT_MODEL),
         "xai" => Some(models::xai::DEFAULT_MODEL),
         "nvidia" => Some(models::nvidia::DEFAULT_MODEL),
+        "merge-gateway" => Some(models::merge_gateway::DEFAULT_MODEL),
         "meta" | "meta-ai" => Some(models::meta::DEFAULT_MODEL),
         _ => None,
     }
@@ -58,5 +60,8 @@ pub fn default_for(provider: &str) -> Option<&'static str> {
 
 /// Validate if a model is supported by a provider
 pub fn is_valid(provider: &str, model: &str) -> bool {
+    if provider.eq_ignore_ascii_case("merge-gateway") {
+        return !model.trim().is_empty();
+    }
     supported_for(provider).map(|list| list.contains(&model)).unwrap_or(false)
 }

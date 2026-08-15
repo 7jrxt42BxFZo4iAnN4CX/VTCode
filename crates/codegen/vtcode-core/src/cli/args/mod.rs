@@ -85,7 +85,7 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub model: Option<String>,
 
-    /// LLM Provider (gemini, openai, anthropic, deepseek, meta, openrouter, codex, zai, moonshot, minimax, ollama, lmstudio)
+    /// LLM Provider (gemini, openai, anthropic, deepseek, meta, openrouter, merge-gateway, codex, zai, moonshot, minimax, ollama, lmstudio)
     #[arg(long, global = true)]
     pub provider: Option<String>,
 

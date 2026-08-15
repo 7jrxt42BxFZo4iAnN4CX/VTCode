@@ -197,6 +197,9 @@ pub fn builtin_model_presets() -> Vec<ModelPreset> {
     // NVIDIA NIM presets
     presets.extend(presets::nvidia_presets());
 
+    // Merge Gateway presets
+    presets.extend(presets::merge_gateway_presets());
+
     // Evolink presets
     presets.extend(presets::evolink_presets());
 
@@ -231,6 +234,7 @@ pub fn presets_for_provider(provider: Provider) -> Vec<ModelPreset> {
         Provider::Poolside => presets::poolside_presets(),
         Provider::XAI => presets::xai_presets(),
         Provider::NVIDIA => presets::nvidia_presets(),
+        Provider::MergeGateway => presets::merge_gateway_presets(),
     }
 }
 
@@ -341,6 +345,23 @@ mod tests {
                 .iter()
                 .all(|preset| preset.provider == Provider::NVIDIA && preset.show_in_picker)
         );
+    }
+
+    #[test]
+    fn merge_gateway_presets_expose_curated_routes_and_default() {
+        let presets = presets::merge_gateway_presets();
+        assert_eq!(presets.len(), 4);
+        let default = presets
+            .iter()
+            .find(|preset| preset.is_default)
+            .expect("Merge Gateway default preset");
+        assert_eq!(default.model, "default_routing");
+        assert_eq!(default.context_window, Some(128_000));
+        assert!(presets.iter().all(|preset| {
+            preset.provider == Provider::MergeGateway
+                && preset.show_in_picker
+                && preset.supported_reasoning_efforts.is_empty()
+        }));
     }
 
     #[test]

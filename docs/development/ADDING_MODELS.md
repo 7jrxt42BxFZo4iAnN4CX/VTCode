@@ -15,6 +15,10 @@ configuration, factory registration, resolver, startup defaults, picker
 presets, and a provider guide. NVIDIA is an OpenAI-compatible provider, but
 its curated constants are intentionally separate from the OpenAI constants;
 explicit NVIDIA model IDs remain valid even when they are not in the picker.
+Gateway providers such as Merge Gateway use the same shared Chat Completions
+transport while keeping curated picker entries separate from arbitrary valid
+provider/model route IDs. Gateway integrations must document which native
+features are intentionally not projected into the compatibility layer.
 For marketplace entries such as Meta Muse on OpenRouter, add generated metadata
 to both `docs/models.json` and the embedded
 `crates/codegen/vtcode-config/build_data/openrouter_models.json`; keep the
@@ -25,6 +29,7 @@ namespace.
 
 - [ ] Add to the provider constants module (for example, NVIDIA uses `constants/models/nvidia.rs`)
 - [ ] Add to model metadata (`docs/models.json`)
+- [ ] For a gateway provider, document the default endpoint, API-key variable, curated picker routes, and pass-through rules for arbitrary provider/model IDs
 - [ ] If the model is OpenRouter-only, mirror its metadata in `build_data/openrouter_models.json`
 - [ ] Add enum variant (`crates/codegen/vtcode-config/src/models/model_id.rs`)
 - [ ] Update `as_str.rs` - string mapping

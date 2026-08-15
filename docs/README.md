@@ -39,12 +39,23 @@ VT Code represents a modern approach to AI-powered software development, featuri
 - **Decision Ledger** - Structured, compact record of key decisions injected each turn for consistency
 - **Error Recovery & Resilience** - Intelligent error handling with pattern detection and context preservation
 - **Conversation Summarization** - Automatic compression when exceeding thresholds with quality assessment
-- **Multi-Provider LLM Support** - 25+ providers including Gemini, OpenAI, Anthropic, Meta AI, xAI, DeepSeek, OpenRouter, Evolink, Qwen, StepFun, Poolside, NVIDIA, Ollama, LM Studio, Xiaomi MiMo, Z.AI, Moonshot, MiniMax, HuggingFace
+- **Multi-Provider LLM Support** - 26+ providers including Gemini, OpenAI, Anthropic, Meta AI, xAI, DeepSeek, OpenRouter, Merge Gateway, Evolink, Qwen, StepFun, Poolside, NVIDIA, Ollama, LM Studio, Xiaomi MiMo, Z.AI, Moonshot, MiniMax, HuggingFace
 - **LLM-Native Code Understanding** - Precise semantic analysis across all modern languages
 - **Bash Safety Parsing** - Accurate shell command validation via tree-sitter-bash
 - **Enterprise-Grade Safety** - Comprehensive security controls and path validation
 - **Flexible Configuration** - TOML-based configuration with granular policies
 - **Workspace-First Execution** - Full read/write/command capabilities anchored to `WORKSPACE_DIR` with built-in indexing workflows
+
+### Provider index
+
+| Category | Providers |
+| --- | --- |
+| Cloud LLMs | Gemini, OpenAI, Anthropic, Meta AI, xAI, DeepSeek, Z.AI, Moonshot, MiniMax, Mistral, Qwen, StepFun |
+| Gateways | OpenRouter, **[Merge Gateway](./providers/merge-gateway.md)**, Evolink, HuggingFace, Atlas Cloud, OmniRoute |
+| Local inference | Ollama, LM Studio, llama.cpp |
+
+See the complete [Provider Guides](./providers/PROVIDER_GUIDES.md) index for
+authentication, endpoints, model catalogs, and setup details.
 
 ## Documentation Overview
 
@@ -121,6 +132,8 @@ Deploying VT Code in production? Focus on enterprise features:
 - **[Performance Analysis](./benchmarks/README.md)** - Optimization and benchmarking
 - **[Provider Guides](./providers/PROVIDER_GUIDES.md)** - LLM provider integration guides
     - [OpenRouter Integration](./providers/openrouter.md)
+    - [Merge Gateway Integration](./providers/merge-gateway.md)
+    - [Merge Gateway Quick Reference](./providers/merge-gateway-quick-reference.md)
     - [llama.cpp Provider Guide](./providers/llamacpp.md)
 
 ## Core Capabilities
@@ -191,7 +204,7 @@ VT Code implements a **multi-layered security model** to protect against prompt 
 ### For Organizations
 
 1. **[Security Implementation](./development/PROCESS_HARDENING.md)** - Enterprise security features
-2. **[Provider Integration](./providers/PROVIDER_GUIDES.md)** - LLM provider setup (Gemini, OpenAI, Anthropic, Meta AI, OpenRouter)
+2. **[Provider Integration](./providers/PROVIDER_GUIDES.md)** - LLM provider setup (Gemini, OpenAI, Anthropic, Meta AI, OpenRouter, Merge Gateway)
 3. **[Performance Tuning](./benchmarks/README.md)** - Optimization strategies
 
 ## Usage Patterns

@@ -100,6 +100,7 @@ fn is_provider_configured(config: &DotConfig, provider: &str) -> bool {
         "llamacpp" => (config.providers.llamacpp.as_ref(), true),
         "stepfun" => (config.providers.stepfun.as_ref(), false),
         "evolink" => (config.providers.evolink.as_ref(), false),
+        "merge-gateway" => (config.providers.merge_gateway.as_ref(), false),
         _ => return false,
     };
     provider_config.map(|p| p.enabled).unwrap_or(default_enabled)
@@ -181,7 +182,7 @@ async fn handle_config_provider(
 
     match provider {
         "openai" | "anthropic" | "gemini" | "deepseek" | "meta" | "openrouter" | "ollama" | "lmstudio" | "llamacpp"
-        | "stepfun" | "evolink" => {
+        | "stepfun" | "evolink" | "merge-gateway" => {
             configure_standard_provider(&mut config, provider, api_key, base_url, model)?;
         }
         _ => return Err(anyhow!("Unsupported provider: {provider}")),
@@ -221,6 +222,7 @@ fn configure_standard_provider(
         "minimax" => get_provider_config!(anthropic), // Note: maps to anthropic
         "stepfun" => get_provider_config!(stepfun),
         "evolink" => get_provider_config!(evolink),
+        "merge-gateway" => get_provider_config!(merge_gateway),
         _ => return Err(anyhow!("Unknown provider: {provider}")),
     };
 
@@ -308,6 +310,7 @@ fn get_provider_credentials(
         "llamacpp" => config.providers.llamacpp.as_ref(),
         "stepfun" => config.providers.stepfun.as_ref(),
         "evolink" => config.providers.evolink.as_ref(),
+        "merge-gateway" => config.providers.merge_gateway.as_ref(),
         _ => return Err(anyhow!("Unknown provider: {provider}")),
     };
 
@@ -381,5 +384,39 @@ fn model_availability_label(availability: &crate::llm::ModelAvailability) -> &'s
         crate::llm::ModelAvailability::ManagedAuthAvailable => "Managed auth",
         crate::llm::ModelAvailability::Misconfigured => "Misconfigured",
         crate::llm::ModelAvailability::LocalOnly => "Local only",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_model_commands_configure_merge_gateway() {
+        let mut config = DotConfig::default();
+
+        configure_standard_provider(
+            &mut config,
+            "merge-gateway",
+            Some("merge-key"),
+            Some("https://merge-proxy.example/v1/openai"),
+            Some("default_routing"),
+        )
+        .expect("Merge Gateway should be accepted by model configuration");
+
+        let provider = config.providers.merge_gateway.as_ref().expect("Merge Gateway config");
+        assert!(provider.enabled);
+        assert_eq!(provider.api_key.as_deref(), Some("merge-key"));
+        assert_eq!(provider.base_url.as_deref(), Some("https://merge-proxy.example/v1/openai"));
+        assert_eq!(provider.model.as_deref(), Some("default_routing"));
+        assert_eq!(
+            get_provider_credentials(&config, "merge-gateway").expect("Merge Gateway credentials"),
+            (
+                Some("merge-key".to_owned()),
+                Some("https://merge-proxy.example/v1/openai".to_owned()),
+                Some("default_routing".to_owned()),
+            )
+        );
+        assert!(is_provider_configured(&config, "merge-gateway"));
     }
 }

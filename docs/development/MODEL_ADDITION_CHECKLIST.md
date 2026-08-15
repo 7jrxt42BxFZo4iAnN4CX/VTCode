@@ -9,6 +9,7 @@ Complete this checklist when adding a new LLM model to VT Code.
 - [ ] Know context window, capabilities, costs
 - [ ] Confirmed tool calling support status
 - [ ] Confirmed reasoning support status (if applicable)
+- [ ] For gateway providers, confirmed whether model IDs are route-qualified and which native fields are intentionally out of scope
 
 ## Phase 1: Constants & Metadata (Database Layer)
 
@@ -31,6 +32,7 @@ Complete this checklist when adding a new LLM model to VT Code.
   - [ ] `modalities.input` array
   - [ ] `modalities.output` array
   - [ ] `context` field (token count)
+- [ ] For gateway providers, recorded the compatibility endpoint and left the local allowlist open when valid provider/model IDs are intentionally pass-through
 - [ ] Validated JSON: `python3 -m json.tool docs/models.json > /dev/null`
 
 ## Phase 2: Model ID Resolution (Core Layer)

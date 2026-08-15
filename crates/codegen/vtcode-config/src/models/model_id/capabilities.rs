@@ -70,6 +70,8 @@ fn catalog_provider_key(provider: &str) -> &str {
         "xai"
     } else if provider.eq_ignore_ascii_case("nvidia") {
         "nvidia"
+    } else if provider.eq_ignore_ascii_case("merge-gateway") {
+        "merge-gateway"
     } else {
         provider
     }
@@ -102,6 +104,7 @@ fn capability_provider_key(provider: Provider) -> &'static str {
         Provider::Poolside => "poolside",
         Provider::XAI => "xai",
         Provider::NVIDIA => "nvidia",
+        Provider::MergeGateway => "merge-gateway",
     }
 }
 
@@ -165,6 +168,10 @@ impl ModelId {
             ModelId::MetaMuseSpark12 => Some(ModelId::MetaMuseSpark11),
             ModelId::NvidiaNemotron3Ultra550bA55b => Some(ModelId::NvidiaNemotron3Super120bA12b),
             ModelId::NvidiaNemotron3Super120bA12b => Some(ModelId::NvidiaNemotron3Nano30bA3b),
+            ModelId::MergeGatewayDefaultRouting
+            | ModelId::MergeGatewayOpenAIGpt55
+            | ModelId::MergeGatewayAnthropicClaudeOpus5
+            | ModelId::MergeGatewayGoogleGemini36Flash => None,
             ModelId::OpenCodeGoDeepseekV4Pro => Some(ModelId::OpenCodeGoDeepseekV4Flash),
             ModelId::OpenCodeGoGlm52 => Some(ModelId::OpenCodeGoGlm51),
             ModelId::OpenCodeGoMinimaxM3 => Some(ModelId::OpenCodeGoMinimaxM27),
@@ -241,6 +248,10 @@ impl ModelId {
             ModelId::MetaMuseSpark12 => Some(ModelId::MetaMuseSpark11),
             ModelId::NvidiaNemotron3Ultra550bA55b => Some(ModelId::NvidiaNemotron3Nano30bA3b),
             ModelId::NvidiaNemotron3Super120bA12b => Some(ModelId::NvidiaNemotron3Nano30bA3b),
+            ModelId::MergeGatewayDefaultRouting
+            | ModelId::MergeGatewayOpenAIGpt55
+            | ModelId::MergeGatewayAnthropicClaudeOpus5
+            | ModelId::MergeGatewayGoogleGemini36Flash => None,
             ModelId::EvolinkDeepseekV4Pro => Some(ModelId::EvolinkDeepseekV4Flash),
             ModelId::HuggingFaceDeepseekV4ProTogether => Some(ModelId::HuggingFaceDeepseekV4FlashNovita),
             ModelId::HuggingFaceDeepseekV4ProNovita => Some(ModelId::HuggingFaceDeepseekV4FlashNovita),
@@ -271,6 +282,7 @@ impl ModelId {
             self,
             ModelId::Gemini35Flash
                 | ModelId::Gemini37Flash
+                | ModelId::MergeGatewayGoogleGemini36Flash
                 | ModelId::EvolinkGemini35Flash
                 | ModelId::EvolinkDeepseekV4Flash
                 | ModelId::OpenRouterStepfunStep35FlashFree
@@ -553,6 +565,10 @@ impl ModelId {
             // Qwen models
             ModelId::QwenDeepSeekV4Flash | ModelId::QwenDeepSeekV4Pro => "v4",
             ModelId::QwenGlm51 => "5.1",
+            ModelId::MergeGatewayDefaultRouting => "routing",
+            ModelId::MergeGatewayOpenAIGpt55 => "5.5",
+            ModelId::MergeGatewayAnthropicClaudeOpus5 => "5",
+            ModelId::MergeGatewayGoogleGemini36Flash => "3.6",
             _ => "unknown",
         }
     }

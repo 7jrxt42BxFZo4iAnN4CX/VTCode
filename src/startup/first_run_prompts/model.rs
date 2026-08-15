@@ -57,6 +57,7 @@ pub(crate) fn default_model_for_provider(provider: Provider) -> &'static str {
         Provider::OpenCodeGo => models::opencode_go::DEFAULT_MODEL,
         Provider::XAI => models::xai::DEFAULT_MODEL,
         Provider::NVIDIA => models::nvidia::DEFAULT_MODEL,
+        Provider::MergeGateway => models::merge_gateway::DEFAULT_MODEL,
     }
 }
 

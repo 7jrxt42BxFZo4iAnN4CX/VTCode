@@ -224,7 +224,8 @@ pub use lightweight_routing::{
 pub use model_resolver::{DynamicModelMeta, DynamicModelRef, ModelAvailability, ModelResolver, ResolvedModel};
 pub use provider::{FinishReason, LLMStream, LLMStreamEvent, Usage};
 pub use providers::{
-    AnthropicProvider, GeminiProvider, HuggingFaceProvider, MetaProvider, OllamaProvider, OpenAIProvider, ZAIProvider,
+    AnthropicProvider, GeminiProvider, HuggingFaceProvider, MergeGatewayProvider, MetaProvider, OllamaProvider,
+    OpenAIProvider, ZAIProvider,
 };
 pub use single_response::collect_single_response;
 pub use tool_bridge::{

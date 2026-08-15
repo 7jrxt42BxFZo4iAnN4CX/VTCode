@@ -94,6 +94,8 @@ fn test_provider_parsing() {
     assert_eq!("meta-ai".parse::<Provider>().unwrap(), Provider::Meta);
     assert_eq!("nvidia".parse::<Provider>().unwrap(), Provider::NVIDIA);
     assert_eq!("nvidia-nim".parse::<Provider>().unwrap(), Provider::NVIDIA);
+    assert_eq!("merge-gateway".parse::<Provider>().unwrap(), Provider::MergeGateway);
+    assert_eq!("merge_gateway".parse::<Provider>().unwrap(), Provider::MergeGateway);
     assert_eq!("openrouter".parse::<Provider>().unwrap(), Provider::OpenRouter);
     assert_eq!("zai".parse::<Provider>().unwrap(), Provider::ZAI);
     assert_eq!("moonshot".parse::<Provider>().unwrap(), Provider::Moonshot);
@@ -114,6 +116,10 @@ fn test_model_providers() {
     assert_eq!(ModelId::MetaMuseSpark12.provider(), Provider::Meta);
     assert_eq!(ModelId::NvidiaNemotron3Ultra550bA55b.provider(), Provider::NVIDIA);
     assert_eq!(ModelId::NvidiaDeepseekV4Flash0731.provider(), Provider::NVIDIA);
+    assert_eq!(ModelId::MergeGatewayDefaultRouting.provider(), Provider::MergeGateway);
+    assert_eq!(ModelId::MergeGatewayOpenAIGpt55.provider(), Provider::MergeGateway);
+    assert_eq!(ModelId::MergeGatewayAnthropicClaudeOpus5.provider(), Provider::MergeGateway);
+    assert_eq!(ModelId::MergeGatewayGoogleGemini36Flash.provider(), Provider::MergeGateway);
     assert_eq!(ModelId::ZaiGlm51.provider(), Provider::ZAI);
     assert_eq!(ModelId::OpenCodeZenGPT54.provider(), Provider::OpenCodeZen);
     assert_eq!(ModelId::OpenCodeGoMinimaxM27.provider(), Provider::OpenCodeGo);
@@ -144,6 +150,11 @@ fn test_provider_defaults() {
     assert_eq!(ModelId::default_orchestrator_for_provider(Provider::OpenCodeGo), ModelId::OpenCodeGoMinimaxM27);
     assert_eq!(ModelId::default_orchestrator_for_provider(Provider::XAI), ModelId::XaiGrok46);
     assert_eq!(ModelId::default_single_for_provider(Provider::XAI), ModelId::XaiGrok46);
+    assert_eq!(
+        ModelId::default_orchestrator_for_provider(Provider::MergeGateway),
+        ModelId::MergeGatewayDefaultRouting
+    );
+    assert_eq!(ModelId::default_single_for_provider(Provider::MergeGateway), ModelId::MergeGatewayDefaultRouting);
 }
 
 #[test]
@@ -285,6 +296,11 @@ fn test_models_for_provider() {
     assert!(nvidia_models.contains(&ModelId::NvidiaNemotron3Ultra550bA55b));
     assert!(nvidia_models.contains(&ModelId::NvidiaZaiGlm52));
 
+    let merge_gateway_models = ModelId::models_for_provider(Provider::MergeGateway);
+    assert_eq!(merge_gateway_models.len(), 4);
+    assert!(merge_gateway_models.contains(&ModelId::MergeGatewayDefaultRouting));
+    assert!(merge_gateway_models.contains(&ModelId::MergeGatewayOpenAIGpt55));
+
     let openrouter_models = ModelId::models_for_provider(Provider::OpenRouter);
     assert!(openrouter_models.contains(&ModelId::OpenRouterOpenAIGpt55));
     assert!(openrouter_models.contains(&ModelId::OpenRouterMetaMuseGlimmer30b));
@@ -419,6 +435,12 @@ fn test_generated_model_capability_lookup() {
     assert!(nvidia_catalog.reasoning);
     assert!(nvidia_catalog.tool_call);
     assert!(catalog_provider_keys().contains(&"nvidia"));
+    let merge_gateway_catalog =
+        model_catalog_entry("merge-gateway", models::merge_gateway::DEFAULT_ROUTING).expect("Merge metadata");
+    assert_eq!(merge_gateway_catalog.context_window, 128_000);
+    assert!(!merge_gateway_catalog.reasoning);
+    assert!(merge_gateway_catalog.tool_call);
+    assert!(catalog_provider_keys().contains(&"merge-gateway"));
     let ollama_cloud_catalog =
         model_catalog_entry("ollama", models::ollama::DEEPSEEK_V4_FLASH_CLOUD).expect("Ollama Cloud metadata");
     assert_eq!(ollama_cloud_catalog.context_window, 1_000_000);
@@ -488,6 +510,8 @@ fn test_model_helpers_include_curated_opencode_models() {
     assert!(go_models.contains(&models::opencode_go::MINIMAX_M2_7));
     assert!(go_models.contains(&models::opencode_go::GLM_5_1));
     assert_eq!(model_helpers::default_for("opencode-go"), Some(models::opencode_go::DEFAULT_MODEL));
+    assert!(model_helpers::is_valid("merge-gateway", "deepseek/deepseek-v4-pro"));
+    assert!(!model_helpers::is_valid("merge-gateway", "   "));
 }
 
 #[test]
@@ -561,6 +585,11 @@ fn test_all_models_have_non_empty_metadata_and_parse() {
             // GLM-5.2 is shared with OpenRouter; bare parsing preserves the
             // existing OpenRouter precedence.
             ModelId::NvidiaZaiGlm52 => continue,
+            // Merge Gateway deliberately reuses upstream provider/model ids;
+            // bare parsing preserves OpenRouter precedence for overlapping ids.
+            ModelId::MergeGatewayOpenAIGpt55
+            | ModelId::MergeGatewayAnthropicClaudeOpus5
+            | ModelId::MergeGatewayGoogleGemini36Flash => continue,
             _ => ModelId::from_str(&model.as_str()),
         };
         assert_eq!(parsed.unwrap(), model);

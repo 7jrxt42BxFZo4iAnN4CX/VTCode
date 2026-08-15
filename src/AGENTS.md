@@ -15,7 +15,7 @@ Detailed runloop recovery and allocator notes live in the [vtcode binary gotchas
 - Install `vtcode_ui::tui::panic_hook` before producing output.
 - `agent/runloop/` is the single-agent loop; `unified/turn/session_loop_runner/mod.rs` is its facade and `orchestration.rs` owns the loop body. `session_loop_runner/harness.rs` opens and closes canonical session persistence with shared one-shot finalization; unexpected exits must emit terminal lifecycle events before draining. Keep status-line command input, persistence, preview, and action policy behind the private child modules of `turn/session/slash_commands/ui/statusline.rs`.
 - Keep transcript/modal editor opens on the bounded runtime coordinator, not queued `/edit` submissions.
-- Keep `/secret` provider/key validation and storage selection behind `turn/session/slash_commands/secrets/storage.rs` and the central resolver.
+- Keep `/secret` provider/key validation and storage selection, including gateway providers, behind `turn/session/slash_commands/secrets/storage.rs` and the central resolver.
 - Route batched tool metrics through the shared execution helper so every executed status is recorded; checkpoint diagnostics use canonical `Usage` plus saturating per-turn counters.
 - Keep PTY status handoff during stream shutdown separate from output rendering.
 - `agent/runloop/unified/turn/compaction/` delegates to `vtcode-core::compaction`; reserve segment boundaries with the shared transition helper.

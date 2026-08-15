@@ -66,6 +66,7 @@ export MODEL_API_KEY="..."        # Meta AI (official, documented name)
 export XAI_API_KEY="..."          # xAI
 export DEEPSEEK_API_KEY="..."     # DeepSeek
 export OPENROUTER_API_KEY="..."   # OpenRouter
+export MERGE_GATEWAY_API_KEY="..." # Merge Gateway
 ```
 
 ## Authentication (OAuth / ChatGPT Subscription)

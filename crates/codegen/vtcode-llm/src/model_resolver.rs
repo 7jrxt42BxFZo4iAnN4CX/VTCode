@@ -431,6 +431,7 @@ fn provider_precedence(provider: Provider) -> usize {
         Provider::Poolside => 22,
         Provider::XAI => 23,
         Provider::NVIDIA => 24,
+        Provider::MergeGateway => 25,
     }
 }
 
@@ -554,6 +555,24 @@ mod tests {
 
         assert_eq!(resolved.provider, Provider::NVIDIA);
         assert!(resolved.known_model());
+    }
+
+    #[test]
+    fn resolver_uses_explicit_merge_gateway_provider_for_arbitrary_route() {
+        let resolved =
+            ModelResolver::resolve(Some("merge-gateway"), "deepseek/deepseek-v4-pro", &[], None).expect("route");
+
+        assert_eq!(resolved.provider, Provider::MergeGateway);
+        assert_eq!(resolved.model_id, "deepseek/deepseek-v4-pro");
+        assert!(!resolved.known_model());
+    }
+
+    #[test]
+    fn resolver_does_not_advertise_generic_reasoning_for_merge_routes() {
+        let resolved = ModelResolver::resolve(Some("merge-gateway"), "openai/gpt-5.5", &[], None).expect("Merge route");
+
+        assert!(resolved.known_model());
+        assert!(!resolved.reasoning_supported());
     }
 
     #[test]

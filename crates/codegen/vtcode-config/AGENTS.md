@@ -14,7 +14,7 @@
 - `schema` feature gates `vtcode_config_schema_json()` — used by `build.rs`.
 ## Adding a Model
 
-Two pathways: **OpenRouter** (code-generated) — edit `ModelId`, `Provider::OpenRouter` match, `docs/models.json`. Build script handles the rest. **Non-OpenRouter** (manual) — add constant, `ModelId` variant + all match arms, defaults if needed, preset, optional resolver update, `docs/models.json`. See `adding-llm-providers` skill for checklist.
+Two pathways: **OpenRouter** (code-generated) — edit `ModelId`, `Provider::OpenRouter` match, `docs/models.json`. Build script handles the rest. **Non-OpenRouter** (manual) — add constant, `ModelId` variant + all match arms, defaults if needed, preset, optional resolver update, `docs/models.json`; gateway providers may intentionally accept explicit catalog-missing route IDs. See `adding-llm-providers` skill for checklist.
 
 ## Gotchas
 

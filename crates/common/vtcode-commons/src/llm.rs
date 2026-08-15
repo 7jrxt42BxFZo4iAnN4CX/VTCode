@@ -29,6 +29,7 @@ pub enum BackendKind {
     Poolside,
     Xai,
     Nvidia,
+    MergeGateway,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

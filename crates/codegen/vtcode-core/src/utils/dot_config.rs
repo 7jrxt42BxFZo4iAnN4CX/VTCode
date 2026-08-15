@@ -85,6 +85,9 @@ pub struct ProviderConfigs {
     /// Evolink provider configuration.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evolink: Option<ProviderConfig>,
+    /// Merge Gateway provider configuration.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merge_gateway: Option<ProviderConfig>,
 }
 
 /// Store of workspace trust records.

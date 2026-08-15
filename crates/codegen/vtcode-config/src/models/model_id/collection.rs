@@ -61,6 +61,11 @@ impl ModelId {
             ModelId::NvidiaNemotron3Nano30bA3b,
             ModelId::NvidiaZaiGlm52,
             ModelId::NvidiaDeepseekV4Flash0731,
+            // Merge Gateway routes
+            ModelId::MergeGatewayDefaultRouting,
+            ModelId::MergeGatewayOpenAIGpt55,
+            ModelId::MergeGatewayAnthropicClaudeOpus5,
+            ModelId::MergeGatewayGoogleGemini36Flash,
             // Mistral models
             ModelId::MistralLarge3,
             // Z.AI models

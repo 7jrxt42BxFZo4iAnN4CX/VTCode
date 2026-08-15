@@ -8,6 +8,24 @@ Regenerate:
 python3 scripts/generate_config_field_reference.py
 ```
 
+Built-in providers include `merge-gateway`. Configure it with a Merge API key
+and the OpenAI-compatible endpoint when using the provider directly:
+
+```toml
+[agent]
+provider = "merge-gateway"
+default_model = "default_routing"
+api_key_env = "MERGE_GATEWAY_API_KEY"
+
+[agent.provider_settings.merge-gateway]
+base_url = "https://api-gateway.merge.dev/v1/openai"
+```
+
+Set `MERGE_GATEWAY_BASE_URL` to override the endpoint. Curated model IDs are
+`default_routing`, `openai/gpt-5.5`, `anthropic/claude-opus-5`, and
+`google/gemini-3.6-flash`; other valid Merge `provider/model` IDs are accepted
+through explicit provider configuration.
+
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `acp.enabled` | `boolean` | no | `false` | Globally enable the ACP bridge |
@@ -125,7 +143,7 @@ python3 scripts/generate_config_field_reference.py
 | `agent.prompt_suggestions.model` | `string` | no | `""` | Lightweight model to use for suggestions. Leave empty to auto-select an efficient sibling of the main model. |
 | `agent.prompt_suggestions.show_cost_notice` | `boolean` | no | `true` | Whether VT Code should remind users that LLM-backed suggestions consume tokens. |
 | `agent.prompt_suggestions.temperature` | `number` | no | `0.30000001192092896` | Temperature for inline prompt suggestion generation. |
-| `agent.provider` | `string` | no | `"openrouter"` | AI provider for single agent mode (gemini, openai, anthropic, meta, openrouter, zai) |
+| `agent.provider` | `string` | no | `"openrouter"` | AI provider for single agent mode (including `merge-gateway`) |
 | `agent.reasoning_effort` | `string` | no | `"none"` | Reasoning effort level for models that support it (none, minimal, low, medium, high, xhigh, max) Applies to: Claude, GPT-5 family, Gemini, Qwen3, DeepSeek, and Meta Muse models with reasoning capability |
 | `agent.refine_prompts_enabled` | `boolean` | no | `false` | Enable prompt refinement pass before sending to LLM |
 | `agent.refine_prompts_max_passes` | `integer` | no | `1` | Max refinement passes for prompt writing |

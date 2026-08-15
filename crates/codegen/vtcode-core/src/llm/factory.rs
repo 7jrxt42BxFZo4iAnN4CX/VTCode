@@ -51,6 +51,7 @@ const BUILTIN_PROVIDER_KEYS: &[&str] = &[
     "poolside",
     "xai",
     "nvidia",
+    "merge-gateway",
 ];
 
 /// LLM provider factory and registry
@@ -334,6 +335,7 @@ mod tests {
                 "huggingface",
                 "llamacpp",
                 "lmstudio",
+                "merge-gateway",
                 "meta",
                 "mimo",
                 "minimax",
@@ -934,6 +936,30 @@ mod tests {
                 .expect("NVIDIA model should resolve to NVIDIA provider");
 
         assert_eq!(provider.name(), "nvidia");
+    }
+
+    #[test]
+    fn create_provider_with_config_registers_merge_gateway() {
+        let provider = create_provider_with_config(
+            "merge-gateway",
+            ProviderConfig {
+                api_key: Some("test-key".to_string()),
+                openai_chatgpt_auth: None,
+                copilot_auth: None,
+                base_url: None,
+                model: Some("deepseek/deepseek-v4-pro".to_string()),
+                prompt_cache: None,
+                timeouts: None,
+                openai: None,
+                anthropic: None,
+                model_behavior: None,
+                workspace_root: None,
+            },
+        )
+        .expect("Merge Gateway should be registered in the factory");
+
+        assert_eq!(provider.name(), "merge-gateway");
+        assert_eq!(provider.backend_kind(), vtcode_commons::llm::BackendKind::MergeGateway);
     }
 
     #[test]

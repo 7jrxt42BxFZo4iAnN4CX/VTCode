@@ -53,6 +53,8 @@ pub enum SecretProvider {
     Copilot,
     #[value(name = "nvidia")]
     Nvidia,
+    #[value(name = "merge-gateway")]
+    MergeGateway,
 }
 
 impl SecretProvider {
@@ -81,6 +83,7 @@ impl SecretProvider {
             SecretProvider::LMStudio => "lmstudio",
             SecretProvider::Copilot => "copilot",
             SecretProvider::Nvidia => "nvidia",
+            SecretProvider::MergeGateway => "merge-gateway",
         }
     }
 }

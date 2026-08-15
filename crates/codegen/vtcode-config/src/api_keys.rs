@@ -469,6 +469,14 @@ mod tests {
     }
 
     #[test]
+    fn merge_gateway_reads_env_var() {
+        with_override("MERGE_GATEWAY_API_KEY", Some("test-merge-gateway-key"), || {
+            let result = get_api_key("merge-gateway", &default_sources());
+            assert_eq!(result.unwrap(), "test-merge-gateway-key");
+        });
+    }
+
+    #[test]
     fn meta_reads_provider_specific_env_var() {
         with_overrides(
             &[
@@ -504,6 +512,7 @@ mod tests {
         assert_eq!(api_key_env_var("minimax"), "MINIMAX_API_KEY");
         assert_eq!(api_key_env_var("huggingface"), "HF_TOKEN");
         assert_eq!(api_key_env_var("poolside"), "POOLSIDE_API_KEY");
+        assert_eq!(api_key_env_var("merge-gateway"), "MERGE_GATEWAY_API_KEY");
         assert_eq!(api_key_env_var("my-corp"), "MY_CORP_API_KEY");
         assert_eq!(api_key_env_var("123corp"), "_123CORP_API_KEY");
     }

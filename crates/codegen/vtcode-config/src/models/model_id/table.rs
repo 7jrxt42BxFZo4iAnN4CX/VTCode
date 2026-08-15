@@ -370,6 +370,35 @@ model_id_table! {
         display: "DeepSeek V4 Flash (NVIDIA)",
         description: "DeepSeek V4 Flash served through NVIDIA NIM for fast reasoning and agentic coding",
     },
+    // Merge Gateway routes
+    MergeGatewayDefaultRouting {
+        provider: MergeGateway,
+        id: models::merge_gateway::DEFAULT_ROUTING,
+        parse: [models::merge_gateway::DEFAULT_ROUTING],
+        display: "Default Routing (Merge Gateway)",
+        description: "Merge Gateway's automatic route selection across configured model vendors",
+    },
+    MergeGatewayOpenAIGpt55 {
+        provider: MergeGateway,
+        id: models::merge_gateway::OPENAI_GPT_5_5,
+        parse: [models::merge_gateway::OPENAI_GPT_5_5],
+        display: "GPT-5.5 (Merge Gateway)",
+        description: "OpenAI GPT-5.5 accessed through Merge Gateway's OpenAI-compatible endpoint",
+    },
+    MergeGatewayAnthropicClaudeOpus5 {
+        provider: MergeGateway,
+        id: models::merge_gateway::ANTHROPIC_CLAUDE_OPUS_5,
+        parse: [models::merge_gateway::ANTHROPIC_CLAUDE_OPUS_5],
+        display: "Claude Opus 5 (Merge Gateway)",
+        description: "Anthropic Claude Opus 5 accessed through Merge Gateway's OpenAI-compatible endpoint",
+    },
+    MergeGatewayGoogleGemini36Flash {
+        provider: MergeGateway,
+        id: models::merge_gateway::GOOGLE_GEMINI_3_6_FLASH,
+        parse: [models::merge_gateway::GOOGLE_GEMINI_3_6_FLASH],
+        display: "Gemini 3.6 Flash (Merge Gateway)",
+        description: "Google Gemini 3.6 Flash accessed through Merge Gateway's OpenAI-compatible endpoint",
+    },
     // Mistral models
     MistralLarge3 {
         provider: Mistral,
@@ -990,6 +1019,14 @@ mod tests {
         // "gpt-oss-20b" is shared with OpenAI and parses to OpenAIGptOss20b
         // (legacy behavior preserved by table row order).
         || *model == ModelId::LlamaCppGptOss20b
+        // Merge Gateway's curated upstream ids intentionally match OpenRouter
+        // ids; explicit provider configuration selects the Merge route.
+        || matches!(
+            model,
+            ModelId::MergeGatewayOpenAIGpt55
+                | ModelId::MergeGatewayAnthropicClaudeOpus5
+                | ModelId::MergeGatewayGoogleGemini36Flash
+        )
     }
 
     #[test]

@@ -57,6 +57,7 @@ impl ModelId {
             Provider::Poolside => ModelId::PoolsideLagunaS21,
             Provider::XAI => ModelId::XaiGrok46,
             Provider::NVIDIA => ModelId::NvidiaNemotron3Ultra550bA55b,
+            Provider::MergeGateway => ModelId::MergeGatewayDefaultRouting,
         }
     }
 
@@ -88,6 +89,7 @@ impl ModelId {
             Provider::Poolside => ModelId::PoolsideLagunaXs2,
             Provider::XAI => ModelId::XaiGrok46,
             Provider::NVIDIA => ModelId::NvidiaNemotron3Ultra550bA55b,
+            Provider::MergeGateway => ModelId::MergeGatewayDefaultRouting,
         }
     }
 }

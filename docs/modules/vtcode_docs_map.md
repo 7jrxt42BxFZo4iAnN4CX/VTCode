@@ -510,6 +510,15 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Content**: NVIDIA NIM Quick Reference
   - **User Questions**: "What can you tell me about NVIDIA NIM Quick Reference?"
 
+- **File**: `docs/providers/merge-gateway.md`
+  - **Content**: Merge Gateway Provider Guide
+  - **Topics**: Setup, OpenAI-compatible endpoint, curated routes, arbitrary route IDs, compatibility limitations, troubleshooting
+  - **User Questions**: "What can you tell me about Merge Gateway Provider Guide?", "How do I configure Merge Gateway?", "Which Merge Gateway model IDs are supported?"
+
+- **File**: `docs/providers/merge-gateway-quick-reference.md`
+  - **Content**: Merge Gateway Quick Reference
+  - **User Questions**: "What can you tell me about Merge Gateway Quick Reference?"
+
 - **File**: `docs/providers/OLLAMA_INDEX.md`
   - **Content**: Ollama Integration Documentation Index
   - **Topics**: Quick Links, Modules Overview, Data Flow, Integration Roadmap, Common Patterns

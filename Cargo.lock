@@ -7917,6 +7917,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "serial_test",
  "shell-words",
  "tempfile",
  "thiserror 2.0.19",

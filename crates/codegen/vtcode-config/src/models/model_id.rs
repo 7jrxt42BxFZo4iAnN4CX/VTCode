@@ -113,6 +113,16 @@ pub enum ModelId {
     /// DeepSeek V4 Flash served through NVIDIA NIM
     NvidiaDeepseekV4Flash0731,
 
+    // Merge Gateway routes
+    /// Merge Gateway's default route selected by Merge
+    MergeGatewayDefaultRouting,
+    /// OpenAI GPT-5.5 through Merge Gateway
+    MergeGatewayOpenAIGpt55,
+    /// Anthropic Claude Opus 5 through Merge Gateway
+    MergeGatewayAnthropicClaudeOpus5,
+    /// Google Gemini 3.6 Flash through Merge Gateway
+    MergeGatewayGoogleGemini36Flash,
+
     // Mistral AI models
     /// Mistral Large 3 - State-of-the-art open-weight general-purpose multimodal model
     MistralLarge3,

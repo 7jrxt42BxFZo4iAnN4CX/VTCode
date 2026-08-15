@@ -59,9 +59,9 @@ impl Default for ValidationResult {
 
 /// Validate that the configured model exists in the generated model catalog.
 pub fn validate_model_exists(provider: &str, model: &str) -> Result<()> {
-    if provider.eq_ignore_ascii_case("copilot") {
+    if provider.eq_ignore_ascii_case("copilot") || provider.eq_ignore_ascii_case("merge-gateway") {
         if model.trim().is_empty() {
-            bail!("Model must not be empty for provider 'copilot'");
+            bail!("Model must not be empty for provider '{provider}'");
         }
         return Ok(());
     }
@@ -313,6 +313,12 @@ mod tests {
     fn accepts_live_copilot_model_id() {
         let result = validate_model_exists("copilot", "gpt-5.3-codex");
         assert!(result.is_ok(), "Should accept live Copilot model ids");
+    }
+
+    #[test]
+    fn accepts_arbitrary_merge_gateway_model_id() {
+        let result = validate_model_exists("merge-gateway", "deepseek/deepseek-v4-pro");
+        assert!(result.is_ok(), "Merge Gateway should accept valid explicit route ids");
     }
 
     #[test]

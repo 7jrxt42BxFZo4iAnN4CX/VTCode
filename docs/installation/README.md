@@ -95,6 +95,7 @@ vtcode
 -   **Google Gemini** (GEMINI_API_KEY)
 -   **Meta AI** (MODEL_API_KEY or META_API_KEY; see [Meta AI Provider](../providers/meta.md))
 -   **NVIDIA NIM** (NVIDIA_API_KEY; see [NVIDIA NIM Provider](../providers/nvidia.md))
+-   **Merge Gateway** (MERGE_GATEWAY_API_KEY; see [Merge Gateway Provider](../providers/merge-gateway.md))
 -   **xAI** (XAI_API_KEY)
 -   **DeepSeek** (DEEPSEEK_API_KEY)
 -   **OpenRouter** (OPENROUTER_API_KEY)
