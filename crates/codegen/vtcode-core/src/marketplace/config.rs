@@ -164,16 +164,6 @@ impl MarketplaceSettings {
     }
 
     /// Check if a plugin source is allowed based on security settings
-    pub fn is_source_allowed(&self, source_url: &str) -> bool {
-        // If allowed sources list is empty, all sources are allowed (except blocked ones)
-        let allowed = self.security.allowed_sources.is_empty()
-            || self.security.allowed_sources.iter().any(|s| source_url.contains(s));
-
-        // Check if source is blocked
-        let blocked = self.security.blocked_sources.iter().any(|s| source_url.contains(s));
-
-        allowed && !blocked
-    }
 
     /// Add an installed plugin to the configuration
     pub fn add_installed_plugin(&mut self, plugin: InstalledPlugin) {
@@ -196,11 +186,6 @@ impl MarketplaceSettings {
     }
 
     /// Remove an installed plugin from the configuration
-    pub fn remove_installed_plugin(&mut self, plugin_id: &str) -> bool {
-        let initial_len = self.installed_plugins.len();
-        self.installed_plugins.retain(|p| p.id != plugin_id);
-        self.installed_plugins.len() != initial_len
-    }
 
     /// Get an installed plugin by ID
     pub fn get_installed_plugin(&self, plugin_id: &str) -> Option<&InstalledPlugin> {
@@ -231,9 +216,6 @@ impl MarketplaceSettings {
 }
 
 /// Helper function to get the marketplace config path based on VT Code's config directory structure
-pub fn get_marketplace_config_path(base_config_dir: &Path) -> PathBuf {
-    base_config_dir.join("marketplace.toml")
-}
 
 #[cfg(test)]
 mod tests {

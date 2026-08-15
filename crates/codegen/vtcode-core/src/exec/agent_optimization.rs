@@ -170,9 +170,6 @@ impl AgentBehaviorAnalyzer {
     }
 
     /// Recommend skills based on effectiveness
-    pub fn recommend_skills(&self, limit: usize) -> Vec<String> {
-        self.skill_stats.most_effective_skills.iter().take(limit).cloned().collect()
-    }
 
     /// Warn about tools with high failure rates
     pub fn identify_risky_tools(&self, failure_threshold: f64) -> Vec<(String, f64)> {
@@ -294,30 +291,10 @@ impl AgentBehaviorAnalyzer {
     }
 
     /// Get usage count for a tool
-    pub fn tool_usage_count(&self, tool_name: &str) -> u64 {
-        *self.tool_stats.usage_frequency.get(tool_name).unwrap_or(&0)
-    }
 
     /// Get failure rate for a tool (0.0-1.0), defaults to 0.0 when unknown
-    pub fn tool_failure_rate(&self, tool_name: &str) -> f64 {
-        self.failure_patterns
-            .high_failure_tools
-            .iter()
-            .find(|(tool, _)| tool == tool_name)
-            .map(|(_, rate)| *rate)
-            .unwrap_or(0.0)
-    }
 
     /// Estimate success rate for a tool using usage counts and observed failure rate
-    pub fn tool_success_rate(&self, tool_name: &str) -> f64 {
-        let usage = self.tool_usage_count(tool_name);
-        if usage == 0 {
-            return 1.0;
-        }
-
-        let failure_rate = self.tool_failure_rate(tool_name).clamp(0.0, 1.0);
-        (1.0 - failure_rate).max(0.0)
-    }
 
     /// Apply recovery pattern automatically for a known error type
     /// Returns the recovery action to take, or None if no pattern exists

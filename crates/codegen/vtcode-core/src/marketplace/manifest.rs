@@ -65,23 +65,4 @@ pub struct PluginManifest {
     pub repository: String,
 }
 
-impl PluginManifest {
-    /// Create a minimal manifest with the required fields and empty defaults for the rest.
-    pub fn new(id: String, name: String, version: String) -> Self {
-        Self {
-            id,
-            name,
-            version,
-            description: String::new(),
-            entrypoint: PathBuf::new(),
-            capabilities: Vec::new(),
-            source: String::new(),
-            trust_level: None,
-            dependencies: Vec::new(),
-            author: String::new(),
-            license: String::new(),
-            homepage: String::new(),
-            repository: String::new(),
-        }
-    }
-}
+impl PluginManifest {}

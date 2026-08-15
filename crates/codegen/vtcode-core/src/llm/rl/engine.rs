@@ -85,12 +85,6 @@ impl RlEngine {
         self.ledger.record(action_id, signal, self.latency_weight);
     }
 
-    /// Borrow the underlying reward ledger.
-    #[must_use]
-    pub fn ledger(&self) -> &RewardLedger {
-        &self.ledger
-    }
-
     /// Build a telemetry snapshot of the engine's current state.
     #[must_use]
     pub fn snapshot(&self) -> RlSnapshot {

@@ -48,22 +48,10 @@ where
     }
 
     /// Set a custom base URL for the provider API endpoint.
-    pub fn base_url(mut self, base_url: String) -> Self {
-        self.base_url = Some(base_url);
-        self
-    }
 
     /// Enable prompt caching with the given configuration.
-    pub fn prompt_cache(mut self, prompt_cache: PromptCachingConfig) -> Self {
-        self.prompt_cache = Some(prompt_cache);
-        self
-    }
 
     /// Set request timeout configuration.
-    pub fn timeouts(mut self, timeouts: TimeoutsConfig) -> Self {
-        self.timeouts = Some(timeouts);
-        self
-    }
 
     /// Build the provider, returning an error if creation fails.
     pub fn try_build(self) -> Result<Box<dyn LLMProvider>, LLMError> {
