@@ -19,7 +19,6 @@ pub mod sections;
 pub mod static_prompts;
 pub mod system;
 pub mod system_prompt_cache;
-pub mod templates;
 pub mod temporal;
 
 // Re-export main types for backward compatibility
@@ -43,9 +42,7 @@ pub use static_prompts::{
 };
 pub use system::SystemPromptReport;
 pub use system::{
-    apply_output_style, generate_lightweight_instruction, generate_specialized_instruction,
-    generate_system_instruction, measure_system_prompt_size,
+    apply_output_style, generate_lightweight_instruction, generate_specialized_instruction, measure_system_prompt_size,
 };
-pub use system_prompt_cache::{PROMPT_CACHE, PromptProvider, SystemPromptCache, TaskType};
-pub use templates::PromptTemplates;
+pub use system_prompt_cache::{PROMPT_CACHE, SystemPromptCache};
 pub use temporal::generate_temporal_context;

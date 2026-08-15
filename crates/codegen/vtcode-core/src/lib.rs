@@ -316,10 +316,7 @@ pub use notifications::{
 };
 pub use pods::*;
 pub use prompts::SystemPromptReport;
-pub use prompts::{
-    generate_lightweight_instruction, generate_specialized_instruction, generate_system_instruction,
-    measure_system_prompt_size,
-};
+pub use prompts::{generate_lightweight_instruction, generate_specialized_instruction, measure_system_prompt_size};
 pub use retry::{RetryDecision, RetryPolicy, RetryPolicyCoreExt};
 pub use security::{IntegrityTag, PayloadEnvelope, ZeroTrustContext};
 pub use telemetry::{TelemetryEvent, TelemetryPipeline};

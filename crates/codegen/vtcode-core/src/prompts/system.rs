@@ -8,7 +8,6 @@
 use crate::config::constants::prompt_budget as prompt_budget_constants;
 use crate::config::types::{ShellPromptProfile, SystemPromptMode};
 use crate::llm::providers::gemini::wire::Content;
-use crate::project_doc::read_project_doc;
 use crate::prompts::context::PromptContext;
 use crate::prompts::guidelines::{generate_tool_guidelines_for_profile, render_shell_profile_guidance};
 use crate::prompts::output_styles::OutputStyleApplier;
@@ -21,7 +20,6 @@ pub use crate::prompts::static_prompts::{
 };
 use crate::prompts::system_prompt_cache::PROMPT_CACHE;
 use crate::skills::render::render_prompt_skills_section;
-use std::env;
 use std::path::Path;
 use tracing::warn;
 
@@ -149,39 +147,6 @@ Use tags when helpful: `<analysis>` facts/options, `<plan>` steps, `<uncertainty
 /// System instruction configuration
 #[derive(Debug, Clone, Default)]
 pub struct SystemPromptConfig;
-
-/// Generate system instruction
-pub async fn generate_system_instruction(_config: &SystemPromptConfig) -> Content {
-    let current_dir = env::current_dir();
-    let instruction = if let Ok(project_root) = current_dir.as_deref() {
-        compose_system_instruction_text(project_root, Some(&crate::config::VTCodeConfig::default()), None).await
-    } else {
-        let mut prompt = default_system_prompt().to_string();
-        prompt.push_str("\n\n");
-        prompt.push_str(&render_shell_profile_guidance(ShellPromptProfile::Auto.resolve_for_current_platform()));
-        prompt
-    };
-
-    if let Ok(current_dir) = current_dir {
-        let styled_instruction = apply_output_style(instruction, None, &current_dir).await;
-        Content::system_text(styled_instruction)
-    } else {
-        Content::system_text(instruction)
-    }
-}
-
-/// Read the dynamically loaded project instruction bundle if present.
-pub async fn read_agent_guidelines(project_root: &Path) -> Option<String> {
-    let max_bytes = prompt_budget_constants::DEFAULT_MAX_BYTES;
-    match read_project_doc(project_root, max_bytes).await {
-        Ok(Some(bundle)) => Some(bundle.contents),
-        Ok(None) => None,
-        Err(err) => {
-            warn!("failed to load project documentation: {err:#}");
-            None
-        }
-    }
-}
 
 /// A named layer of the composed system prompt.
 ///
@@ -573,32 +538,6 @@ pub async fn generate_system_instruction_with_config_and_report(
 
     // Apply output style if configured
     let styled_instruction = apply_output_style(instruction, vtcode_config, project_root).await;
-    (Content::system_text(styled_instruction), report)
-}
-
-/// Generate the stable base system instruction without workspace configuration.
-pub async fn generate_system_instruction_with_guidelines(config: &SystemPromptConfig, project_root: &Path) -> Content {
-    let (content, _report) = generate_system_instruction_with_guidelines_and_report(config, project_root).await;
-    content
-}
-
-/// Same as [`generate_system_instruction_with_guidelines`] but also returns
-/// the [`SystemPromptReport`] for the composed prompt.
-pub async fn generate_system_instruction_with_guidelines_and_report(
-    _config: &SystemPromptConfig,
-    project_root: &Path,
-) -> (Content, SystemPromptReport) {
-    let cache_key = cache_key(project_root, None, None);
-    let (instruction, report) = match PROMPT_CACHE.get(&cache_key) {
-        Some(cached) => cached,
-        None => {
-            let built = compose_system_instruction_with_report(project_root, None, None).await;
-            PROMPT_CACHE.insert(cache_key, built.clone());
-            built
-        }
-    };
-    // Apply output style if configured
-    let styled_instruction = apply_output_style(instruction, None, project_root).await;
     (Content::system_text(styled_instruction), report)
 }
 

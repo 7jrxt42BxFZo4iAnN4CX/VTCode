@@ -14,20 +14,6 @@ const MAX_SHARD_SIZE: usize = 32;
 const NUM_SHARDS: usize = 16;
 const SHARD_MASK: usize = NUM_SHARDS - 1;
 
-/// Task categories for prompt generation
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub enum TaskType {
-    System,
-    Lightweight,
-    Specialized,
-}
-
-/// Providers can expose a cache key describing the prompt variant.
-pub trait PromptProvider {
-    fn cache_key(&self) -> String;
-    fn task_type(&self) -> TaskType;
-}
-
 /// Sharded in-memory prompt cache.
 ///
 /// Splits the cache across N `RwLock<LruCache>` shards so that reads on
@@ -61,34 +47,6 @@ impl<V: Clone> SystemPromptCache<V> {
         (hasher.finish() as usize) & SHARD_MASK
     }
 
-    /// Get cached prompt or build it if missing.
-    /// Fast path: read-lock + peek (concurrent, no LRU promotion).
-    /// Slow path: write-lock + double-check + insert.
-    pub fn get_or_insert_with<F>(&self, key: &str, builder: F) -> V
-    where
-        F: FnOnce() -> V,
-    {
-        let idx = Self::shard_index(key);
-
-        // Fast path: read-lock allows N concurrent readers on different shards
-        {
-            let shard = self.shards[idx].read();
-            if let Some(value) = shard.peek(key) {
-                return value.clone();
-            }
-        }
-
-        // Slow path: build + insert under write-lock
-        let value = builder();
-        let mut shard = self.shards[idx].write();
-        // Double-check: another caller may have inserted while we were building
-        if let Some(value) = shard.get(key) {
-            return value.clone();
-        }
-        shard.put(key.to_string(), value.clone());
-        value
-    }
-
     /// Get cached value, returning None on miss.
     pub fn get(&self, key: &str) -> Option<V> {
         let shard = self.shards[Self::shard_index(key)].read();
@@ -100,13 +58,6 @@ impl<V: Clone> SystemPromptCache<V> {
         let idx = Self::shard_index(&key);
         let mut shard = self.shards[idx].write();
         shard.put(key, value);
-    }
-
-    /// Clear all shards.
-    pub fn clear(&self) {
-        for shard in &self.shards {
-            shard.write().clear();
-        }
     }
 }
 
