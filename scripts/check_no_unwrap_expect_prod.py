@@ -108,7 +108,9 @@ def is_allowlisted(rel_path: str, line_no: int, rules: list[AllowRule]) -> bool:
     # workspace layout changes.
     candidates = {rel_path}
     if rel_path.startswith("crates/"):
-        candidates.add(rel_path.split("/", 2)[2])
+        parts = rel_path.split("/", 2)
+        if len(parts) > 2:
+            candidates.add(parts[2])
     for rule in rules:
         for candidate in candidates:
             if not fnmatch(candidate, rule.pattern):
@@ -132,7 +134,7 @@ def scan_file(path: Path, rules: list[AllowRule]) -> list[tuple[str, int, str]]:
     for idx, raw_line in enumerate(lines, start=1):
         line = raw_line
 
-        if re.search(r"#\s*\[\s*cfg\s*\([^]]*test", line):
+        if re.search(r"#\s*\[\s*cfg\s*\((?!not\s*\()[^]]*test", line):
             pending_cfg_test = True
 
         if pending_cfg_test:

@@ -66,7 +66,9 @@ def matches_any(pattern: str, tracked: list[str]) -> bool:
         # also match the current "crates/codegen|common/..." layout.
         candidates = [path]
         if path.startswith("crates/"):
-            candidates.append(path.split("/", 2)[2])
+            parts = path.split("/", 2)
+            if len(parts) > 2:
+                candidates.append(parts[2])
         for candidate in candidates:
             if fnmatch(candidate, pattern):
                 return True
