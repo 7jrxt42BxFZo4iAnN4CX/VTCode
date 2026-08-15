@@ -6,6 +6,10 @@
 //! - Dangerous object types (WScript.Shell, Shell.Application, etc.)
 //! - Method invocation patterns
 //! - Execution scope and privilege context
+#![expect(
+    unused_results,
+    reason = "Windows database builders intentionally discard HashMap::insert return values"
+)]
 
 use hashbrown::HashMap;
 

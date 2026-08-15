@@ -6,6 +6,10 @@
 //! - Dangerous registry paths (Run, Services, Drivers, etc.)
 //! - Access methods (Get-Item, Set-Item, New-ItemProperty, etc.)
 //! - Privilege levels required
+#![expect(
+    unused_results,
+    reason = "Windows database builders intentionally discard HashMap::insert return values"
+)]
 
 use hashbrown::HashMap;
 
