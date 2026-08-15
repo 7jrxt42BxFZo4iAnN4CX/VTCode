@@ -239,24 +239,6 @@ fn cleanup_old_audit_logs(audit_dir: &Path, max_age_days: u64) -> Result<()> {
     Ok(())
 }
 
-/// Generate a human-readable summary of permission decisions
-pub struct PermissionSummary {
-    pub total_events: usize,
-    pub allowed: usize,
-    pub denied: usize,
-    pub prompted: usize,
-    pub cached: usize,
-}
-
-impl PermissionSummary {
-    pub fn format(&self) -> String {
-        format!(
-            "Permission Summary: {} total | {} allowed | {} denied | {} prompted | {} cached",
-            self.total_events, self.allowed, self.denied, self.prompted, self.cached
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
