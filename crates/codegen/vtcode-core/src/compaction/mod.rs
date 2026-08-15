@@ -13,7 +13,6 @@ use crate::llm::utils::truncate_to_token_limit;
 pub mod auto;
 pub mod memory_envelope;
 pub mod prefire;
-pub mod summarizer;
 pub mod two_pass;
 
 pub use crate::compaction::prefire::{AsyncCompactionCache, PrefireState};

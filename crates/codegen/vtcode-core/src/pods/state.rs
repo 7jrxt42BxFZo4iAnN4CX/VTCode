@@ -82,15 +82,3 @@ pub enum PodHealth {
     /// Process is not running.
     Dead,
 }
-
-impl PodHealth {
-    /// Return the lowercase string representation of this health status.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Running => "running",
-            Self::Starting => "starting",
-            Self::Crashed => "crashed",
-            Self::Dead => "dead",
-        }
-    }
-}

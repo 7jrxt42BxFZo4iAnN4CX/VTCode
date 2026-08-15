@@ -1,7 +1,7 @@
 use super::catalog::PodCatalog;
 use super::state::PodsState;
 use anyhow::{Context, Result, anyhow};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use vtcode_commons::fs::{ensure_dir_exists, read_json_file, write_json_file};
 
 /// Persisted pod storage rooted in `~/.vtcode/pods`.
@@ -20,11 +20,6 @@ impl PodsStore {
     pub fn default_store() -> Result<Self> {
         let home = dirs::home_dir().ok_or_else(|| anyhow!("failed to resolve home directory"))?;
         Ok(Self::new(home.join(".vtcode").join("pods")))
-    }
-
-    /// Return the root directory of this store.
-    pub fn base_dir(&self) -> &Path {
-        &self.base_dir
     }
 
     /// Return the path to the `state.json` file.
