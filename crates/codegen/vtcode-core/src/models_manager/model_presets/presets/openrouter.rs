@@ -333,5 +333,32 @@ pub(crate) fn openrouter_presets() -> Vec<ModelPreset> {
             supported_in_api: true,
             context_window: Some(1_048_576),
         },
+        ModelPreset {
+            id: "openrouter/google/gemini-3.7-flash".to_string(),
+            model: "google/gemini-3.7-flash".to_string(),
+            display_name: "Gemini 3.7 Flash (OpenRouter)".to_string(),
+            description: "Flash model with 1M context and tunable thinking levels via OpenRouter".to_string(),
+            provider: Provider::OpenRouter,
+            default_reasoning_effort: ReasoningEffortLevel::Medium,
+            supported_reasoning_efforts: vec![
+                ReasoningEffortPreset {
+                    effort: ReasoningEffortLevel::Low,
+                    description: "Fast responses".to_string(),
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffortLevel::Medium,
+                    description: "Balanced reasoning".to_string(),
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffortLevel::High,
+                    description: "Deep reasoning".to_string(),
+                },
+            ],
+            is_default: false,
+            upgrade: None,
+            show_in_picker: true,
+            supported_in_api: true,
+            context_window: Some(1_048_576),
+        },
     ]
 }

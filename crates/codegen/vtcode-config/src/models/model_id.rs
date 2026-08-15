@@ -326,6 +326,8 @@ pub enum ModelId {
     OpenRouterGoogleGemini35FlashLite,
     /// Gemini 3.6 Flash - Latest Gemini flash model with improved capabilities via OpenRouter
     OpenRouterGoogleGemini36Flash,
+    /// Gemini 3.7 Flash - Flash model with 1M context and tunable thinking levels via OpenRouter
+    OpenRouterGoogleGemini37Flash,
 
     /// Claude Sonnet 4.6 - Anthropic Claude Sonnet 4.6 listing
     OpenRouterAnthropicClaudeSonnet46,

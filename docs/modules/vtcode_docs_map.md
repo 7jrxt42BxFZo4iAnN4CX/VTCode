@@ -492,6 +492,16 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Supported Providers, Running Ollama, Running LM Studio, Running llama.cpp, Command Reference
   - **User Questions**: "What can you tell me about Local Inference Servers?", "How does Supported Providers work?", "How does Running Ollama work?"
 
+- **File**: `docs/providers/merge-gateway.md`
+  - **Content**: Merge Gateway Integration
+  - **Topics**: Setup, Curated models, Configuration examples, Compatibility behavior, Troubleshooting
+  - **User Questions**: "What can you tell me about Merge Gateway Integration?", "How does Setup work?", "How does Curated models work?"
+
+- **File**: `docs/providers/merge-gateway-quick-reference.md`
+  - **Content**: Merge Gateway Quick Reference
+  - **Topics**: Minimal setup
+  - **User Questions**: "What can you tell me about Merge Gateway Quick Reference?", "How does Minimal setup work?"
+
 - **File**: `docs/providers/meta.md`
   - **Content**: Meta AI Integration Guide
   - **Topics**: Quickstart, Curated models, Troubleshooting
@@ -509,15 +519,6 @@ This document serves as an index of all VT Code documentation. When users ask qu
 - **File**: `docs/providers/nvidia-quick-reference.md`
   - **Content**: NVIDIA NIM Quick Reference
   - **User Questions**: "What can you tell me about NVIDIA NIM Quick Reference?"
-
-- **File**: `docs/providers/merge-gateway.md`
-  - **Content**: Merge Gateway Provider Guide
-  - **Topics**: Setup, OpenAI-compatible endpoint, curated routes, arbitrary route IDs, compatibility limitations, troubleshooting
-  - **User Questions**: "What can you tell me about Merge Gateway Provider Guide?", "How do I configure Merge Gateway?", "Which Merge Gateway model IDs are supported?"
-
-- **File**: `docs/providers/merge-gateway-quick-reference.md`
-  - **Content**: Merge Gateway Quick Reference
-  - **User Questions**: "What can you tell me about Merge Gateway Quick Reference?"
 
 - **File**: `docs/providers/OLLAMA_INDEX.md`
   - **Content**: Ollama Integration Documentation Index
