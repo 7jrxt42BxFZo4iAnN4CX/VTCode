@@ -257,7 +257,7 @@ pub(super) fn hash_normalized_args(tool_name: &str, args: &serde_json::Value) ->
     hasher.finish()
 }
 
-pub(super) fn hash_normalized_code_search_args(args: &serde_json::Value, hasher: &mut impl std::hash::Hasher) {
+fn hash_normalized_code_search_args(args: &serde_json::Value, hasher: &mut impl std::hash::Hasher) {
     use std::hash::Hash;
 
     crate::tools::normalised_code_search_loop_identity(args)
@@ -415,6 +415,6 @@ pub(super) fn read_target_for_tool_call(tool_name: &str, args: &serde_json::Valu
 /// Returns `true` when `(tool_name, args)` represent a `file_operation` read
 /// invocation — either via the legacy `::read` suffix or the modern
 /// `action: "read"` argument.
-pub(super) fn is_file_operation_read(tool_name: &str, args: &serde_json::Value) -> bool {
+fn is_file_operation_read(tool_name: &str, args: &serde_json::Value) -> bool {
     tool_name.ends_with("::read") || matches!(args.get("action").and_then(|v| v.as_str()), Some("read"))
 }

@@ -85,7 +85,7 @@ fn visit_groups(
 pub(super) struct CompiledHookGroup {
     pub(super) matcher: HookMatcher,
     /// Raw configured matcher pattern (for display); `None` when unset.
-    pub(super) matcher_pattern: Option<String>,
+    matcher_pattern: Option<String>,
     pub(super) commands: Vec<HookCommandConfig>,
 }
 

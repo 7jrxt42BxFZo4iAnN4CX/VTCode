@@ -623,7 +623,7 @@ impl SessionListing {
     }
 
     /// Return an identifier that is safe to advertise as an archive resume target.
-    pub(crate) fn verified_identifier(&self) -> Result<VerifiedSessionArchiveIdentifier> {
+    fn verified_identifier(&self) -> Result<VerifiedSessionArchiveIdentifier> {
         let identifier = self
             .path
             .file_stem()

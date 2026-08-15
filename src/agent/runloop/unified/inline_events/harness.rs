@@ -114,7 +114,7 @@ impl HarnessEventEmitter {
     ///
     /// When enabled, events are also written in Open Responses format to a separate file.
     #[cfg(test)]
-    pub(crate) fn enable_open_responses(
+    fn enable_open_responses(
         &self,
         config: OpenResponsesConfig,
         model: &str,
@@ -345,7 +345,7 @@ impl HarnessEventEmitter {
 
     /// Synchronous compatibility finalizer used by focused unit tests.
     #[cfg(test)]
-    pub(crate) fn finish_open_responses(&self) {
+    fn finish_open_responses(&self) {
         let state = self.inner.open_responses.lock().ok().and_then(|mut guard| guard.take());
         let Some(state) = state else {
             return;

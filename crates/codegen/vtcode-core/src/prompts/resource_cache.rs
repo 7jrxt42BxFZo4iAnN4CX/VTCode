@@ -10,13 +10,13 @@ use std::time::{Duration, Instant, SystemTime};
 use tracing::warn;
 
 /// How long a parsed prompt resource remains eligible for reuse.
-pub(crate) const RESOURCE_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
+const RESOURCE_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 
 /// Minimum interval between source metadata scans for a cache entry.
-pub(crate) const RESOURCE_METADATA_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const RESOURCE_METADATA_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Maximum number of source roots cached by one prompt-resource cache.
-pub(crate) const RESOURCE_CACHE_MAX_ENTRIES: usize = 32;
+const RESOURCE_CACHE_MAX_ENTRIES: usize = 32;
 
 /// Metadata needed to detect a source-file change without reading its body.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

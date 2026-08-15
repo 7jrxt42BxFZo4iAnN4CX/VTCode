@@ -457,7 +457,7 @@ impl PtyManager {
         self.create_session_with_bridge(session_id, command, working_dir, size, HashMap::new(), None)
     }
 
-    pub(crate) fn create_session_with_bridge(
+    fn create_session_with_bridge(
         &self,
         session_id: String,
         command: Vec<String>,

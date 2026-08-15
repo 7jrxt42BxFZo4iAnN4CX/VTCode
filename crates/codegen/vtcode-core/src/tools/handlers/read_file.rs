@@ -197,7 +197,7 @@ impl ReadFileHandler {
     }
 
     /// Read a single range from a file.
-    pub(super) async fn read_range(&self, path: &Path, range: &ReadRange) -> Result<RangeResult> {
+    async fn read_range(&self, path: &Path, range: &ReadRange) -> Result<RangeResult> {
         let offset = range.offset.max(1);
         let limit = Self::effective_line_limit(range.limit);
 

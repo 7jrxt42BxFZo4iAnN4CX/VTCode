@@ -255,7 +255,7 @@ pub(super) fn selection_from_dynamic(
 }
 
 #[cfg(test)]
-pub(super) fn selection_from_dynamic_with_mode(
+fn selection_from_dynamic_with_mode(
     provider: Provider,
     model_id: &str,
     display_name: &str,

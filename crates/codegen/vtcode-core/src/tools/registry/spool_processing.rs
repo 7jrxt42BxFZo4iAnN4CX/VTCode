@@ -21,7 +21,7 @@ fn output_field_bytes(value: &Value) -> usize {
         .unwrap_or(0)
 }
 
-pub(super) fn output_budget_bytes(max_output_tokens: usize) -> usize {
+fn output_budget_bytes(max_output_tokens: usize) -> usize {
     max_output_tokens.saturating_mul(OUTPUT_PREVIEW_CHARS_PER_TOKEN)
 }
 

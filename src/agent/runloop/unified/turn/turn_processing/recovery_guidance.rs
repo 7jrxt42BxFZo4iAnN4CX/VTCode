@@ -107,7 +107,7 @@ pub(super) fn recovery_empty_fallback_safety_message(mode: RecoveryMode) -> Stri
 /// nothing during recovery; without forcing the push, the conversation can
 /// end with a silent blank assistant message.
 #[cfg(test)]
-pub(super) fn push_recovery_fallback_assistant_message(
+fn push_recovery_fallback_assistant_message(
     history: &mut Vec<uni::Message>,
     content: &str,
     phase: Option<uni::AssistantPhase>,

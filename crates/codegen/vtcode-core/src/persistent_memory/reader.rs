@@ -129,7 +129,7 @@ fn list_md_files(dir: &Path, filter: impl Fn(&str) -> bool) -> Result<Vec<PathBu
     Ok(files)
 }
 
-pub(super) fn list_pending_rollout_files(rollout_dir: &Path) -> Result<Vec<PathBuf>> {
+fn list_pending_rollout_files(rollout_dir: &Path) -> Result<Vec<PathBuf>> {
     list_md_files(rollout_dir, |n| n.ends_with(".pending.md"))
 }
 
