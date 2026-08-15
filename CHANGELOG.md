@@ -2,6 +2,48 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.146.1 - 2026-08-15
+
+### Highlights
+#### Bug Fixes
+
+- Remove Windows-only build warnings in vtcode-safety builders and plugin loader (45383068) 
+- Make every Windows-only code path lint- and test-clean (d27ab3f8) 
+- Make editor terminal-detection test environment-independent (ac9c7ac3) 
+- Restore invariant checks after crates/ restructure and allowlist drift (4e6c67d8) 
+- Scope ast-grep rules and fix flagged own-code issues (2fc6606e) 
+- Revert redundant unsafe block in native plugin callback (f73632a2) 
+- Harden cfg detection and crates/ path normalization (c39b7b33) 
+- Route exec_policy_parser through the public API (f454075d) 
+- Remove build warnings (f92229dc) 
+#### Documentation
+
+- Note Windows-only DB builder lint convention (91925968) 
+- Point lifecycle-hooks examples at real scripts (99a81ece) 
+#### Features
+
+- Support verified session archive resume ids (1e493e7d) 
+### Other Changes
+#### Build
+
+- Bump lru to 0.18.2 to clear RUSTSEC-2026-0253 (613d40b9) 
+#### CI
+
+- Deny warnings across the full workspace in check-windows (b3fb5105) 
+#### Refactors
+
+- Privatize 15 restricted-visibility items (hawk) (81993266) 
+- Remove dead public code flagged by hawk (7f046553) 
+- Remove dead PermissionSummary from audit module (a55a642f) 
+- Remove dead command handlers duplicated by the binary CLI (ecf42274) 
+- Remove more dead public code (hawk triage, batch 3) (d9590025) 
+- Remove dead cli surface (hawk triage, batch 4) (2ccc1a8d) 
+- Remove dead context methods (hawk triage, batch 5) (6292f7bc) 
+- Remove dead entity/proactive-gatherer code (hawk triage, batch 6) (8ab6d528) 
+- Remove more dead public code (hawk triage, batch 7) (363be0c8) 
+- Remove legacy prompt-generation surface (hawk triage, batch 8) (9aed951d) 
+- Remove dead PluginCache methods (hawk triage, batch 9) (ea1f6265) 
+- Drop orphaned doc comments left by dead-method removals (174c1cb3) 
 ## 0.146.0 - 2026-08-15
 
 ### Highlights
