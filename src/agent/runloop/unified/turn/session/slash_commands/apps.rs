@@ -813,7 +813,8 @@ mod tests {
         assert!(editor_command_requires_terminal("helix"));
         assert!(!editor_command_requires_terminal("code --wait"));
         assert!(!editor_command_requires_terminal("zed"));
-        assert!(!editor_command_requires_terminal(""));
+        // An empty command falls back to $VISUAL/$EDITOR and PATH detection, so
+        // its result is environment-dependent and cannot be asserted here.
     }
 
     #[test]
