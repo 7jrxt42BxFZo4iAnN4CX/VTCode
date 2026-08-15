@@ -8,6 +8,10 @@
 //! - HIGH: Code execution, arbitrary file operations, network access
 //! - MEDIUM: Registry modification, process management, limited file ops
 //! - LOW: Information gathering, configuration changes (relatively safe)
+#![expect(
+    unused_results,
+    reason = "Windows database builders intentionally discard HashMap::insert return values"
+)]
 
 #![expect(
     unused_results,
