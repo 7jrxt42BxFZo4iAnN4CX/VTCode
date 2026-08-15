@@ -1,7 +1,5 @@
 //! Guided `/init` support for repository analysis and `AGENTS.md` generation.
 
-use crate::tools::ToolRegistry;
-use crate::utils::colors::style;
 use anyhow::{Context, Result};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -295,31 +293,6 @@ impl GuidedInitPlan {
         self.questions = build_guided_questions(&self.analysis);
         self
     }
-}
-
-/// Compatibility wrapper retained for older call sites.
-pub async fn handle_init_command(_registry: &mut ToolRegistry, workspace: &Path) -> Result<()> {
-    println!("{}", style("Initializing project with AGENTS.md...").cyan().bold());
-    println!("{}", style("1. Analyzing project structure...").dim());
-    let plan = prepare_guided_init(workspace, true)?;
-    println!("{}", style("2. Rendering AGENTS.md content...").dim());
-    let content = render_agents_md(&plan, &GuidedInitAnswers::default())?;
-    println!("{}", style("3. Writing AGENTS.md file...").dim());
-    let report = write_agents_file(workspace, &content, true)?;
-    println!("{} {}", style("[OK]").green().bold(), style("AGENTS.md generated successfully!").green());
-    println!("{} {}", style(" Location:").cyan(), report.path.display());
-    Ok(())
-}
-
-/// Compatibility wrapper retained for older call sites.
-pub async fn generate_agents_file(
-    _registry: &mut ToolRegistry,
-    workspace: &Path,
-    overwrite: bool,
-) -> Result<GenerateAgentsFileReport> {
-    let plan = prepare_guided_init(workspace, overwrite)?;
-    let content = render_agents_md(&plan, &GuidedInitAnswers::default())?;
-    write_agents_file(workspace, &content, overwrite)
 }
 
 pub fn prepare_guided_init(workspace: &Path, force: bool) -> Result<GuidedInitPlan> {
