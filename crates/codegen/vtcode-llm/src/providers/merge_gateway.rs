@@ -59,16 +59,35 @@ impl_openai_compat_provider!(MergeGatewayProvider, MergeGatewaySpec, {
     fn supports_vision(&self, model: &str) -> bool {
         matches!(
             model,
-            models::merge_gateway::ANTHROPIC_CLAUDE_OPUS_5 | models::merge_gateway::GOOGLE_GEMINI_3_6_FLASH
+            models::merge_gateway::ANTHROPIC_CLAUDE_OPUS_5
+                | models::merge_gateway::GOOGLE_GEMINI_3_6_FLASH
+                | models::merge_gateway::GOOGLE_GEMINI_3_7_FLASH
+                | models::merge_gateway::QWEN_3_8_MAX
+                | models::merge_gateway::MOONSHOT_KIMI_K3
+                | models::merge_gateway::META_MUSE_SPARK_1_1
+                | models::merge_gateway::OPENAI_GPT_5_6_LUNA
+                | models::merge_gateway::OPENAI_GPT_5_6_SOL
+                | models::merge_gateway::OPENAI_GPT_5_6_TERRA
         )
     }
 
     fn effective_context_size(&self, model: &str) -> usize {
         match model {
-            models::merge_gateway::OPENAI_GPT_5_5 => 1_100_000,
-            models::merge_gateway::ANTHROPIC_CLAUDE_OPUS_5 | models::merge_gateway::GOOGLE_GEMINI_3_6_FLASH => {
-                1_000_000
-            }
+            models::merge_gateway::OPENAI_GPT_5_5
+            | models::merge_gateway::OPENAI_GPT_5_6_LUNA
+            | models::merge_gateway::OPENAI_GPT_5_6_SOL
+            | models::merge_gateway::OPENAI_GPT_5_6_TERRA => 1_100_000,
+            models::merge_gateway::ANTHROPIC_CLAUDE_OPUS_5
+            | models::merge_gateway::GOOGLE_GEMINI_3_6_FLASH
+            | models::merge_gateway::GOOGLE_GEMINI_3_7_FLASH
+            | models::merge_gateway::DEEPSEEK_V4_PRO_0813
+            | models::merge_gateway::DEEPSEEK_V4_FLASH_0731
+            | models::merge_gateway::QWEN_3_8_MAX
+            | models::merge_gateway::MOONSHOT_KIMI_K3
+            | models::merge_gateway::THINKINGMACHINES_INKLING
+            | models::merge_gateway::META_MUSE_SPARK_1_1 => 1_000_000,
+            models::merge_gateway::XAI_GROK_4_6 => 500_000,
+            models::merge_gateway::MINIMAX_H3 => 131_000,
             _ => 128_000,
         }
     }
@@ -228,7 +247,14 @@ mod tests {
         assert!(!provider.supports_reasoning(models::merge_gateway::DEFAULT_ROUTING));
         assert!(!provider.supports_reasoning_effort(models::merge_gateway::DEFAULT_ROUTING));
         assert!(provider.supports_vision(models::merge_gateway::ANTHROPIC_CLAUDE_OPUS_5));
+        assert!(provider.supports_vision(models::merge_gateway::GOOGLE_GEMINI_3_7_FLASH));
+        assert!(provider.supports_vision(models::merge_gateway::QWEN_3_8_MAX));
+        assert!(provider.supports_vision(models::merge_gateway::MOONSHOT_KIMI_K3));
+        assert!(provider.supports_vision(models::merge_gateway::META_MUSE_SPARK_1_1));
+        assert!(provider.supports_vision(models::merge_gateway::OPENAI_GPT_5_6_LUNA));
         assert!(!provider.supports_vision(models::merge_gateway::DEFAULT_ROUTING));
         assert_eq!(provider.effective_context_size("merge/custom-route"), 128_000);
+        assert_eq!(provider.effective_context_size(models::merge_gateway::MINIMAX_H3), 131_000);
+        assert_eq!(provider.effective_context_size(models::merge_gateway::XAI_GROK_4_6), 500_000);
     }
 }

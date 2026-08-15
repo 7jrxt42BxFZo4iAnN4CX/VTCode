@@ -122,6 +122,30 @@ pub enum ModelId {
     MergeGatewayAnthropicClaudeOpus5,
     /// Google Gemini 3.6 Flash through Merge Gateway
     MergeGatewayGoogleGemini36Flash,
+    /// Google Gemini 3.7 Flash through Merge Gateway
+    MergeGatewayGoogleGemini37Flash,
+    /// DeepSeek V4 Pro 0813 through Merge Gateway
+    MergeGatewayDeepseekV4Pro0813,
+    /// DeepSeek V4 Flash 0731 through Merge Gateway
+    MergeGatewayDeepseekV4Flash0731,
+    /// xAI Grok 4.6 through Merge Gateway
+    MergeGatewayXaiGrok46,
+    /// Qwen3.8 Max through Merge Gateway
+    MergeGatewayQwen38Max,
+    /// MiniMax H3 through Merge Gateway
+    MergeGatewayMinimaxH3,
+    /// Moonshot Kimi K3 through Merge Gateway
+    MergeGatewayMoonshotKimiK3,
+    /// Thinking Machines Inkling through Merge Gateway
+    MergeGatewayThinkingMachinesInkling,
+    /// Meta Muse Spark 1.1 through Merge Gateway
+    MergeGatewayMetaMuseSpark11,
+    /// OpenAI GPT-5.6 Luna through Merge Gateway
+    MergeGatewayOpenAIGpt56Luna,
+    /// OpenAI GPT-5.6 Sol through Merge Gateway
+    MergeGatewayOpenAIGpt56Sol,
+    /// OpenAI GPT-5.6 Terra through Merge Gateway
+    MergeGatewayOpenAIGpt56Terra,
 
     // Mistral AI models
     /// Mistral Large 3 - State-of-the-art open-weight general-purpose multimodal model

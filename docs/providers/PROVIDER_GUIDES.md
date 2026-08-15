@@ -156,7 +156,7 @@ See the [Configuration guide](../config/config.md#custom_providers) for full det
 -   **Authentication:** `MERGE_GATEWAY_API_KEY` (Bearer token; create a key in the [Merge dashboard](https://dashboard.merge.dev/))
 -   **Base URL:** `https://api-gateway.merge.dev/v1/openai`, override with `MERGE_GATEWAY_BASE_URL`
 -   **Default model:** `default_routing`
--   **Curated picker models:** `openai/gpt-5.5`, `anthropic/claude-opus-5`, and `google/gemini-3.6-flash`
+-   **Curated picker models:** `openai/gpt-5.5`, `anthropic/claude-opus-5`, `google/gemini-3.6-flash`, `google/gemini-3.7-flash`, `deepseek/deepseek-v4-pro-0813`, `deepseek/deepseek-v4-flash-0731`, `xai/grok-4.6`, `qwen/qwen3.8-max`, `minimax/minimax-h3`, `moonshot/kimi-k3`, `thinkingmachines/inkling`, `meta/muse-spark-1.1`, `openai/gpt-5.6-luna`, `openai/gpt-5.6-sol`, and `openai/gpt-5.6-terra`
 -   **Features:** OpenAI-compatible Chat Completions, streaming usage, tool calling, curated vision metadata, and arbitrary explicit Merge route IDs
 -   **Limitations:** This integration intentionally uses only Merge's OpenAI-compatible Chat Completions surface. Native Responses routing metadata, service tiers, Gateway-controlled thinking fields, prompt-cache headers, and per-call cost extraction are not forwarded.
 

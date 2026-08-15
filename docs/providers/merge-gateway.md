@@ -54,6 +54,18 @@ vtcode --provider merge-gateway --model anthropic/claude-opus-5
 | `openai/gpt-5.5` | 1.1M | No | OpenAI route |
 | `anthropic/claude-opus-5` | 1M | Yes | Anthropic route |
 | `google/gemini-3.6-flash` | 1M | Yes | Google route |
+| `google/gemini-3.7-flash` | 1M | Yes | Google route |
+| `deepseek/deepseek-v4-pro-0813` | 1M | No | DeepSeek route |
+| `deepseek/deepseek-v4-flash-0731` | 1M | No | DeepSeek route |
+| `xai/grok-4.6` | 500k | No | xAI route |
+| `qwen/qwen3.8-max` | 1M | Yes | Qwen route |
+| `minimax/minimax-h3` | 131k | No | MiniMax route |
+| `moonshot/kimi-k3` | 1M | Yes | Moonshot route |
+| `thinkingmachines/inkling` | 1M | No | Thinking Machines route |
+| `meta/muse-spark-1.1` | 1M | Yes | Meta route |
+| `openai/gpt-5.6-luna` | 1.1M | Yes | OpenAI route |
+| `openai/gpt-5.6-sol` | 1.1M | Yes | OpenAI route |
+| `openai/gpt-5.6-terra` | 1.1M | Yes | OpenAI route |
 
 These are the models shown in VT Code's picker. Merge model IDs are not a
 closed local allowlist: any valid explicit `provider/model` route can be used

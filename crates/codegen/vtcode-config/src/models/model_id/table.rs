@@ -399,6 +399,90 @@ model_id_table! {
         display: "Gemini 3.6 Flash (Merge Gateway)",
         description: "Google Gemini 3.6 Flash accessed through Merge Gateway's OpenAI-compatible endpoint",
     },
+    MergeGatewayGoogleGemini37Flash {
+        provider: MergeGateway,
+        id: models::merge_gateway::GOOGLE_GEMINI_3_7_FLASH,
+        parse: [models::merge_gateway::GOOGLE_GEMINI_3_7_FLASH],
+        display: "Gemini 3.7 Flash (Merge Gateway)",
+        description: "Google Gemini 3.7 Flash accessed through Merge Gateway's OpenAI-compatible endpoint",
+    },
+    MergeGatewayDeepseekV4Pro0813 {
+        provider: MergeGateway,
+        id: models::merge_gateway::DEEPSEEK_V4_PRO_0813,
+        parse: [models::merge_gateway::DEEPSEEK_V4_PRO_0813],
+        display: "DeepSeek V4 Pro 0813 (Merge Gateway)",
+        description: "DeepSeek V4 Pro 0813 accessed through Merge Gateway's OpenAI-compatible endpoint",
+    },
+    MergeGatewayDeepseekV4Flash0731 {
+        provider: MergeGateway,
+        id: models::merge_gateway::DEEPSEEK_V4_FLASH_0731,
+        parse: [models::merge_gateway::DEEPSEEK_V4_FLASH_0731],
+        display: "DeepSeek V4 Flash 0731 (Merge Gateway)",
+        description: "DeepSeek V4 Flash 0731 accessed through Merge Gateway's OpenAI-compatible endpoint",
+    },
+    MergeGatewayXaiGrok46 {
+        provider: MergeGateway,
+        id: models::merge_gateway::XAI_GROK_4_6,
+        parse: [models::merge_gateway::XAI_GROK_4_6],
+        display: "Grok 4.6 (Merge Gateway)",
+        description: "xAI Grok 4.6 accessed through Merge Gateway's OpenAI-compatible endpoint",
+    },
+    MergeGatewayQwen38Max {
+        provider: MergeGateway,
+        id: models::merge_gateway::QWEN_3_8_MAX,
+        parse: [models::merge_gateway::QWEN_3_8_MAX],
+        display: "Qwen3.8 Max (Merge Gateway)",
+        description: "Qwen3.8 Max accessed through Merge Gateway's OpenAI-compatible endpoint",
+    },
+    MergeGatewayMinimaxH3 {
+        provider: MergeGateway,
+        id: models::merge_gateway::MINIMAX_H3,
+        parse: [models::merge_gateway::MINIMAX_H3],
+        display: "MiniMax H3 (Merge Gateway)",
+        description: "MiniMax H3 accessed through Merge Gateway's OpenAI-compatible endpoint",
+    },
+    MergeGatewayMoonshotKimiK3 {
+        provider: MergeGateway,
+        id: models::merge_gateway::MOONSHOT_KIMI_K3,
+        parse: [models::merge_gateway::MOONSHOT_KIMI_K3],
+        display: "Kimi K3 (Merge Gateway)",
+        description: "Moonshot Kimi K3 accessed through Merge Gateway's OpenAI-compatible endpoint",
+    },
+    MergeGatewayThinkingMachinesInkling {
+        provider: MergeGateway,
+        id: models::merge_gateway::THINKINGMACHINES_INKLING,
+        parse: [models::merge_gateway::THINKINGMACHINES_INKLING],
+        display: "Inkling (Merge Gateway)",
+        description: "Thinking Machines Inkling accessed through Merge Gateway's OpenAI-compatible endpoint",
+    },
+    MergeGatewayMetaMuseSpark11 {
+        provider: MergeGateway,
+        id: models::merge_gateway::META_MUSE_SPARK_1_1,
+        parse: [models::merge_gateway::META_MUSE_SPARK_1_1],
+        display: "Muse Spark 1.1 (Merge Gateway)",
+        description: "Meta Muse Spark 1.1 accessed through Merge Gateway's OpenAI-compatible endpoint",
+    },
+    MergeGatewayOpenAIGpt56Luna {
+        provider: MergeGateway,
+        id: models::merge_gateway::OPENAI_GPT_5_6_LUNA,
+        parse: [models::merge_gateway::OPENAI_GPT_5_6_LUNA],
+        display: "GPT-5.6 Luna (Merge Gateway)",
+        description: "OpenAI GPT-5.6 Luna accessed through Merge Gateway's OpenAI-compatible endpoint",
+    },
+    MergeGatewayOpenAIGpt56Sol {
+        provider: MergeGateway,
+        id: models::merge_gateway::OPENAI_GPT_5_6_SOL,
+        parse: [models::merge_gateway::OPENAI_GPT_5_6_SOL],
+        display: "GPT-5.6 Sol (Merge Gateway)",
+        description: "OpenAI GPT-5.6 Sol accessed through Merge Gateway's OpenAI-compatible endpoint",
+    },
+    MergeGatewayOpenAIGpt56Terra {
+        provider: MergeGateway,
+        id: models::merge_gateway::OPENAI_GPT_5_6_TERRA,
+        parse: [models::merge_gateway::OPENAI_GPT_5_6_TERRA],
+        display: "GPT-5.6 Terra (Merge Gateway)",
+        description: "OpenAI GPT-5.6 Terra accessed through Merge Gateway's OpenAI-compatible endpoint",
+    },
     // Mistral models
     MistralLarge3 {
         provider: Mistral,
@@ -1026,6 +1110,7 @@ mod tests {
             ModelId::MergeGatewayOpenAIGpt55
                 | ModelId::MergeGatewayAnthropicClaudeOpus5
                 | ModelId::MergeGatewayGoogleGemini36Flash
+                | ModelId::MergeGatewayGoogleGemini37Flash
         )
     }
 

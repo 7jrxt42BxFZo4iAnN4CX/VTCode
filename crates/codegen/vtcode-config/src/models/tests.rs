@@ -120,6 +120,18 @@ fn test_model_providers() {
     assert_eq!(ModelId::MergeGatewayOpenAIGpt55.provider(), Provider::MergeGateway);
     assert_eq!(ModelId::MergeGatewayAnthropicClaudeOpus5.provider(), Provider::MergeGateway);
     assert_eq!(ModelId::MergeGatewayGoogleGemini36Flash.provider(), Provider::MergeGateway);
+    assert_eq!(ModelId::MergeGatewayGoogleGemini37Flash.provider(), Provider::MergeGateway);
+    assert_eq!(ModelId::MergeGatewayDeepseekV4Pro0813.provider(), Provider::MergeGateway);
+    assert_eq!(ModelId::MergeGatewayDeepseekV4Flash0731.provider(), Provider::MergeGateway);
+    assert_eq!(ModelId::MergeGatewayXaiGrok46.provider(), Provider::MergeGateway);
+    assert_eq!(ModelId::MergeGatewayQwen38Max.provider(), Provider::MergeGateway);
+    assert_eq!(ModelId::MergeGatewayMinimaxH3.provider(), Provider::MergeGateway);
+    assert_eq!(ModelId::MergeGatewayMoonshotKimiK3.provider(), Provider::MergeGateway);
+    assert_eq!(ModelId::MergeGatewayThinkingMachinesInkling.provider(), Provider::MergeGateway);
+    assert_eq!(ModelId::MergeGatewayMetaMuseSpark11.provider(), Provider::MergeGateway);
+    assert_eq!(ModelId::MergeGatewayOpenAIGpt56Luna.provider(), Provider::MergeGateway);
+    assert_eq!(ModelId::MergeGatewayOpenAIGpt56Sol.provider(), Provider::MergeGateway);
+    assert_eq!(ModelId::MergeGatewayOpenAIGpt56Terra.provider(), Provider::MergeGateway);
     assert_eq!(ModelId::ZaiGlm51.provider(), Provider::ZAI);
     assert_eq!(ModelId::OpenCodeZenGPT54.provider(), Provider::OpenCodeZen);
     assert_eq!(ModelId::OpenCodeGoMinimaxM27.provider(), Provider::OpenCodeGo);
@@ -297,9 +309,12 @@ fn test_models_for_provider() {
     assert!(nvidia_models.contains(&ModelId::NvidiaZaiGlm52));
 
     let merge_gateway_models = ModelId::models_for_provider(Provider::MergeGateway);
-    assert_eq!(merge_gateway_models.len(), 4);
+    assert_eq!(merge_gateway_models.len(), 16);
     assert!(merge_gateway_models.contains(&ModelId::MergeGatewayDefaultRouting));
     assert!(merge_gateway_models.contains(&ModelId::MergeGatewayOpenAIGpt55));
+    assert!(merge_gateway_models.contains(&ModelId::MergeGatewayGoogleGemini37Flash));
+    assert!(merge_gateway_models.contains(&ModelId::MergeGatewayDeepseekV4Pro0813));
+    assert!(merge_gateway_models.contains(&ModelId::MergeGatewayOpenAIGpt56Terra));
 
     let openrouter_models = ModelId::models_for_provider(Provider::OpenRouter);
     assert!(openrouter_models.contains(&ModelId::OpenRouterOpenAIGpt55));
@@ -441,6 +456,14 @@ fn test_generated_model_capability_lookup() {
     assert!(!merge_gateway_catalog.reasoning);
     assert!(merge_gateway_catalog.tool_call);
     assert!(catalog_provider_keys().contains(&"merge-gateway"));
+    let merge_gateway_gemini =
+        model_catalog_entry("merge-gateway", models::merge_gateway::GOOGLE_GEMINI_3_7_FLASH).expect("Gemini metadata");
+    assert_eq!(merge_gateway_gemini.context_window, 1_000_000);
+    assert!(merge_gateway_gemini.vision);
+    let merge_gateway_gpt =
+        model_catalog_entry("merge-gateway", models::merge_gateway::OPENAI_GPT_5_6_SOL).expect("GPT metadata");
+    assert_eq!(merge_gateway_gpt.context_window, 1_100_000);
+    assert!(merge_gateway_gpt.vision);
     let ollama_cloud_catalog =
         model_catalog_entry("ollama", models::ollama::DEEPSEEK_V4_FLASH_CLOUD).expect("Ollama Cloud metadata");
     assert_eq!(ollama_cloud_catalog.context_window, 1_000_000);
@@ -589,7 +612,8 @@ fn test_all_models_have_non_empty_metadata_and_parse() {
             // bare parsing preserves OpenRouter precedence for overlapping ids.
             ModelId::MergeGatewayOpenAIGpt55
             | ModelId::MergeGatewayAnthropicClaudeOpus5
-            | ModelId::MergeGatewayGoogleGemini36Flash => continue,
+            | ModelId::MergeGatewayGoogleGemini36Flash
+            | ModelId::MergeGatewayGoogleGemini37Flash => continue,
             _ => ModelId::from_str(&model.as_str()),
         };
         assert_eq!(parsed.unwrap(), model);
