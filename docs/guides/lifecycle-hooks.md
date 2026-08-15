@@ -21,7 +21,7 @@ event.
 [hooks.lifecycle]
 # Session start hook that applies to all triggers (startup, resume, clear, compact)
 session_start = [
-  { hooks = [ { command = "./scripts/setup-session.sh" } ] }
+  { hooks = [ { command = "./scripts/setup.sh" } ] }
 ]
 
 # Pre-tool hook scoped to all Bash commands
@@ -29,11 +29,15 @@ pre_tool_use = [
   {
     matcher = "Bash",
     hooks = [
-      { command = "./scripts/validate-bash.py", timeout_seconds = 10 }
+      { command = "./scripts/check-bash-syntax.sh", timeout_seconds = 10 }
     ]
   }
 ]
 ```
+
+The example commands above are illustrative — the session-start hook points at
+the real `./scripts/setup.sh` dev-environment setup, while the pre-tool
+validator is a placeholder; substitute a script that exists in your project.
 
 Each hook entry maps to the following structures:
 
