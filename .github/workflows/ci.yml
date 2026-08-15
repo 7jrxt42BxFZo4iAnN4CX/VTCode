@@ -314,6 +314,7 @@ jobs:
     env:
       CARGO_TERM_VERBOSE: false
       CARGO_TERM_COLOR: always
+      RUSTFLAGS: "-D warnings"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
@@ -326,13 +327,9 @@ jobs:
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: x86_64-pc-windows-msvc
-      - run: cargo check --locked --target x86_64-pc-windows-msvc --jobs 4
+      - name: Check Windows workspace (deny warnings)
         shell: bash
-      - name: Check Windows crates deny warnings
-        shell: bash
-        env:
-          RUSTFLAGS: "-D warnings"
-        run: cargo check --locked --target x86_64-pc-windows-msvc --jobs 4 -p vtcode-safety -p vtcode-agent-plugins
+        run: cargo check --locked --target x86_64-pc-windows-msvc --workspace --jobs 4
 
   test:
     name: "Cargo nextest"
