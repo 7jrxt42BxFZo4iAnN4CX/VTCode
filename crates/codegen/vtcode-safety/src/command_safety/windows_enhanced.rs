@@ -16,11 +16,9 @@
 
 /// Enhanced Windows command safety detection
 pub fn is_dangerous_windows_enhanced(command: &[String]) -> bool {
-    if command.is_empty() {
+    let Some(exe) = command.first() else {
         return false;
-    }
-
-    let exe = &command[0];
+    };
     let base_exe = extract_exe_name(exe).to_lowercase();
 
     // PowerShell variants
@@ -48,11 +46,9 @@ pub fn is_dangerous_windows_enhanced(command: &[String]) -> bool {
 
 /// Detects dangerous PowerShell patterns with COM and code execution detection
 fn is_dangerous_powershell_enhanced(command: &[String]) -> bool {
-    if command.len() < 2 {
+    let Some(script) = command.get(1) else {
         return false;
-    }
-
-    let script = &command[1];
+    };
     let script_lower = script.to_lowercase();
 
     // ──── COM Object Detection ────
@@ -224,11 +220,9 @@ fn is_dangerous_vbscript(command: &[String]) -> bool {
 
 /// Detects dangerous registry operations
 fn is_dangerous_reg_operation(command: &[String]) -> bool {
-    if command.len() < 2 {
+    let Some(operation) = command.get(1).map(|s| s.to_lowercase()) else {
         return false;
-    }
-
-    let operation = command[1].to_lowercase();
+    };
 
     // Dangerous operations on registry
     matches!(operation.as_str(), "add" | "delete" | "import" | "export" | "query" | "copy")
@@ -236,11 +230,9 @@ fn is_dangerous_reg_operation(command: &[String]) -> bool {
 
 /// Detects dangerous NET commands
 fn is_dangerous_net_command(command: &[String]) -> bool {
-    if command.len() < 2 {
+    let Some(subcommand) = command.get(1).map(|s| s.to_lowercase()) else {
         return false;
-    }
-
-    let subcommand = command[1].to_lowercase();
+    };
 
     // Dangerous network commands
     matches!(subcommand.as_str(), "user" | "localgroup" | "group" | "share" | "use" | "config" | "session")

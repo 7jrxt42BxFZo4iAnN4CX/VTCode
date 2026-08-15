@@ -14,11 +14,9 @@
 
 /// Detects dangerous Windows/PowerShell commands
 pub fn is_dangerous_command_windows(command: &[String]) -> bool {
-    if command.is_empty() {
+    let Some(exe) = command.first() else {
         return false;
-    }
-
-    let exe = &command[0];
+    };
     let base_exe = std::path::Path::new(exe)
         .file_name()
         .and_then(|osstr| osstr.to_str())
@@ -40,11 +38,9 @@ pub fn is_dangerous_command_windows(command: &[String]) -> bool {
 
 /// Detects dangerous PowerShell invocations
 fn is_dangerous_powershell_invocation(command: &[String]) -> bool {
-    if command.len() < 2 {
+    let Some(script) = command.get(1) else {
         return false;
-    }
-
-    let script = &command[1];
+    };
 
     // Simple heuristic checks
     // Note: A full PowerShell parser (Phase 3) would provide more accurate detection.
@@ -98,11 +94,9 @@ fn is_dangerous_powershell_invocation(command: &[String]) -> bool {
 
 /// Detects dangerous CMD invocations
 fn is_dangerous_cmd_invocation(command: &[String]) -> bool {
-    if command.len() < 2 {
+    let Some(rest) = command.get(1..) else {
         return false;
-    }
-
-    let rest = &command[1..];
+    };
     let mut iter = rest.iter();
 
     while let Some(arg) = iter.next() {

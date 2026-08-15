@@ -329,7 +329,10 @@ jobs:
           key: x86_64-pc-windows-msvc
       - name: Check Windows workspace (deny warnings)
         shell: bash
-        run: cargo check --locked --target x86_64-pc-windows-msvc --workspace --jobs 4
+        run: cargo check --locked --target x86_64-pc-windows-msvc --workspace --all-targets --jobs 4
+      - name: Clippy Windows workspace (deny warnings)
+        shell: bash
+        run: cargo clippy --locked --target x86_64-pc-windows-msvc --workspace --all-targets --jobs 4 -- -D warnings
 
   test:
     name: "Cargo nextest"

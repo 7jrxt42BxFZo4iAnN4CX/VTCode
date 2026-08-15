@@ -23,6 +23,7 @@ async fn temp_registry_with_config(vtcode_toml: Option<&str>) -> (TempDir, ToolR
     (temp, registry)
 }
 
+#[cfg(unix)]
 fn exec_session_id(response: &serde_json::Value) -> String {
     response
         .get("process_id")
@@ -32,6 +33,7 @@ fn exec_session_id(response: &serde_json::Value) -> String {
         .to_string()
 }
 
+#[cfg(unix)]
 async fn read_session_until_exit(
     registry: &ToolRegistry,
     session_id: &str,

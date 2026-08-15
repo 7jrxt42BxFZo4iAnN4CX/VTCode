@@ -1,6 +1,9 @@
-#![expect(
-    clippy::cast_possible_truncation,
-    reason = "The macOS Mach message count is defined as the platform ABI's bounded integer type."
+#![cfg_attr(
+    any(target_os = "macos", target_os = "linux"),
+    expect(
+        clippy::cast_possible_truncation,
+        reason = "RSS sampling casts platform ABI integer sizes to f64 for MB-scale reporting; truncation is acceptable."
+    )
 )]
 
 //! Resident Set Size (RSS) sampling for memory diagnostics.

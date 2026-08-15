@@ -1,9 +1,9 @@
-#![cfg(unix)]
 #![allow(
     missing_docs,
     clippy::expect_used,
     reason = "Intentional compatibility, platform, test, or API-shape suppression."
 )]
+#![cfg(unix)]
 use assert_cmd::Command;
 use std::fs;
 use std::path::PathBuf;

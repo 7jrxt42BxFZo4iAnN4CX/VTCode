@@ -60,7 +60,7 @@ pub(super) fn install_with_smart_detection() -> Result<()> {
             debug_log("Attempting installation via Scoop (fallback)");
             return install_via_scoop();
         }
-        return Err(anyhow!("No supported installer found. Install Cargo, Chocolatey, or Scoop."));
+        Err(anyhow!("No supported installer found. Install Cargo, Chocolatey, or Scoop."))
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]

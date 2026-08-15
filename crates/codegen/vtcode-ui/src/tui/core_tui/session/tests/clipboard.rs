@@ -1,3 +1,4 @@
+#![cfg(unix)]
 #![allow(
     missing_docs,
     reason = "Intentional compatibility, platform, or test-only suppression."

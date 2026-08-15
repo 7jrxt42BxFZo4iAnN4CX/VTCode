@@ -43,7 +43,8 @@ pub(crate) fn is_functional() -> bool {
 
             let functional = entry.get_password().is_ok();
 
-            let _ = entry.delete_credential();
+            // Best-effort cleanup; the test user is unique per process, so a leftover is harmless.
+            let _cleanup = entry.delete_credential();
 
             functional
         }
