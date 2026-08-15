@@ -239,9 +239,11 @@ fn copy_dir_all_inner(src: &Path, dst: &Path, ancestors: &mut Vec<PathBuf>) -> s
             // Copy symlinks as their link target, not the linked content, so
             // plugin-internal symlinks stay relative and absolute symlinks
             // cannot pull data out of the source into the install tree.
-            let target = std::fs::read_link(&src_path)?;
             #[cfg(unix)]
-            std::os::unix::fs::symlink(target, &dst_path)?;
+            {
+                let target = std::fs::read_link(&src_path)?;
+                std::os::unix::fs::symlink(target, &dst_path)?;
+            }
             #[cfg(not(unix))]
             let _copied_bytes = std::fs::copy(&src_path, &dst_path)?;
         } else if meta.is_dir() {

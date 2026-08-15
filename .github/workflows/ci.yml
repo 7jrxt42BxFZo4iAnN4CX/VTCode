@@ -328,6 +328,11 @@ jobs:
           key: x86_64-pc-windows-msvc
       - run: cargo check --locked --target x86_64-pc-windows-msvc --jobs 4
         shell: bash
+      - name: Check Windows crates deny warnings
+        shell: bash
+        env:
+          RUSTFLAGS: "-D warnings"
+        run: cargo check --locked --target x86_64-pc-windows-msvc --jobs 4 -p vtcode-safety -p vtcode-agent-plugins
 
   test:
     name: "Cargo nextest"

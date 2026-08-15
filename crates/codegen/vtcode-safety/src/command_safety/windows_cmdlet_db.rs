@@ -9,6 +9,10 @@
 //! - MEDIUM: Registry modification, process management, limited file ops
 //! - LOW: Information gathering, configuration changes (relatively safe)
 
+#![expect(
+    unused_results,
+    reason = "Database builders are one-shot maps; discarded insert results are intentional."
+)]
 use hashbrown::HashMap;
 use once_cell::sync::Lazy;
 

@@ -7,6 +7,10 @@
 //! - Method invocation patterns
 //! - Execution scope and privilege context
 
+#![expect(
+    unused_results,
+    reason = "Database builders are one-shot maps; discarded insert results are intentional."
+)]
 use hashbrown::HashMap;
 
 /// COM object risk level

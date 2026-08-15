@@ -7,6 +7,10 @@
 //! - Access methods (Get-Item, Set-Item, New-ItemProperty, etc.)
 //! - Privilege levels required
 
+#![expect(
+    unused_results,
+    reason = "Database builders are one-shot maps; discarded insert results are intentional."
+)]
 use hashbrown::HashMap;
 
 /// Registry access risk level
