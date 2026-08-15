@@ -367,6 +367,8 @@ pub enum ModelId {
     OpenRouterPoolsideLagunaM1Free,
     /// Laguna S 2.1 (free) - Poolside's 118B MoE free coding agent model via OpenRouter
     OpenRouterPoolsideLagunaS21Free,
+    /// Qwen3.8 27B - Qwen's open-weight dense vision-language model with flexible thinking via OpenRouter
+    OpenRouterQwenQwen3827b,
 
     // Poolside models
     /// Laguna M.1 - Poolside's flagship MoE coding agent model

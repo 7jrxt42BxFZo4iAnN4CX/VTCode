@@ -360,5 +360,32 @@ pub(crate) fn openrouter_presets() -> Vec<ModelPreset> {
             supported_in_api: true,
             context_window: Some(1_048_576),
         },
+        ModelPreset {
+            id: "openrouter/qwen/qwen3.8-27b".to_string(),
+            model: "qwen/qwen3.8-27b".to_string(),
+            display_name: "Qwen3.8 27B (OpenRouter)".to_string(),
+            description: "Qwen3.8 27B open-weight dense vision-language model with flexible thinking via OpenRouter".to_string(),
+            provider: Provider::OpenRouter,
+            default_reasoning_effort: ReasoningEffortLevel::Medium,
+            supported_reasoning_efforts: vec![
+                ReasoningEffortPreset {
+                    effort: ReasoningEffortLevel::Low,
+                    description: "Fast responses".to_string(),
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffortLevel::Medium,
+                    description: "Balanced reasoning".to_string(),
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffortLevel::High,
+                    description: "Deep reasoning".to_string(),
+                },
+            ],
+            is_default: false,
+            upgrade: None,
+            show_in_picker: true,
+            supported_in_api: true,
+            context_window: Some(262_144),
+        },
     ]
 }

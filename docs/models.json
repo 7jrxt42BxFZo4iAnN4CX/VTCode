@@ -3222,6 +3222,40 @@
           "generation": "Laguna-S.2.1",
           "doc_comment": "Laguna S 2.1 (free) - Poolside's 118B MoE free coding agent model via OpenRouter"
         }
+      },
+      "qwen/qwen3.8-27b": {
+        "id": "qwen/qwen3.8-27b",
+        "name": "Qwen: Qwen3.8 27B",
+        "description": "Qwen3.8 27B is an open-weight dense vision-language model from Qwen. It is suited for coding, professional workflows, research, multimodal interaction, and long-running agent tasks, with flexible thinking that can be enabled or disabled.",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text",
+            "image",
+            "video"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 262144,
+        "max_output_tokens": 131072,
+        "cost": {
+          "input": 4.5e-7,
+          "output": 3.2e-6
+        },
+        "vtcode": {
+          "variant": "OpenRouterQwenQwen3827b",
+          "constant": "QWEN_3_8_27B",
+          "vendor": "qwen",
+          "display": "Qwen3.8 27B",
+          "description": "Qwen3.8 27B open-weight dense vision-language model with flexible thinking via OpenRouter",
+          "efficient": false,
+          "top_tier": false,
+          "generation": "3.8",
+          "doc_comment": "Qwen3.8 27B - Qwen's open-weight dense vision-language model with flexible thinking via OpenRouter"
+        }
       }
     },
     "default_model": "xiaomi/mimo-v2.5-pro"
