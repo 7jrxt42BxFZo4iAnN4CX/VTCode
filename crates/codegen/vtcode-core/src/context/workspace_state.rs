@@ -85,9 +85,6 @@ pub struct WorkspaceState {
 
     /// Value snapshots for inference
     value_snapshots: HashMap<String, ValueHistory>,
-
-    /// Last user intent/request
-    last_user_intent: Option<String>,
 }
 
 impl Default for WorkspaceState {
@@ -104,7 +101,6 @@ impl WorkspaceState {
             recent_changes: Vec::with_capacity(MAX_RECENT_CHANGES),
             hot_files: Vec::with_capacity(MAX_HOT_FILES),
             value_snapshots: HashMap::new(),
-            last_user_intent: None,
         }
     }
 
@@ -163,18 +159,6 @@ impl WorkspaceState {
         }
 
         terms
-    }
-
-    /// Infer reference target from vague term
-    pub fn infer_reference_target(&self, vague_term: &str) -> Option<PathBuf> {
-        let term_lower = vague_term.to_lowercase();
-
-        // Priority: most recent file containing term
-        self.recent_files
-            .iter()
-            .rev()
-            .find(|activity| activity.related_terms.contains(&term_lower))
-            .map(|activity| activity.path.clone())
     }
 
     /// Resolve relative value expression
@@ -395,44 +379,6 @@ impl WorkspaceState {
         while self.recent_changes.len() > MAX_RECENT_CHANGES {
             self.recent_changes.remove(0);
         }
-    }
-
-    /// Record value snapshot
-    pub fn record_value(&mut self, key: String, value: String, file: PathBuf, line: usize) {
-        if let Some(history) = self.value_snapshots.get_mut(&key) {
-            // Move current to previous
-            history.previous.push(history.current.clone());
-            history.current = value;
-            history.file = file;
-            history.line = line;
-
-            // Keep bounded
-            if history.previous.len() > 10 {
-                history.previous.remove(0);
-            }
-        } else {
-            // Create new history
-            self.value_snapshots.insert(
-                key.clone(),
-                ValueHistory {
-                    key,
-                    current: value,
-                    previous: Vec::new(),
-                    file,
-                    line,
-                },
-            );
-        }
-    }
-
-    /// Set last user intent
-    pub fn set_user_intent(&mut self, intent: String) {
-        self.last_user_intent = Some(intent);
-    }
-
-    /// Get last user intent
-    pub fn last_user_intent(&self) -> Option<&str> {
-        self.last_user_intent.as_deref()
     }
 
     /// Get recent files (up to N)

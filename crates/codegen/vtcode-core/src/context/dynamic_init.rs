@@ -260,12 +260,6 @@ Configure MCP servers in `vtcode.toml` or `.mcp.json`.
     }
 }
 
-/// Check if dynamic context directories exist
-pub fn check_dynamic_context_exists(workspace: &Path) -> bool {
-    let dirs = DynamicContextDirs::from_workspace(workspace);
-    dirs.vtcode_dir.exists()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

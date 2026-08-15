@@ -382,11 +382,6 @@ impl HistoryFileManager {
 
         Ok(())
     }
-
-    /// Get the history directory path
-    pub fn history_dir(&self) -> &Path {
-        &self.history_dir
-    }
 }
 
 /// Sanitize session ID for use in filename

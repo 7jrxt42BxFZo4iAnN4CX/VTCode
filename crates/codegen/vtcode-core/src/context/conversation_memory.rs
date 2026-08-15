@@ -94,10 +94,8 @@ pub struct ConversationMemory {
     recent_user_messages: VecDeque<UserMessage>,
 
     /// Recent file contexts (files mentioned or edited)
-    recent_file_contexts: VecDeque<PathBuf>,
 
     /// Resolved reference mappings
-    resolved_references: HashMap<String, String>,
 
     /// Current turn number
     current_turn: usize,
@@ -116,8 +114,6 @@ impl ConversationMemory {
             mentioned_entities: HashMap::new(),
             entity_timeline: VecDeque::with_capacity(MAX_ENTITY_MENTIONS),
             recent_user_messages: VecDeque::with_capacity(MAX_MEMORY_TURNS),
-            recent_file_contexts: VecDeque::with_capacity(20),
-            resolved_references: HashMap::new(),
             current_turn: 0,
         }
     }
@@ -270,42 +266,12 @@ impl ConversationMemory {
         }
     }
 
-    /// Get all mentioned entities
-    pub fn mentioned_entities(&self) -> &HashMap<String, MentionHistory> {
-        &self.mentioned_entities
-    }
-
     /// Get entity mention count
     pub fn mention_count(&self, entity: &str) -> usize {
         self.mentioned_entities
             .get(&entity.to_lowercase())
             .map(|h| h.mention_count)
             .unwrap_or(0)
-    }
-
-    /// Add file context
-    pub fn add_file_context(&mut self, file: PathBuf) {
-        self.recent_file_contexts.push_back(file);
-
-        // Keep bounded
-        while self.recent_file_contexts.len() > 20 {
-            self.recent_file_contexts.pop_front();
-        }
-    }
-
-    /// Get recent file contexts
-    pub fn recent_file_contexts(&self, count: usize) -> Vec<&PathBuf> {
-        self.recent_file_contexts.iter().rev().take(count).collect()
-    }
-
-    /// Check if entity was recently mentioned
-    pub fn was_recently_mentioned(&self, entity: &str, within_turns: usize) -> bool {
-        let cutoff_turn = self.current_turn.saturating_sub(within_turns);
-
-        self.entity_timeline
-            .iter()
-            .rev()
-            .any(|m| m.entity.eq_ignore_ascii_case(entity) && m.turn >= cutoff_turn)
     }
 
     /// Get context summary for recent conversation
@@ -322,20 +288,6 @@ impl ConversationMemory {
         }
 
         summary
-    }
-
-    /// Clear old data to free memory
-    pub fn clear_old_data(&mut self, keep_turns: usize) {
-        let cutoff_turn = self.current_turn.saturating_sub(keep_turns);
-
-        // Remove old entity timeline entries
-        self.entity_timeline.retain(|m| m.turn >= cutoff_turn);
-
-        // Remove old user messages
-        self.recent_user_messages.retain(|m| m.turn >= cutoff_turn);
-
-        // Clear resolved references from old turns
-        self.resolved_references.clear();
     }
 }
 
