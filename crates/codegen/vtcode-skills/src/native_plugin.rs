@@ -693,9 +693,13 @@ mod tests {
         std::thread::sleep(Duration::from_millis(25));
         TEST_EXECUTE_ACTIVE_CALLS.fetch_sub(1, Ordering::SeqCst);
 
-        CString::new(r#"{"success":true,"output":{},"error":null,"files":[]}"#)
-            .unwrap()
-            .into_raw()
+        // SAFETY: the returned C string is owned by the host bridge, which
+        // frees it through the registered destructor.
+        unsafe {
+            CString::new(r#"{"success":true,"output":{},"error":null,"files":[]}"#)
+                .unwrap()
+                .into_raw()
+        }
     }
 
     #[test]

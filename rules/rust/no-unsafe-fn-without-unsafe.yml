@@ -20,3 +20,5 @@ rule:
           stopBy: end
 files:
   - "**/*.rs"
+ignores:
+  - "patches/**"

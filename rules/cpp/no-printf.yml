@@ -17,3 +17,5 @@ files:
   - "**/*.cc"
   - "**/*.cxx"
   - "**/*.hpp"
+ignores:
+  - "patches/**"

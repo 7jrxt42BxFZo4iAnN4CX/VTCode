@@ -42,7 +42,7 @@ def extract_code(txt: str) -> str:
     if "```" in txt:
         try:
             return txt.split("```", 1)[1].rsplit("```", 1)[0].strip()
-        except:
+        except Exception:
             pass
     return txt.strip()
 
@@ -98,7 +98,7 @@ def vt_ask(prompt: str):
     if m:
         try:
             usage = json.loads("{" + m.group(0).split("{", 1)[1])
-        except:
+        except Exception:
             usage = None
     
     return {

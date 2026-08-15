@@ -5,8 +5,9 @@ message: Avoid `print()` in production code. Use `logging` instead.
 note: |
   `print()` calls in production code should use the `logging` module for
   proper log level control, formatting, and output routing. Scope this rule
-  with `files` to exclude test directories and scripts where console output
-  is acceptable.
+  with `ignores` to exclude test directories and scripts where console
+  output is acceptable. (The `!` negation in `files` is ignored by the pinned
+  ast-grep version; use `ignores`.)
 rule:
   kind: call
   has:
@@ -14,6 +15,10 @@ rule:
     pattern: print
 files:
   - "**/*.py"
-  - "!tests/**"
-  - "!**/test_*.py"
-  - "!**/*_test.py"
+ignores:
+  - "tests/**"
+  - "**/test_*.py"
+  - "**/*_test.py"
+  - "scripts/**"
+  - "crates/codegen/vtcode-skills/src/skills/assets/samples/**"
+  - "patches/**"
