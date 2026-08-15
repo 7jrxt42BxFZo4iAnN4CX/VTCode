@@ -163,8 +163,6 @@ impl MarketplaceSettings {
         self.marketplaces.len() != initial_len
     }
 
-    /// Check if a plugin source is allowed based on security settings
-
     /// Add an installed plugin to the configuration
     pub fn add_installed_plugin(&mut self, plugin: InstalledPlugin) {
         // Check if plugin already exists and update it, or add as new
@@ -184,8 +182,6 @@ impl MarketplaceSettings {
             }
         }
     }
-
-    /// Remove an installed plugin from the configuration
 
     /// Get an installed plugin by ID
     pub fn get_installed_plugin(&self, plugin_id: &str) -> Option<&InstalledPlugin> {
@@ -214,8 +210,6 @@ impl MarketplaceSettings {
         }
     }
 }
-
-/// Helper function to get the marketplace config path based on VT Code's config directory structure
 
 #[cfg(test)]
 mod tests {

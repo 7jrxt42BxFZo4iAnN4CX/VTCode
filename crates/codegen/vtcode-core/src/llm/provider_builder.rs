@@ -47,12 +47,6 @@ where
         self
     }
 
-    /// Set a custom base URL for the provider API endpoint.
-
-    /// Enable prompt caching with the given configuration.
-
-    /// Set request timeout configuration.
-
     /// Build the provider, returning an error if creation fails.
     pub fn try_build(self) -> Result<Box<dyn LLMProvider>, LLMError> {
         crate::llm::provider_config::create_provider_unified(

@@ -169,8 +169,6 @@ impl AgentBehaviorAnalyzer {
         recommendations
     }
 
-    /// Recommend skills based on effectiveness
-
     /// Warn about tools with high failure rates
     pub fn identify_risky_tools(&self, failure_threshold: f64) -> Vec<(String, f64)> {
         self.failure_patterns
@@ -289,12 +287,6 @@ impl AgentBehaviorAnalyzer {
 
         metrics
     }
-
-    /// Get usage count for a tool
-
-    /// Get failure rate for a tool (0.0-1.0), defaults to 0.0 when unknown
-
-    /// Estimate success rate for a tool using usage counts and observed failure rate
 
     /// Apply recovery pattern automatically for a known error type
     /// Returns the recovery action to take, or None if no pattern exists
