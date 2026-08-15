@@ -1,8 +1,6 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use vtcode_core::core::agent::blocked_handoff::write_blocked_handoff;
-use vtcode_core::core::agent::harness_artifacts::existing_harness_artifact_paths;
 use vtcode_core::core::agent::snapshots::SnapshotTurnContext;
 use vtcode_core::exec::events::HarnessEventKind;
 use vtcode_core::llm::provider as uni;
@@ -68,31 +66,6 @@ pub(crate) async fn apply_turn_outcome(outcome: TurnLoopOutcome, ctx: TurnOutcom
         TurnLoopResult::Blocked { reason } => {
             if let Some(reason) = reason.as_deref() {
                 let _ = ctx.renderer.line(MessageStyle::Info, reason);
-            }
-            match write_blocked_handoff(
-                ctx.workspace,
-                ctx.session_id,
-                "blocked",
-                reason.as_deref().unwrap_or("Turn blocked due to repeated failing behavior."),
-                &existing_harness_artifact_paths(ctx.workspace),
-            ) {
-                Ok(artifacts) => {
-                    for path in [&artifacts.current_path, &artifacts.archive_path] {
-                        let path_text = path.display().to_string();
-                        let _ = ctx.renderer.line(MessageStyle::Info, &format!("Blocked handoff: {path_text}"));
-                        if let Some(emitter) = ctx.harness_emitter {
-                            let _ =
-                                emitter.emit(crate::agent::runloop::unified::inline_events::harness::harness_event(
-                                    HarnessEventKind::BlockedHandoffWritten,
-                                    Some("Blocked handoff written".to_string()),
-                                    Some(path_text),
-                                    None,
-                                    None,
-                                ));
-                        }
-                    }
-                }
-                Err(err) => tracing::warn!("Failed to persist blocked handoff: {}", err),
             }
             reset_inline_input(ctx.handle, ctx.default_placeholder.clone());
             ctx.ctrl_c_state.reset();
@@ -190,6 +163,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn blocked_turn_resets_interactive_input_without_ending_session() {
+        let (handle, mut renderer, mut receiver) = renderer_with_channel();
+        let ctrl_c_state = Arc::new(CtrlCState::new());
+        let default_placeholder = None;
+        let mut session_end_reason = vtcode_core::hooks::SessionEndReason::Completed;
+        let mut next_checkpoint_turn = 1usize;
+        let mut conversation_history = Vec::new();
+        let outcome = TurnLoopOutcome {
+            result: TurnLoopResult::Blocked { reason: Some("blocked for test".to_owned()) },
+            turn_modified_files: BTreeSet::new(),
+            turn_diagnostics: Default::default(),
+            pending_primary_agent: None,
+            pending_plan_auto_accept: false,
+            pending_plan_execution_context:
+                crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Current,
+            plan_approved_execution_pending: false,
+            final_response_was_fallback: false,
+        };
+
+        apply_turn_outcome(
+            outcome,
+            TurnOutcomeContext {
+                conversation_history: &mut conversation_history,
+                completed_turn_prompt: None,
+                completed_turn_prompt_message_index: None,
+                renderer: &mut renderer,
+                handle: &handle,
+                ctrl_c_state: &ctrl_c_state,
+                default_placeholder: &default_placeholder,
+                checkpoint_manager: None,
+                next_checkpoint_turn: &mut next_checkpoint_turn,
+                session_end_reason: &mut session_end_reason,
+                turn_elapsed: Duration::from_secs(1),
+                show_turn_timer: true,
+                session_id: "session-test",
+                runtime_turn_id: None,
+                harness_emitter: None,
+            },
+        )
+        .await
+        .expect("apply blocked outcome");
+
+        assert!(matches!(session_end_reason, vtcode_core::hooks::SessionEndReason::Completed));
+        let mut saw_clear_input = false;
+        let mut saw_default_placeholder = false;
+        while let Ok(command) = receiver.try_recv() {
+            match command {
+                InlineCommand::ClearInput => saw_clear_input = true,
+                InlineCommand::SetPlaceholder { hint: None, .. } => saw_default_placeholder = true,
+                _ => {}
+            }
+        }
+        assert!(saw_clear_input);
+        assert!(saw_default_placeholder);
+    }
+
+    #[tokio::test]
     async fn completed_turn_emits_worked_for_divider() {
         let (handle, mut renderer, mut receiver) = renderer_with_channel();
         let ctrl_c_state = Arc::new(CtrlCState::new());
@@ -225,7 +255,6 @@ mod tests {
                 session_end_reason: &mut session_end_reason,
                 turn_elapsed: Duration::from_secs(90),
                 show_turn_timer: true,
-                workspace: std::path::Path::new("."),
                 session_id: "session-test",
                 runtime_turn_id: None,
                 harness_emitter: None,
@@ -274,7 +303,6 @@ mod tests {
                 session_end_reason: &mut session_end_reason,
                 turn_elapsed: Duration::from_secs(90),
                 show_turn_timer: true,
-                workspace: std::path::Path::new("."),
                 session_id: "session-test",
                 runtime_turn_id: None,
                 harness_emitter: None,
@@ -323,7 +351,6 @@ mod tests {
                 session_end_reason: &mut session_end_reason,
                 turn_elapsed: Duration::from_secs(90),
                 show_turn_timer: false,
-                workspace: std::path::Path::new("."),
                 session_id: "session-test",
                 runtime_turn_id: None,
                 harness_emitter: None,

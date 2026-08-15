@@ -10,7 +10,7 @@
 ## Rules
 - Re-export public APIs from `lib.rs`; consumers must not reach into submodules, and keep constants in `config::constants` rather than inline.
 - `exec_policy` and `command_safety` are separate policy layers.
-- Session event sinks are authoritative: preserve ordering, use one bounded non-blocking handoff with count/byte limits and fail-closed saturation, and await the shared one-shot drain result before reporting task success. `SessionStoreSink` writes the canonical workspace store; recovery/final assistant messages must use the canonical `ThreadEvent` path rather than history-only writes. Snapshot files migrate independently through V2 while unrelated durable state remains on V1.
+- Session event sinks are authoritative: preserve ordering, use one bounded non-blocking handoff with count/byte limits and fail-closed saturation, and await the shared one-shot drain result before reporting task success. `SessionStoreSink` writes the canonical workspace store; recovery/final assistant messages must use the canonical `ThreadEvent` path rather than history-only writes. Snapshot files migrate independently through V2 while unrelated durable state remains on V1. Archive-less runner handoffs must not claim a session-archive resume ID.
 - Trajectory logging is best effort: retain line/byte bounds and expose drops/failures through diagnostics.
 - Spool references are consumed through `SpooledOutputReference`; binary consumers must not reopen spool paths to reconstruct previews.
 ## Workflows

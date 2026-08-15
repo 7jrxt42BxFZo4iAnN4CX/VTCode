@@ -309,6 +309,10 @@ async fn tool_loop_limit_writes_blocked_handoff_artifacts() {
         let content = fs::read_to_string(&path).expect("blocked handoff file");
         assert!(content.contains("tool_loop_limit_reached"));
         assert!(content.contains("Stopped after reaching tool loop limit"));
+        assert!(!content.contains("resume_command:"));
+        assert!(
+            content.contains("Resume unavailable because the legacy agent runner does not create a session archive.")
+        );
     }
 }
 

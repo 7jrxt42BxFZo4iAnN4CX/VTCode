@@ -741,7 +741,7 @@ through explicit provider configuration.
 | `tools.editor.suspend_tui` | `boolean` | no | `true` | Suspend the TUI event loop while editor is running |
 | `tools.loop_thresholds` | `object` | no | `{}` | Tool-specific loop thresholds (Adaptive Loop Detection) Allows setting higher loop limits for read-only tools (e.g., ls, grep) and lower limits for mutating tools. |
 | `tools.loop_thresholds.*` | `integer` | no | `-` | - |
-| `tools.max_consecutive_blocked_tool_calls_per_turn` | `integer` | no | `8` | Maximum consecutive blocked tool calls allowed per turn before forcing a turn break. This prevents long blocked-call churn from consuming CPU. |
+| `tools.max_consecutive_blocked_tool_calls_per_turn` | `integer` | no | `8` | Maximum consecutive blocked tool calls allowed per turn before forcing a turn break. The total fuse is 2x this value in normal mode, 4x in Plan Mode, and this value in recovery mode; the consecutive streak resets after an allowed call. |
 | `tools.max_repeated_tool_calls` | `integer` | no | `2` | Maximum number of times the same tool invocation can be retried with the identical arguments within a single turn. |
 | `tools.max_sequential_spool_chunk_reads` | `integer` | no | `6` | Maximum sequential spool-chunk `read_file` calls allowed per turn before nudging the agent to switch to targeted extraction/summarization. |
 | `tools.max_tool_loops` | `integer` | no | `40` | Maximum inner tool-call loops per user turn. Set to `0` to disable the limit. Planning raises smaller nonzero values to its planning floor; prompt-approved extensions remain bounded by ordinary and planning hard caps. This is separate from per-call, per-turn, full-auto-turn, and conversation-turn limits. |

@@ -2,9 +2,12 @@
     missing_docs,
     reason = "Intentional compatibility, platform, or test-only suppression."
 )]
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::*;
+use crate::agent::runloop::unified::tool_pipeline::{ToolExecutionStatus, ToolPipelineOutcome};
+use crate::agent::runloop::unified::turn::tool_outcomes::execution_result::handle_tool_execution_result;
+use vtcode_core::tools::registry::ToolExecutionError;
 
 #[tokio::test]
 async fn blocked_tool_call_guard_emits_tool_and_system_messages() {
@@ -54,10 +57,10 @@ async fn blocked_tool_call_guard_allows_configured_consecutive_cap() {
 async fn blocked_tool_call_guard_caps_non_consecutive_total_churn() {
     let mut backing = TestContextBacking::new(4).await;
     let mut ctx = backing.turn_processing_context();
-    let max_streak = max_consecutive_blocked_tool_calls_per_turn(&ctx);
+    let limits = blocked_tool_call_limits(&ctx);
     let args = json!({"path":"src/main.rs"});
 
-    for idx in 0..(max_streak * 2) {
+    for idx in 0..limits.total_cap {
         let outcome =
             enforce_blocked_tool_call_guard(&mut ctx, &format!("blocked_{idx}"), tool_names::READ_FILE, &args);
         assert!(outcome.is_none(), "blocked total {idx} should stay under cap");
@@ -71,6 +74,91 @@ async fn blocked_tool_call_guard_caps_non_consecutive_total_churn() {
             .iter()
             .any(|message| message.content.as_text().contains("blocked_total"))
     );
+    assert!(ctx.working_history.iter().any(|message| {
+        message
+            .content
+            .as_text()
+            .contains(&format!("per-turn cap ({})", limits.total_cap))
+    }));
+}
+
+#[tokio::test]
+async fn blocked_tool_call_guard_allows_four_times_total_churn_in_planning_mode() {
+    let mut backing = TestContextBacking::new(4).await;
+    backing.tool_registry.enable_planning();
+    let mut ctx = backing.turn_processing_context();
+    let limits = blocked_tool_call_limits(&ctx);
+    let args = json!({"path":"src/main.rs"});
+
+    assert_eq!(limits.total_cap, limits.consecutive_cap * 4);
+    for idx in 0..limits.total_cap {
+        let outcome =
+            enforce_blocked_tool_call_guard(&mut ctx, &format!("blocked_{idx}"), tool_names::READ_FILE, &args);
+        assert!(outcome.is_none(), "blocked total {idx} should stay under planning cap");
+        ctx.reset_blocked_tool_call_streak();
+    }
+
+    let outcome = enforce_blocked_tool_call_guard(&mut ctx, "blocked_total_over_cap", tool_names::READ_FILE, &args);
+    assert!(matches!(outcome, Some(TurnHandlerOutcome::Break(TurnLoopResult::Blocked { .. }))));
+    assert!(ctx.working_history.iter().any(|message| {
+        message
+            .content
+            .as_text()
+            .contains(&format!("per-turn cap ({})", limits.total_cap))
+    }));
+}
+
+#[tokio::test]
+async fn denied_execution_result_uses_planning_total_fuse() {
+    let mut backing = TestContextBacking::new(4).await;
+    backing.tool_registry.enable_planning();
+    let mut ctx = backing.turn_processing_context();
+    let limits = blocked_tool_call_limits(&ctx);
+    let args = json!({"path": "src/main.rs"});
+    let mut repeated_tool_attempts = LoopTracker::new();
+    let mut turn_modified_files = BTreeSet::new();
+    let mut outcome_ctx = ToolOutcomeContext {
+        ctx: &mut ctx,
+        repeated_tool_attempts: &mut repeated_tool_attempts,
+        turn_modified_files: &mut turn_modified_files,
+    };
+
+    for index in 0..limits.total_cap {
+        let pipeline_outcome = ToolPipelineOutcome::from_status(ToolExecutionStatus::Failure {
+            error: ToolExecutionError::policy_violation("read_file", "denied for test"),
+        });
+        let outcome = handle_tool_execution_result(
+            &mut outcome_ctx,
+            format!("denied_{index}"),
+            tool_names::READ_FILE,
+            &args,
+            &pipeline_outcome,
+            Instant::now(),
+        )
+        .await
+        .expect("denied execution result should be handled");
+        assert!(outcome.is_none(), "planning denial {index} should stay under total fuse");
+        outcome_ctx.ctx.reset_blocked_tool_call_streak();
+    }
+
+    let pipeline_outcome = ToolPipelineOutcome::from_status(ToolExecutionStatus::Failure {
+        error: ToolExecutionError::policy_violation("read_file", "denied for test"),
+    });
+    let outcome = handle_tool_execution_result(
+        &mut outcome_ctx,
+        "denied_over_cap".to_string(),
+        tool_names::READ_FILE,
+        &args,
+        &pipeline_outcome,
+        Instant::now(),
+    )
+    .await
+    .expect("total-fuse denial should be handled");
+
+    let Some(TurnHandlerOutcome::Break(TurnLoopResult::Blocked { reason: Some(reason) })) = outcome else {
+        panic!("planning denial should trip the total fuse");
+    };
+    assert!(reason.contains(&format!("Blocked tool calls reached per-turn cap ({})", limits.total_cap)));
 }
 
 #[tokio::test]

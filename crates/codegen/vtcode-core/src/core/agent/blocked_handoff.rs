@@ -5,12 +5,19 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use uuid::Uuid;
 
+use crate::utils::session_archive::VerifiedSessionArchiveIdentifier;
 use crate::utils::session_debug::sanitize_debug_component;
 
 const TASKS_DIR: &str = ".vtcode/tasks";
 const CURRENT_BLOCKED_FILE: &str = "current_blocked.md";
 const BLOCKERS_DIR: &str = "blockers";
 const CURRENT_TASK_FILE: &str = "current_task.md";
+
+struct BlockedHandoffPaths<'a> {
+    tracker: &'a Path,
+    current: &'a Path,
+    archive: &'a Path,
+}
 
 /// Artifacts produced by [`write_blocked_handoff`], containing paths to the
 /// current and archived handoff files.
@@ -22,17 +29,50 @@ pub struct BlockedHandoffArtifacts {
     pub archive_path: PathBuf,
 }
 
+/// Resume metadata for a blocked handoff.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockedHandoffResume<'a> {
+    /// The identifier came from a verified, persisted session archive.
+    Available(&'a VerifiedSessionArchiveIdentifier),
+    /// No durable archive can be advertised for this handoff.
+    Unavailable(&'a str),
+}
+
 /// Write a blocked-handoff artifact when the agent hits an unrecoverable blocker.
 ///
 /// Creates both a `current_blocked.md` file and a timestamped archive under
 /// `.vtcode/tasks/blockers/`. The handoff includes the blocker summary, current
-/// tracker snapshot, and a resume command.
+/// tracker snapshot. Resume commands are added only by
+/// [`write_blocked_handoff_with_resume`] after a caller verifies an
+/// archive identifier.
 pub fn write_blocked_handoff(
     workspace: &Path,
     session_id: &str,
     outcome_code: &str,
     blocker_summary: &str,
     relevant_paths: &[PathBuf],
+) -> Result<BlockedHandoffArtifacts> {
+    write_blocked_handoff_with_resume(
+        workspace,
+        session_id,
+        outcome_code,
+        blocker_summary,
+        relevant_paths,
+        BlockedHandoffResume::Unavailable(
+            "Resume is unavailable because this compatibility entry point has no verified session archive.",
+        ),
+    )
+}
+
+/// Write a blocked handoff with resume metadata supplied through the typed
+/// archive-verification boundary.
+pub fn write_blocked_handoff_with_resume(
+    workspace: &Path,
+    session_id: &str,
+    outcome_code: &str,
+    blocker_summary: &str,
+    relevant_paths: &[PathBuf],
+    resume: BlockedHandoffResume<'_>,
 ) -> Result<BlockedHandoffArtifacts> {
     let tasks_dir = workspace.join(TASKS_DIR);
     let blockers_dir = tasks_dir.join(BLOCKERS_DIR);
@@ -51,11 +91,14 @@ pub fn write_blocked_handoff(
         session_id,
         outcome_code,
         blocker_summary,
-        &tracker_path,
-        &current_path,
-        &archive_path,
+        BlockedHandoffPaths {
+            tracker: &tracker_path,
+            current: &current_path,
+            archive: &archive_path,
+        },
         relevant_paths,
         timestamp.to_rfc3339(),
+        resume,
     );
 
     fs::write(&current_path, &markdown).with_context(|| format!("failed to write {}", current_path.display()))?;
@@ -69,22 +112,21 @@ fn render_blocked_handoff(
     session_id: &str,
     outcome_code: &str,
     blocker_summary: &str,
-    tracker_path: &Path,
-    current_path: &Path,
-    archive_path: &Path,
+    paths: BlockedHandoffPaths<'_>,
     relevant_paths: &[PathBuf],
     created_at: String,
+    resume: BlockedHandoffResume<'_>,
 ) -> String {
-    let tracker_snapshot = fs::read_to_string(tracker_path)
+    let tracker_snapshot = fs::read_to_string(paths.tracker)
         .ok()
         .filter(|content| !content.trim().is_empty())
         .unwrap_or_else(|| "_No current tracker snapshot found._".to_string());
 
     let mut paths = vec![
         workspace.to_path_buf(),
-        tracker_path.to_path_buf(),
-        current_path.to_path_buf(),
-        archive_path.to_path_buf(),
+        paths.tracker.to_path_buf(),
+        paths.current.to_path_buf(),
+        paths.archive.to_path_buf(),
     ];
     for path in relevant_paths {
         if !paths.iter().any(|existing| existing == path) {
@@ -98,8 +140,18 @@ fn render_blocked_handoff(
         .collect::<Vec<_>>()
         .join("\n");
 
+    let (resume_front_matter, resume_metadata) = match resume {
+        BlockedHandoffResume::Available(identifier) => (
+            format!("resume_command: \"vtcode --resume {}\"\n", identifier.as_str()),
+            format!("- Resume command: `vtcode --resume {}`\n", identifier.as_str()),
+        ),
+        BlockedHandoffResume::Unavailable(explanation) => {
+            (String::new(), format!("- Resume unavailable: {}\n", explanation.trim()))
+        }
+    };
+
     format!(
-        "---\nsession_id: {session_id}\noutcome: {outcome_code}\ncreated_at: {created_at}\nworkspace: {}\nresume_command: \"vtcode --resume {session_id}\"\n---\n\n# Blocker Summary\n\n{}\n\n# Current Tracker Snapshot\n\n{}\n\n# Relevant Paths\n\n{}\n\n# Resume Metadata\n\n- Session ID: `{session_id}`\n- Outcome: `{outcome_code}`\n- Resume command: `vtcode --resume {session_id}`\n",
+        "---\nsession_id: {session_id}\noutcome: {outcome_code}\ncreated_at: {created_at}\nworkspace: {}\n{resume_front_matter}---\n\n# Blocker Summary\n\n{}\n\n# Current Tracker Snapshot\n\n{}\n\n# Relevant Paths\n\n{}\n\n# Resume Metadata\n\n- Session ID: `{session_id}`\n- Outcome: `{outcome_code}`\n{resume_metadata}",
         workspace.display(),
         blocker_summary.trim(),
         tracker_snapshot,
@@ -168,6 +220,8 @@ pub fn write_async_approval_blocker(
 
 #[cfg(test)]
 mod tests {
+    use crate::utils::session_archive::VerifiedSessionArchiveIdentifier;
+
     use super::*;
 
     #[test]
@@ -194,8 +248,50 @@ mod tests {
         assert!(current.contains("# Blocker Summary"));
         assert!(current.contains("Execution stalled on a loop."));
         assert!(current.contains("# Current Task"));
-        assert!(current.contains("vtcode --resume session-123"));
+        assert!(!current.contains("resume_command:"));
+        assert!(!current.contains("vtcode --resume"));
+        assert!(current.contains("Resume is unavailable"));
         assert!(current.contains("src/lib.rs"));
+    }
+
+    #[test]
+    fn writes_blocked_handoff_without_resume_when_archive_is_unavailable() {
+        let temp = tempfile::tempdir().expect("temp dir");
+
+        let artifacts = write_blocked_handoff_with_resume(
+            temp.path(),
+            "runtime-session",
+            "blocked",
+            "History persistence is disabled.",
+            &[temp.path().join("src/lib.rs")],
+            BlockedHandoffResume::Unavailable("Resume is unavailable because the session archive was not persisted."),
+        )
+        .expect("write handoff");
+
+        let current = fs::read_to_string(&artifacts.current_path).expect("current handoff");
+        assert!(!current.contains("resume_command:"));
+        assert!(!current.contains("vtcode --resume"));
+        assert!(current.contains("Resume is unavailable because the session archive was not persisted."));
+    }
+
+    #[test]
+    fn uses_verified_archive_identifier_for_resume_command() {
+        let temp = tempfile::tempdir().expect("temp dir");
+
+        let verified_identifier = VerifiedSessionArchiveIdentifier("session-archive-id".to_owned());
+        let artifacts = write_blocked_handoff_with_resume(
+            temp.path(),
+            "runtime-session",
+            "blocked",
+            "Execution stalled on a loop.",
+            &[],
+            BlockedHandoffResume::Available(&verified_identifier),
+        )
+        .expect("write handoff");
+
+        let current = fs::read_to_string(&artifacts.current_path).expect("current handoff");
+        assert!(current.contains("vtcode --resume session-archive-id"));
+        assert!(!current.contains("vtcode --resume runtime-session"));
     }
 
     #[test]

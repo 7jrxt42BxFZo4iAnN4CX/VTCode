@@ -38,7 +38,10 @@ pub mod tool_catalog;
 pub mod types;
 
 // Re-export main types for convenience
-pub use blocked_handoff::{AsyncApprovalArtifacts, BlockedHandoffArtifacts};
+pub use blocked_handoff::{
+    AsyncApprovalArtifacts, BlockedHandoffArtifacts, BlockedHandoffResume, write_blocked_handoff,
+    write_blocked_handoff_with_resume,
+};
 pub use bootstrap::{AgentComponentBuilder, AgentComponentSet};
 pub use context_reset::{ContextResetDecision, ContextResetManifest};
 pub use evaluator::{DimensionScore, EvaluationResult, EvaluationRubric, ScoringDimension};

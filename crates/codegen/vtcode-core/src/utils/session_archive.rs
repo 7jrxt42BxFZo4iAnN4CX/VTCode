@@ -4,9 +4,7 @@ use crate::llm::provider::{AssistantPhase, Message, MessageContent, MessageRole,
 use crate::telemetry::perf::PerfSpan;
 use crate::utils::dot_config::DotManager;
 use crate::utils::error_log_collector::ErrorLogEntry;
-use crate::utils::file_utils::{
-    ensure_dir_exists, read_json_file, read_json_file_sync, write_json_file, write_json_file_sync,
-};
+use crate::utils::file_utils::{ensure_dir_exists, read_json_file, write_json_file, write_json_file_sync};
 use crate::utils::session_transcript_norm::{
     format_repeated_summary, normalize_distinct_tools_for_summary, normalize_recovery_line, normalized_transcript_key,
     push_clean_transcript_line, should_drop_transcript_line, summarize_tool_block,
@@ -559,6 +557,22 @@ pub struct SessionListing {
     pub snapshot: SessionSnapshot,
 }
 
+/// An archive identifier derived from a loaded session listing.
+///
+/// The inner value is crate-private so callers cannot mark an arbitrary
+/// runtime/session ID as resumable. Obtain one from
+/// [`SessionArchive::verify_persisted_resume_identifier`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedSessionArchiveIdentifier(pub(crate) String);
+
+impl VerifiedSessionArchiveIdentifier {
+    /// Borrow the verified archive identifier.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionProgressArgs {
     pub total_messages: usize,
@@ -606,6 +620,17 @@ impl SessionListing {
             .and_then(|value| value.to_str())
             .map(|value| value.to_string())
             .unwrap_or_else(|| self.path.display().to_string())
+    }
+
+    /// Return an identifier that is safe to advertise as an archive resume target.
+    pub(crate) fn verified_identifier(&self) -> Result<VerifiedSessionArchiveIdentifier> {
+        let identifier = self
+            .path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .with_context(|| format!("session archive path has no valid identifier: {}", self.path.display()))?;
+        validate_session_identifier(identifier)?;
+        Ok(VerifiedSessionArchiveIdentifier(identifier.to_owned()))
     }
 
     pub fn first_prompt_preview(&self) -> Option<String> {
@@ -1037,19 +1062,38 @@ impl SessionArchive {
         &self,
         args: SessionProgressArgs,
     ) -> Result<SessionProgressPersistenceStatus> {
+        self.persist_progress_async_with_status_inner(args, false).await
+    }
+
+    async fn persist_progress_async_with_status_inner(
+        &self,
+        args: SessionProgressArgs,
+        bypass_throttle: bool,
+    ) -> Result<SessionProgressPersistenceStatus> {
         let mut perf = PerfSpan::new("vtcode.perf.session_progress_write_ms");
-        perf.tag("mode", "async");
+        perf.tag("mode", if bypass_throttle { "async_forced" } else { "async" });
 
         if !history_persistence_enabled() {
             return Ok(SessionProgressPersistenceStatus::Disabled(self.path.clone()));
         }
-        if !self.should_persist_progress(args.turn_number)? {
+        if !bypass_throttle && !self.should_persist_progress(args.turn_number)? {
             return Ok(SessionProgressPersistenceStatus::Throttled(self.path.clone()));
         }
 
         let snapshot = self.build_progress_snapshot(args);
         let path = self.write_snapshot_async(snapshot).await?;
         Ok(SessionProgressPersistenceStatus::Persisted(path))
+    }
+
+    /// Persist progress immediately, bypassing the normal progress throttle.
+    ///
+    /// This is intended for terminal handoff checkpoints where the latest
+    /// conversation must be durable before an external artifact is written.
+    pub async fn persist_progress_async_with_status_forced(
+        &self,
+        args: SessionProgressArgs,
+    ) -> Result<SessionProgressPersistenceStatus> {
+        self.persist_progress_async_with_status_inner(args, true).await
     }
 
     pub async fn persist_progress_async(&self, args: SessionProgressArgs) -> Result<PathBuf> {
@@ -1107,6 +1151,29 @@ impl SessionArchive {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Verify that a persisted snapshot resolves back to this archive and
+    /// return its typed resume identifier.
+    pub async fn verify_persisted_resume_identifier(
+        &self,
+        persisted_path: &Path,
+    ) -> Result<Option<VerifiedSessionArchiveIdentifier>> {
+        if self.path != persisted_path {
+            return Ok(None);
+        }
+
+        let Some(identifier) = persisted_path.file_stem().and_then(|stem| stem.to_str()) else {
+            return Ok(None);
+        };
+        let Some(listing) = find_session_by_identifier(identifier).await? else {
+            return Ok(None);
+        };
+        if listing.path != self.path {
+            return Ok(None);
+        }
+
+        Ok(Some(listing.verified_identifier()?))
     }
 
     /// Create a forked session from an existing session snapshot
@@ -1229,7 +1296,7 @@ pub async fn find_session_by_identifier(identifier: &str) -> Result<Option<Sessi
         return Ok(None);
     }
 
-    let snapshot: SessionSnapshot = read_json_file_sync(&path)?;
+    let snapshot: SessionSnapshot = read_json_file(&path).await?;
     Ok(Some(SessionListing { path, snapshot }))
 }
 

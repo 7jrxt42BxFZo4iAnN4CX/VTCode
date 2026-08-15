@@ -283,12 +283,13 @@ async fn handle_failure<'a>(
 
     if is_planning_active_denial {
         let consecutive_blocked_tool_calls = t_ctx.ctx.harness_state.consecutive_blocked_tool_calls;
+        let limits = super::handlers::blocked_tool_call_limits(t_ctx.ctx);
         emit_turn_metric_log(
             t_ctx.ctx,
             "planning_denial",
             tool_name,
             consecutive_blocked_tool_calls,
-            super::handlers::max_consecutive_blocked_tool_calls_per_turn(t_ctx.ctx),
+            limits.consecutive_cap,
         );
     }
 
@@ -302,19 +303,21 @@ async fn handle_failure<'a>(
     if blocked_or_denied_failure {
         t_ctx.ctx.harness_state.record_denied_tool_call();
         let streak = t_ctx.ctx.record_blocked_tool_call();
-        let max_streak = super::handlers::max_consecutive_blocked_tool_calls_per_turn(t_ctx.ctx);
+        let limits = super::handlers::blocked_tool_call_limits(t_ctx.ctx);
         // The interview denial has already armed the bounded tool-free
         // synthesis fallback. Do not let the generic blocked-call fuse turn
         // that recoverable transition into a terminal `Blocked` outcome.
         let interview_denial_recovery = t_ctx.ctx.is_planning_active()
             && tool_name == vtcode_core::config::constants::tools::REQUEST_USER_INPUT
             && is_permanent_request_user_input_denial;
-        if streak > max_streak && !interview_denial_recovery {
-            emit_turn_metric_log(t_ctx.ctx, "blocked_streak_break", tool_name, streak, max_streak);
+        if let Some(fuse_trip) =
+            super::handlers::blocked_tool_call_fuse_trip(streak, t_ctx.ctx.harness_state.blocked_tool_calls, limits)
+            && !interview_denial_recovery
+        {
             let display_tool = tool_action_label(tool_name, args_val);
-            let block_reason = format!(
-                "Consecutive blocked/denied tool calls reached per-turn cap ({max_streak}). Last blocked call: '{display_tool}'. Stopping turn to prevent retry churn."
-            );
+            let (block_reason, _) =
+                super::handlers::blocked_tool_call_messages(fuse_trip, t_ctx.ctx.is_recovery_active(), &display_tool);
+            emit_turn_metric_log(t_ctx.ctx, fuse_trip.metric(), tool_name, streak, fuse_trip.cap());
             t_ctx.ctx.push_system_message(block_reason.clone());
             return Ok(Some(TurnHandlerOutcome::Break(TurnLoopResult::Blocked { reason: Some(block_reason) })));
         }
@@ -441,3 +444,51 @@ pub(super) fn record_mcp_event_to_panel(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod blocked_fuse_tests {
+    use super::super::handlers::{
+        BlockedToolCallFuseTrip, BlockedToolCallLimits, blocked_tool_call_fuse_trip, blocked_tool_call_messages,
+    };
+
+    fn limits(consecutive_cap: usize, total_cap: usize) -> BlockedToolCallLimits {
+        BlockedToolCallLimits { consecutive_cap, total_cap }
+    }
+
+    #[test]
+    fn denied_execution_result_trips_normal_total_cap() {
+        assert_eq!(blocked_tool_call_fuse_trip(1, 9, limits(4, 8)), Some(BlockedToolCallFuseTrip::Total { cap: 8 }));
+    }
+
+    #[test]
+    fn denied_execution_result_allows_planning_total_cap_until_four_times_consecutive() {
+        assert_eq!(blocked_tool_call_fuse_trip(1, 16, limits(4, 16)), None);
+        assert_eq!(blocked_tool_call_fuse_trip(1, 17, limits(4, 16)), Some(BlockedToolCallFuseTrip::Total { cap: 16 }));
+    }
+
+    #[test]
+    fn denied_execution_result_trips_consecutive_cap_early() {
+        assert_eq!(
+            blocked_tool_call_fuse_trip(5, 5, limits(4, 8)),
+            Some(BlockedToolCallFuseTrip::Consecutive { cap: 4 })
+        );
+    }
+
+    #[test]
+    fn denied_execution_result_prefers_total_cap_when_both_fuses_trip() {
+        assert_eq!(blocked_tool_call_fuse_trip(5, 9, limits(4, 8)), Some(BlockedToolCallFuseTrip::Total { cap: 8 }));
+    }
+
+    #[test]
+    fn denied_execution_result_diagnostic_uses_actual_total_cap() {
+        let trip = blocked_tool_call_fuse_trip(1, 29, limits(7, 28)).expect("total fuse should trip");
+        assert_eq!(trip, BlockedToolCallFuseTrip::Total { cap: 28 });
+    }
+
+    #[test]
+    fn denied_execution_result_uses_shared_total_fuse_message() {
+        let (reason, _) =
+            blocked_tool_call_messages(BlockedToolCallFuseTrip::Total { cap: 28 }, false, "read_file 'src/main.rs'");
+        assert!(reason.contains("Blocked tool calls reached per-turn cap (28)"));
+    }
+}

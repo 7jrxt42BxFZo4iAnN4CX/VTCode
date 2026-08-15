@@ -1,6 +1,7 @@
 //! Session-loop orchestration and focused lifecycle helpers.
 
 mod archive;
+mod blocked_handoff;
 mod handoff;
 mod harness;
 mod metrics;

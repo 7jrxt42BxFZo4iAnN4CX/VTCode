@@ -1,6 +1,7 @@
 use super::fallbacks::{
     build_validation_error_content_with_fallback, preflight_validation_fallback, recovery_fallback_for_tool,
 };
+use super::guards::blocked_tool_guard::blocked_tool_call_limits;
 use super::looping::{
     low_signal_family_key, shell_run_signature, spool_chunk_read_path, task_tracker_create_signature,
 };

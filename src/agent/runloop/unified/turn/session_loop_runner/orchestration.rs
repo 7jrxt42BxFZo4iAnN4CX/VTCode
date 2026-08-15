@@ -20,11 +20,14 @@ use vtcode_core::llm::provider::MessageRole;
 use vtcode_core::session::SessionId;
 use vtcode_core::utils::ansi::MessageStyle;
 use vtcode_core::utils::session_archive;
-use vtcode_core::utils::session_archive::{SessionMessage, SessionProgressArgs, SessionProgressPersistenceStatus};
+use vtcode_core::utils::session_archive::{SessionMessage, SessionProgressArgs};
 use vtcode_ui::tui::app::ArchivedPromptEntry;
 
 use super::super::{CancelGuard, RECENT_MESSAGE_LIMIT, TerminalCleanupGuard, extract_idle_config};
 use super::archive::{create_session_archive, refresh_runtime_debug_context_for_next_session, workspace_archive_label};
+use super::blocked_handoff::{
+    SessionCheckpointOutcome, persist_session_checkpoint, write_blocked_handoff_after_checkpoint,
+};
 use super::handoff::{
     PLAN_APPROVED_EXECUTION_INPUT, apply_primary_agent_tool_policy_overrides, build_approved_plan_execution_prompt,
     select_approved_plan_execution_agent,
@@ -1087,7 +1090,6 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                         session_end_reason: &mut session_end_reason,
                         turn_elapsed,
                         show_turn_timer,
-                        workspace: &config.workspace,
                         session_id: &harness_snapshot.session_id,
                         runtime_turn_id: Some(&turn_id),
                         harness_emitter: harness_emitter.as_ref(),
@@ -1273,8 +1275,8 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                 last_activity_time = Some(Instant::now());
                 vtcode_core::tools::cache::FILE_CACHE.check_pressure_and_evict().await;
                 tool_result_cache.write().await.check_pressure_and_evict();
-                let mut history_checkpoint_succeeded = false;
-                let mut history_persistence_disabled = false;
+                let blocked_turn = matches!(&outcome_result, RunLoopTurnLoopResult::Blocked { .. });
+                let mut checkpoint_outcome = SessionCheckpointOutcome::without_archive(blocked_turn);
                 if let Some(archive) = session_archive.as_ref() {
                     let messages: Vec<SessionMessage> =
                         runtime.state.messages.iter().map(SessionMessage::from).collect();
@@ -1291,42 +1293,23 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                     let progress_turn = next_checkpoint_turn.saturating_sub(1).max(1);
                     let distinct_tools = session_stats.sorted_tools();
                     let skill_names: Vec<String> = loaded_skills.read().await.keys().cloned().collect();
-
-                    match archive
-                        .persist_progress_async_with_status(SessionProgressArgs {
-                            total_messages: runtime.state.messages.len(),
-                            distinct_tools: distinct_tools.clone(),
-                            messages,
-                            recent_messages,
-                            turn_number: progress_turn,
-                            token_usage: None,
-                            max_context_tokens: None,
-                            loaded_skills: Some(skill_names),
-                        })
-                        .await
-                    {
-                        Ok(SessionProgressPersistenceStatus::Persisted(_)) => history_checkpoint_succeeded = true,
-                        Ok(SessionProgressPersistenceStatus::Throttled(path)) => {
-                            tracing::debug!(
-                                path = %path.display(),
-                                "Session progress checkpoint throttled; retaining in-flight steering intents"
-                            );
-                        }
-                        Ok(SessionProgressPersistenceStatus::Disabled(path)) => {
-                            history_persistence_disabled = true;
-                            tracing::debug!(
-                                path = %path.display(),
-                                "Session progress checkpoint skipped because history persistence is disabled"
-                            );
-                        }
-                        Err(err) => tracing::warn!("Failed to persist session progress: {}", err),
-                    }
+                    let checkpoint_args = SessionProgressArgs {
+                        total_messages: runtime.state.messages.len(),
+                        distinct_tools,
+                        messages,
+                        recent_messages,
+                        turn_number: progress_turn,
+                        token_usage: None,
+                        max_context_tokens: None,
+                        loaded_skills: Some(skill_names),
+                    };
+                    checkpoint_outcome = persist_session_checkpoint(archive, checkpoint_args, blocked_turn).await;
                 }
                 let steering_update = {
                     let (_, steering) = runtime.split_mut();
-                    if history_checkpoint_succeeded {
+                    if checkpoint_outcome.history_checkpoint_succeeded() {
                         steering.acknowledge_durable_follow_up_intents();
-                    } else if session_archive.is_none() || history_persistence_disabled {
+                    } else if session_archive.is_none() || checkpoint_outcome.history_persistence_disabled() {
                         steering.release_in_flight_follow_up_intents_without_persistence();
                     }
                     vtcode_core::compaction::memory_envelope::SessionMemoryEnvelopeUpdate {
@@ -1350,6 +1333,16 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                         error = %err,
                         session_id = %harness_snapshot.session_id,
                         "Failed to refresh session memory envelope after turn"
+                    );
+                }
+                if let RunLoopTurnLoopResult::Blocked { reason } = &outcome_result {
+                    write_blocked_handoff_after_checkpoint(
+                        &config.workspace,
+                        &harness_snapshot.session_id,
+                        reason.as_deref().unwrap_or("Turn blocked due to repeated failing behavior."),
+                        checkpoint_outcome.blocked_handoff_resume(),
+                        &mut renderer,
+                        harness_emitter.as_ref(),
                     );
                 }
                 match &outcome_result {

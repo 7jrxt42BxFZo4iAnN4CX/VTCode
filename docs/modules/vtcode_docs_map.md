@@ -23,7 +23,8 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/config/TOOLS_CONFIG.md`
   - **Content**: Tools Configuration
-  - **User Questions**: "What can you tell me about Tools Configuration?"
+  - **Topics**: Blocked-call limits and blocked handoffs
+  - **User Questions**: "What can you tell me about Tools Configuration?", "How does Blocked-call limits and blocked handoffs work?"
 
 - **File**: `docs/config/config.md`
   - **Content**: VT Code Configuration
@@ -382,8 +383,8 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/guides/planning-workflow.md`
   - **Content**: Planning Workflow
-  - **Topics**: Overview, Usage, Plan Output Format, Summary, Implementation Steps
-  - **User Questions**: "What can you tell me about Planning Workflow?", "How does Overview work?", "How does Usage work?"
+  - **Topics**: Overview, Bounded blocked-call recovery, Usage, Plan Output Format, Summary
+  - **User Questions**: "What can you tell me about Planning Workflow?", "How does Overview work?", "How does Bounded blocked-call recovery work?"
 
 - **File**: `docs/guides/responses-api-reasoning.md`
   - **Content**: Responses API & Reasoning Models

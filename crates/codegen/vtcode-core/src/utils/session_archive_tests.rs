@@ -838,6 +838,70 @@ async fn throttled_async_progress_does_not_claim_durable_checkpoint() -> Result<
 
 #[serial_test::serial(session_dir_override)]
 #[tokio::test]
+async fn forced_async_progress_persists_latest_message_after_throttle() -> Result<()> {
+    let _settings_lock = lock_history_test_guard().await;
+    let _history_guard = HistorySettingsGuard::set(HistoryPersistence::File, None);
+    let temp_dir = tempfile::tempdir().context("failed to create temp dir")?;
+    let _guard = EnvGuard::set(SESSION_DIR_ENV, temp_dir.path());
+
+    let metadata = SessionArchiveMetadata::new("ForcedWS", "/tmp/forced", "model", "provider", "dark", "medium");
+    let archive = SessionArchive::new(metadata, None).await?;
+    let initial = vec![SessionMessage::new(MessageRole::User, "initial")];
+    archive
+        .persist_progress_async_with_status(SessionProgressArgs {
+            total_messages: 1,
+            distinct_tools: Vec::new(),
+            messages: initial.clone(),
+            recent_messages: initial.clone(),
+            turn_number: 1,
+            token_usage: None,
+            max_context_tokens: None,
+            loaded_skills: None,
+        })
+        .await?;
+
+    let latest = vec![
+        SessionMessage::new(MessageRole::User, "initial"),
+        SessionMessage::new(MessageRole::Assistant, "blocked latest response"),
+    ];
+    let status = archive
+        .persist_progress_async_with_status_forced(SessionProgressArgs {
+            total_messages: latest.len(),
+            distinct_tools: Vec::new(),
+            messages: latest.clone(),
+            recent_messages: latest,
+            turn_number: 1,
+            token_usage: None,
+            max_context_tokens: None,
+            loaded_skills: None,
+        })
+        .await?;
+
+    assert!(status.is_persisted());
+    let snapshot: SessionSnapshot = serde_json::from_str(&fs::read_to_string(archive.path())?)?;
+    assert_eq!(snapshot.messages[1].content.as_text_borrowed(), Some("blocked latest response"));
+
+    let identifier = archive
+        .path()
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .context("session archive has no identifier")?;
+    let verified_identifier = archive
+        .verify_persisted_resume_identifier(archive.path())
+        .await?
+        .context("forced checkpoint should produce a verified resume identifier")?;
+    assert_eq!(verified_identifier.as_str(), identifier);
+
+    let listing = find_session_by_identifier(identifier)
+        .await?
+        .context("forced checkpoint should be resolvable by its archive identifier")?;
+    assert_eq!(listing.path, archive.path());
+    assert_eq!(listing.snapshot.messages[1].content.as_text_borrowed(), Some("blocked latest response"));
+    Ok(())
+}
+
+#[serial_test::serial(session_dir_override)]
+#[tokio::test]
 async fn session_archive_skips_writes_when_history_persistence_is_disabled() -> Result<()> {
     let _settings_lock = lock_history_test_guard().await;
     let _history_guard = HistorySettingsGuard::set(HistoryPersistence::None, None);
@@ -856,6 +920,21 @@ async fn session_archive_skips_writes_when_history_persistence_is_disabled() -> 
 
     assert_eq!(path, archive.path());
     assert!(!path.exists(), "history disabled should not write archive files");
+
+    let status = archive
+        .persist_progress_async_with_status_forced(SessionProgressArgs {
+            total_messages: 1,
+            distinct_tools: Vec::new(),
+            messages: vec![SessionMessage::new(MessageRole::User, "not persisted")],
+            recent_messages: vec![SessionMessage::new(MessageRole::User, "not persisted")],
+            turn_number: 1,
+            token_usage: None,
+            max_context_tokens: None,
+            loaded_skills: None,
+        })
+        .await?;
+    assert!(matches!(status, SessionProgressPersistenceStatus::Disabled(_)));
+    assert!(!archive.path().exists());
     Ok(())
 }
 

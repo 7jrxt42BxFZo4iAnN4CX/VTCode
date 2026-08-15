@@ -57,7 +57,8 @@ pub struct ToolsConfig {
     pub max_repeated_tool_calls: usize,
 
     /// Maximum consecutive blocked tool calls allowed per turn before forcing a
-    /// turn break. This prevents long blocked-call churn from consuming CPU.
+    /// turn break. The total fuse is 2x this value in normal mode, 4x in Plan
+    /// Mode, and this value in recovery mode.
     #[serde(default = "default_max_consecutive_blocked_tool_calls_per_turn")]
     pub max_consecutive_blocked_tool_calls_per_turn: usize,
 
