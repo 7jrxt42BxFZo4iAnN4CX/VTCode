@@ -183,21 +183,6 @@ impl CodeExecutor {
         }
     }
 
-    /// Set custom execution configuration.
-    pub fn with_config(mut self, config: ExecutionConfig) -> Self {
-        self.config = config;
-        self
-    }
-
-    /// Enable PII (Personally Identifiable Information) protection.
-    ///
-    /// When enabled, the executor will automatically tokenize sensitive data
-    /// in MCP tool calls to prevent accidental exposure.
-    pub fn with_pii_protection(mut self, enabled: bool) -> Self {
-        self.enable_pii_protection = enabled;
-        self
-    }
-
     /// Expose built-in vtcode tools to the snippet as callable library
     /// functions (mirroring the MCP tool surface). Pass `None` to keep only
     /// MCP tools available from code.
@@ -718,21 +703,6 @@ const mcp = new MCPTools();
         }
 
         Ok(sdk)
-    }
-
-    /// Get the workspace root path.
-    pub fn workspace_root(&self) -> &PathBuf {
-        &self.workspace_root
-    }
-
-    /// Borrow the MCP client without exposing shared ownership.
-    pub fn mcp_client_ref(&self) -> &dyn McpToolExecutor {
-        self.mcp_client.as_ref()
-    }
-
-    /// Get the shared MCP client handle for callers that need to clone it.
-    pub fn mcp_client(&self) -> &Arc<dyn McpToolExecutor> {
-        &self.mcp_client
     }
 }
 

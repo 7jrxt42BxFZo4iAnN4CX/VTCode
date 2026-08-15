@@ -4,8 +4,6 @@
 //! call sites continue to access configuration types and helpers through
 //! `vtcode_core::config`.
 
-use vtcode_commons::terminal_detection::is_ghostty_terminal;
-
 pub mod acp;
 pub mod api;
 pub mod api_keys;
@@ -18,7 +16,6 @@ pub mod ide_context;
 pub mod loader;
 pub mod mcp;
 pub mod models;
-pub mod output_styles;
 pub mod telemetry;
 pub mod types;
 pub mod validation;
@@ -77,18 +74,7 @@ pub use vtcode_config::{
 };
 pub use vtcode_config::{TimeoutsConfig, resolve_timeout};
 
-/// Convert KeyboardProtocolConfig to KeyboardEnhancementFlags.
-#[cfg(feature = "tui")]
-pub fn keyboard_protocol_to_flags(config: &KeyboardProtocolConfig) -> crossterm::event::KeyboardEnhancementFlags {
-    keyboard_protocol_to_flags_for_terminal(
-        config,
-        cfg!(target_os = "macos"),
-        std::env::var("TERM_PROGRAM").ok().as_deref(),
-        std::env::var("TERM").ok().as_deref(),
-    )
-}
-
-#[cfg(feature = "tui")]
+#[cfg(all(test, feature = "tui"))]
 fn keyboard_protocol_to_flags_for_terminal(
     config: &KeyboardProtocolConfig,
     is_macos: bool,
@@ -139,7 +125,7 @@ fn keyboard_protocol_to_flags_for_terminal(
     flags
 }
 
-#[cfg(feature = "tui")]
+#[cfg(all(test, feature = "tui"))]
 fn should_force_report_all_keys(
     mode: KeyboardProtocolMode,
     is_macos: bool,
@@ -152,7 +138,7 @@ fn should_force_report_all_keys(
 
     // Ghostty on macOS needs "report all keys" enabled so bare Command presses
     // surface as modifier-key events that transcript link clicks can merge in.
-    is_ghostty_terminal(term_program, term)
+    vtcode_commons::terminal_detection::is_ghostty_terminal(term_program, term)
 }
 
 #[cfg(all(test, feature = "tui"))]

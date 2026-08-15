@@ -36,19 +36,6 @@ impl ValidationResult {
     pub fn add_warning(&mut self, warning: String) {
         self.warnings.push(warning);
     }
-
-    pub fn to_result(self) -> Result<()> {
-        if !self.is_valid {
-            bail!("Configuration validation failed:\n{}", &self.errors);
-        }
-
-        // Print warnings if any
-        for warning in &self.warnings {
-            tracing::warn!(warning = %warning, "configuration warning");
-        }
-
-        Ok(())
-    }
 }
 
 impl Default for ValidationResult {
