@@ -10,6 +10,7 @@ use crate::providers::common::{
     override_base_url, resolve_model, serialize_message_content_openai_for_model, validate_request_common,
 };
 use crate::providers::error_handling::{format_network_error, format_parse_error};
+use crate::providers::gemini::sanitize_function_parameters;
 use crate::providers::openai_compat::{OpenAiCompatCore, OpenAiCompatSpec};
 use crate::providers::shared::{
     Utf8StreamDecoder, extract_data_payload, find_sse_boundary_bytes, function_output_value_from_message_content,
@@ -162,16 +163,22 @@ impl MergeGatewayProvider {
         format!("{}/responses", self.native.base_url.trim_end_matches('/'))
     }
 
-    fn build_native_tools(&self, tools: &[ToolDefinition]) -> Option<Vec<Value>> {
+    fn build_native_tools(&self, tools: &[ToolDefinition], model: &str) -> Option<Vec<Value>> {
+        let gemini_compatible = model.starts_with("google/gemini-");
         let serialized: Vec<Value> = tools
             .iter()
             .filter_map(|tool| {
                 tool.function.as_ref().map(|func| {
+                    let parameters = if gemini_compatible {
+                        sanitize_function_parameters(func.parameters.clone())
+                    } else {
+                        func.parameters.clone()
+                    };
                     json!({
                         "type": "function",
                         "name": func.name,
                         "description": func.description,
-                        "parameters": func.parameters,
+                        "parameters": parameters,
                     })
                 })
             })
@@ -285,7 +292,11 @@ impl MergeGatewayProvider {
         payload.insert("model".to_owned(), Value::String(request.model.clone()));
         payload.insert("input".to_owned(), Value::Array(input));
 
-        if let Some(tools) = request.tools.as_ref().and_then(|tools| self.build_native_tools(tools)) {
+        if let Some(tools) = request
+            .tools
+            .as_ref()
+            .and_then(|tools| self.build_native_tools(tools, &request.model))
+        {
             payload.insert("tools".to_owned(), Value::Array(tools));
         }
 
@@ -1370,6 +1381,7 @@ mod tests {
     use std::sync::Arc;
     use vtcode_config::TimeoutsConfig;
     use vtcode_config::constants::models;
+    use vtcode_utility_tool_specs::{apply_patch_parameters, write_stdin_parameters};
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1472,6 +1484,34 @@ mod tests {
         assert_eq!(input[3]["type"], "tool_result");
         assert_eq!(input[3]["tool_use_id"], "call_1");
         assert_eq!(input[3]["content"], "sunny");
+    }
+
+    #[test]
+    fn native_payload_sanitizes_gemini_incompatible_tool_schemas() {
+        let provider = MergeGatewayProvider::with_model(
+            "test-key".to_string(),
+            models::merge_gateway::GOOGLE_GEMINI_3_7_FLASH.to_string(),
+        );
+        let request = LLMRequest {
+            model: models::merge_gateway::GOOGLE_GEMINI_3_7_FLASH.to_string(),
+            tools: Some(Arc::new(vec![
+                ToolDefinition::function(
+                    "write_stdin".to_string(),
+                    "Write to a running command".to_string(),
+                    write_stdin_parameters(),
+                ),
+                ToolDefinition::function("apply_patch".to_string(), "Edit files".to_string(), apply_patch_parameters()),
+            ])),
+            ..Default::default()
+        };
+
+        let payload = provider.build_native_payload(&request, false).expect("payload");
+        let tools = payload["tools"].as_array().expect("native tools");
+
+        assert_eq!(tools.len(), 2);
+        assert!(tools.iter().all(|tool| tool["parameters"].get("anyOf").is_none()));
+        assert_eq!(tools[0]["parameters"]["required"], json!(["session_id"]));
+        assert!(tools[1]["parameters"].get("required").is_none());
     }
 
     #[tokio::test]
