@@ -192,7 +192,7 @@ impl ConfigValidator {
             let configured_context = config.context.max_context_tokens;
             if configured_context > 0 && configured_context > max_tokens {
                 result.warnings.push(format!(
-                    "Configured context window ({} tokens) exceeds model limit ({} tokens) for {} on {}",
+                    "Configured session context safety budget ({} tokens) exceeds provider limit ({} tokens) for {} on {}",
                     configured_context, max_tokens, config.agent.default_model, config.agent.provider
                 ));
             }

@@ -377,6 +377,20 @@ pub(crate) struct HarnessTurnState {
     recovery_phase: RecoveryPhase,
     recovery_mode: Option<RecoveryMode>,
     recovery_retry_count: u8,
+    /// Set for the one post-tool provider-recovery pass that must compact the
+    /// older prefix before the next tool-enabled request.
+    post_tool_compaction_pending: bool,
+    /// Set when the provider identified the failed follow-up as a context
+    /// capacity error. A failed/no-op recovery compaction must then produce a
+    /// blocked handoff instead of retrying the same oversized request.
+    post_tool_context_capacity_failure: bool,
+    /// Set when the required recovery compaction failed or had no reducible
+    /// prefix after a context-capacity rejection.
+    post_tool_context_compaction_failed: bool,
+    /// Explicit one-shot guard for the tool-enabled retry. This is separate
+    /// from the tool-free recovery cycle counter because the two modes have
+    /// different budgets and completion semantics.
+    post_tool_tool_enabled_retry_used: bool,
     /// Counts how many times the post-tool follow-up failure path has
     /// scheduled a tool-free recovery pass within a single turn. Bounded by
     /// `MAX_POST_TOOL_RECOVERY_CYCLES` in the turn loop as a defense-in-depth
@@ -474,6 +488,10 @@ impl HarnessTurnState {
             recovery_phase: RecoveryPhase::Inactive,
             recovery_mode: None,
             recovery_retry_count: 0,
+            post_tool_compaction_pending: false,
+            post_tool_context_capacity_failure: false,
+            post_tool_context_compaction_failed: false,
+            post_tool_tool_enabled_retry_used: false,
             post_tool_recovery_cycles: 0,
             recovery_rejected_synthesis: None,
             approved_plan_execution: false,
@@ -721,6 +739,30 @@ impl HarnessTurnState {
         }
     }
 
+    /// Arm the single tool-enabled retry used after a provider failure follows
+    /// successful tool execution. The runloop consumes the
+    /// compaction flag before consuming the recovery pass, so the retry sees
+    /// the compacted prefix plus the current request and tool outputs.
+    pub(crate) fn arm_post_tool_tool_enabled_retry(
+        &mut self,
+        reason: impl Into<String>,
+        context_capacity_failure: bool,
+    ) -> bool {
+        if !matches!(self.recovery_phase, RecoveryPhase::Inactive) {
+            return false;
+        }
+
+        self.recovery_activations = self.recovery_activations.saturating_add(1);
+        self.recovery_reason = Some(reason.into());
+        self.recovery_phase = RecoveryPhase::Pending;
+        self.recovery_mode = Some(RecoveryMode::ToolEnabledRetry);
+        self.recovery_retry_count = 0;
+        self.post_tool_compaction_pending = true;
+        self.post_tool_context_capacity_failure = context_capacity_failure;
+        self.post_tool_tool_enabled_retry_used = true;
+        true
+    }
+
     pub(crate) fn is_recovery_active(&self) -> bool {
         matches!(self.recovery_phase, RecoveryPhase::Pending | RecoveryPhase::InPass)
     }
@@ -800,6 +842,31 @@ impl HarnessTurnState {
 
     pub(crate) fn recovery_is_tool_free(&self) -> bool {
         matches!(self.recovery_mode, Some(RecoveryMode::ToolFreeSynthesis))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn post_tool_compaction_pending(&self) -> bool {
+        self.post_tool_compaction_pending
+    }
+
+    pub(crate) fn take_post_tool_compaction_pending(&mut self) -> bool {
+        std::mem::take(&mut self.post_tool_compaction_pending)
+    }
+
+    pub(crate) fn post_tool_context_capacity_failure(&self) -> bool {
+        self.post_tool_context_capacity_failure
+    }
+
+    pub(crate) fn mark_post_tool_context_compaction_failed(&mut self) {
+        self.post_tool_context_compaction_failed = true;
+    }
+
+    pub(crate) fn post_tool_context_compaction_failed(&self) -> bool {
+        self.post_tool_context_compaction_failed
+    }
+
+    pub(crate) fn post_tool_tool_enabled_retry_used(&self) -> bool {
+        self.post_tool_tool_enabled_retry_used
     }
 
     pub(crate) fn set_approved_plan_execution(&mut self, active: bool) {
@@ -907,7 +974,7 @@ impl HarnessTurnState {
         self.post_tool_recovery_cycles
     }
 
-    /// Increment the post-tool recovery cycle counter. Returns the new value.
+    /// Increment the tool-free post-tool recovery cycle counter. Returns the new value.
     pub(crate) fn increment_post_tool_recovery_cycle(&mut self) -> u8 {
         self.post_tool_recovery_cycles = self.post_tool_recovery_cycles.saturating_add(1);
         self.post_tool_recovery_cycles
@@ -1433,6 +1500,34 @@ mod tests {
         assert!(!state.recovery_is_tool_free());
         assert!(state.consume_recovery_pass());
         assert!(state.finish_recovery_pass());
+    }
+
+    #[test]
+    fn harness_state_arms_one_post_tool_compaction_retry() {
+        let mut state = HarnessTurnState::new(TurnRunId("run-1".to_string()), TurnId("turn-1".to_string()), 4, 10, 1);
+
+        assert!(state.arm_post_tool_tool_enabled_retry("transient post-tool failure", false));
+        assert!(state.is_recovery_active());
+        assert_eq!(state.recovery_mode(), Some(RecoveryMode::ToolEnabledRetry));
+        assert!(!state.recovery_is_tool_free());
+        assert!(state.post_tool_compaction_pending());
+        assert!(state.post_tool_tool_enabled_retry_used());
+        assert!(!state.post_tool_context_capacity_failure());
+        assert!(state.take_post_tool_compaction_pending());
+        assert!(!state.post_tool_compaction_pending());
+        assert!(!state.arm_post_tool_tool_enabled_retry("must remain bounded", false));
+    }
+
+    #[test]
+    fn harness_state_marks_context_capacity_recovery() {
+        let mut state = HarnessTurnState::new(TurnRunId("run-1".to_string()), TurnId("turn-1".to_string()), 4, 10, 1);
+
+        assert!(state.arm_post_tool_tool_enabled_retry("context limit", true));
+        assert!(state.post_tool_context_capacity_failure());
+        assert!(!state.post_tool_context_compaction_failed());
+
+        state.mark_post_tool_context_compaction_failed();
+        assert!(state.post_tool_context_compaction_failed());
     }
 
     #[test]

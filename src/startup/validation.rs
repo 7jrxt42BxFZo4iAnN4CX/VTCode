@@ -235,7 +235,7 @@ fn collect_token_overhead_warnings(config: &VTCodeConfig) -> Vec<String> {
 
     if !config.agent.harness.auto_compaction_enabled {
         warnings.push(
-            "agent.harness.auto_compaction_enabled is disabled; conversation history grows without bound. Enable it (the default) to compact context when token pressure rises.".to_string(),
+            "agent.harness.auto_compaction_enabled is disabled; normal conversation history can grow without bound. Enable it (the default) to compact context when token pressure rises. A bounded post-tool recovery compaction remains available after provider failure.".to_string(),
         );
     }
 

@@ -343,6 +343,32 @@ fn test_update_token_usage_falls_back_when_prompt_missing() {
     assert_eq!(manager.current_token_usage(), 2500);
 }
 
+#[test]
+fn test_prompt_estimate_includes_composed_instruction_growth() {
+    let mut manager = ContextManager::new("sys".into(), (), Arc::new(RwLock::new(HashMap::new())), None);
+
+    manager.record_prompt_estimate(160_000);
+    assert_eq!(manager.current_token_usage(), 160_000);
+
+    // A smaller estimate must not erase pressure observed from a larger
+    // assembled prompt before the provider returns authoritative usage.
+    manager.record_prompt_estimate(12_000);
+    assert_eq!(manager.current_token_usage(), 160_000);
+}
+
+#[test]
+fn test_compaction_resets_prompt_pressure_for_the_next_request() {
+    let mut manager = ContextManager::new("sys".into(), (), Arc::new(RwLock::new(HashMap::new())), None);
+
+    manager.record_prompt_estimate(160_000);
+    assert!(manager.mark_compaction_pending_at_soft_threshold(Some(160_000)));
+
+    manager.reset_token_pressure_after_compaction();
+
+    assert_eq!(manager.current_token_usage(), 0);
+    assert!(!manager.compaction_pending());
+}
+
 #[tokio::test]
 async fn build_system_prompt_ignores_token_usage_updates() {
     let mut manager = ContextManager::new("System prompt".to_string(), (), Arc::new(RwLock::new(HashMap::new())), None);

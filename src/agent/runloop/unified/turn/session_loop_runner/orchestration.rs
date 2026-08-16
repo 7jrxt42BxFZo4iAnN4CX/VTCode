@@ -328,10 +328,15 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
             .as_ref()
             .map(|cfg| cfg.tools.max_tool_loops)
             .unwrap_or(vtcode_config::constants::tool_limits::DEFAULT_MAX_TOOL_LOOPS);
-        let max_context_tokens = vt_cfg
-            .as_ref()
-            .map(|cfg| cfg.context.max_context_tokens)
-            .unwrap_or_else(vtcode_config::context::default_max_context_tokens);
+        let effective_model = crate::agent::runloop::unified::turn::turn_processing::resolve_effective_request_model(
+            &config.model,
+            active_primary_agent.active(),
+        );
+        let max_context_tokens = vtcode_core::compaction::effective_context_budget(
+            vt_cfg.as_ref(),
+            provider_client.as_ref(),
+            &effective_model,
+        );
         let mut runtime = AgentRuntime::new(
             AgentSessionState::new(
                 SessionId::generate().into_inner(),

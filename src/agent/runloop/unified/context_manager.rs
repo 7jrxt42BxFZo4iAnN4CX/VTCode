@@ -29,8 +29,8 @@ struct ContextStats {
     /// Current prompt-side token pressure used for compaction checks.
     total_token_usage: usize,
     /// Set when pressure crosses the soft compaction threshold. The flag is
-    /// intentionally separate from token usage so a boundary can consume it
-    /// without changing the provider-reported accounting.
+    /// intentionally separate from the current estimate so a boundary can
+    /// consume it explicitly before the next request records fresh pressure.
     compaction_pending: bool,
 }
 
@@ -203,6 +203,15 @@ impl ContextManager {
         self.cached_stats.total_token_usage
     }
 
+    /// Record a lower-bound estimate for the assembled wire prompt before the
+    /// provider call. Provider usage remains authoritative when available,
+    /// but this estimate keeps newly rendered instructions, tool schemas, and
+    /// history growth in the next compaction decision when a request fails
+    /// before returning usage.
+    pub(crate) fn record_prompt_estimate(&mut self, estimated_tokens: usize) {
+        self.cached_stats.total_token_usage = self.cached_stats.total_token_usage.max(estimated_tokens);
+    }
+
     /// Derive the internal soft threshold from the effective hard threshold.
     /// This is deliberately not configurable: it only schedules work at a
     /// safe boundary and must not change the request/cache shape.
@@ -251,13 +260,15 @@ impl ContextManager {
         names
     }
 
-    /// Cap prompt-pressure tracking after local history compaction.
-    pub(crate) fn cap_token_usage_after_compaction(&mut self, threshold: Option<usize>) {
+    /// Reset prompt-pressure tracking after history compaction.
+    ///
+    /// The next request builder records a fresh estimate from the compacted
+    /// wire request. Retaining the pre-compaction threshold here would keep
+    /// pressure artificially high and can trigger the same compaction again
+    /// before the provider has a chance to report authoritative usage.
+    pub(crate) fn reset_token_pressure_after_compaction(&mut self) {
         self.cached_stats.compaction_pending = false;
-        self.cached_stats.total_token_usage = match threshold {
-            Some(limit) if limit > 0 => self.cached_stats.total_token_usage.min(limit),
-            Some(_) | None => 0,
-        };
+        self.cached_stats.total_token_usage = 0;
     }
 
     pub(crate) async fn build_system_prompt(&mut self, params: SystemPromptParams) -> Result<String> {

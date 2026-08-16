@@ -8,7 +8,8 @@ use vtcode_core::utils::ansi::{AnsiRenderer, MessageStyle};
 use super::{
     MAX_POST_TOOL_RECOVERY_CYCLES, PLANNING_RECOVERY_SYNTHESIS_FALLBACK,
     PLANNING_RECOVERY_SYNTHESIS_FALLBACK_NO_INTERVIEW, POST_TOOL_RECOVERY_REASON, POST_TOOL_RECOVERY_REASON_PLAN_MODE,
-    POST_TOOL_RESUME_DIRECTIVE, RECOVERY_CONTRACT_VIOLATION_REASON, RECOVERY_SYNTHESIS_FALLBACK_FINAL_ANSWER,
+    POST_TOOL_RESUME_DIRECTIVE, POST_TOOL_TOOL_ENABLED_RETRY_DIRECTIVE, RECOVERY_CONTRACT_VIOLATION_REASON,
+    RECOVERY_SYNTHESIS_FALLBACK_FINAL_ANSWER,
 };
 use crate::agent::runloop::unified::inline_events::harness::HarnessEventEmitter;
 use crate::agent::runloop::unified::plan_blocks::extract_any_plan;
@@ -24,9 +25,13 @@ use crate::agent::runloop::unified::turn::context::TurnLoopResult;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PostToolFailureRecovery {
     NotApplicable,
+    RetryToolEnabled,
     RetryToolFree,
     StopAfterDirective,
 }
+
+const POST_TOOL_TOOL_ENABLED_RETRY_FAILED_REASON: &str = "Post-tool recovery could not confirm the requested work after one bounded tool-enabled retry. The completed tool outputs and resume handoff were retained; retry from the pending step.";
+pub(super) const POST_TOOL_CONTEXT_COMPACTION_FAILED_REASON: &str = "The provider rejected the follow-up because the context exceeded its capacity, and the bounded recovery compaction could not reduce the request. Completed tool outputs were retained; retry after reducing context or switching model.";
 
 #[derive(Clone, Copy)]
 pub(super) struct PlanRecoveryEventContext<'a> {
@@ -39,6 +44,14 @@ pub(super) fn has_tool_response_since(messages: &[uni::Message], baseline_len: u
     messages
         .get(baseline_len..)
         .is_some_and(|recent| recent.iter().any(|msg| msg.role == uni::MessageRole::Tool))
+}
+
+/// Context-capacity recovery is valid only for the provider request itself.
+/// Parsing and tool-result failures may contain similar wording in arbitrary
+/// payloads; treating those as prompt overflow would discard useful history
+/// and schedule an unrelated write-capable retry.
+fn is_provider_context_capacity_failure(failure_stage: &str, err: &anyhow::Error) -> bool {
+    failure_stage == "execute_llm_request" && vtcode_commons::is_context_capacity_error(err)
 }
 
 fn ensure_recent_system_message(working_history: &mut Vec<uni::Message>, content: &str) {
@@ -85,6 +98,7 @@ pub(super) fn maybe_recover_after_post_tool_llm_failure(
     turn_history_start_len: usize,
     failure_stage: &'static str,
     allow_tool_free_retry: bool,
+    allow_tool_enabled_retry: bool,
     planning_active: bool,
 ) -> Result<PostToolFailureRecovery> {
     let has_partial_tool_progress = has_tool_response_since(working_history, turn_history_start_len);
@@ -107,7 +121,8 @@ pub(super) fn maybe_recover_after_post_tool_llm_failure(
     }
 
     let err_cat = vtcode_commons::classify_anyhow_error(err);
-    let transient_hint = if err_cat.is_retryable() {
+    let context_capacity_failure = is_provider_context_capacity_failure(failure_stage, err);
+    let transient_hint = if err_cat.is_retryable() && !context_capacity_failure {
         " (transient — may resolve on retry)"
     } else {
         ""
@@ -122,9 +137,21 @@ pub(super) fn maybe_recover_after_post_tool_llm_failure(
             "Tip: rerun with a narrower prompt or switch provider/model for the follow-up.",
         )?;
     }
-    let should_retry =
+    let should_retry_tool_enabled = allow_tool_enabled_retry && (err_cat.is_retryable() || context_capacity_failure);
+    let should_retry_tool_free =
         allow_tool_free_retry && (err_cat.is_retryable() || matches!(err_cat, ErrorCategory::ExecutionError));
-    let action = if should_retry {
+    let action = if should_retry_tool_enabled {
+        ensure_recent_system_message(working_history, POST_TOOL_TOOL_ENABLED_RETRY_DIRECTIVE);
+        renderer.line(
+            MessageStyle::Info,
+            if context_capacity_failure {
+                "[!] Follow-up exceeded the provider context capacity; compacting context and scheduling one tool-enabled recovery pass."
+            } else {
+                "[!] Follow-up failed transiently after tool execution; compacting context and scheduling one tool-enabled recovery pass."
+            },
+        )?;
+        PostToolFailureRecovery::RetryToolEnabled
+    } else if should_retry_tool_free {
         // Tool-free recovery: inject only the tools-disabled recovery reason.
         // The resume directive would contradict it (see
         // `prepare_post_tool_tool_free_recovery`). In plan mode use the
@@ -154,6 +181,7 @@ pub(super) fn maybe_recover_after_post_tool_llm_failure(
         stage = failure_stage,
         category = ?err_cat,
         retryable = err_cat.is_retryable(),
+        context_capacity_failure,
         recovery_action = ?action,
         "Recovered turn after post-tool LLM phase failure"
     );
@@ -536,9 +564,9 @@ pub(super) async fn normalize_tool_free_recovery_break_outcome_with_events(
 /// Action the turn loop should take after dispatching a post-tool failure.
 #[derive(Debug)]
 pub(super) enum PostToolFailureAction {
-    /// Continue the loop (after RetryToolFree).
+    /// Continue the loop for a bounded recovery retry.
     Continue,
-    /// Break with the given result (after StopAfterDirective or cycle cap).
+    /// Break with the given result after recovery is exhausted or a cycle cap.
     Break(TurnLoopResult),
     /// Fall through to error display and abort (block A only).
     Fallthrough,
@@ -589,6 +617,7 @@ pub(super) async fn dispatch_post_tool_failure(ctx: PostToolRecoveryContext<'_>)
         turn_id: &event_turn_id,
     };
     let planning_active = plan_session.is_some();
+    let context_capacity_failure = is_provider_context_capacity_failure(stage, err);
     // Plan-mode: if this turn's tool wall-clock budget was exhausted, the
     // planning context is saturated — the model spent the entire budget on
     // research and the synthesis still failed. Mark the session
@@ -605,6 +634,8 @@ pub(super) async fn dispatch_post_tool_failure(ctx: PostToolRecoveryContext<'_>)
     {
         session.mark_recovery_exhausted();
     }
+    let post_tool_retry_exhausted =
+        !tool_free_recovery && harness_state.post_tool_tool_enabled_retry_used() && harness_state.recovery_pass_used();
     let recovery = maybe_recover_after_post_tool_llm_failure(
         renderer,
         working_history,
@@ -612,7 +643,10 @@ pub(super) async fn dispatch_post_tool_failure(ctx: PostToolRecoveryContext<'_>)
         step_count,
         turn_history_start_len,
         stage,
-        !tool_free_recovery,
+        !tool_free_recovery && !post_tool_retry_exhausted,
+        !tool_free_recovery
+            && !harness_state.post_tool_tool_enabled_retry_used()
+            && !harness_state.recovery_pass_used(),
         planning_active,
     )?;
 
@@ -639,6 +673,22 @@ pub(super) async fn dispatch_post_tool_failure(ctx: PostToolRecoveryContext<'_>)
                 Ok(PostToolFailureAction::Fallthrough)
             }
         }
+        PostToolFailureRecovery::RetryToolEnabled => {
+            if harness_state.post_tool_tool_enabled_retry_used()
+                || !harness_state
+                    .arm_post_tool_tool_enabled_retry("post-tool follow-up failure", context_capacity_failure)
+            {
+                ensure_post_tool_resume_directive(working_history);
+                return Ok(PostToolFailureAction::Break(TurnLoopResult::Blocked {
+                    reason: Some(if context_capacity_failure {
+                        POST_TOOL_CONTEXT_COMPACTION_FAILED_REASON.to_string()
+                    } else {
+                        POST_TOOL_TOOL_ENABLED_RETRY_FAILED_REASON.to_string()
+                    }),
+                }));
+            }
+            Ok(PostToolFailureAction::Continue)
+        }
         PostToolFailureRecovery::RetryToolFree => {
             let salvaged = harness_state.take_recovery_rejected_synthesis();
             let cycle_stage = concat_compact(stage, ".recovery_cycle_cap");
@@ -661,7 +711,18 @@ pub(super) async fn dispatch_post_tool_failure(ctx: PostToolRecoveryContext<'_>)
             Ok(PostToolFailureAction::Continue)
         }
         PostToolFailureRecovery::StopAfterDirective => {
-            let result = if tool_free_recovery {
+            let tool_enabled_retry_exhausted = !tool_free_recovery
+                && harness_state.post_tool_tool_enabled_retry_used()
+                && harness_state.recovery_pass_used();
+            let result = if tool_enabled_retry_exhausted {
+                TurnLoopResult::Blocked {
+                    reason: Some(if harness_state.post_tool_context_compaction_failed() {
+                        POST_TOOL_CONTEXT_COMPACTION_FAILED_REASON.to_string()
+                    } else {
+                        POST_TOOL_TOOL_ENABLED_RETRY_FAILED_REASON.to_string()
+                    }),
+                }
+            } else if tool_free_recovery {
                 let salvaged = harness_state.take_recovery_rejected_synthesis();
                 let directive_stage = concat_compact(stage, ".stop_after_directive");
                 complete_turn_after_failed_tool_free_recovery_with_events(
@@ -749,6 +810,13 @@ mod tests {
         })
     }
 
+    fn context_capacity_err() -> anyhow::Error {
+        anyhow::Error::new(LLMError::InvalidRequest {
+            message: "maximum context length is 114688 tokens".to_string(),
+            metadata: None,
+        })
+    }
+
     // ---- Pure policy tests for `planning_finalize_notice` ----
     // All six (exhaustion × draft-ready) combinations are tested in isolation,
     // independent of the async harness. The critical invariant: a ready-draft
@@ -824,6 +892,138 @@ mod tests {
     }
 
     // ---- Async integration tests ----
+
+    #[tokio::test]
+    async fn transient_post_tool_failure_selects_tool_enabled_retry() {
+        let mut renderer = AnsiRenderer::stdout();
+        let mut working_history = vec![uni::Message::tool_response(
+            "call-1".to_string(),
+            "{\"ok\":true}".to_string(),
+        )];
+
+        let recovery = maybe_recover_after_post_tool_llm_failure(
+            &mut renderer,
+            &mut working_history,
+            &transient_err(),
+            1,
+            0,
+            "test",
+            true,
+            true,
+            false,
+        )
+        .expect("recovery policy should resolve");
+
+        assert_eq!(recovery, PostToolFailureRecovery::RetryToolEnabled);
+        assert!(
+            working_history
+                .iter()
+                .any(|message| { message.content.as_text().contains("required write or verification tools") })
+        );
+    }
+
+    #[tokio::test]
+    async fn context_capacity_failure_selects_compacting_tool_enabled_retry() {
+        let mut renderer = AnsiRenderer::stdout();
+        let mut working_history = vec![uni::Message::tool_response(
+            "call-1".to_string(),
+            "{\"ok\":true}".to_string(),
+        )];
+
+        let recovery = maybe_recover_after_post_tool_llm_failure(
+            &mut renderer,
+            &mut working_history,
+            &context_capacity_err(),
+            1,
+            0,
+            "execute_llm_request",
+            false,
+            true,
+            false,
+        )
+        .expect("context recovery policy should resolve");
+
+        assert_eq!(recovery, PostToolFailureRecovery::RetryToolEnabled);
+    }
+
+    #[tokio::test]
+    async fn context_capacity_marker_from_non_request_stage_does_not_enable_tool_retry() {
+        let mut renderer = AnsiRenderer::stdout();
+        let mut working_history = vec![uni::Message::tool_response(
+            "call-1".to_string(),
+            "{\"ok\":true}".to_string(),
+        )];
+
+        let recovery = maybe_recover_after_post_tool_llm_failure(
+            &mut renderer,
+            &mut working_history,
+            &context_capacity_err(),
+            1,
+            0,
+            "process_llm_response",
+            false,
+            true,
+            false,
+        )
+        .expect("non-request recovery policy should resolve");
+
+        assert_eq!(recovery, PostToolFailureRecovery::StopAfterDirective);
+        assert!(
+            !working_history
+                .iter()
+                .any(|message| { message.content.as_text().contains("required write or verification tools") })
+        );
+    }
+
+    #[tokio::test]
+    async fn repeated_tool_enabled_retry_failure_returns_blocked_handoff() {
+        use crate::agent::runloop::unified::run_loop_context::{HarnessTurnState, TurnId, TurnRunId};
+
+        let mut renderer = AnsiRenderer::stdout();
+        let mut working_history = vec![
+            uni::Message::user("apply the requested fix".to_string()),
+            uni::Message::tool_response("call-1".to_string(), "{\"ok\":true}".to_string()),
+        ];
+        let mut harness_state =
+            HarnessTurnState::new(TurnRunId("test-run".to_string()), TurnId("test-turn".to_string()), 4, 600, 0);
+        let err = transient_err();
+
+        let first = dispatch_post_tool_failure(PostToolRecoveryContext {
+            renderer: &mut renderer,
+            working_history: &mut working_history,
+            harness_state: &mut harness_state,
+            harness_emitter: None,
+            plan_session: None,
+            plan_state: None,
+            err: &err,
+            step_count: 1,
+            turn_history_start_len: 1,
+            stage: "first",
+            tool_free_recovery: false,
+        })
+        .await
+        .expect("first recovery dispatch should succeed");
+        assert!(matches!(first, PostToolFailureAction::Continue));
+        assert!(harness_state.consume_recovery_pass());
+
+        let second = dispatch_post_tool_failure(PostToolRecoveryContext {
+            renderer: &mut renderer,
+            working_history: &mut working_history,
+            harness_state: &mut harness_state,
+            harness_emitter: None,
+            plan_session: None,
+            plan_state: None,
+            err: &err,
+            step_count: 2,
+            turn_history_start_len: 1,
+            stage: "second",
+            tool_free_recovery: false,
+        })
+        .await
+        .expect("second recovery dispatch should produce a truthful handoff");
+
+        assert!(matches!(second, PostToolFailureAction::Break(TurnLoopResult::Blocked { reason: Some(_) })));
+    }
 
     #[tokio::test]
     async fn tool_free_recovery_keeps_planning_alive_on_transient_error() {

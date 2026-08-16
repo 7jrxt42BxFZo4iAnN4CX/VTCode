@@ -144,9 +144,9 @@ impl LedgerConfig {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ContextFeaturesConfig {
-    /// Maximum tokens to keep in context (affects model cost and performance)
-    /// Higher values preserve more context but cost more and may hit token limits
-    /// This field is maintained for compatibility but no longer used for trimming
+    /// Maximum prompt tokens allowed for the session safety budget. The
+    /// effective auto-compaction boundary is 90% of the smaller of this value
+    /// and the provider's hard context capacity.
     #[serde(default = "default_max_context_tokens")]
     pub max_context_tokens: usize,
 
@@ -195,7 +195,7 @@ fn default_include_in_prompt() -> bool {
     true
 }
 pub fn default_max_context_tokens() -> usize {
-    90000
+    160000
 }
 
 fn default_trim_to_percent() -> u8 {

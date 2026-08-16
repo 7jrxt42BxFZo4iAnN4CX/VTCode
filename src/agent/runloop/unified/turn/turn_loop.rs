@@ -42,6 +42,8 @@ use crate::agent::runloop::unified::turn::turn_loop_helpers::{
 mod notifications;
 #[path = "turn_loop/post_tool_recovery.rs"]
 mod post_tool_recovery;
+#[path = "turn_loop/recovery_compaction.rs"]
+mod recovery_compaction;
 #[path = "turn_loop/usage_accounting.rs"]
 mod usage_accounting;
 
@@ -55,9 +57,13 @@ use post_tool_recovery::maybe_recover_after_post_tool_llm_failure;
 #[cfg(test)]
 use post_tool_recovery::normalize_tool_free_recovery_break_outcome;
 use post_tool_recovery::{
-    PlanRecoveryEventContext, PostToolFailureAction, PostToolRecoveryContext, dispatch_post_tool_failure,
+    POST_TOOL_CONTEXT_COMPACTION_FAILED_REASON, PlanRecoveryEventContext, PostToolFailureAction,
+    PostToolRecoveryContext, dispatch_post_tool_failure, ensure_post_tool_resume_directive,
     normalize_tool_free_recovery_break_outcome_with_events,
 };
+#[cfg(test)]
+use recovery_compaction::current_turn_preserve_index;
+use recovery_compaction::{RecoveryCompactionRequest, compact_before_tool_enabled_retry};
 use usage_accounting::{accumulate_turn_usage, estimate_session_costs, has_turn_usage, stop_reason_from_finish_reason};
 use vtcode_core::config::types::AgentConfig;
 use vtcode_core::core::agent::error_recovery::ErrorType;
@@ -571,6 +577,7 @@ impl<'a> TurnLoopContext<'a> {
 }
 
 pub(crate) const POST_TOOL_RESUME_DIRECTIVE: &str = "Previous turn already completed tool execution. Reuse the latest tool outputs in history instead of rerunning the same exploration. If those tool outputs include `critical_note`, `hint`, `next_action`, `fallback_tool`, `fallback_tool_args`, or `rerun_hint`, follow that guidance first. Do NOT re-read files that were already read in the previous turn — their content is in the conversation history above. Synthesize a plan or answer from what is already gathered.";
+pub(crate) const POST_TOOL_TOOL_ENABLED_RETRY_DIRECTIVE: &str = "The previous model follow-up failed after tool execution. The older context will be compacted before this retry. Reuse the completed tool outputs above, do not repeat read-only exploration, and continue the user's request with any required write or verification tools. Only finish after the requested work is confirmed; do not claim success from an unverified plan.";
 
 // For `TurnLoopContext`, we will reuse the generic `handle_pipeline_output` via an adapter below.
 
@@ -582,7 +589,7 @@ pub(crate) async fn run_turn_loop(
     use crate::agent::runloop::unified::turn::guards::run_proactive_guards;
     use crate::agent::runloop::unified::turn::turn_processing::{
         HandleTurnProcessingResultParams, execute_llm_request, handle_turn_processing_result,
-        maybe_force_planning_workflow_interview, process_llm_response,
+        maybe_force_planning_workflow_interview, process_llm_response, resolve_effective_request_model,
     };
 
     // Initialize the outcome result
@@ -690,9 +697,11 @@ pub(crate) async fn run_turn_loop(
                 skip_confirmations: ctx.skip_confirmations,
                 full_auto: ctx.full_auto,
                 context_usage_percent: ctx.context_manager.context_usage_percent(
-                    ctx.vt_cfg
-                        .map(|cfg| cfg.context.max_context_tokens)
-                        .unwrap_or_else(vtcode_config::context::default_max_context_tokens),
+                    vtcode_core::compaction::effective_context_budget(
+                        ctx.vt_cfg,
+                        ctx.provider_client.as_ref(),
+                        &resolve_effective_request_model(&ctx.config.model, ctx.active_primary_agent.active()),
+                    ),
                 ),
                 telemetry: crate::agent::runloop::unified::planning_workflow::PlanApprovalTelemetryContext {
                     emitter: ctx.harness_emitter,
@@ -718,45 +727,94 @@ pub(crate) async fn run_turn_loop(
             ToolLoopLimitAction::BreakLoop => break,
         }
 
-        let active_model = ctx.config.model.clone();
+        let active_model = resolve_effective_request_model(&ctx.config.model, ctx.active_primary_agent.active());
         let harness_snapshot = ctx.tool_registry.harness_context_snapshot();
         let steering_update = vtcode_core::compaction::memory_envelope::SessionMemoryEnvelopeUpdate {
             pending_intents: Some(ctx.runtime_steering.pending_follow_up_intents_snapshot()),
             applied_intent_ids: ctx.runtime_steering.applied_follow_up_intent_ids().iter().cloned().collect(),
             ..Default::default()
         };
-        match crate::agent::runloop::unified::turn::compaction::maybe_auto_compact_history(
-            crate::agent::runloop::unified::turn::compaction::CompactionContext::new(
-                ctx.provider_client.as_ref(),
-                &active_model,
-                &harness_snapshot.session_id,
-                &ctx.harness_state.run_id.0,
-                &ctx.config.workspace,
-                ctx.vt_cfg,
-                ctx.lifecycle_hooks,
-                ctx.harness_emitter,
-            ),
-            crate::agent::runloop::unified::turn::compaction::CompactionState::new(
-                working_history,
-                ctx.session_stats,
-                ctx.context_manager,
-            )
-            .with_steering_update(steering_update),
-        )
-        .await
-        {
-            Ok(Some(outcome)) => {
-                turn_history_start_len = outcome.compacted_len;
-                tracing::info!(
-                    original_len = outcome.original_len,
-                    compacted_len = outcome.compacted_len,
-                    turn_history_start_len,
-                    "Applied local fallback compaction before the next turn request"
-                );
+        let recovery_compaction_requested = ctx.harness_state.take_post_tool_compaction_pending();
+        if recovery_compaction_requested {
+            let context_capacity_failure = ctx.harness_state.post_tool_context_capacity_failure();
+            match compact_before_tool_enabled_retry(RecoveryCompactionRequest {
+                history: working_history,
+                turn_history_start_len: &mut turn_history_start_len,
+                compaction_context: crate::agent::runloop::unified::turn::compaction::CompactionContext::new(
+                    ctx.provider_client.as_ref(),
+                    &active_model,
+                    &harness_snapshot.session_id,
+                    &ctx.harness_state.run_id.0,
+                    &ctx.config.workspace,
+                    ctx.vt_cfg,
+                    ctx.lifecycle_hooks,
+                    ctx.harness_emitter,
+                ),
+                session_stats: ctx.session_stats,
+                context_manager: ctx.context_manager,
+                steering_update,
+            })
+            .await
+            {
+                Ok(true) => {}
+                Ok(false) if context_capacity_failure => {
+                    ctx.harness_state.mark_post_tool_context_compaction_failed();
+                    ensure_post_tool_resume_directive(working_history);
+                    result = TurnLoopResult::Blocked {
+                        reason: Some(POST_TOOL_CONTEXT_COMPACTION_FAILED_REASON.to_string()),
+                    };
+                    break;
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    if context_capacity_failure {
+                        ctx.harness_state.mark_post_tool_context_compaction_failed();
+                        ensure_post_tool_resume_directive(working_history);
+                        result = TurnLoopResult::Blocked {
+                            reason: Some(POST_TOOL_CONTEXT_COMPACTION_FAILED_REASON.to_string()),
+                        };
+                        break;
+                    }
+                    tracing::warn!(
+                        error = %err,
+                        "Post-tool recovery compaction failed; preserving the existing history for the bounded retry"
+                    );
+                }
             }
-            Ok(None) => {}
-            Err(err) => {
-                tracing::warn!(error = %err, "Local fallback compaction failed");
+        } else {
+            match crate::agent::runloop::unified::turn::compaction::maybe_auto_compact_history(
+                crate::agent::runloop::unified::turn::compaction::CompactionContext::new(
+                    ctx.provider_client.as_ref(),
+                    &active_model,
+                    &harness_snapshot.session_id,
+                    &ctx.harness_state.run_id.0,
+                    &ctx.config.workspace,
+                    ctx.vt_cfg,
+                    ctx.lifecycle_hooks,
+                    ctx.harness_emitter,
+                ),
+                crate::agent::runloop::unified::turn::compaction::CompactionState::new(
+                    working_history,
+                    ctx.session_stats,
+                    ctx.context_manager,
+                )
+                .with_steering_update(steering_update),
+            )
+            .await
+            {
+                Ok(Some(outcome)) => {
+                    turn_history_start_len = outcome.compacted_len;
+                    tracing::info!(
+                        original_len = outcome.original_len,
+                        compacted_len = outcome.compacted_len,
+                        turn_history_start_len,
+                        "Applied local fallback compaction before the next turn request"
+                    );
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    tracing::warn!(error = %err, "Local fallback compaction failed");
+                }
             }
         }
 
@@ -803,7 +861,10 @@ pub(crate) async fn run_turn_loop(
 
         // Execute the LLM request
         turn_processing_ctx.set_phase(TurnPhase::Requesting);
-        let active_model = turn_processing_ctx.config.model.clone();
+        let active_model = resolve_effective_request_model(
+            &turn_processing_ctx.config.model,
+            turn_processing_ctx.active_primary_agent.active(),
+        );
         let recovery_pass = turn_processing_ctx.consume_recovery_pass();
 
         let tool_free_recovery = recovery_pass && turn_processing_ctx.recovery_is_tool_free();

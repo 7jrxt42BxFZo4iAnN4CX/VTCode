@@ -236,7 +236,7 @@ detailed_tracking = false  # Enable for debugging
 
 ```toml
 [context]
-max_context_tokens = 128000
+max_context_tokens = 160000
 trim_to_percent = 80
 preserve_recent_turns = 5
 
@@ -246,6 +246,11 @@ max_entries = 12
 include_in_prompt = true
 preserve_in_compression = true
 ```
+
+`context.max_context_tokens` is the session prompt safety budget. With no
+explicit harness compaction threshold, VT Code compacts at 90% of the smaller
+of this budget and the provider's hard context capacity. Set it to `0` only to
+restore provider-only threshold resolution.
 
 ## Best Practices
 

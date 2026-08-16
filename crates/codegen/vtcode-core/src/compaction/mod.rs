@@ -15,6 +15,7 @@ pub mod memory_envelope;
 pub mod prefire;
 pub mod two_pass;
 
+pub use crate::compaction::memory_envelope::{effective_context_budget, effective_session_context_budget};
 pub use crate::compaction::prefire::{AsyncCompactionCache, PrefireState};
 
 pub const SUPPRESS_NONE: u8 = 0;

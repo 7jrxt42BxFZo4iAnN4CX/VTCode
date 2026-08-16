@@ -128,7 +128,11 @@ impl AgentRunner {
 
         let max_tool_loops = self.config().tools.max_tool_loops;
         let preserve_recent_turns = self.config().context.preserve_recent_turns;
-        let max_context_tokens = self.config().context.max_context_tokens;
+        let max_context_tokens = crate::compaction::effective_context_budget(
+            Some(self.config()),
+            self.provider_client.as_ref(),
+            &self.model,
+        );
 
         let mut session_state =
             AgentSessionState::new(self.session_id.clone(), self.max_turns, max_tool_loops, max_context_tokens);

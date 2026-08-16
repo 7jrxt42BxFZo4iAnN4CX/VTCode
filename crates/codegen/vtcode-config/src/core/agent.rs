@@ -429,12 +429,17 @@ pub struct AgentHarnessConfig {
     pub max_parallel_tool_calls: usize,
     /// Enable automatic context compaction when token pressure crosses threshold.
     ///
-    /// Enabled by default. When disabled, no automatic compaction is triggered.
+    /// Enabled by default. When disabled, normal threshold-triggered automatic
+    /// compaction is skipped; the bounded post-tool recovery path may still
+    /// compact the older prefix as a safety fallback after a provider failure.
     #[serde(default = "default_harness_auto_compaction_enabled")]
     pub auto_compaction_enabled: bool,
-    /// Optional absolute compact threshold (tokens) for Responses server-side compaction.
+    /// Optional absolute compaction threshold (tokens) for native and local compaction.
     ///
-    /// When unset, VT Code derives a threshold from the provider context window.
+    /// When set, this overrides the session budget but remains capped by the
+    /// provider's hard context capacity. When unset, VT Code derives a 90%
+    /// trigger from the smaller of the provider capacity and
+    /// `context.max_context_tokens`.
     #[serde(default)]
     pub auto_compaction_threshold_tokens: Option<u64>,
     /// Optional custom instructions for the compaction summarization prompt.

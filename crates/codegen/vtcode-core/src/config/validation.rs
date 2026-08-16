@@ -223,8 +223,8 @@ fn validate_context_window(config: &VTCodeConfig, result: &mut ValidationResult)
         && context_window > model_context
     {
         result.add_warning(format!(
-            "Configured context window {context_window} exceeds model capacity {model_context}. \
-             The model will use its maximum context size."
+            "Configured session context safety budget {context_window} exceeds provider capacity {model_context}. \
+             The provider capacity remains the hard upper bound for compaction and request validation."
         ));
     }
 }

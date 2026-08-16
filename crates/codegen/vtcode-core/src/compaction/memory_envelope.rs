@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use tokio::fs as async_fs;
 
 use vtcode_config::constants::context::DEFAULT_COMPACTION_TRIGGER_RATIO;
+use vtcode_config::context::default_max_context_tokens;
 use vtcode_config::loader::VTCodeConfig;
 
 use crate::compaction::CompactionConfig;
@@ -1290,14 +1291,64 @@ pub fn resolve_compaction_threshold(configured_threshold: Option<u64>, context_s
     })
 }
 
+/// Resolve the compaction boundary against both the provider capability and
+/// VT Code's session safety budget.
+///
+/// An explicit harness threshold is an opt-in escape hatch: it remains
+/// authoritative for the session, but can never exceed a known provider
+/// context capacity. When no explicit threshold is set, the session budget
+/// limits the provider capacity before the normal 90% trigger ratio is
+/// applied. A zero session budget preserves the legacy provider-only
+/// behavior because zero means that the setting is not configured.
+pub fn resolve_effective_compaction_threshold(
+    configured_threshold: Option<u64>,
+    provider_context_size: usize,
+    session_context_budget: usize,
+) -> Option<u64> {
+    if configured_threshold.is_some_and(|threshold| threshold > 0) {
+        return resolve_compaction_threshold(configured_threshold, provider_context_size);
+    }
+
+    let effective_context_size = effective_session_context_budget(provider_context_size, session_context_budget);
+    resolve_compaction_threshold(None, effective_context_size)
+}
+
+/// Resolve the hard context budget shared by preflight checks and runtime
+/// context accounting.
+///
+/// A configured session budget is a safety ceiling, while a positive provider
+/// value is a hard capability ceiling. Zero means that the corresponding
+/// source is unknown/unconfigured, so it must not turn a usable limit into an
+/// unusable zero budget.
+#[must_use]
+pub fn effective_session_context_budget(provider_context_size: usize, session_context_budget: usize) -> usize {
+    match (provider_context_size > 0, session_context_budget > 0) {
+        (true, true) => provider_context_size.min(session_context_budget),
+        (true, false) => provider_context_size,
+        (false, true) => session_context_budget,
+        (false, false) => 0,
+    }
+}
+
+/// Resolve the context budget used by runtime accounting and preflight checks.
+///
+/// Keeping the provider/model lookup beside the min-resolution rule prevents
+/// callers from accidentally reporting or enforcing a provider-only limit.
+#[must_use]
+pub fn effective_context_budget(vt_cfg: Option<&VTCodeConfig>, provider: &dyn LLMProvider, model: &str) -> usize {
+    let session_context_budget = vt_cfg.map_or_else(default_max_context_tokens, |cfg| cfg.context.max_context_tokens);
+    effective_session_context_budget(provider.effective_context_size(model), session_context_budget)
+}
+
 pub fn effective_compaction_threshold(
     vt_cfg: Option<&VTCodeConfig>,
     provider: &dyn LLMProvider,
     model: &str,
 ) -> Option<usize> {
-    let context_size = provider.effective_context_size(model);
+    let provider_context_size = provider.effective_context_size(model);
     let configured_threshold = vt_cfg.and_then(|cfg| cfg.agent.harness.auto_compaction_threshold_tokens);
+    let session_context_budget = vt_cfg.map_or_else(default_max_context_tokens, |cfg| cfg.context.max_context_tokens);
 
-    resolve_compaction_threshold(configured_threshold, context_size)
+    resolve_effective_compaction_threshold(configured_threshold, provider_context_size, session_context_budget)
         .and_then(|threshold| usize::try_from(threshold).ok())
 }

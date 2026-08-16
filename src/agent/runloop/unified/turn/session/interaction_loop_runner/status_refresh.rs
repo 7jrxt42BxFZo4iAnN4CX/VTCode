@@ -6,6 +6,7 @@ use crate::agent::runloop::unified::context_manager::ContextManager;
 use crate::agent::runloop::unified::session_setup::{IdeContextBridge, apply_ide_context_snapshot};
 use crate::agent::runloop::unified::state::SessionStats;
 use crate::agent::runloop::unified::status_line;
+use crate::agent::runloop::unified::turn::turn_processing::resolve_effective_request_model;
 use vtcode_core::config::loader::VTCodeConfig;
 use vtcode_core::llm::provider::LLMProvider;
 use vtcode_core::tools::registry::ToolRegistry;
@@ -36,6 +37,7 @@ pub(super) struct StatusRefreshContext<'a> {
     header_context: &'a mut InlineHeaderContext,
     ide_context_bridge: &'a mut Option<IdeContextBridge>,
     context_manager: &'a mut ContextManager,
+    active_primary_agent: &'a vtcode_core::primary_agent::ActivePrimaryAgentState,
     workspace: &'a Path,
     provider: &'a str,
     model: &'a str,
@@ -54,6 +56,7 @@ impl<'a> StatusRefreshContext<'a> {
             header_context: ctx.header_context,
             ide_context_bridge: ctx.ide_context_bridge,
             context_manager: ctx.context_manager,
+            active_primary_agent: &*ctx.active_primary_agent,
             workspace: ctx.config.workspace.as_path(),
             provider: &ctx.config.provider,
             model: &ctx.config.model,
@@ -133,7 +136,9 @@ async fn refresh_runtime_counters(ctx: &mut StatusRefreshContext<'_>, state: &mu
     };
     status_line::update_thread_context(state.input_status_state, ctx.active_thread_label, local_agent_count);
 
-    let context_limit_tokens = ctx.provider_client.effective_context_size(ctx.model);
+    let effective_model = resolve_effective_request_model(ctx.model, ctx.active_primary_agent.active());
+    let context_limit_tokens =
+        vtcode_core::compaction::effective_context_budget(ctx.vt_cfg, ctx.provider_client, &effective_model);
     let context_used_tokens = ctx.context_manager.current_token_usage();
     status_line::update_context_budget(state.input_status_state, context_used_tokens, context_limit_tokens);
 }

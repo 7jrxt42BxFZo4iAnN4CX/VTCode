@@ -19,11 +19,15 @@ The runtime keeps prompt additions small and cache-stable while preserving the
 newest working context. Automatic compaction uses a non-configurable continuity
 tail target of approximately 20,000 estimated tokens. It retains complete
 user/assistant/tool protocol groups verbatim, removes an incomplete trailing tool
-call, and summarizes only the older prefix. A soft threshold at 90% of the
-effective hard threshold marks compaction pending for the next outer turn
-boundary; the hard threshold compacts before the next model request. Provider
-native compaction results are normalized through the same tail rules, with local
-fallback when the provider does not return a usable tail.
+call, and summarizes only the older prefix. Unless an explicit harness threshold
+is configured, the effective hard threshold is based on the smaller of the
+provider's hard context capacity and the 160,000-token default session budget;
+the trigger is 90% of that ceiling. Explicit thresholds remain capped by the
+provider capacity. A soft threshold at 90% of the effective hard threshold marks
+compaction pending for the next outer turn boundary; the hard threshold compacts
+before the next model request. Provider-native compaction results are normalized
+through the same tail rules, with local fallback when the provider does not
+return a usable tail.
 
 Long-running command sessions have an explicit `wait` action. A wait deadline
 returns a bounded in-progress result without killing the process, so the model

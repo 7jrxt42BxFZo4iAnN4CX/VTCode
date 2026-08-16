@@ -994,9 +994,9 @@ shell_zsh_fork = false
 
 # Context management configuration - Controls conversation memory
 [context]
-# Maximum number of tokens to keep in context (affects model cost and performance)
-# Higher values preserve more context but cost more and may hit token limits
-max_context_tokens = 90000
+# Session prompt safety budget used by automatic compaction
+# The effective default trigger is 90% of min(this budget, provider capacity)
+max_context_tokens = 160000
 
 # Percentage to trim context to when it gets too large
 trim_to_percent = 60

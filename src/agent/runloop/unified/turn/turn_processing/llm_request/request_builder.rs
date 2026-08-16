@@ -226,13 +226,23 @@ pub(super) async fn build_turn_request(
     // real on-wire request payload. Cache read/write/miss are already surfaced
     // via `SessionStats` prompt-cache diagnostics, so they are not duplicated.
     let request = &request_plan.request;
-    let system_prompt_tokens = request.system_prompt.as_ref().map(|sp| sp.len() / 4).unwrap_or(0);
+    let system_prompt_tokens = request.system_prompt.as_ref().map(|sp| sp.len().div_ceil(4)).unwrap_or(0);
     let (on_wire_tools, tool_schema_tokens) = request
         .tools
         .as_ref()
         .map(|tools| (tools.len(), estimate_tool_schema_tokens(tools.as_slice())))
         .unwrap_or((0, 0));
     let message_history_tokens = estimate_message_history_tokens(request.messages.as_slice());
+    // Keep prompt growth visible to the next compaction check even when the
+    // provider rejects this request before returning usage. The message
+    // estimator includes structured tool/image content rather than only text,
+    // while the tool schemas are measured from their serialized wire shape, so
+    // the full assembled prompt contributes to session pressure accounting.
+    ctx.context_manager.record_prompt_estimate(
+        system_prompt_tokens
+            .saturating_add(tool_schema_tokens)
+            .saturating_add(message_history_tokens),
+    );
     emit_token_budget_breakdown(
         ctx,
         TokenBudgetBreakdown {

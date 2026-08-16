@@ -14,6 +14,7 @@ use vtcode_core::config::{OpenAIPromptCacheKeyMode, PromptCachingConfig};
 use vtcode_core::core::agent::features::FeatureSet;
 use vtcode_core::llm::provider::{self as uni};
 
+use super::super::resolve_effective_request_model;
 use crate::agent::runloop::unified::incremental_system_prompt::PromptCacheShapingMode;
 use crate::agent::runloop::unified::run_loop_context::TurnExecutionSnapshot;
 use crate::agent::runloop::unified::session_setup::active_deferred_tool_policy;
@@ -130,16 +131,6 @@ pub(super) fn capture_turn_request_snapshot(
         execution: ctx.harness_state.execution_snapshot(),
         client_local_tool_deferral,
     }
-}
-
-fn resolve_effective_request_model(base_model: &str, active_primary_agent: &ActivePrimaryAgent) -> String {
-    active_primary_agent
-        .model
-        .as_deref()
-        .map(str::trim)
-        .filter(|model| !model.is_empty() && !model.eq_ignore_ascii_case("inherit"))
-        .unwrap_or(base_model)
-        .to_string()
 }
 
 pub(super) fn resolve_effective_reasoning_effort(

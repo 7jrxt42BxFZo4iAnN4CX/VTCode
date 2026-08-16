@@ -346,6 +346,46 @@ pub fn classify_anyhow_error(err: &anyhow::Error) -> ErrorCategory {
     classify_error_message(&msg)
 }
 
+/// Return whether an error explicitly reports that the provider rejected the
+/// request because its input context is too large.
+///
+/// Context-capacity failures are intentionally kept separate from
+/// [`ErrorCategory::InvalidParameters`]: they are not model argument mistakes
+/// and a bounded history compaction can make the same request valid. The
+/// marker set is deliberately specific so ordinary validation messages that
+/// merely mention a context field do not enter recovery.
+#[must_use]
+pub fn is_context_capacity_error(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| is_context_capacity_message(&cause.to_string()))
+}
+
+/// Return whether a provider error message identifies an input-context limit.
+#[must_use]
+pub fn is_context_capacity_message(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    contains_any(
+        &message,
+        &[
+            "context_length_exceeded",
+            "context length exceeded",
+            "maximum context length",
+            "maximum context window",
+            "context window exceeded",
+            "context window is too small",
+            "exceeds the model's maximum context",
+            "exceeds model context",
+            "exceeds the maximum context",
+            "prompt is too long",
+            "input is too long",
+            "input token count exceeds",
+            "exceeds the maximum number of tokens",
+            "maximum input tokens",
+            "too many tokens in the prompt",
+            "request exceeds the context",
+        ],
+    )
+}
+
 /// Classify an error message string into an `ErrorCategory`.
 ///
 /// Marker groups are checked in priority order to handle overlapping patterns
@@ -922,6 +962,13 @@ mod tests {
         assert!(!is_retryable_llm_error_message("invalid api key"));
         assert!(!is_retryable_llm_error_message("weekly usage limit reached"));
         assert!(!is_retryable_llm_error_message("permission denied"));
+    }
+
+    #[test]
+    fn context_capacity_markers_are_specific() {
+        assert!(is_context_capacity_message("invalid request: maximum context length is 114688 tokens"));
+        assert!(is_context_capacity_message("input token count exceeds the maximum number of tokens allowed"));
+        assert!(!is_context_capacity_message("invalid request: context field is missing"));
     }
 
     // --- Recovery suggestions ---

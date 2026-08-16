@@ -11,11 +11,12 @@
 
 use std::str::FromStr;
 
+use vtcode_config::context::default_max_context_tokens;
 use vtcode_core::core::agent::features::FeatureSet;
 use vtcode_core::tools::handlers::anthropic_native_memory_enabled_for_runtime;
 
 use crate::agent::runloop::unified::turn::compaction::{
-    build_server_compaction_context_management, resolve_compaction_threshold,
+    build_server_compaction_context_management, resolve_effective_compaction_threshold,
 };
 use crate::agent::runloop::unified::turn::context::TurnProcessingContext;
 
@@ -51,7 +52,11 @@ fn resolve_server_compaction_context_management(
         return None;
     }
 
-    build_server_compaction_context_management(configured_threshold, turn.context_window_size)
+    build_server_compaction_context_management(
+        configured_threshold,
+        turn.context_window_size,
+        vt_cfg.map_or_else(default_max_context_tokens, |cfg| cfg.context.max_context_tokens),
+    )
 }
 
 fn build_anthropic_context_management(
@@ -107,9 +112,10 @@ fn build_anthropic_context_management(
     }
 
     if vt_cfg.agent.harness.auto_compaction_enabled
-        && let Some(trigger_tokens) = resolve_compaction_threshold(
+        && let Some(trigger_tokens) = resolve_effective_compaction_threshold(
             vt_cfg.agent.harness.auto_compaction_threshold_tokens,
             turn.context_window_size,
+            vt_cfg.context.max_context_tokens,
         )
     {
         let mut compact_edit = serde_json::Map::new();
@@ -153,14 +159,35 @@ mod tests {
         cfg.agent.harness.auto_compaction_enabled = true;
         cfg.agent.harness.auto_compaction_threshold_tokens = Some(512);
 
-        let payload =
-            build_server_compaction_context_management(cfg.agent.harness.auto_compaction_threshold_tokens, 2_000);
+        let payload = build_server_compaction_context_management(
+            cfg.agent.harness.auto_compaction_threshold_tokens,
+            2_000,
+            cfg.context.max_context_tokens,
+        );
 
         assert_eq!(
             payload,
             Some(json!([{
                 "type": "compaction",
                 "compact_threshold": 512,
+            }]))
+        );
+    }
+
+    #[test]
+    fn server_supported_request_build_uses_session_safety_budget_by_default() {
+        assert_eq!(
+            build_server_compaction_context_management(None, 500_000, 160_000),
+            Some(json!([{
+                "type": "compaction",
+                "compact_threshold": 144000,
+            }]))
+        );
+        assert_eq!(
+            build_server_compaction_context_management(None, 100_000, 160_000),
+            Some(json!([{
+                "type": "compaction",
+                "compact_threshold": 90000,
             }]))
         );
     }

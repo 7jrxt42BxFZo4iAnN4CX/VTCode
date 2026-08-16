@@ -3,6 +3,7 @@ use crate::agent::runloop::unified::planning_workflow::{
     PlanArtifactError, ValidatedPlanArtifact, emit_plan_ready_events, persist_plan_draft, persisted_plan_is_ready,
     plan_repair_directive_for_error, validate_plan_content,
 };
+use crate::agent::runloop::unified::turn::turn_processing::resolve_effective_request_model;
 use crate::agent::runloop::unified::ui_interaction_stream_helpers::render_compact_reasoning_block;
 
 const DENIED_INTERVIEW_PLAN_SYNTHESIS_RETRY_DIRECTIVE: &str = "Planning recovery: the interactive interview is unavailable, and the previous response did not contain a completed plan. Do not ask another question or offer approval yet. Emit exactly one compact `<proposed_plan>` now from the repository evidence already in this conversation; include Summary, numbered steps in the form `Action -> files: [path] -> verify: [command]`, Validation, and short Assumptions. Do not emit tool calls.";
@@ -570,9 +571,14 @@ impl<'a> TurnProcessingContext<'a> {
                         active_agent_name: self.active_primary_agent.active().name(),
                         skip_confirmations: self.skip_confirmations,
                         context_usage_percent: self.context_manager.context_usage_percent(
-                            self.vt_cfg
-                                .map(|cfg| cfg.context.max_context_tokens)
-                                .unwrap_or_else(vtcode_config::context::default_max_context_tokens),
+                            vtcode_core::compaction::effective_context_budget(
+                                self.vt_cfg,
+                                &**self.provider_client,
+                                &resolve_effective_request_model(
+                                    &self.config.model,
+                                    self.active_primary_agent.active(),
+                                ),
+                            ),
                         ),
                     },
                     PlanApprovalTelemetryContext {

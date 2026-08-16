@@ -171,16 +171,19 @@ pub(super) fn estimate_tool_schema_tokens(tools: &[ToolDefinition]) -> usize {
         .iter()
         .map(|tool| {
             buf.clear();
-            serde_json::to_writer(&mut buf, tool).map(|_| buf.len() / 4).unwrap_or(0)
+            serde_json::to_writer(&mut buf, tool)
+                .map(|_| buf.len().div_ceil(4))
+                .unwrap_or(0)
         })
         .sum()
 }
 
-/// Rough token estimate for the text portion of the message history (~4
-/// chars/token). Non-text content (images, tool calls/results) is not counted,
-/// so this is a lower-bound hint suitable for telemetry, not billing.
+/// Estimate the assembled message history using the provider message model's
+/// existing token estimator. Unlike a text-only byte heuristic, it accounts
+/// for tool calls, tool-call IDs, reasoning metadata, and image/file parts, so
+/// structured wire content contributes to context-pressure accounting too.
 pub(super) fn estimate_message_history_tokens(messages: &[Message]) -> usize {
-    messages.iter().map(|message| message.content.as_text().len() / 4).sum()
+    messages.iter().map(Message::estimate_tokens).sum()
 }
 
 /// Per-request token-budget breakdown for the assembled first-request prefix.

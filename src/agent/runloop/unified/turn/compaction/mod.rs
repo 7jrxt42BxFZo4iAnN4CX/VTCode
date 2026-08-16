@@ -12,7 +12,7 @@ pub(crate) use vtcode_core::compaction::memory_envelope::{
     insert_memory_envelope_message, latest_memory_envelope_path_for_session,
     latest_memory_envelope_path_for_session_async, load_latest_memory_envelope, load_latest_memory_envelope_async,
     local_compaction_config, persist_memory_envelope_async, persist_memory_envelope_async_with_update,
-    read_task_tracker_snapshot, read_task_tracker_snapshot_async, resolve_compaction_threshold,
+    read_task_tracker_snapshot, read_task_tracker_snapshot_async, resolve_effective_compaction_threshold,
     should_persist_memory_envelope, strip_existing_memory_envelope, write_memory_envelope_to_path,
     write_memory_envelope_to_path_async,
 };
@@ -21,6 +21,7 @@ pub(crate) use vtcode_core::compaction::memory_envelope::{
 #[cfg(test)]
 pub(crate) use vtcode_core::compaction::memory_envelope::{
     DEDUPED_FILE_READ_NOTE, SESSION_MEMORY_ENVELOPE_SCHEMA_VERSION, inject_latest_memory_envelope,
+    resolve_compaction_threshold,
 };
 #[cfg(test)]
 pub(crate) use vtcode_core::persistent_memory::{GroundedFactRecord, dedup_latest_facts};
@@ -157,14 +158,17 @@ fn boundary_reason_for_compaction_trigger(
 )] // context_size is usize (non-negative), ratio is positive
 pub(crate) fn build_server_compaction_context_management(
     configured_threshold: Option<u64>,
-    context_size: usize,
+    provider_context_size: usize,
+    session_context_budget: usize,
 ) -> Option<Value> {
-    resolve_compaction_threshold(configured_threshold, context_size).map(|compact_threshold| {
-        json!([{
-            "type": "compaction",
-            "compact_threshold": compact_threshold,
-        }])
-    })
+    resolve_effective_compaction_threshold(configured_threshold, provider_context_size, session_context_budget).map(
+        |compact_threshold| {
+            json!([{
+                "type": "compaction",
+                "compact_threshold": compact_threshold,
+            }])
+        },
+    )
 }
 
 pub(crate) async fn build_summarized_fork_history(
@@ -373,12 +377,15 @@ async fn run_manual_compaction(
     .map(Some)
 }
 
-#[cfg(test)]
 pub(crate) async fn compact_history_for_recovery_in_place(
     context: CompactionContext<'_>,
     state: CompactionState<'_>,
     preserve_from_index: usize,
 ) -> Result<Option<CompactionOutcome>> {
+    // This is a one-shot safety action requested by post-tool recovery, not
+    // normal threshold-driven auto-compaction. It intentionally bypasses the
+    // auto-compaction enable/suppression gates; the recovery state machine
+    // bounds the call to one attempt and blocks if the prefix cannot shrink.
     compact_history_before_index_in_place(
         context,
         state,
@@ -543,7 +550,7 @@ async fn apply_compacted_history(
     *history = compacted;
     session_stats.clear_previous_response_chain_for(provider.name(), model);
     context_manager.take_compaction_pending();
-    context_manager.cap_token_usage_after_compaction(effective_compaction_threshold(vt_cfg, provider, model));
+    context_manager.reset_token_pressure_after_compaction();
     if let Some(ref envelope) = envelope {
         tracing::info!(
             provider = %provider.name(),
@@ -593,7 +600,6 @@ async fn apply_compacted_history(
     })
 }
 
-#[cfg(test)]
 async fn compact_history_before_index_in_place(
     context: CompactionContext<'_>,
     state: CompactionState<'_>,
@@ -822,7 +828,7 @@ pub(crate) async fn maybe_auto_compact_history(
     // Binary-specific post-step: reset response-chain and token tracking, then
     // emit the canonical `thread.compact_boundary` event.
     session_stats.clear_previous_response_chain_for(provider.name(), model);
-    context_manager.cap_token_usage_after_compaction(effective_compaction_threshold(vt_cfg, provider, model));
+    context_manager.reset_token_pressure_after_compaction();
     let segment_transition = session_stats.begin_request_segment(SegmentBoundaryReason::Compaction);
     *history = compacted_history;
     if let Some(harness_emitter) = harness_emitter {

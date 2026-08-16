@@ -3,10 +3,11 @@ use super::post_tool_recovery::prepare_post_tool_tool_free_recovery;
 use super::post_tool_recovery::{ensure_post_tool_resume_directive, has_tool_response_since};
 use super::{
     HarnessUsage, PLANNING_RECOVERY_SYNTHESIS_FALLBACK, POST_TOOL_RECOVERY_REASON, POST_TOOL_RECOVERY_REASON_PLAN_MODE,
-    POST_TOOL_RESUME_DIRECTIVE, PostToolFailureRecovery, RECOVERY_CONTRACT_VIOLATION_REASON,
-    RECOVERY_SYNTHESIS_FALLBACK_FINAL_ANSWER, accumulate_turn_usage, count_assistant_text_responses_for_guard,
-    count_assistant_text_responses_in_turn, has_turn_usage, maybe_recover_after_post_tool_llm_failure,
-    normalize_tool_free_recovery_break_outcome, run_turn_loop,
+    POST_TOOL_RESUME_DIRECTIVE, POST_TOOL_TOOL_ENABLED_RETRY_DIRECTIVE, PostToolFailureRecovery,
+    RECOVERY_CONTRACT_VIOLATION_REASON, RECOVERY_SYNTHESIS_FALLBACK_FINAL_ANSWER, accumulate_turn_usage,
+    count_assistant_text_responses_for_guard, count_assistant_text_responses_in_turn, current_turn_preserve_index,
+    has_turn_usage, maybe_recover_after_post_tool_llm_failure, normalize_tool_free_recovery_break_outcome,
+    run_turn_loop,
 };
 use crate::agent::runloop::unified::planning_workflow::recovery::{
     PLANNING_SYNTHESIS_TRUNCATED_CONDENSE_DIRECTIVE, plan_synthesis_was_truncated,
@@ -20,6 +21,17 @@ use vtcode_core::config::constants::tools as tool_names;
 use vtcode_core::llm::provider as uni;
 use vtcode_core::utils::ansi::AnsiRenderer;
 use vtcode_ui::tui::app::InlineHandle;
+
+#[test]
+fn current_turn_preserve_index_keeps_user_request_before_transient_notes() {
+    let history = vec![
+        uni::Message::assistant("older response".to_string()),
+        uni::Message::user("apply the requested fix".to_string()),
+        uni::Message::system("transient recovery note".to_string()),
+    ];
+
+    assert_eq!(current_turn_preserve_index(&history, history.len()), 1);
+}
 
 #[test]
 fn recovery_synthesis_fallback_says_no_tool_call_was_applied() {
@@ -104,7 +116,7 @@ fn prepare_post_tool_tool_free_recovery_is_idempotent_near_history_tail() {
 }
 
 #[test]
-fn retryable_post_tool_follow_up_failure_schedules_tool_free_recovery_once() {
+fn retryable_post_tool_follow_up_failure_schedules_one_tool_enabled_recovery() {
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let handle = InlineHandle::new_for_tests(tx);
     let mut renderer = AnsiRenderer::with_inline_ui(handle, Default::default());
@@ -122,10 +134,11 @@ fn retryable_post_tool_follow_up_failure_schedules_tool_free_recovery_once() {
         1,
         "streaming",
         true,
+        true,
         false,
     )
     .expect("recovery should succeed");
-    assert_eq!(action, PostToolFailureRecovery::RetryToolFree);
+    assert_eq!(action, PostToolFailureRecovery::RetryToolEnabled);
 
     let action_again = maybe_recover_after_post_tool_llm_failure(
         &mut renderer,
@@ -134,21 +147,29 @@ fn retryable_post_tool_follow_up_failure_schedules_tool_free_recovery_once() {
         3,
         1,
         "streaming",
-        true,
+        false,
+        false,
         false,
     )
     .expect("repeat recovery should succeed");
-    assert_eq!(action_again, PostToolFailureRecovery::RetryToolFree);
+    assert_eq!(action_again, PostToolFailureRecovery::StopAfterDirective);
 
-    // Retry path injects only the recovery reason; the resume directive is
-    // reserved for the turn-ending (StopAfterDirective) path.
+    let enabled_retry_count = history
+        .iter()
+        .filter(|message| {
+            message.role == uni::MessageRole::System
+                && message.content.as_text() == POST_TOOL_TOOL_ENABLED_RETRY_DIRECTIVE
+        })
+        .count();
+    assert_eq!(enabled_retry_count, 1);
+
     let directive_count = history
         .iter()
         .filter(|message| {
             message.role == uni::MessageRole::System && message.content.as_text() == POST_TOOL_RESUME_DIRECTIVE
         })
         .count();
-    assert_eq!(directive_count, 0);
+    assert_eq!(directive_count, 1);
 
     let recovery_reason_count = history
         .iter()
@@ -156,7 +177,7 @@ fn retryable_post_tool_follow_up_failure_schedules_tool_free_recovery_once() {
             message.role == uni::MessageRole::System && message.content.as_text() == POST_TOOL_RECOVERY_REASON
         })
         .count();
-    assert_eq!(recovery_reason_count, 1);
+    assert_eq!(recovery_reason_count, 0);
 }
 
 #[test]
@@ -183,6 +204,7 @@ fn plan_mode_recovery_uses_plan_aware_directive() {
         1,
         "streaming",
         true,
+        false,
         true,
     )
     .expect("recovery should succeed");
@@ -224,6 +246,7 @@ fn retryable_post_tool_follow_up_failure_stops_after_recovery_pass_is_spent() {
         2,
         1,
         "streaming",
+        false,
         false,
         false,
     )
@@ -275,6 +298,7 @@ fn post_tool_follow_up_failure_chain_consumes_tool_free_recovery_pass() {
         1,
         "execute_llm_request",
         true,
+        false,
         false,
     )
     .expect("recovery classification should succeed");

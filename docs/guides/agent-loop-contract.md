@@ -113,9 +113,15 @@ Auto-compaction is **on by default** (`agent.harness.auto_compaction_enabled`,
 default `true`) and is **unified across both runloops**: the core `AgentRunner`
 loop and the binary unified runloop both delegate to the shared
 `vtcode_core::compaction` orchestrator (`auto_compact_messages`) rather than
-maintaining separate compaction logic. It fires when the live token usage
-crosses `agent.harness.auto_compaction_threshold_tokens` (or a context-size
-ratio default).
+maintaining separate compaction logic. It fires at the effective session
+ceiling: an explicit `agent.harness.auto_compaction_threshold_tokens` wins,
+otherwise VT Code applies the 90% ratio to the smaller of the provider's hard
+context capacity and `context.max_context_tokens` (160,000 by default).
+Explicit thresholds remain capped by the provider capacity.
+Disabling normal auto-compaction does not disable the single bounded recovery
+compaction used after a provider rejects a follow-up that follows successful
+tool output; that safety path preserves the current request and completed tool
+results, and blocks truthfully if it cannot reduce the context.
 
 To preserve conversational continuity, every compacted history keeps:
 
@@ -130,6 +136,14 @@ The soft compaction threshold is 90% of the effective hard threshold. Reaching
 it marks compaction pending and defers the work to the next outer turn
 boundary. The hard threshold compacts before the next model request. No hidden
 summary model call is issued in the middle of an active tool loop.
+
+If a transient provider failure follows successful tool execution, the unified
+runloop first compacts only the older prefix, preserving the current request,
+tool outputs, and memory envelope. It emits one canonical
+`thread.compact_boundary`, then permits one bounded `ToolEnabledRetry` so a
+required edit or verification can still run without repeating completed
+read-only exploration. A second failure produces a blocked, resumable handoff;
+the harness never reports successful completion without confirmation.
 
 The fork/branch history builder (`build_summarized_fork_history`) deliberately
 omits the continuity tail and produces a minimal resume artifact (envelope +

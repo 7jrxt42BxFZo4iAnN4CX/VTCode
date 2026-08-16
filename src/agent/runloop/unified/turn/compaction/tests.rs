@@ -2,9 +2,9 @@ use super::{
     CompactionContext, CompactionState, GroundedFactRecord, SESSION_MEMORY_ENVELOPE_SCHEMA_VERSION,
     SessionMemoryEnvelope, build_server_compaction_context_management, build_summarized_fork_history,
     compact_history_for_recovery_in_place, compact_history_from_index_in_place, compact_history_in_place,
-    compact_history_in_place_with_events, compact_history_on_model_switch_in_place, inject_latest_memory_envelope,
-    latest_memory_envelope_path_for_session, manual_compact_history_in_place, maybe_auto_compact_history,
-    resolve_compaction_threshold,
+    compact_history_in_place_with_events, compact_history_on_model_switch_in_place, effective_compaction_threshold,
+    inject_latest_memory_envelope, latest_memory_envelope_path_for_session, manual_compact_history_in_place,
+    maybe_auto_compact_history, resolve_compaction_threshold,
 };
 use crate::agent::runloop::unified::context_manager::ContextManager;
 use crate::agent::runloop::unified::inline_events::harness::HarnessEventEmitter;
@@ -18,6 +18,7 @@ use tempfile::tempdir;
 use tokio::sync::RwLock;
 use vtcode_commons::llm::Usage;
 use vtcode_core::compaction::ManualCompactionOptions;
+use vtcode_core::compaction::effective_session_context_budget;
 use vtcode_core::config::constants::tools as tool_names;
 use vtcode_core::config::loader::VTCodeConfig;
 use vtcode_core::llm::provider::{
@@ -40,6 +41,33 @@ struct InlineRejectingRecoveryProvider;
 
 struct RecordingProviderCompactionProvider {
     seen_history: Arc<RwLock<Vec<Message>>>,
+}
+
+struct ContextSizedProvider {
+    context_size: usize,
+}
+
+#[async_trait]
+impl LLMProvider for ContextSizedProvider {
+    fn name(&self) -> &str {
+        "context-sized-stub"
+    }
+
+    async fn generate(&self, _request: LLMRequest) -> Result<LLMResponse, LLMError> {
+        Ok(LLMResponse::new("stub-model", "summary"))
+    }
+
+    fn supported_models(&self) -> Vec<String> {
+        vec!["stub-model".to_string()]
+    }
+
+    fn validate_request(&self, _request: &LLMRequest) -> Result<(), LLMError> {
+        Ok(())
+    }
+
+    fn effective_context_size(&self, _model: &str) -> usize {
+        self.context_size
+    }
 }
 
 #[async_trait]
@@ -1411,6 +1439,42 @@ async fn auto_compaction_replaces_history_and_clears_response_chain() {
 }
 
 #[tokio::test]
+async fn auto_compaction_uses_the_effective_session_safety_ceiling() {
+    let temp = tempdir().expect("tempdir");
+    let provider = ContextSizedProvider { context_size: 500_000 };
+    let vt_cfg = VTCodeConfig::default();
+    let mut history = test_history();
+    let mut session_stats = SessionStats::default();
+    let mut context_manager = test_context_manager();
+    context_manager.update_token_usage(&Some(Usage {
+        prompt_tokens: 145_000,
+        completion_tokens: 10,
+        total_tokens: 145_010,
+        ..Usage::default()
+    }));
+
+    let outcome = maybe_auto_compact_history(
+        CompactionContext::new(
+            &provider,
+            "stub-model",
+            "session-alpha",
+            "thread-alpha",
+            temp.path(),
+            Some(&vt_cfg),
+            None,
+            None,
+        ),
+        CompactionState::new(&mut history, &mut session_stats, &mut context_manager),
+    )
+    .await
+    .expect("auto compaction succeeds")
+    .expect("145k prompt pressure must cross the 144k session boundary");
+
+    assert!(outcome.compacted_len >= outcome.original_len);
+    assert!(context_manager.current_token_usage() <= 144_000);
+}
+
+#[tokio::test]
 async fn targeted_compaction_preserves_prefix_and_replaces_suffix() {
     let temp = tempdir().expect("tempdir");
     let provider = LocalCompactionProvider;
@@ -1477,7 +1541,14 @@ async fn recovery_compaction_preserves_current_turn_suffix_and_emits_event() {
     history.push(Message::tool_response("call-current".to_string(), "{\"ok\":true}".to_string()));
     let preserved_suffix = history[12..].to_vec();
     let mut session_stats = SessionStats::default();
+    session_stats.set_previous_response_chain("stub", "stub-model", Some("resp-recovery"), &[]);
     let mut context_manager = test_context_manager();
+    context_manager.update_token_usage(&Some(Usage {
+        prompt_tokens: 950,
+        completion_tokens: 10,
+        total_tokens: 960,
+        ..Usage::default()
+    }));
 
     let outcome = compact_history_for_recovery_in_place(
         CompactionContext::new(
@@ -1499,12 +1570,15 @@ async fn recovery_compaction_preserves_current_turn_suffix_and_emits_event() {
 
     assert_eq!(history[history.len() - preserved_suffix.len()..], preserved_suffix);
     assert!(outcome.compacted_len >= outcome.original_len);
+    assert_eq!(session_stats.previous_response_id_for("stub", "stub-model"), None);
+    assert!(context_manager.current_token_usage() <= 900);
     assert_history_contains_messages(&history, &test_history());
 
     let content = fs::read_to_string(harness_path).expect("read harness log");
-    assert!(content.contains("\"type\":\"thread.compact_boundary\""));
+    assert_eq!(content.matches("\"type\":\"thread.compact_boundary\"").count(), 1);
     assert!(content.contains("\"trigger\":\"recovery\""));
     assert!(content.contains("\"mode\":\"local\""));
+    assert!(history.iter().any(|message| message.content.as_text() == "current-turn"));
 }
 
 #[tokio::test]
@@ -2000,9 +2074,84 @@ fn resolve_compaction_threshold_requires_context_or_override() {
 }
 
 #[test]
+fn effective_compaction_threshold_uses_default_session_budget_before_provider_capacity() {
+    // Arrange
+    let provider = ContextSizedProvider { context_size: 500_000 };
+    let config = VTCodeConfig::default();
+
+    // Act
+    let threshold = effective_compaction_threshold(Some(&config), &provider, "stub-model");
+
+    // Assert
+    assert_eq!(threshold, Some(144_000));
+}
+
+#[test]
+fn effective_compaction_threshold_clamps_session_budget_to_provider_capacity() {
+    // Arrange
+    let provider = ContextSizedProvider { context_size: 100_000 };
+    let config = VTCodeConfig::default();
+
+    // Act
+    let threshold = effective_compaction_threshold(Some(&config), &provider, "stub-model");
+
+    // Assert
+    assert_eq!(threshold, Some(90_000));
+}
+
+#[test]
+fn effective_compaction_threshold_uses_default_session_budget_without_config() {
+    let threshold = effective_compaction_threshold(None, &ContextSizedProvider { context_size: 500_000 }, "stub-model");
+
+    assert_eq!(threshold, Some(144_000));
+}
+
+#[test]
+fn explicit_compaction_threshold_overrides_session_budget_but_not_provider_capacity() {
+    // Arrange
+    let mut config = VTCodeConfig::default();
+    config.context.max_context_tokens = 100_000;
+    config.agent.harness.auto_compaction_threshold_tokens = Some(200_000);
+
+    // Act
+    let session_override =
+        effective_compaction_threshold(Some(&config), &ContextSizedProvider { context_size: 500_000 }, "stub-model");
+    let provider_cap =
+        effective_compaction_threshold(Some(&config), &ContextSizedProvider { context_size: 150_000 }, "stub-model");
+
+    // Assert
+    assert_eq!(session_override, Some(200_000));
+    assert_eq!(provider_cap, Some(150_000));
+}
+
+#[test]
+fn zero_session_budget_preserves_provider_derived_threshold() {
+    // Arrange
+    let mut config = VTCodeConfig::default();
+    config.context.max_context_tokens = 0;
+
+    // Act
+    let threshold =
+        effective_compaction_threshold(Some(&config), &ContextSizedProvider { context_size: 200_000 }, "stub-model");
+
+    // Assert
+    assert_eq!(threshold, Some(180_000));
+    assert_eq!(resolve_compaction_threshold(Some(0), 200_000), Some(180_000));
+}
+
+#[test]
+fn effective_session_context_budget_preserves_known_limit_when_other_side_is_zero() {
+    assert_eq!(effective_session_context_budget(500_000, 160_000), 160_000);
+    assert_eq!(effective_session_context_budget(100_000, 160_000), 100_000);
+    assert_eq!(effective_session_context_budget(500_000, 0), 500_000);
+    assert_eq!(effective_session_context_budget(0, 160_000), 160_000);
+    assert_eq!(effective_session_context_budget(0, 0), 0);
+}
+
+#[test]
 fn build_server_compaction_context_management_creates_openai_payload() {
     assert_eq!(
-        build_server_compaction_context_management(Some(512), 2_000),
+        build_server_compaction_context_management(Some(512), 2_000, 160_000),
         Some(json!([{
             "type": "compaction",
             "compact_threshold": 512,
