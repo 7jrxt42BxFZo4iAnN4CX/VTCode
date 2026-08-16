@@ -220,6 +220,19 @@ pub(crate) async fn run_tool_call_with_args(
         }
     }
 
+    // Safety gateway admission is always completed before registry execution
+    // in the unified runloop: the tool-outcome handlers (validate_tool_call)
+    // and the copilot runtime validate every call through the shared gateway
+    // before invoking this pipeline with prevalidated == true, and the
+    // non-prevalidated branch above runs check_tool_safety itself. Passing
+    // the negation of prevalidated here made the registry re-admit every
+    // interactive call on the SAME shared gateway, doubling the counter and
+    // halving the effective per-turn tool budget (checkpoint turn_942/943:
+    // 16 admitted calls then "Per-turn tool limit reached (max: 32)" with
+    // max_tool_calls_per_turn = 32). The registry only performs its own
+    // check when neither the caller nor this pipeline has run it.
+    let safety_prevalidated = prevalidated || ctx.safety_validator.is_some();
+
     let request_user_input_enabled = FeatureSet::from_config(vt_cfg)
         .request_user_input_enabled(ctx.tool_registry.is_planning_active(), ctx.renderer.supports_inline_ui())
         // Also reject if the interview was permanently denied this session
@@ -292,7 +305,7 @@ pub(crate) async fn run_tool_call_with_args(
         vt_cfg,
         max_tool_retries,
         exec_settlement_mode_for_tool_call(prevalidated, name, effective_args.as_ref()),
-        !prevalidated,
+        safety_prevalidated,
     )
     .await;
     if excludes_wait_from_turn_clock {
@@ -313,7 +326,7 @@ pub(crate) async fn run_tool_call_with_args(
         harness_emitter.cloned(),
         vt_cfg,
         max_tool_retries,
-        !prevalidated,
+        safety_prevalidated,
     )
     .await?;
 

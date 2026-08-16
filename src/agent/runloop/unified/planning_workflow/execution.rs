@@ -72,7 +72,10 @@ pub(crate) async fn handle_start_planning(
         None,
         max_tool_retries,
         ExecSettlementMode::Manual,
-        false,
+        // start_planning was already safety-admitted through runloop validation
+        // before this (re-)execution; the registry must not consume the shared
+        // per-turn gateway budget a second time.
+        true,
     )
     .await;
 
@@ -192,7 +195,10 @@ async fn handle_enter_pending_confirmation(
         None,
         max_tool_retries,
         ExecSettlementMode::Manual,
-        false,
+        // start_planning was already safety-admitted through runloop validation
+        // before this (re-)execution; the registry must not consume the shared
+        // per-turn gateway budget a second time.
+        true,
     )
     .await;
 

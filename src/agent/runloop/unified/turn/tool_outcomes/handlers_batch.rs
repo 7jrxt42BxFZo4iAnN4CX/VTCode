@@ -180,7 +180,11 @@ async fn execute_parallel_group<'a, 'b>(
                 Some(&reporter),
                 max_retries,
                 exec_settlement_mode_for_tool_call(true, &name, &args),
-                false,
+                // Every call in this group was safety-admitted by
+                // validate_tool_call before parallel execution; the registry
+                // must not re-admit it on the shared gateway (double-counting
+                // halves the effective per-turn tool budget).
+                true,
             )
             .await;
             (call_id, name, args, status, start_time, circuit_before)
