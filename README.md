@@ -173,6 +173,8 @@ OAuth-based providers can use their dedicated `vtcode login` command.
 Use `[[custom_providers]]` to add a private gateway, an aggregator such as
 Atlas Cloud or OmniRoute, or an internal inference cluster:
 
+#### Basic configuration
+
 ```toml
 [[custom_providers]]
 name = "mycorp"
@@ -180,24 +182,61 @@ display_name = "MyCorp"
 base_url = "https://llm.corp.example/v1"
 api_key_env = "MYCORP_API_KEY"
 model = "gpt-5-mini"
+models = ["gpt-5-mini", "gpt-5.4"]
 context_window = 256000   # optional; defaults to 128000 tokens
 ```
 
-Custom provider settings include:
+Set the corresponding environment variable before launching VT Code:
+
+```bash
+export MYCORP_API_KEY="..."
+```
+
+#### Capability settings
 
 - `context_window`: capability size in tokens. It controls UI context sizing,
   compaction thresholds, and preflight token checks.
+- `models`: optional model IDs to expose in the model picker. `model` remains
+  the default selection.
 - `api_format`: optional value of `auto`, `openai-chat`, `openai-responses`, or
   `anthropic-messages`. Omit it to preserve autodetection, or set it explicitly
   to prevent fallback to another format.
-- Capability defaults such as `supports_tools` and `supports_vision`.
-- `profiles."<model-id>"`: sparse overrides for an existing model. Profiles do
-  not add models to the picker.
+- Capability defaults include `supports_tools`, `supports_reasoning`,
+  `supports_reasoning_effort`, `supports_vision`, `supports_structured_output`,
+  `supports_parallel_tool_calls`, `supports_context_caching`,
+  `supports_responses_compaction`, and `supports_context_edits`.
 
 The separate `context.max_context_tokens` setting can impose a lower session
 budget. See the [configuration reference](./docs/config/CONFIG_FIELD_REFERENCE.md),
-the [custom provider configuration](./docs/config/config.md#custom_providers),
-and the [worked provider examples](./docs/providers/PROVIDER_GUIDES.md#custom-providers).
+the [custom provider configuration](./docs/config/config.md#custom_providers).
+
+#### Model profiles
+
+Use a profile for model-specific overrides:
+
+```toml
+[custom_providers.profiles."gpt-5.4"]
+api_format = "openai-responses"
+context_window = 131072
+supports_tools = true
+supports_vision = false
+supports_structured_output = true
+```
+
+Profiles apply only to an existing model identifier. They do not add models to
+the picker. Use `model` or `models` on the provider entry to control model
+availability.
+
+#### Validate the configuration
+
+```bash
+vtcode models list
+vtcode models config
+vtcode ask "Summarize this repository"
+```
+
+See the [worked provider examples](./docs/providers/PROVIDER_GUIDES.md#custom-providers)
+for Atlas Cloud and OmniRoute.
 
 ### Provider governance
 

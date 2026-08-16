@@ -26,10 +26,15 @@ See the [Configuration guide](../config/config.md#provider-whitelisting) for ful
 
 ## Custom providers
 
-Any OpenAI-compatible endpoint can be added with `[[custom_providers]]` without
-a dedicated runtime provider. Each entry has a stable `name`, a
-`display_name`, a `base_url`, an optional `api_key_env`, a default `model`, and
-an optional `context_window` in tokens:
+Use `[[custom_providers]]` for an OpenAI-compatible endpoint that does not have
+a dedicated built-in provider. A custom provider can represent a private
+gateway, an aggregator, or an internal inference service.
+
+### Basic configuration
+
+A typical entry includes a stable `name`, a human-friendly `display_name`, a
+`base_url`, and a default `model`. Set `api_key_env` when the endpoint requires
+an API key. Use `models` to expose several known model IDs in the model picker.
 
 ```toml
 [[custom_providers]]
@@ -38,25 +43,92 @@ display_name = "MyCorp"
 base_url = "https://llm.corp.example/v1"
 api_key_env = "MYCORP_API_KEY"
 model = "gpt-5-mini"
+models = ["gpt-5-mini", "gpt-5.4"]
 context_window = 256000   # optional; defaults to 128000 tokens
 ```
 
-`context_window` is the provider capability in tokens and drives the context
-size shown in the UI, automatic compaction, and preflight token checks. When
-omitted, custom providers retain the 128000-token default. The separate
-`context.max_context_tokens` setting remains an independent lower session
-budget.
+Set the corresponding environment variable before launching VT Code:
 
-New fields and model profiles
+```bash
+export MYCORP_API_KEY="..."
+```
 
-- `api_format` (provider-level): an optional hint describing the provider's preferred API shape. Accepted values are `auto`, `openai-chat`, `openai-responses`, and `anthropic-messages`. When omitted VT Code preserves legacy behavior and will attempt to autodetect; an explicit value is honored and VT Code will not silently fall back to a different format.
+Secure credentials are scoped by the custom provider `name` and `api_key_env`.
+They are not shared with another configured endpoint that happens to reuse the
+same environment variable.
 
-- Per-provider capability defaults: custom providers may set fields such as `supports_tools`, `supports_vision`, or `supports_structured_output` to conservative values used when explicit model metadata is unavailable.
+### Capability settings
 
-- Per-model profiles: define sparse runtime overrides for specific model identifiers under `custom_providers.profiles."<model-id>"`. Profiles do not add models to the picker — they only tweak runtime defaults and capabilities for an existing model identifier. See the Configuration guide for examples and precedence rules.
+`context_window` declares the provider capability in tokens. It controls the
+context size shown in the UI, automatic compaction, and preflight token checks.
+When omitted, the provider uses the default context window. The separate
+`context.max_context_tokens` setting can impose a lower session budget.
+
+Use `api_format` when the endpoint needs an explicit request shape. Accepted
+values are `auto`, `openai-chat`, `openai-responses`, and
+`anthropic-messages`. Omitting the field preserves legacy autodetection. An
+explicit value is honored and does not silently fall back to another format.
+
+Provider-level capability defaults are useful when the endpoint does not
+return model metadata. Supported defaults include:
+
+- `supports_tools`
+- `supports_reasoning`
+- `supports_reasoning_effort`
+- `supports_vision`
+- `supports_structured_output`
+- `supports_parallel_tool_calls`
+- `supports_context_caching`
+- `supports_responses_compaction`
+- `supports_context_edits`
+
+### Model profiles
+
+Use sparse profiles for model-specific overrides:
+
+```toml
+[custom_providers.profiles."gpt-5.4"]
+api_format = "openai-responses"
+context_window = 131072
+supports_tools = true
+supports_vision = false
+supports_structured_output = true
+supports_parallel_tool_calls = true
+```
+
+Profiles apply only to an existing model identifier. They do not add models to
+the picker. Use `model` or `models` on the provider entry to control model
+availability.
+
+When VT Code resolves a model's runtime shape, values are applied in this
+order, from highest to lowest priority:
+
+1. The matching per-model profile
+2. Provider-level capability defaults
+3. Metadata returned by the provider
+4. Conservative built-in defaults
+
+An explicit boolean `false` is honored at every level. Omitting `api_format`
+preserves autodetection, while an explicit value selects that API shape.
+
+### Validate the configuration
+
+List built-in and custom providers, then open the provider configuration flow:
+
+```bash
+vtcode models list
+vtcode models config
+```
+
+Run a simple request after configuration:
+
+```bash
+vtcode ask "Summarize this repository"
+```
 
 Worked examples: [Atlas Cloud](./atlascloud.md) and [OmniRoute](./omniroute.md).
-See the [Configuration guide](../config/config.md#custom_providers) for full details.
+See the [Configuration guide](../config/config.md#custom_providers) for the
+complete field reference and precedence rules.
 
 ## Google Gemini
 
