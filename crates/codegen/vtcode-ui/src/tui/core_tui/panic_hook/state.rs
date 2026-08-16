@@ -4,6 +4,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(crate) static TUI_INITIALIZED: AtomicBool = AtomicBool::new(false);
 pub(crate) static KEYBOARD_ENHANCEMENTS_PUSHED: AtomicBool = AtomicBool::new(false);
+/// Whether the TUI is currently running on the alternate screen buffer.
+///
+/// Tracks `UiSurfacePreference::Alternate`/`Auto` sessions so the canonical
+/// restore path knows whether it must clear the main screen explicitly
+/// (inline sessions draw directly on it) or whether leaving the alternate
+/// screen already restores it.
+pub(crate) static ALTERNATE_SCREEN_ACTIVE: AtomicBool = AtomicBool::new(false);
 pub(crate) static RESTORE_DONE: AtomicBool = AtomicBool::new(false);
 static DEBUG_MODE: AtomicBool = AtomicBool::new(cfg!(debug_assertions));
 pub(crate) static COLOR_EYRE_ENABLED: AtomicBool = AtomicBool::new(cfg!(debug_assertions));
@@ -77,6 +84,8 @@ pub(crate) fn app_metadata() -> AppMetadata {
 pub(crate) fn mark_tui_initialized() {
     TUI_INITIALIZED.store(true, Ordering::SeqCst);
     RESTORE_DONE.store(false, Ordering::SeqCst);
+    // Fresh session: alternate-screen state is set by the runner when it enters one.
+    ALTERNATE_SCREEN_ACTIVE.store(false, Ordering::SeqCst);
 }
 
 pub(crate) fn mark_tui_deinitialized() {
@@ -89,6 +98,14 @@ pub(crate) fn is_tui_initialized() -> bool {
 
 pub(crate) fn mark_keyboard_enhancements_pushed(pushed: bool) {
     KEYBOARD_ENHANCEMENTS_PUSHED.store(pushed, Ordering::SeqCst);
+}
+
+pub(crate) fn mark_alternate_screen_active(active: bool) {
+    ALTERNATE_SCREEN_ACTIVE.store(active, Ordering::SeqCst);
+}
+
+pub(crate) fn is_alternate_screen_active() -> bool {
+    ALTERNATE_SCREEN_ACTIVE.load(Ordering::SeqCst)
 }
 
 pub(crate) fn try_claim_restore() -> bool {

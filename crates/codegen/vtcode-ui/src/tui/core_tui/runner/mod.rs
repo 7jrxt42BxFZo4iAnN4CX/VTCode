@@ -267,6 +267,10 @@ where
     mode_restore_guard.state_mut().save_cursor_position(&mut stderr);
     if surface.use_alternate() {
         mode_restore_guard.state_mut().enter_alternate_screen(&mut stderr)?;
+        // Record the surface so the canonical restore path can skip the
+        // full-screen clear: leaving the alternate buffer already restores
+        // the main screen (see panic_hook::restore_tui).
+        crate::tui::core_tui::panic_hook::state::mark_alternate_screen_active(true);
     }
     mode_restore_guard
         .state_mut()
