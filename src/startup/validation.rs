@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use vtcode_core::config::loader::VTCodeConfig;
 use vtcode_core::config::validator::ConfigValidator;
+use vtcode_core::llm::factory::get_factory;
 use vtcode_core::prompts::system::measure_system_prompt_size;
 use vtcode_core::utils::path::canonicalize_workspace;
 
@@ -123,9 +124,42 @@ pub(super) fn validate_full_auto_configuration(config: &VTCodeConfig, workspace:
     Ok(())
 }
 
+/// Fail fast with a clear, actionable error when the resolved LLM provider is
+/// not a known built-in or configured custom provider. Without this, an invalid
+/// `--provider` value (or broken `[agent].provider` config) only surfaces deep
+/// inside session setup as an opaque "Failed to initialize provider client"
+/// report, after the terminal probe has already started.
+pub(super) fn validate_runtime_provider(config: &VTCodeConfig, provider: &str) -> Result<()> {
+    let provider_key = provider.trim();
+    if provider_key.is_empty() {
+        return Ok(());
+    }
+
+    let mut known: Vec<String> = {
+        let factory = get_factory()
+            .lock()
+            .map_err(|err| anyhow!("LLM factory lock poisoned while validating provider: {err}"))?;
+        factory.list_providers()
+    };
+    for custom in &config.custom_providers {
+        known.push(custom.name.trim().to_string());
+    }
+    for key in config.provider_overrides.keys() {
+        known.push(key.trim().to_string());
+    }
+    known.push(crate::codex_app_server::CODEX_PROVIDER.to_string());
+
+    if !known.iter().any(|candidate| candidate.eq_ignore_ascii_case(provider_key)) {
+        let mut available = known.iter().map(|candidate| candidate.to_ascii_lowercase()).collect::<Vec<_>>();
+        available.sort();
+        available.dedup();
+        bail!("Unknown provider '{provider_key}'. Available providers: {}", available.join(", "));
+    }
+    Ok(())
+}
+
 pub(super) fn resolve_workspace_path(workspace_arg: Option<PathBuf>) -> Result<PathBuf> {
     let cwd = std::env::current_dir().context("Failed to determine current working directory")?;
-
     let resolved = match workspace_arg {
         Some(path) if path.is_absolute() => path,
         Some(path) => cwd.join(path),
@@ -277,6 +311,59 @@ mod tests {
     use vtcode_commons::env_lock;
     use vtcode_config::McpProviderConfig;
     use vtcode_core::config::loader::ConfigBuilder;
+
+    #[test]
+    fn runtime_provider_validation_rejects_unknown_provider() {
+        let config = VTCodeConfig::default();
+        let error = validate_runtime_provider(&config, "merge-api").expect_err("unknown provider should fail");
+
+        let message = error.to_string();
+        assert!(message.contains("Unknown provider 'merge-api'"), "{message}");
+        assert!(message.contains("Available providers:"), "{message}");
+        assert!(message.contains("merge-gateway"), "{message}");
+        assert!(message.contains("openai"), "{message}");
+    }
+
+    #[test]
+    fn runtime_provider_validation_accepts_builtin_and_codex() {
+        let config = VTCodeConfig::default();
+        for provider in ["openai", "Merge-Gateway", "codex", "COPILOT"] {
+            validate_runtime_provider(&config, provider).expect("known provider should be accepted");
+        }
+    }
+
+    #[test]
+    fn runtime_provider_validation_accepts_configured_custom_provider() {
+        let mut config = VTCodeConfig::default();
+        config.custom_providers.push(vtcode_config::core::CustomProviderConfig {
+            name: "mycorp".to_string(),
+            display_name: "MyCorp".to_string(),
+            base_url: "https://llm.example/v1".to_string(),
+            context_window: None,
+            api_key_env: "MYCORP_API_KEY".to_string(),
+            auth: None,
+            model: "corp-model".to_string(),
+            models: Vec::new(),
+            ..vtcode_config::core::CustomProviderConfig::default()
+        });
+
+        validate_runtime_provider(&config, "mycorp").expect("configured custom provider should be accepted");
+    }
+
+    #[test]
+    fn runtime_provider_validation_accepts_provider_override_key() {
+        let mut config = VTCodeConfig::default();
+        config
+            .provider_overrides
+            .insert("corp-gateway".to_string(), vtcode_config::core::ProviderOverrideConfig::default());
+
+        validate_runtime_provider(&config, "corp-gateway").expect("override key should be accepted");
+    }
+
+    #[test]
+    fn runtime_provider_validation_accepts_blank_provider() {
+        validate_runtime_provider(&VTCodeConfig::default(), "  ").expect("blank provider should be a no-op");
+    }
 
     #[test]
     #[expect(clippy::panic_in_result_fn, reason = "test function, assertions are OK")]

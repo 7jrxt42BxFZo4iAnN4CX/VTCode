@@ -18,7 +18,10 @@ use config_loading::load_startup_config;
 pub(crate) use dependency_advisories::{SearchToolsBundleNotice, take_search_tools_bundle_notice};
 use resume::{resolve_session_resume, validate_resume_all_usage};
 use theme::determine_theme;
-use validation::{apply_cli_permission_overrides, validate_full_auto_configuration, validate_startup_configuration};
+use validation::{
+    apply_cli_permission_overrides, validate_full_auto_configuration, validate_runtime_provider,
+    validate_startup_configuration,
+};
 use vtcode_config::auth::{OpenAIChatGptAuthHandle, resolve_openai_auth};
 use vtcode_config::workspace_env::read_workspace_env_value;
 use vtcode_config::{OpenAIPreferredMethod, PromptCacheRetention};
@@ -121,6 +124,13 @@ impl StartupContext {
             )
             .await?
         };
+
+        // Fail fast on an unknown provider before the terminal probe / TUI
+        // starts, so an invalid `--provider` or broken `[agent].provider` yields
+        // a clean, actionable error instead of an opaque mid-session failure.
+        if command_uses_llm_provider(args.command.as_ref()) {
+            validate_runtime_provider(&config, &selection.provider)?;
+        }
 
         // --- Parallelized / gated startup fan-out -------------------------------
         // Everything below depends only on `config`/`args`/`selection` (already
@@ -648,6 +658,29 @@ fn command_skips_provider_auth(command: Option<&Commands>) -> bool {
                 | Commands::Update { .. }
                 | Commands::Dependencies { .. }
                 | Commands::Secret { .. }
+        )
+    )
+}
+
+/// Whether the command will initialize an LLM provider client, in which case
+/// the resolved provider must be validated during startup. Commands outside
+/// this set (e.g. `models`, `schema`, `man`) never build a provider client and
+/// must not be blocked by a stale invalid `[agent].provider`.
+fn command_uses_llm_provider(command: Option<&Commands>) -> bool {
+    matches!(
+        command,
+        None | Some(
+            Commands::Chat
+                | Commands::ChatVerbose
+                | Commands::Ask { .. }
+                | Commands::Exec { .. }
+                | Commands::Review(_)
+                | Commands::Benchmark { .. }
+                | Commands::Analyze { .. }
+                | Commands::Continue
+                | Commands::BackgroundSubagent(_)
+                | Commands::AgentClientProtocol { .. }
+                | Commands::AnthropicApi { .. }
         )
     )
 }

@@ -495,7 +495,7 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/providers/merge-gateway.md`
   - **Content**: Merge Gateway Integration
-  - **Topics**: Setup, Curated models, Configuration examples, Compatibility behavior, Troubleshooting
+  - **Topics**: Setup, Curated models, Configuration examples, Responses and catalog behavior, Troubleshooting
   - **User Questions**: "What can you tell me about Merge Gateway Integration?", "How does Setup work?", "How does Curated models work?"
 
 - **File**: `docs/providers/merge-gateway-quick-reference.md`

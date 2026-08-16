@@ -99,10 +99,22 @@ impl LLMFactory {
             });
         }
 
-        let factory_fn = self.providers.get(provider_name).ok_or_else(|| LLMError::InvalidRequest {
-            message: format!("Unknown provider: {provider_name}"),
-            metadata: None,
-        })?;
+        let factory_fn = self
+            .providers
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(provider_name))
+            .map(|(_, factory_fn)| factory_fn)
+            .ok_or_else(|| {
+                let mut available: Vec<&str> = self.providers.keys().map(String::as_str).collect();
+                available.sort_unstable();
+                LLMError::InvalidRequest {
+                    message: format!(
+                        "Unknown provider: {provider_name}. Available providers: {}",
+                        available.join(", ")
+                    ),
+                    metadata: None,
+                }
+            })?;
 
         Ok(factory_fn(config))
     }
@@ -977,5 +989,61 @@ mod tests {
             Err(error) => panic!("expected invalid request error, got {error:?}"),
             Ok(_) => panic!("unknown models should remain rejected"),
         }
+    }
+
+    #[test]
+    fn unknown_provider_error_lists_available_providers() {
+        let factory = LLMFactory::new();
+        let error = match factory.create_provider(
+            "merge-api",
+            ProviderConfig {
+                api_key: None,
+                openai_chatgpt_auth: None,
+                copilot_auth: None,
+                base_url: None,
+                model: None,
+                prompt_cache: None,
+                timeouts: None,
+                openai: None,
+                anthropic: None,
+                model_behavior: None,
+                workspace_root: None,
+            },
+            &[],
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("unknown provider should be rejected"),
+        };
+
+        let message = format!("{error:?}");
+        assert!(message.contains("Unknown provider: merge-api"), "{message}");
+        assert!(message.contains("Available providers:"), "{message}");
+        assert!(message.contains("merge-gateway"), "{message}");
+    }
+
+    #[test]
+    fn provider_lookup_is_case_insensitive() {
+        let factory = LLMFactory::new();
+        let provider = factory
+            .create_provider(
+                "OpenAI",
+                ProviderConfig {
+                    api_key: Some("test-key".to_string()),
+                    openai_chatgpt_auth: None,
+                    copilot_auth: None,
+                    base_url: None,
+                    model: Some(vtcode_config::constants::models::openai::DEFAULT_MODEL.to_string()),
+                    prompt_cache: None,
+                    timeouts: None,
+                    openai: None,
+                    anthropic: None,
+                    model_behavior: None,
+                    workspace_root: None,
+                },
+                &[],
+            )
+            .expect("provider lookup should be case-insensitive");
+
+        assert_eq!(provider.name(), "openai");
     }
 }
