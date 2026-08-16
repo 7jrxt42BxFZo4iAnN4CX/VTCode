@@ -355,54 +355,6 @@ pub fn render_instruction_markdown(
     section
 }
 
-pub fn render_instruction_summary_markdown(
-    title: &str,
-    segments: &[InstructionSegment],
-    truncated: bool,
-    project_root: &Path,
-    home_dir: Option<&Path>,
-    highlight_limit: usize,
-    truncation_note: &str,
-) -> String {
-    let mut section = String::with_capacity(1024);
-    let _ = writeln!(section, "## {title}\n");
-    section.push_str(
-        "Instructions are listed from lowest to highest precedence. When conflicts exist, defer to the later entries.\n\n",
-    );
-
-    if !segments.is_empty() {
-        section.push_str("### Instruction map\n");
-        for (index, segment) in segments.iter().enumerate() {
-            let _ = writeln!(
-                section,
-                "- {}. {} ({})",
-                index + 1,
-                format_instruction_path(&segment.source.path, project_root, home_dir),
-                instruction_source_label(&segment.source),
-            );
-        }
-
-        let highlights = extract_instruction_highlights(segments, highlight_limit);
-        if !highlights.is_empty() {
-            section.push_str("\n### Key points\n");
-            for highlight in highlights {
-                let _ = writeln!(section, "- {highlight}");
-            }
-        }
-
-        section.push_str(
-            "\n### On-demand loading\n- This prompt only indexes instruction files.\n- Full instruction files stay on disk and are not inlined here.\n- Use the available file-read tools to open a listed file when exact wording or deeper details matter.\n",
-        );
-    }
-
-    if truncated && !truncation_note.is_empty() {
-        let _ = writeln!(section, "\n_{truncation_note}_");
-    }
-
-    section.push('\n');
-    section
-}
-
 pub fn instruction_scope_label(scope: &InstructionScope) -> &'static str {
     match scope {
         InstructionScope::User => "user",
@@ -1500,33 +1452,6 @@ mod tests {
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].path.file_name().and_then(|value| value.to_str()).unwrap_or_default(), "AGENTS.md");
 
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn render_summary_uses_source_labels() -> Result<()> {
-        let segments = vec![InstructionSegment {
-            source: InstructionSource {
-                path: PathBuf::from("AGENTS.md"),
-                scope: InstructionScope::Workspace,
-                kind: InstructionSourceKind::Agents,
-                matched: false,
-            },
-            contents: "- first\n".to_string(),
-        }];
-
-        let rendered = render_instruction_summary_markdown(
-            "PROJECT DOCUMENTATION",
-            &segments,
-            false,
-            Path::new("/workspace"),
-            None,
-            4,
-            "",
-        );
-
-        assert!(rendered.contains("workspace AGENTS"));
-        assert!(rendered.contains("first"));
         Ok(())
     }
 

@@ -837,7 +837,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_default_live_prompt_budget_with_instruction_summary() {
+    async fn test_default_live_prompt_budget_with_instruction_inline() {
         use crate::project_doc::build_instruction_appendix_with_context;
 
         let workspace = tempfile::TempDir::new().expect("workspace");
@@ -853,6 +853,8 @@ mod tests {
             "---\npaths:\n  - \"**/*.rs\"\n---\n# Rust\n- keep changes surgical\n",
         )
         .expect("write rust rule");
+        std::fs::create_dir_all(workspace.path().join("src")).expect("src dir");
+        std::fs::write(workspace.path().join("src/lib.rs"), "pub fn main() {}\n").expect("write lib.rs");
 
         let mut config = VTCodeConfig::default();
         config.agent.include_temporal_context = false;
@@ -869,7 +871,9 @@ mod tests {
         let approx_tokens = prompt.len() / 4;
 
         assert!(prompt.contains("### Instruction map"));
-        assert!(prompt.contains("### On-demand loading"));
+        assert!(prompt.contains("# Rust"));
+        assert!(prompt.contains("- keep changes surgical"));
+        assert!(!prompt.contains("### On-demand loading"));
         assert!(approx_tokens <= 1250, "got ~{approx_tokens} tokens");
     }
 

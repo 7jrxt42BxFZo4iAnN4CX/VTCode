@@ -317,7 +317,7 @@ top_p = 0.9                # Top-P sampling parameter
 
 VT Code separates authored guidance from learned persistent memory.
 
-- Authored guidance automatically includes `~/.vtcode/AGENTS.md`, project `AGENTS.md`, project `.vtcode/rules/`, and any `agent.instruction_files` entries you configure.
+- Authored guidance automatically includes `~/.vtcode/AGENTS.md`, project `AGENTS.md`, project `.vtcode/rules/`, and any `agent.instruction_files` entries you configure. The full content of these files is inlined into the prompt up to `agent.instruction_max_bytes` (default 16384); files that exceed the budget are truncated with a notice in the prompt.
 - Persistent memory is a per-repository memory store summarized into a compact startup section after authored guidance.
 
 ### Instruction discovery controls

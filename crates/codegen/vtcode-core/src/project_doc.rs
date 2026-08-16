@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::instructions::{
     InstructionBundle, InstructionDiscoveryOptions, InstructionSegment, extract_instruction_highlights,
-    read_instruction_bundle, render_instruction_summary_markdown,
+    read_instruction_bundle, render_instruction_markdown,
 };
 use crate::persistent_memory::{
     MEMORY_FILENAME, MEMORY_SUMMARY_FILENAME, PersistentMemoryExcerpt, extract_memory_highlights,
@@ -20,8 +20,7 @@ use vtcode_config::core::AgentConfig;
 pub const PROJECT_DOC_SEPARATOR: &str = "\n\n--- project-doc ---\n\n";
 pub const PERSISTENT_MEMORY_SEPARATOR: &str = "\n\n--- persistent-memory ---\n\n";
 const PROJECT_DOC_SUMMARY_TITLE: &str = "PROJECT DOCUMENTATION";
-const PROJECT_DOC_TRUNCATION_NOTE: &str =
-    "Some instruction files exceeded the configured prompt budget and were indexed instead of fully inlined.";
+const PROJECT_DOC_TRUNCATION_NOTE: &str = "Some instruction files exceeded the configured prompt budget (agent.instruction_max_bytes) and were truncated; raise the budget to inline them in full.";
 const PERSISTENT_MEMORY_TRUNCATION_NOTE: &str =
     "Persistent memory was truncated to the configured startup excerpt budget.";
 const PERSISTENT_MEMORY_HIGHLIGHT_LIMIT: usize = 3;
@@ -202,7 +201,7 @@ pub fn render_instruction_appendix(
         }
 
         section.push_str(
-            render_instruction_summary_markdown(
+            render_instruction_markdown(
                 PROJECT_DOC_SUMMARY_TITLE,
                 &bundle.segments,
                 bundle.truncated,
@@ -436,7 +435,8 @@ mod tests {
 
         assert!(appendix.contains("## PROJECT DOCUMENTATION"));
         assert!(appendix.contains("### Instruction map"));
-        assert!(appendix.contains("### On-demand loading"));
+        assert!(appendix.contains("- Root summary"));
+        assert!(!appendix.contains("This detail should stay out"));
         assert!(appendix.contains("Some instruction files exceeded the configured prompt budget"));
     }
 
@@ -491,7 +491,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn renders_compact_instruction_appendix() {
+    async fn renders_instruction_appendix_inlining_full_content() {
         let repo = tempdir().expect("failed to unwrap");
         std::fs::write(repo.path().join(".git"), "gitdir: /tmp/git").expect("failed to unwrap");
         write_doc(repo.path(), "- Root summary\n\nFollow the repository-level guidance first.\n").expect("write doc");
@@ -507,10 +507,11 @@ mod tests {
         assert!(instructions.contains("### Instruction map"));
         assert!(instructions.contains("AGENTS.md (workspace AGENTS)"));
         assert!(instructions.contains("nested/sub/AGENTS.md (workspace AGENTS)"));
+        assert!(instructions.contains("### Key points"));
         assert!(instructions.contains("Root summary"));
         assert!(instructions.contains("Nested summary"));
-        assert!(instructions.contains("### Key points"));
-        assert!(instructions.contains("### On-demand loading"));
+        assert!(instructions.contains("Follow the repository-level guidance first."));
+        assert!(instructions.contains("Follow the nested guidance last."));
     }
 
     #[tokio::test]
@@ -588,7 +589,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn instruction_appendix_stays_summary_sized() {
+    async fn instruction_appendix_inlines_full_guidance() {
         let repo = tempdir().expect("repo");
         std::fs::write(repo.path().join(".git"), "gitdir: /tmp/git").expect("git marker");
         write_doc(
@@ -604,7 +605,8 @@ mod tests {
 
         assert!(appendix.contains("### Instruction map"));
         assert!(appendix.contains("### Key points"));
-        assert!(appendix.contains("### On-demand loading"));
-        assert!(approx_tokens < 140, "got ~{approx_tokens} tokens");
+        assert!(appendix.contains("avoid adding to vtcode-core"));
+        assert!(appendix.contains("start with docs/ARCHITECTURE.md"));
+        assert!(approx_tokens < 250, "got ~{approx_tokens} tokens");
     }
 }
