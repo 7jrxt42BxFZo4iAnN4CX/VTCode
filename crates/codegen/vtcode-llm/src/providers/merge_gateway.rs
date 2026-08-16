@@ -1487,6 +1487,21 @@ mod tests {
     }
 
     #[test]
+    fn native_payload_enables_response_streaming() {
+        let provider =
+            MergeGatewayProvider::with_model("test-key".to_string(), models::merge_gateway::XAI_GROK_4_6.to_string());
+        let request = LLMRequest {
+            model: models::merge_gateway::XAI_GROK_4_6.to_string(),
+            messages: vec![Message::user("hello".to_string())].into(),
+            ..Default::default()
+        };
+
+        let payload = provider.build_native_payload(&request, true).expect("payload");
+
+        assert_eq!(payload["stream"], true);
+    }
+
+    #[test]
     fn native_payload_sanitizes_gemini_incompatible_tool_schemas() {
         let provider = MergeGatewayProvider::with_model(
             "test-key".to_string(),

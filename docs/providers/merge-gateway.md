@@ -98,6 +98,19 @@ structured-output schemas, streaming, and the model selected by Merge. Tool
 results are sent as top-level `tool_result` input items, matching Merge's
 multi-turn contract.
 
+### Streaming
+
+VT Code's native `stream` and `stream_normalized` paths send
+`POST /v1/responses` with `"stream": true`. Merge returns SSE-style `data:`
+frames: native `response.stream` frames are cumulative snapshots,
+`response.done` is the successful terminal frame, and `response.error` is an
+in-band provider failure. Usage is emitted from the final response snapshot.
+
+The parser also accepts the frame kind from the JSON `object` field, which is
+the native Merge form, and resets the buffered snapshot when Merge emits a
+`fallback_restart` frame. See the [Merge streaming contract](https://docs.merge.dev/merge-gateway/features/embedded-routing)
+for the upstream response and error behavior.
+
 When the Merge provider is selected and `MERGE_GATEWAY_API_KEY` is available,
 VT Code fetches the authenticated `GET /v1/models` catalog with cursor
 pagination. Catalog data is cached per provider and reused when refresh fails;
