@@ -110,7 +110,7 @@ vtcode update                  # self-update
 
 ### User guides
 
-- [**Wiki**](https://github.com/vinhnx/VTCode/wiki): community wiki — getting started, configuration, providers, local models, skills, MCP, automation, security, and FAQ
+- [**Wiki**](https://github.com/vinhnx/VTCode/wiki): community wiki on getting started, configuration, providers, local models, skills, MCP, automation, security, and FAQ
 - [**Installation**](./docs/installation/README.md): installation methods, provider setup, and troubleshooting
 - [**Interactive TUI**](./docs/user-guide/interactive-mode.md): primary agents, slash commands (`/model`, `/review`, `/mcp`, `/skills`, `/theme`, `/compact`)
 - [**CLI commands**](./docs/user-guide/commands.md): command reference for interactive, headless, review, and automation workflows
