@@ -593,6 +593,11 @@ impl MergeGatewayProvider {
     }
 
     fn merge_event_name(raw_event: &str, payload: &Value) -> String {
+        for line in raw_event.lines() {
+            if let Some(event) = line.strip_prefix("event:") {
+                return event.trim().to_string();
+            }
+        }
         if let Some(event) = payload.get("event").and_then(Value::as_str) {
             return event.to_string();
         }
@@ -603,11 +608,6 @@ impl MergeGatewayProvider {
             && (event.starts_with("response.") || event == "error")
         {
             return event.to_string();
-        }
-        for line in raw_event.lines() {
-            if let Some(event) = line.strip_prefix("event:") {
-                return event.trim().to_string();
-            }
         }
         String::new()
     }
@@ -1829,6 +1829,81 @@ mod tests {
             "usage": {"input_tokens": 10, "output_tokens": 3, "total_tokens": 13}
         });
         let stream_body = [sse_data(first_response), sse_data(final_response)].concat();
+
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(stream_body),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut stream = provider
+            .stream_normalized(LLMRequest {
+                model: models::merge_gateway::XAI_GROK_4_6.to_string(),
+                messages: vec![Message::user("hello".to_string())].into(),
+                ..Default::default()
+            })
+            .await
+            .expect("normalized stream");
+
+        let mut events = Vec::new();
+        while let Some(event) = stream.next().await {
+            events.push(event.expect("stream event"));
+        }
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                NormalizedStreamEvent::TextDelta { delta },
+                NormalizedStreamEvent::Usage { usage },
+                NormalizedStreamEvent::Done { response }
+            ]
+            if delta == "complete response"
+                && usage.prompt_tokens == 10
+                && usage.completion_tokens == 3
+                && response.content.as_deref() == Some("complete response")
+        ));
+    }
+
+    #[tokio::test]
+    async fn native_stream_prefers_sse_event_name_over_payload_kind() {
+        let server = MockServer::start().await;
+        let provider = test_provider(&server.uri());
+
+        let first_response = json!({
+            "id": "resp_123",
+            "type": "response",
+            "object": "response",
+            "model": "xai/grok-4.6",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "complete response"}],
+                "finish_reason": null
+            }]
+        });
+        let final_response = json!({
+            "id": "resp_123",
+            "type": "response",
+            "object": "response",
+            "model": "xai/grok-4.6",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "complete response"}],
+                "finish_reason": "stop"
+            }],
+            "usage": {"input_tokens": 10, "output_tokens": 3, "total_tokens": 13}
+        });
+        let stream_body = [
+            sse("response.stream", first_response),
+            sse("response.done", final_response),
+        ]
+        .concat();
 
         Mock::given(method("POST"))
             .and(path("/responses"))
