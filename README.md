@@ -1,5 +1,3 @@
-# VT Code
-
 <p align="center">
   <img src="./resources/logo/vt_code_adaptive.svg" alt="VT Code" style="border-radius: 12px" width="300"/>
 </p>
