@@ -33,7 +33,7 @@ for model in models {
 Pre-load a model into memory (faster inference):
 
 ```rust
-client.load_model("lmstudio-community/Qwen3-8B").await?;
+client.load_model("lmstudio-community/openai-gpt-oss-20b").await?;
 ```
 
 ### Download a Model
@@ -41,7 +41,7 @@ client.load_model("lmstudio-community/Qwen3-8B").await?;
 Download using the `lms` CLI tool:
 
 ```rust
-client.download_model("lmstudio-community/Qwen3-8B").await?;
+client.download_model("lmstudio-community/openai-gpt-oss-20b").await?;
 ```
 
 ## API Reference

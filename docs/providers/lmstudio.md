@@ -53,7 +53,7 @@ Configure `vtcode.toml` in your workspace to point at LM Studio:
 ```toml
 [agent]
 provider = "lmstudio"                     # LM Studio provider
-default_model = "lmstudio-community/Qwen3-8B"
+default_model = "lmstudio-community/openai-gpt-oss-20b"
 
 [tools]
 default_policy = "prompt"

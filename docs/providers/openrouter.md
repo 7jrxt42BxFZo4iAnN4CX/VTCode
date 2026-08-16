@@ -30,7 +30,7 @@ Or use the lightweight MiMo V2.5:
 vtcode --provider openrouter --model xiaomi/mimo-v2.5 chat
 ```
 
-Both commands stream responses using the OpenRouter Responses API and support VT Code tooling out of the box.
+Both commands stream responses using the OpenAI-compatible Chat Completions API and support VT Code tooling out of the box.
 
 ## Meta Muse models
 

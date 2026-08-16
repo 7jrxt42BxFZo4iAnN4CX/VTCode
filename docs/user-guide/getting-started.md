@@ -58,15 +58,18 @@ Choose one of the supported LLM providers:
 
 -   **Moonshot (Kimi)**: `export MOONSHOT_API_KEY=your_key_here`
     -   Get from [Moonshot Platform](https://platform.moonshot.ai/docs)
-    -   Models: Kimi K2.7 Code, K2.6, K2.5
+    -   Models: Kimi K3, K2.7 Code, K2.6, K2.5
+    -   Default model: `kimi-k3`; see the [Moonshot provider guide](../providers/PROVIDER_GUIDES.md#moonshot-kimi)
 
 -   **StepFun**: `export STEPFUN_API_KEY=your_key_here`
     -   Get from [StepFun Platform](https://platform.stepfun.ai/docs)
     -   Models: Step-3.7-Flash
+    -   Default model: `step-3.7-flash`
 
 -   **MiniMax**: `export MINIMAX_API_KEY=your_key_here`
     -   Get from [MiniMax Platform](https://platform.minimax.io/docs)
     -   Models: MiniMax-M3, M2.7, M2.5
+    -   Default model: `MiniMax-M3`
 
 -   **NVIDIA NIM**: `export NVIDIA_API_KEY=your_key_here`
     -   Get from [NVIDIA Build](https://build.nvidia.com/)

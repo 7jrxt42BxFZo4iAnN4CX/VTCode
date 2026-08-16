@@ -10,8 +10,6 @@ VT Code includes a built-in `llamacpp` provider for local inference through [`ll
 - Dynamic model discovery through `/v1/models`
 - A starter catalog for:
   - `gpt-oss-20b`
-  - `qwen3.6-27b`
-  - `qwen3.6-35b-a3b`
   - `gemma-4-26b-a4b`
   - `gemma-4-e4b`
   - `step-3.5-flash`

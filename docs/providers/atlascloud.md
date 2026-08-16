@@ -22,7 +22,7 @@ Add Atlas Cloud to your workspace `vtcode.toml`:
 ```toml
 [agent]
 provider = "atlascloud"
-default_model = "deepseek-ai/DeepSeek-V3-0324"
+default_model = "deepseek-ai/deepseek-v4-flash"
 reasoning_effort = "low"
 
 [[custom_providers]]
@@ -30,14 +30,14 @@ name = "atlascloud"
 display_name = "Atlas Cloud"
 base_url = "https://api.atlascloud.ai/v1"
 api_key_env = "ATLASCLOUD_API_KEY"
-model = "deepseek-ai/DeepSeek-V3-0324"
+model = "deepseek-ai/deepseek-v4-flash"
 
 # Optional: declare the context window in tokens (default is 128000).
 # context_window = 256000
 
 # Optional: list available models for the model picker.
 # models = [
-#     "deepseek-ai/DeepSeek-V3-0324",
+#     "deepseek-ai/deepseek-v4-flash",
 #     "deepseek-ai/deepseek-r1-0528",
 #     "moonshotai/kimi-k2.7-code",
 #     "moonshotai/Kimi-K2-Instruct",
@@ -76,8 +76,8 @@ vtcode ask "Summarize this repository"
   The validated chat pool used in our rollout contains 50 cross-provider model
   IDs that have already been smoke-tested through Atlas Cloud's OpenAI-compatible
   route.
-- The recommended default is `deepseek-ai/DeepSeek-V3-0324`, because it is a
-  stable model slug that is already verified across multiple Atlas integrations.
+- The recommended default is `deepseek-ai/deepseek-v4-flash`, because it is a
+  fast and stable model slug that is already verified across multiple Atlas integrations.
 - Use the `models` field in `[[custom_providers]]` to populate the model picker
   with the exact slugs you have access to. Run `GET /v1/models` against your
   API key to see your full catalog.

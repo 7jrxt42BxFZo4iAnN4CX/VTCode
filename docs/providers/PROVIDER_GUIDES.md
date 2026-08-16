@@ -66,8 +66,7 @@ See the [Configuration guide](../config/config.md#custom_providers) for full det
 -   **Curated models:**
     -   `gemini-3.7-flash` — latest flash model, 1M context, tunable thinking (low/medium/high)
     -   `gemini-3.6-flash` — flash model with improved reasoning and efficiency, 1M context
-    -   `gemini-3.5-flash` — high-efficiency frontier flash model, 1M context
-    -   `gemini-3.1-pro-preview` — flagship Pro model, 1M context
+    -   `gemini-3.5-flash-lite` — cost-optimized lightweight flash model, 1M context
 -   **Features:** Streaming, tool calls, structured output, image/video/audio input, context caching, code execution, and configurable reasoning effort
 -   Configuration details are covered in the main [Getting Started guide](../user-guide/getting-started.md#api-requirements).
 -   Models and constants are defined in [`crates/codegen/vtcode-config/src/constants/models/google.rs`](../../crates/codegen/vtcode-config/src/constants/models/google.rs).
@@ -79,7 +78,7 @@ See the [Configuration guide](../config/config.md#custom_providers) for full det
     -   [Models catalog](https://developers.openai.com/api/docs/models)
     -   [Deprecations](https://developers.openai.com/api/docs/deprecations)
 - Follow the [Getting Started guide](../user-guide/getting-started.md#api-requirements) for API key setup.
--   See [`crates/codegen/vtcode-core/src/config/constants.rs`](../../crates/codegen/vtcode-core/src/config/constants.rs) for the latest supported models.
+-   See [`crates/codegen/vtcode-config/src/constants/models/openai.rs`](../../crates/codegen/vtcode-config/src/constants/models/openai.rs) for the latest supported models.
 -   **Authentication methods (in priority order):**
     1.  **ChatGPT subscription OAuth** — `vtcode login openai` or `/login openai`. No API key needed. VT Code performs an in-process PKCE browser login with full auto-refresh. The Codex CLI is **not** required. By default, VT Code reuses Codex's public OAuth client identity as an **unofficial compatibility mechanism** (OpenAI has not documented or guaranteed third-party reuse, and a public client ID is not authorization to reuse another tool's registration). Organizations with their own OpenAI-issued client pair can override via `VTCODE_OPENAI_OAUTH_CLIENT_ID` / `VTCODE_OPENAI_OAUTH_ORIGINATOR` (both must be set together).
     2.  **Codex auth.json fallback** — if you have Codex CLI installed and authenticated (`codex login`), VT Code automatically detects `~/.codex/auth.json` and uses it at runtime when no VT Code-managed session is stored. Validate with `vtcode login openai --from-codex`.
@@ -109,8 +108,22 @@ See the [Configuration guide](../config/config.md#custom_providers) for full det
 
 ## Anthropic
 
+-   **Provider key:** `anthropic` (env: `ANTHROPIC_API_KEY`)
+-   **Default model:** `claude-sonnet-5`
+-   **Curated models:** `claude-sonnet-5`, `claude-fable-5`, `claude-mythos-5`, `claude-opus-5`, `claude-opus-4-8`, `claude-sonnet-4-6`, and `claude-haiku-4-5`
 -   Key management and defaults mirror the Gemini/OpenAI flow in [Getting Started](../user-guide/getting-started.md#api-requirements).
--   Supported model IDs live in [`crates/codegen/vtcode-core/src/config/constants.rs`](../../crates/codegen/vtcode-core/src/config/constants.rs).
+-   Supported model IDs live in [`crates/codegen/vtcode-config/src/constants/models/anthropic.rs`](../../crates/codegen/vtcode-config/src/constants/models/anthropic.rs).
+
+## DeepSeek
+
+-   **Provider key:** `deepseek`
+-   **Authentication:** `DEEPSEEK_API_KEY` environment variable
+-   **Base URL:** `https://api.deepseek.com/v1`, override with `DEEPSEEK_BASE_URL`
+-   **Default model:** `deepseek-v4-pro`
+-   **Curated models:**
+    -   `deepseek-v4-pro` — high-performance reasoning model with advanced thinking capabilities
+    -   `deepseek-v4-flash` — official release with significantly enhanced agent capabilities for coding and tool use
+-   **Features:** Streaming, tool calls, structured output, and reasoning support
 
 ## xAI (Grok)
 
@@ -177,6 +190,7 @@ See the [Configuration guide](../config/config.md#custom_providers) for full det
 -   Default model: `xiaomi/mimo-v2.5-pro` (VT Code's default). Xiaomi MiMo V2.5 and V2.5 Pro are also available.
 -   For Meta Muse, prefer the official [`meta` provider](./meta.md) when direct Meta access is desired. OpenRouter's `meta/...` entries are separately namespaced marketplace routes.
 -   **Meta Muse models via OpenRouter:** `meta/muse-glimmer-30b` and `meta/muse-spark-1.2`
+-   **Curated picker catalog:** `openrouter/meta/muse-glimmer-30b`, `openrouter/meta/muse-spark-1.2`, `openrouter/deepseek/deepseek-chat`, `openrouter/moonshotai/kimi-k3`, `openrouter/moonshotai/kimi-k2.6`, `openrouter/moonshotai/kimi-k2.7-code`, `openrouter/qwen/qwen3.7-max`, `openrouter/tencent/hy3-preview`, `openrouter/x-ai/grok-build-0.1`, `openrouter/x-ai/grok-4.6`, `openrouter/xiaomi/mimo-v2.5`, `openrouter/xiaomi/mimo-v2.5-pro`, `openrouter/poolside/laguna-m.1:free`, `openrouter/poolside/laguna-s-2.1:free`, `openrouter/google/gemini-3.5-flash-lite`, `openrouter/google/gemini-3.6-flash`, `openrouter/google/gemini-3.7-flash`, and `openrouter/qwen/qwen3.8-27b`
 -   **Xiaomi MiMo models:**
     -   `xiaomi/mimo-v2.5-pro` — flagship agentic model, 1M context, reasoning + tool calls
     -   `xiaomi/mimo-v2.5` — omnimodal model, 1M context, reasoning + tool calls
@@ -214,7 +228,8 @@ See the [Configuration guide](../config/config.md#custom_providers) for full det
 -   **Guide:** [Local Inference Servers](./local-servers.md) (unified `/local` command)
 -   **Setup:** Install and run Ollama locally ([official install](https://ollama.com/download))
 -   **Configuration:** Local usage needs no key; set `OLLAMA_API_KEY` to access Ollama Cloud
--   **Default model:** Any locally available model (e.g., `llama3:8b`, `mistral:7b`, `qwen3:1.7b`)
+-   **Default model:** `gpt-oss:20b` (local); any locally available model works
+-   **Curated picker catalog:** `gpt-oss:20b`, `gemma4`, plus cloud models `deepseek-v4-flash:cloud`, `deepseek-v4-pro:cloud`, `nemotron-3-ultra:cloud`, `kimi-k3:cloud`, `minimax-m3:cloud`, and `glm-5.2:cloud` (also `gpt-oss:120b-cloud` via the OpenAI OSS support)
 -   **Cloud models:** Use IDs like `gpt-oss:120b-cloud` with `OLLAMA_BASE_URL=https://ollama.com`
 -   **Custom Models:** Use the `custom-ollama` option in the model picker to enter any locally or cloud-available model ID
 -   **Base URL:** Configurable via `OLLAMA_BASE_URL` environment variable (defaults to `http://localhost:11434`)
@@ -225,8 +240,8 @@ See the [Configuration guide](../config/config.md#custom_providers) for full det
 -   **Guide:** [LM Studio Provider Guide](./lmstudio.md)
 -   **Server:** Enable the OpenAI-compatible Developer server in LM Studio (defaults to `http://localhost:1234/v1`)
 -   **Environment:** Optional `LMSTUDIO_API_KEY` when auth is enabled; override host/port via `LMSTUDIO_BASE_URL`
--   **Default model:** `lmstudio-community/meta-llama-3.1-8b-instruct` (local inference)
--   **Catalog:** Also ships with `lmstudio-community/meta-llama-3-8b-instruct`, `lmstudio-community/qwen2.5-7b-instruct`, `lmstudio-community/gemma-2-2b-it`, `lmstudio-community/gemma-2-9b-it`, and `lmstudio-community/phi-3.1-mini-4k-instruct`, plus any custom GGUF models you expose
+-   **Default model:** `lmstudio-community/openai-gpt-oss-20b` (local inference)
+-   **Catalog:** Also ships with `lmstudio-community/meta-llama-3.1-8b-instruct` and `lmstudio-community/gemma-3-12b-it`, plus any custom GGUF models you expose
 -   **Features:** Streaming, tool calling, structured output, and reasoning effort passthrough via the shared OpenAI surface
 
 ## llama.cpp Local Server
@@ -235,7 +250,7 @@ See the [Configuration guide](../config/config.md#custom_providers) for full det
 -   **Server:** VT Code targets `llama-server` and defaults to `http://localhost:8080/v1`
 -   **Environment:** `LLAMACPP_BASE_URL` overrides the endpoint; `LLAMACPP_MODEL_PATH` enables VT Code-managed startup
 -   **Managed startup:** VT Code can launch `llama-server -m /path/to/model.gguf --port ...` when the endpoint is localhost and a GGUF path is configured
--   **Starter catalog:** `gpt-oss-20b`, `qwen3.6-27b`, `qwen3.6-35b-a3b`, `gemma-4-26b-a4b`, `gemma-4-e4b`, and `step-3.5-flash`
+-   **Starter catalog:** `gpt-oss-20b`, `gemma-4-26b-a4b`, `gemma-4-e4b`, and `step-3.5-flash`
 -   **Features:** Streaming, dynamic `/v1/models` discovery, local no-auth defaults, and OpenAI-compatible request handling
 
 ## Evolink Multi-Model Gateway
@@ -328,28 +343,58 @@ VT Code provides compatibility with the Anthropic Messages API to help connect e
 
 -   **Provider key:** `huggingface`
 -   **Official docs:** [HuggingFace Inference API](https://huggingface.co/docs/api-inference)
--   **Auth:** `HUGGINGFACE_API_KEY` environment variable
--   **Setup:** Set `HUGGINGFACE_API_KEY` from HuggingFace settings, then configure `provider = "huggingface"` in `vtcode.toml`
--   **Notable models:** `moonshotai/Kimi-K3:together` (2.8T flagship, 1M context, native vision via Together), `deepseek-ai/DeepSeek-V4-Pro:together`, `zai-org/GLM-5.2:novita`, `MiniMaxAI/MiniMax-M3:novita`
--   **Features:** Access to various models through HuggingFace's inference API, including models from Z.AI, DeepSeek, Moonshot, and other providers
+-   **Auth:** `HF_TOKEN` environment variable
+-   **Base URL:** `https://router.huggingface.co/v1`, override with `HUGGINGFACE_BASE_URL`
+-   **Setup:** Set `HF_TOKEN` from HuggingFace settings, then configure `provider = "huggingface"` in `vtcode.toml`
+-   **Default model:** `openai/gpt-oss-120b:huggingface`
+-   **Notable models:** `openai/gpt-oss-20b:huggingface`, `deepseek-ai/DeepSeek-R1`, `deepseek-ai/DeepSeek-V4-Pro:together`, `deepseek-ai/DeepSeek-V4-Pro:novita`, `zai-org/GLM-5.1:zai-org`, `zai-org/GLM-5.2:novita`, `moonshotai/Kimi-K3:together`, `moonshotai/Kimi-K2.6:novita`, `MiniMaxAI/MiniMax-M3:novita`, `MiniMaxAI/MiniMax-M2.7:novita`, `stepfun-ai/Step-3.5-Flash:featherless-ai`
+-   **Features:** Access to various models through HuggingFace's inference API, including models from OpenAI, DeepSeek, Z.AI, Moonshot, MiniMax, and other providers
 
 ## Poolside
 
 -   **Provider key:** `poolside`
 -   **Auth:** `POOLSIDE_API_KEY` environment variable
+-   **Base URL:** `https://api.poolsi.de/openai/v1`, override with `POOLSIDE_BASE_URL`
+-   **Default model:** `poolside/laguna-s-2.1`
+-   **Curated picker models:** `poolside/laguna-s-2.1`, `poolside/laguna-m.1`, `poolside/laguna-xs.2`
 -   **Setup:** Set `POOLSIDE_API_KEY` from Poolside platform, then configure `provider = "poolside"` in `vtcode.toml`
 
+## Mistral
+
+-   **Provider key:** `mistral`
+-   **Authentication:** `MISTRAL_API_KEY` environment variable
+-   **Base URL:** `https://api.mistral.ai/v1`, override with `MISTRAL_BASE_URL`
+-   **Default model:** `mistral-large-2512`
+-   **Curated picker models:** `mistral-large-2512`, `mistral-medium-3-5`, `mistral-small-2603`, `mistral-medium-2508`, `codestral-2508`
+-   **Features:** Streaming, tool calls, structured output, and reasoning support
+
+## Qwen
+
+-   **Provider key:** `qwen`
+-   **Authentication:** `QWEN_API_KEY` (alternate `DASHSCOPE_API_KEY`)
+-   **Base URL:** `https://dashscope.aliyuncs.com/compatible-mode/v1`, override with `QWEN_BASE_URL`
+-   **Default model:** `deepseek-v4-flash`
+-   **Curated picker models:** `deepseek-v4-flash`, `deepseek-v4-pro`, `glm-5.1`
+-   **Features:** Streaming, tool calls, and reasoning support
+
+## OpenCode Zen
+
+-   **Provider key:** `opencode-zen`
+-   **Authentication:** `OPENCODE_ZEN_API_KEY` environment variable
+-   **Base URL:** `https://opencode.ai/zen/v1`, override with `OPENCODE_ZEN_BASE_URL`
+-   **Default model:** `opencode/gpt-5.4`
+-   **Curated picker models:** `opencode/gpt-5.4`
+-   **Setup:** Set `OPENCODE_ZEN_API_KEY` from the [OpenCode Zen console](https://opencode.ai/docs/zen/), then configure `provider = "opencode-zen"` in `vtcode.toml`
+-   **Features:** Curated pay-as-you-go gateway over flagship models
+
+## OpenCode Go
+
+-   **Provider key:** `opencode-go`
+-   **Authentication:** `OPENCODE_GO_API_KEY` environment variable
+-   **Base URL:** `https://opencode.ai/zen/go/v1`, override with `OPENCODE_GO_BASE_URL`
+-   **Default model:** `opencode-go/glm-5.1`
+-   **Curated picker models:** `opencode-go/glm-5.1`, `opencode-go/glm-5.2`, `opencode-go/kimi-k2.7-code`, `opencode-go/kimi-k2.6`, `opencode-go/mimo-v2.5-pro`, `opencode-go/mimo-v2.5`, `opencode-go/minimax-m3`, `opencode-go/minimax-m2.7`, `opencode-go/qwen3.7-max`, `opencode-go/qwen3.7-plus`, `opencode-go/qwen3.6-plus`, `opencode-go/deepseek-v4-pro`, `opencode-go/deepseek-v4-flash`
+-   **Setup:** Set `OPENCODE_GO_API_KEY` from the [OpenCode Go console](https://opencode.ai/docs/go/), then configure `provider = "opencode-go"` in `vtcode.toml`
+-   **Features:** Subscription-based access to flagship open models for agentic coding
+
 > ℹ Additional provider-specific guides will be added as new integrations land in VT Code.
-
-## Next release (v0.139)
-
-Provider whitelisting will gain tighter first-run and `/model` picker integration in the next release. If you need to restrict available providers today, use `providers_whitelist` in `vtcode.toml` as documented above.
-
-## For the original poster
-
-If you landed here from an issue or support request:
-
-1. Confirm your `vtcode.toml` has the correct `provider` and (if required) the matching API key environment variable.
-2. Run `vtcode doctor` (or `vtcode check`) to validate config before opening the model picker.
-3. If the picker still shows the wrong provider, check `docs/config/CONFIG_FIELD_REFERENCE.md` for the latest `providers_whitelist` semantics and `[[custom_providers]]` shape.
-4. Ping the maintainer with your `vtcode.toml` (redacted) and the output of `vtcode doctor` so the fix can be verified quickly.

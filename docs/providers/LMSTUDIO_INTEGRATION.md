@@ -32,7 +32,7 @@ Set the provider in your config:
 # vtcode.toml
 [agent]
 provider = "lmstudio"
-default_model = "openai/gpt-oss-20b"
+default_model = "lmstudio-community/openai-gpt-oss-20b"
 ```
 
 Or via environment variable:

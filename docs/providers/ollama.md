@@ -64,26 +64,21 @@ vtcode
 # Direct CLI usage with custom model
 vtcode --provider ollama --model mistral:7b ask "Review this code"
 vtcode --provider ollama --model codellama:7b ask "Explain this function"
-vtcode --provider ollama --model gpt-oss-20b ask "Help with this implementation"
+vtcode --provider ollama --model gpt-oss:20b ask "Help with this implementation"
 vtcode --provider ollama --model gpt-oss:120b-cloud ask "Plan this large migration"
 ```
 
 The `/model` picker now lists the core Ollama catalog so you can choose them without typing IDs:
 
 - `gpt-oss:20b` (local)
-- `gpt-oss:120b-cloud`
+- `gemma4` (local)
 - `deepseek-v4-flash:cloud` (1M-token context)
-- `deepseek-v3.1:671b-cloud`
+- `deepseek-v4-pro:cloud`
+- `nemotron-3-ultra:cloud`
 - `kimi-k3:cloud`
-- `kimi-k2.6:cloud`
-- `kimi-k2.5:cloud`
-- `qwen3:1.7b`
-- `qwen3-coder:480b-cloud`
-- `glm-4.6:cloud`
-- `glm-4.7:cloud`
-- `minimax-m2.7:cloud`
-- `minimax-m2.5:cloud`
-- `laguna-xs.2` (local, 33B MoE with 3B activated — optimized for agentic coding)
+- `minimax-m3:cloud`
+- `glm-5.2:cloud`
+- `gpt-oss:120b-cloud` (via the OpenAI OSS support below)
 
 These entries appear beneath the Ollama provider section alongside the "Custom Ollama model" option.
 
@@ -91,18 +86,18 @@ These entries appear beneath the Ollama provider section alongside the "Custom O
 
 VT Code includes support for OpenAI's open-source models that can be run via Ollama locally or through the cloud preview:
 
-- `gpt-oss-20b`: Open-source 20B parameter model from OpenAI (local)
+- `gpt-oss:20b`: Open-source 20B parameter model from OpenAI (local)
 - `gpt-oss:120b-cloud`: Cloud-hosted 120B parameter model managed by Ollama
 
 To use these models:
 
 ```bash
 # Pull the model first (local or cloud)
-ollama pull gpt-oss-20b
+ollama pull gpt-oss:20b
 ollama pull gpt-oss:120b-cloud
 
 # Use in VT Code
-vtcode --provider ollama --model gpt-oss-20b ask "Code review this function"
+vtcode --provider ollama --model gpt-oss:20b ask "Code review this function"
 vtcode --provider ollama --model gpt-oss:120b-cloud ask "Assist with this architecture review"
 ```
 
