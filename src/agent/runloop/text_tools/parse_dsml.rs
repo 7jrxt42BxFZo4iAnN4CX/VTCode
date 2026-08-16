@@ -2,37 +2,175 @@ use serde_json::{Map, Value};
 
 use crate::agent::runloop::text_tools::parser::{ParseResult, ParsedToolCall, TextualToolParser};
 
-const DSML_TAG_PREFIX: &str = "<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}";
-const DSML_CLOSE_PREFIX: &str = "</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}";
-const DSML_INVOKE_OPEN: &str = "<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}invoke name=\"";
-const DSML_INVOKE_CLOSE: &str = "</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}invoke>";
-const DSML_PARAM_OPEN: &str = "<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}parameter";
-const DSML_PARAM_CLOSE: &str = "</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}parameter>";
+const DSML_MARKER: &str = "DSML";
 
-/// Strips DSML markup from text, removing all `<||DSML||...>` and `</||DSML||...>` tags
-/// while preserving non-tag content (including parameter values).
+#[derive(Debug, Clone, Copy)]
+struct DsmlTag<'a> {
+    start: usize,
+    end: usize,
+    closing: bool,
+    name: &'a str,
+    attributes: &'a str,
+}
+
+fn is_dsml_bar(ch: char) -> bool {
+    matches!(ch, '\u{ff5c}' | '|')
+}
+
+fn skip_dsml_whitespace(text: &str, mut cursor: usize) -> usize {
+    while let Some(ch) = text[cursor..].chars().next() {
+        if !ch.is_whitespace() {
+            break;
+        }
+        cursor += ch.len_utf8();
+    }
+    cursor
+}
+
+fn consume_dsml_bars(text: &str, mut cursor: usize) -> Option<usize> {
+    let mut count = 0;
+    loop {
+        cursor = skip_dsml_whitespace(text, cursor);
+        let Some(ch) = text[cursor..].chars().next() else {
+            break;
+        };
+        if !is_dsml_bar(ch) {
+            break;
+        }
+        count += 1;
+        cursor += ch.len_utf8();
+    }
+
+    (count > 0).then_some(cursor)
+}
+
+fn parse_dsml_tag_at(text: &str, start: usize) -> Option<DsmlTag<'_>> {
+    if !text.get(start..)?.starts_with('<') {
+        return None;
+    }
+
+    let mut cursor = start + '<'.len_utf8();
+    cursor = skip_dsml_whitespace(text, cursor);
+    let closing = text[cursor..].starts_with('/');
+    if closing {
+        cursor += '/'.len_utf8();
+    }
+
+    cursor = consume_dsml_bars(text, cursor)?;
+    cursor = skip_dsml_whitespace(text, cursor);
+    let marker_end = cursor.checked_add(DSML_MARKER.len())?;
+    if !text.get(cursor..marker_end)?.eq_ignore_ascii_case(DSML_MARKER) {
+        return None;
+    }
+    cursor = consume_dsml_bars(text, marker_end)?;
+    cursor = skip_dsml_whitespace(text, cursor);
+
+    let name_start = cursor;
+    while let Some(ch) = text[cursor..].chars().next() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-') {
+            cursor += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if name_start == cursor {
+        return None;
+    }
+
+    let name = &text[name_start..cursor];
+    let attributes_start = cursor;
+    let close_offset = text[attributes_start..].find('>')?;
+    let close_start = attributes_start + close_offset;
+
+    Some(DsmlTag {
+        start,
+        end: close_start + '>'.len_utf8(),
+        closing,
+        name,
+        attributes: &text[attributes_start..close_start],
+    })
+}
+
+fn find_dsml_tag<'a>(text: &'a str, from: usize, name: &str, closing: bool) -> Option<DsmlTag<'a>> {
+    let mut search_start = from;
+    while let Some(relative_start) = text[search_start..].find('<') {
+        let start = search_start + relative_start;
+        if let Some(tag) = parse_dsml_tag_at(text, start)
+            && tag.closing == closing
+            && tag.name.eq_ignore_ascii_case(name)
+        {
+            return Some(tag);
+        }
+        search_start = start + '<'.len_utf8();
+    }
+    None
+}
+
+fn find_dsml_attribute<'a>(attributes: &'a str, key: &str) -> Option<&'a str> {
+    let mut search_start = 0;
+    while let Some(relative_start) = attributes[search_start..].find(key) {
+        let key_start = search_start + relative_start;
+        let has_identifier_prefix = attributes[..key_start]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'));
+        if has_identifier_prefix {
+            search_start = key_start + key.len();
+            continue;
+        }
+
+        let mut cursor = skip_dsml_whitespace(attributes, key_start + key.len());
+        if !attributes[cursor..].starts_with('=') {
+            search_start = key_start + key.len();
+            continue;
+        }
+        cursor += '='.len_utf8();
+        cursor = skip_dsml_whitespace(attributes, cursor);
+        let quote = attributes[cursor..].chars().next()?;
+        if quote != '"' && quote != '\'' {
+            return None;
+        }
+        let value_start = cursor + quote.len_utf8();
+        let value_end = attributes[value_start..].find(quote)?;
+        return Some(&attributes[value_start..value_start + value_end]);
+    }
+    None
+}
+
+/// Strips DSML markup from text, including tokenized variants with whitespace
+/// around the separator bars, while preserving non-tag content (including
+/// parameter values).
 pub(crate) fn strip_dsml_markup(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    let open_prefix = DSML_TAG_PREFIX;
-    let close_prefix = DSML_CLOSE_PREFIX;
-    let open_bytes = open_prefix.as_bytes();
-    let close_bytes = close_prefix.as_bytes();
+    let mut cursor = 0;
 
-    while !rest.is_empty() {
-        let rest_bytes = rest.as_bytes();
-        if rest_bytes.starts_with(open_bytes) || rest_bytes.starts_with(close_bytes) {
-            let Some(gt) = rest.find('>') else {
-                break;
-            };
-            rest = &rest[gt + 1..];
-        } else if let Some(ch) = rest.chars().next() {
+    while cursor < text.len() {
+        if text.as_bytes()[cursor] == b'<'
+            && let Some(tag) = parse_dsml_tag_at(text, cursor)
+        {
+            cursor = tag.end;
+            continue;
+        }
+
+        if let Some(ch) = text[cursor..].chars().next() {
             out.push(ch);
-            rest = &rest[ch.len_utf8()..];
+            cursor += ch.len_utf8();
         }
     }
 
     out
+}
+
+pub(crate) fn contains_dsml_markup(text: &str) -> bool {
+    let mut search_start = 0;
+    while let Some(relative_start) = text[search_start..].find('<') {
+        let start = search_start + relative_start;
+        if parse_dsml_tag_at(text, start).is_some() {
+            return true;
+        }
+        search_start = start + '<'.len_utf8();
+    }
+    false
 }
 
 /// Public wrapper for tests
@@ -43,40 +181,24 @@ fn parse_dsml_tool_call(text: &str) -> Option<(String, Value)> {
 
 #[cfg_attr(feature = "profiling", hotpath::measure)]
 fn parse_dsml_tool_call_raw(text: &str) -> Option<(String, Value)> {
-    let invoke_start = text.find(DSML_INVOKE_OPEN)?;
-    let after_prefix = &text[invoke_start + DSML_INVOKE_OPEN.len()..];
-
-    let name_end = after_prefix.find('"')?;
-    let name = after_prefix[..name_end].trim().to_string();
+    let invoke = find_dsml_tag(text, 0, "invoke", false)?;
+    let name = find_dsml_attribute(invoke.attributes, "name")?.trim().to_string();
     if name.is_empty() {
         return None;
     }
 
-    let after_name = &after_prefix[name_end + 1..];
-    let tag_close = after_name.find('>')?;
-    let rest = &after_name[tag_close + 1..];
-
-    let content_end = rest.find(DSML_INVOKE_CLOSE)?;
-    let content = &rest[..content_end];
+    let invoke_close = find_dsml_tag(text, invoke.end, "invoke", true)?;
+    let content = &text[invoke.end..invoke_close.start];
 
     let mut object = Map::new();
-    let mut remaining = content;
+    let mut search_start = 0;
 
-    while let Some(param_start) = remaining.find(DSML_PARAM_OPEN) {
-        let after_tag = &remaining[param_start + DSML_PARAM_OPEN.len()..];
-
-        let name_keyword = after_tag.find("name=\"")?;
-        let name_content = &after_tag[name_keyword + "name=\"".len()..];
-        let name_end = name_content.find('"')?;
-        let param_name = name_content[..name_end].trim().to_string();
-
-        let after_param_name = &name_content[name_end + 1..];
-        let gt_pos = after_param_name.find('>')?;
-        let is_string = after_param_name[..gt_pos].contains("string=\"true\"");
-
-        let after_gt = &after_param_name[gt_pos + 1..];
-        let value_end = after_gt.find(DSML_PARAM_CLOSE)?;
-        let raw_value = after_gt[..value_end].trim();
+    while let Some(param) = find_dsml_tag(content, search_start, "parameter", false) {
+        let param_close = find_dsml_tag(content, param.end, "parameter", true)?;
+        let param_name = find_dsml_attribute(param.attributes, "name")?.trim().to_string();
+        let is_string =
+            find_dsml_attribute(param.attributes, "string").is_some_and(|value| value.eq_ignore_ascii_case("true"));
+        let raw_value = content[param.end..param_close.start].trim();
 
         let value = if is_string {
             Value::String(raw_value.to_string())
@@ -85,18 +207,7 @@ fn parse_dsml_tool_call_raw(text: &str) -> Option<(String, Value)> {
         };
 
         object.insert(param_name, value);
-
-        let consumed = param_start
-            + DSML_PARAM_OPEN.len()
-            + name_keyword
-            + "name=\"".len()
-            + name_end
-            + 1
-            + gt_pos
-            + 1
-            + value_end
-            + DSML_PARAM_CLOSE.len();
-        remaining = &remaining[consumed..];
+        search_start = param_close.end;
     }
 
     if object.is_empty() {
@@ -108,18 +219,13 @@ fn parse_dsml_tool_call_raw(text: &str) -> Option<(String, Value)> {
 
 /// Collects DSML invoke regions for stripping.
 pub(super) fn collect_dsml_regions(text: &str, regions: &mut Vec<(usize, usize)>) {
-    let mut search_start = 0usize;
-    while let Some(relative_start) = text[search_start..].find(DSML_INVOKE_OPEN) {
-        let start = search_start + relative_start;
-        let content_start = start + DSML_INVOKE_OPEN.len();
-        let end = text[content_start..]
-            .find(DSML_INVOKE_CLOSE)
-            .map(|idx| content_start + idx + DSML_INVOKE_CLOSE.len())
-            .unwrap_or(text.len());
-        if start < end && end <= text.len() {
-            regions.push((start, end));
+    let mut search_start = 0;
+    while let Some(invoke) = find_dsml_tag(text, search_start, "invoke", false) {
+        let end = find_dsml_tag(text, invoke.end, "invoke", true).map_or(text.len(), |close| close.end);
+        if invoke.start < end {
+            regions.push((invoke.start, end));
         }
-        search_start = end.max(content_start);
+        search_start = end.max(invoke.end);
     }
 }
 
@@ -183,6 +289,20 @@ mod tests {
         let (name, args) = parse_dsml_tool_call(text).expect("should parse");
         assert_eq!(name, "read_file");
         assert_eq!(args["path"], Value::String("/tmp/foo.txt".to_string()));
+    }
+
+    #[test]
+    fn parses_dsml_with_whitespace_between_special_token_bars() {
+        let text = concat!(
+            "<\u{ff5c} \u{ff5c} DSML\u{ff5c} \u{ff5c} invoke name=\"exec_command\">\n",
+            "<\u{ff5c} \u{ff5c} DSML\u{ff5c} \u{ff5c} parameter name=\"cmd\" string=\"true\">true</\u{ff5c} \u{ff5c} DSML\u{ff5c} \u{ff5c} parameter>\n",
+            "</\u{ff5c} \u{ff5c} DSML\u{ff5c} \u{ff5c} invoke>",
+        );
+
+        let (name, args) = parse_dsml_tool_call(text).expect("spaced DSML should parse");
+        assert_eq!(name, "exec_command");
+        assert_eq!(args["cmd"], Value::String("true".to_string()));
+        assert!(contains_dsml_markup(text));
     }
 
     #[test]
@@ -267,6 +387,24 @@ mod tests {
         assert!(result.contains("Here is my synthesis."));
         assert!(result.contains("The key finding is..."));
         assert!(!result.contains("DSML"));
+    }
+
+    #[test]
+    fn strip_dsml_removes_spaced_special_token_tags() {
+        let text = concat!(
+            "Before.\n",
+            "<\u{ff5c} \u{ff5c} DSML\u{ff5c} \u{ff5c} invoke name=\"read_file\">\n",
+            "<\u{ff5c} \u{ff5c} DSML\u{ff5c} \u{ff5c} parameter name=\"path\" string=\"true\">README.md</\u{ff5c} \u{ff5c} DSML\u{ff5c} \u{ff5c} parameter>\n",
+            "</\u{ff5c} \u{ff5c} DSML\u{ff5c} \u{ff5c} invoke>\n",
+            "After.",
+        );
+
+        let result = strip_dsml_markup(text);
+        assert!(result.contains("Before."));
+        assert!(result.contains("README.md"));
+        assert!(result.contains("After."));
+        assert!(!result.contains("DSML"));
+        assert!(!contains_dsml_markup(&result));
     }
 
     #[test]

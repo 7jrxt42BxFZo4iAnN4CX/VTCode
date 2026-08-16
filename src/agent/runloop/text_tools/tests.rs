@@ -39,6 +39,13 @@ fn pseudo_markers_detect_tools_call_dialect() {
 }
 
 #[test]
+fn pseudo_markers_detect_spaced_dsml_dialect() {
+    assert!(contains_pseudo_tool_call_markers(
+        "<\u{ff5c} \u{ff5c} DSML\u{ff5c} \u{ff5c} invoke name=\"exec_command\">...</\u{ff5c} \u{ff5c} DSML\u{ff5c} \u{ff5c} invoke>"
+    ));
+}
+
+#[test]
 fn pseudo_markers_detect_closing_tool_call_tag_alone() {
     assert!(contains_pseudo_tool_call_markers("</tool_call>"));
 }
@@ -406,6 +413,23 @@ Please review the summary."#;
     assert!(stripped.contains("Please review the summary."));
     assert!(!stripped.contains("<invoke"));
     assert!(detect_textual_tool_call(&stripped).is_none());
+}
+
+#[test]
+fn test_strip_textual_tool_call_regions_removes_spaced_dsml_markup() {
+    let message = concat!(
+        "Researching the launch flow.\n",
+        "<\u{ff5c} \u{ff5c} DSML\u{ff5c} \u{ff5c} invoke name=\"exec_command\">\n",
+        "<\u{ff5c} \u{ff5c} DSML\u{ff5c} \u{ff5c} parameter name=\"cmd\" string=\"true\">true</\u{ff5c} \u{ff5c} DSML\u{ff5c} \u{ff5c} parameter>\n",
+        "</\u{ff5c} \u{ff5c} DSML\u{ff5c} \u{ff5c} invoke>\n",
+        "Now drafting the plan.",
+    );
+
+    let stripped = strip_textual_tool_call_regions(message);
+
+    assert!(stripped.contains("Researching the launch flow."));
+    assert!(stripped.contains("Now drafting the plan."));
+    assert!(!stripped.contains("DSML"));
 }
 
 #[test]

@@ -8,7 +8,7 @@ use crate::agent::runloop::text_tools::canonical::{
 use crate::agent::runloop::text_tools::parse_args::{find_matching_delimiter, parse_textual_arguments};
 use crate::agent::runloop::text_tools::parse_bracketed::BracketedToolParser;
 use crate::agent::runloop::text_tools::parse_channel::ChannelToolParser;
-use crate::agent::runloop::text_tools::parse_dsml::DsmlToolParser;
+use crate::agent::runloop::text_tools::parse_dsml::{DsmlToolParser, contains_dsml_markup, strip_dsml_markup};
 use crate::agent::runloop::text_tools::parse_structured::StructuredToolParser;
 use crate::agent::runloop::text_tools::parse_tagged::TaggedToolParser;
 use crate::agent::runloop::text_tools::parse_yaml::YamlToolParser;
@@ -70,7 +70,7 @@ pub(crate) fn contains_pseudo_tool_call_markers(text: &str) -> bool {
         "<minimax:tool_call>",
     ];
     let lowered = text.to_ascii_lowercase();
-    MARKERS.iter().any(|marker| lowered.contains(marker))
+    contains_dsml_markup(text) || MARKERS.iter().any(|marker| lowered.contains(marker))
 }
 
 pub(crate) fn strip_textual_tool_call_regions(text: &str) -> String {
@@ -101,7 +101,11 @@ pub(crate) fn strip_textual_tool_call_regions(text: &str) -> String {
     collect_pseudo_marker_regions(&lowered, "<parameter=", "</parameter", &mut regions);
 
     if regions.is_empty() {
-        return text.to_string();
+        return if contains_dsml_markup(text) {
+            strip_dsml_markup(text)
+        } else {
+            text.to_string()
+        };
     }
 
     regions.sort_unstable_by_key(|(start, end)| (*start, *end));
@@ -126,7 +130,11 @@ pub(crate) fn strip_textual_tool_call_regions(text: &str) -> String {
         cursor = end;
     }
     stripped.push_str(&text[cursor..]);
-    stripped
+    if contains_dsml_markup(&stripped) {
+        strip_dsml_markup(&stripped)
+    } else {
+        stripped
+    }
 }
 
 fn collect_enclosed_regions(text: &str, open_marker: &str, close_marker: &str, regions: &mut Vec<(usize, usize)>) {

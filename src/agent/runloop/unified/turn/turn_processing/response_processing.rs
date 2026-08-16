@@ -115,15 +115,6 @@ pub(crate) fn process_llm_response(
         tool_calls.clear();
     }
 
-    // Strip DSML markup from text before rendering to prevent raw tags
-    // from leaking into the user-visible output.
-    if let Some(ref text) = final_text
-        && (text.contains("<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}")
-            || text.contains("</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}"))
-    {
-        final_text = Some(crate::agent::runloop::text_tools::strip_dsml_markup(text));
-    }
-
     if allow_tool_calls
         && tool_calls.is_empty()
         && let Some(text) = final_text.as_deref()
@@ -156,6 +147,15 @@ pub(crate) fn process_llm_response(
             interpreted_textual_call = true;
             final_text = None;
         }
+    }
+
+    // Strip DSML markup only after textual tool-call detection. If cleanup runs
+    // first, a valid DSML call loses its tags and is rendered as raw argument
+    // text instead of being dispatched as a tool call.
+    if let Some(ref text) = final_text
+        && crate::agent::runloop::text_tools::contains_dsml_markup(text)
+    {
+        final_text = Some(crate::agent::runloop::text_tools::strip_dsml_markup(text));
     }
 
     if allow_tool_calls
@@ -706,6 +706,43 @@ mod tests {
                 assert_eq!(text, "run()");
             }
             _ => panic!("Expected textual invalid exec_command to stay a text response"),
+        }
+    }
+
+    #[test]
+    fn process_llm_response_parses_spaced_dsml_before_stripping_markup() {
+        let response = LLMResponse {
+            content: Some(concat!(
+                "<\u{ff5c} \u{ff5c} DSML\u{ff5c} \u{ff5c} invoke name=\"exec_command\">\n",
+                "<\u{ff5c} \u{ff5c} DSML\u{ff5c} \u{ff5c} parameter name=\"cmd\" string=\"true\">true</\u{ff5c} \u{ff5c} DSML\u{ff5c} \u{ff5c} parameter>\n",
+                "</\u{ff5c} \u{ff5c} DSML\u{ff5c} \u{ff5c} invoke>",
+            ).to_string()),
+            tool_calls: None,
+            model: "test".to_string(),
+            usage: None,
+            finish_reason: FinishReason::Stop,
+            reasoning: None,
+            reasoning_details: None,
+            tool_references: Vec::new(),
+            compaction: None,
+            request_id: None,
+            organization_id: None,
+        };
+
+        let mut renderer = AnsiRenderer::stdout();
+        let result = process_llm_response(&response, &mut renderer, 0, false, false, true, true, None, None)
+            .expect("processing should succeed");
+
+        match result {
+            TurnProcessingResult::ToolCalls { tool_calls, .. } => {
+                assert_eq!(tool_calls.len(), 1);
+                assert_eq!(tool_calls[0].tool_name(), tools::EXEC_COMMAND);
+                assert_eq!(tool_calls[0].args(), Some(&serde_json::json!({"cmd": "true", "action": "run"})));
+            }
+            TurnProcessingResult::TextResponse { text, .. } => {
+                panic!("spaced DSML leaked as text: {text}");
+            }
+            TurnProcessingResult::Empty => panic!("spaced DSML should produce a tool call"),
         }
     }
 
