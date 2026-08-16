@@ -115,6 +115,7 @@ pub(super) fn enable_terminal_modes(
             return Err(anyhow::anyhow!("failed to enable raw mode: {error}"));
         }
     }
+    crate::tui::ui::tui::panic_hook::mark_terminal_modified();
 
     if fullscreen.mouse_capture {
         match execute!(stderr, EnableMouseCapture) {

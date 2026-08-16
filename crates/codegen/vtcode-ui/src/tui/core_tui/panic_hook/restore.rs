@@ -63,6 +63,15 @@ pub fn restore_tui() -> io::Result<()> {
     }
 
     state::mark_tui_deinitialized();
+
+    // Never emit restore sequences when no component modified the terminal:
+    // error reports for non-TUI runs (failed startup, one-shot commands)
+    // would otherwise spray raw escape sequences before the message.
+    if !state::is_terminal_modified() {
+        return Ok(());
+    }
+    state::mark_terminal_restored();
+
     let mut first_error: Option<io::Error> = None;
 
     crate::tui::core_tui::runner::terminal_io::drain_terminal_events();
@@ -144,5 +153,45 @@ mod tests {
         assert!(state::is_alternate_screen_active());
         state::mark_tui_initialized();
         assert!(!state::is_alternate_screen_active(), "new TUI session must start inline");
+    }
+
+    #[test]
+    fn terminal_modified_flag_round_trip() {
+        state::mark_terminal_restored();
+        assert!(!state::is_terminal_modified());
+        state::mark_terminal_modified();
+        assert!(state::is_terminal_modified());
+        state::mark_terminal_restored();
+        assert!(!state::is_terminal_modified());
+    }
+
+    #[test]
+    fn new_tui_session_marks_terminal_modified() {
+        state::mark_terminal_restored();
+        assert!(!state::is_terminal_modified());
+        state::mark_tui_initialized();
+        assert!(state::is_terminal_modified(), "entering a TUI session must mark the terminal modified");
+    }
+
+    #[test]
+    fn restore_skips_emission_when_terminal_never_modified() {
+        state::RESTORE_DONE.store(false, Ordering::SeqCst);
+        state::TUI_INITIALIZED.store(false, Ordering::SeqCst);
+        state::mark_terminal_restored();
+
+        let result = restore_tui();
+        assert!(result.is_ok() || result.is_err());
+        assert!(
+            state::RESTORE_DONE.load(Ordering::SeqCst),
+            "restore must still be claimed so later calls stay no-ops"
+        );
+        assert!(!state::is_terminal_modified(), "unmodified terminal must stay unmodified");
+
+        // A modified terminal must still run the full restore and clear the flag.
+        state::RESTORE_DONE.store(false, Ordering::SeqCst);
+        state::mark_terminal_modified();
+        let result = restore_tui();
+        assert!(result.is_ok() || result.is_err());
+        assert!(!state::is_terminal_modified(), "restore must clear the modified flag");
     }
 }

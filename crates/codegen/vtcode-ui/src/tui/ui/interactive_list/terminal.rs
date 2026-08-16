@@ -43,6 +43,7 @@ impl TerminalModeGuard {
     pub(super) fn enable_raw_mode(&mut self) -> Result<()> {
         enable_raw_mode().with_context(|| format!("Failed to enable raw mode for {} selector", self.label))?;
         self.raw_mode_enabled = true;
+        crate::tui::ui::tui::panic_hook::mark_terminal_modified();
         Ok(())
     }
 
@@ -50,6 +51,7 @@ impl TerminalModeGuard {
         execute!(stderr, EnterAlternateScreen)
             .with_context(|| format!("Failed to enter alternate screen for {} selector", self.label))?;
         self.alternate_screen = true;
+        crate::tui::ui::tui::panic_hook::mark_terminal_modified();
         Ok(())
     }
 
@@ -97,7 +99,17 @@ impl TerminalModeGuard {
 
         terminal.backend_mut().flush().ok();
         io::stderr().flush().ok();
+        self.mark_restored_if_standalone();
         Ok(())
+    }
+
+    /// The selector restored the terminal itself. If it ran outside a TUI
+    /// session, nothing else will restore the terminal, so clear the global
+    /// modified flag to keep later error reports clean.
+    fn mark_restored_if_standalone(&self) {
+        if !crate::tui::ui::tui::panic_hook::is_tui_initialized() {
+            crate::tui::ui::tui::panic_hook::mark_terminal_restored();
+        }
     }
 }
 
@@ -135,5 +147,6 @@ impl Drop for TerminalModeGuard {
         }
 
         let _ = io::stderr().flush();
+        self.mark_restored_if_standalone();
     }
 }

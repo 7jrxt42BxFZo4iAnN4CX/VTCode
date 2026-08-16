@@ -83,6 +83,7 @@ impl AlternateScreenSession {
         // Enable raw mode
         enable_raw_mode().context("failed to enable raw mode for terminal app")?;
         session.original_state.raw_mode_enabled = true;
+        crate::tui::core_tui::panic_hook::mark_terminal_modified();
 
         // Enable bracketed paste (only if TTY)
         if is_tty && execute!(stdout, EnableBracketedPaste).is_ok() {
@@ -194,6 +195,13 @@ impl AlternateScreenSession {
         if let Err(e) = stdout.flush() {
             tracing::warn!(%e, "failed to flush stdout");
             errors.push(format!("flush stdout: {e}"));
+        }
+
+        // This session restored the terminal itself. If it ran outside a TUI
+        // session nothing else will restore it, so clear the global modified
+        // flag to keep later error reports clean.
+        if !crate::tui::core_tui::panic_hook::is_tui_initialized() {
+            crate::tui::core_tui::panic_hook::mark_terminal_restored();
         }
 
         if errors.is_empty() {

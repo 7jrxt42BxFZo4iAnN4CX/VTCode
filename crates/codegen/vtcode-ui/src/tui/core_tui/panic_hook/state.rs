@@ -3,6 +3,11 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(crate) static TUI_INITIALIZED: AtomicBool = AtomicBool::new(false);
+/// Whether any component has put the terminal into a non-default state
+/// (raw mode, alternate screen, bracketed paste, ...). The canonical restore
+/// path only emits restore sequences when this is set, so error reports for
+/// runs that never touched the terminal stay clean.
+pub(crate) static TERMINAL_MODIFIED: AtomicBool = AtomicBool::new(false);
 pub(crate) static KEYBOARD_ENHANCEMENTS_PUSHED: AtomicBool = AtomicBool::new(false);
 /// Whether the TUI is currently running on the alternate screen buffer.
 ///
@@ -86,6 +91,7 @@ pub(crate) fn mark_tui_initialized() {
     RESTORE_DONE.store(false, Ordering::SeqCst);
     // Fresh session: alternate-screen state is set by the runner when it enters one.
     ALTERNATE_SCREEN_ACTIVE.store(false, Ordering::SeqCst);
+    mark_terminal_modified();
 }
 
 pub(crate) fn mark_tui_deinitialized() {
@@ -94,6 +100,18 @@ pub(crate) fn mark_tui_deinitialized() {
 
 pub(crate) fn is_tui_initialized() -> bool {
     TUI_INITIALIZED.load(Ordering::SeqCst)
+}
+
+pub(crate) fn mark_terminal_modified() {
+    TERMINAL_MODIFIED.store(true, Ordering::SeqCst);
+}
+
+pub(crate) fn mark_terminal_restored() {
+    TERMINAL_MODIFIED.store(false, Ordering::SeqCst);
+}
+
+pub(crate) fn is_terminal_modified() -> bool {
+    TERMINAL_MODIFIED.load(Ordering::SeqCst)
 }
 
 pub(crate) fn mark_keyboard_enhancements_pushed(pushed: bool) {
