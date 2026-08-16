@@ -36,6 +36,8 @@ let server = vtcode_auth::start_auth_code_callback_server(OAuthProvider::OpenRou
 
 ## API Reference
 
+See [docs.rs/vtcode-auth](https://docs.rs/vtcode-auth) for full API documentation.
+
 | Type | Purpose |
 |------|---------|
 | `AuthConfig` | Top-level authentication configuration |
@@ -56,10 +58,6 @@ let server = vtcode_auth::start_auth_code_callback_server(OAuthProvider::OpenRou
 - `openai_chatgpt_oauth` — OpenAI ChatGPT OAuth session management
 - `openrouter_oauth` — OpenRouter OAuth token management
 - `pkce` — PKCE challenge generation
-
-## API reference
-
-See [docs.rs/vtcode-auth](https://docs.rs/vtcode-auth).
 
 ## Related docs
 

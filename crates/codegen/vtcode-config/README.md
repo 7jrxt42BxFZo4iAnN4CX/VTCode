@@ -83,5 +83,3 @@ Install a custom `ConfigDefaultsProvider` with
 or syntax highlighting defaults exposed by the loader.
 
 <!-- cargo-rdme end -->
-
-## Adding a Model

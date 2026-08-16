@@ -183,7 +183,7 @@ cargo uninstall vtcode
 npm uninstall -g @vinhnx/vtcode
 ```
 
-### Windows (PowerShell)
+### Windows (Uninstall)
 
 ```powershell
 Remove-Item "$env:LOCALAPPDATA\VT Code\vtcode.exe"
@@ -193,13 +193,13 @@ Remove-Item "C:\Program Files\VT Code\vtcode.exe"
 
 ## Installation Paths
 
-### macOS & Linux
+### macOS & Linux Paths
 
 -   `/usr/local/bin/vtcode` (standard)
 -   `/opt/local/bin/vtcode` (Homebrew ARM64)
 -   `~/.local/bin/vtcode` (user fallback)
 
-### Windows
+### Windows Paths
 
 -   `C:\Program Files\VT Code\vtcode.exe` (system-wide, requires admin)
 -   `%LOCALAPPDATA%\VT Code\vtcode.exe` (user-scoped)

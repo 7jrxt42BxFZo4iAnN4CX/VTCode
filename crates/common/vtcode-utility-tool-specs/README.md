@@ -31,6 +31,8 @@ let desc = with_semantic_anchor_guidance("Apply a unified diff");
 
 ## API Reference
 
+See [docs.rs/vtcode-utility-tool-specs](https://docs.rs/vtcode-utility-tool-specs) for full API documentation.
+
 ### Constants
 
 - `SEMANTIC_ANCHOR_GUIDANCE` – default guidance string for semantic anchors
@@ -71,10 +73,6 @@ Each returns a `serde_json::Value` representing a JSON Schema object:
 | `json_schema` | `JsonSchema`, `AdditionalProperties`, `parse_tool_input_schema` |
 | `mcp_tool` | `ParsedMcpTool`, `parse_mcp_tool` |
 | `responses_api` | `FreeformTool`, `FreeformToolFormat`, `ResponsesApiTool` |
-
-## API reference
-
-See [docs.rs/vtcode-utility-tool-specs](https://docs.rs/vtcode-utility-tool-specs).
 
 ## Dependencies
 

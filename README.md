@@ -1,3 +1,5 @@
+# VT Code
+
 <p align="center">
   <img src="./resources/logo/vt_code_adaptive.svg" alt="VT Code" style="border-radius: 12px" width="300"/>
 </p>
@@ -17,51 +19,87 @@
   <br><em>Secure, open, universal.</em>
 </p>
 
-VT Code is a Rust coding agent built for long-running autonomous workflows. It has OS-native sandboxing, multi-provider LLM support, open protocols, and extensible Skills.
+VT Code is an open-source Rust terminal coding agent for interactive and
+long-running autonomous workflows. It combines OS-native sandboxing,
+multi-provider LLM support, open protocols, and extensible Skills in one
+tool.
 
 ## Features
 
+### Runtime and coding
+
 - **Agent runtime**: interactive TUI, slash commands, streaming, `ask`/`exec` CLI, and session resume
 - **Coding tools**: safe file ops, [ripgrep](https://github.com/BurntSushi/ripgrep) search, [ast-grep](https://ast-grep.github.io/) outline symbol maps, fuzzy discovery, code intelligence, project indexing, and terminal execution
+
+### Extensibility and providers
+
 - **Extensibility**: [Agent Skills](https://agentskills.io), [Model Context Protocol](https://modelcontextprotocol.io/) MCP client/server, [Agent Plugins](https://agent-plugins.org) portable packages, lifecycle hooks, subagents, custom providers, and [Agent Client Protocol](https://agentclientprotocol.com) (ACP)
 - **Model providers**: 26+ LLM providers including Anthropic, OpenAI, Gemini, Meta AI (Muse), xAI, OpenRouter, Merge Gateway, NVIDIA NIM, **local inference via Ollama, LM Studio, and llama.cpp** (managed with the `/local` command), and more
+
+### Safety and protocols
+
 - **Safety**: restricted shell sandbox, tool guardrails, subprocess isolation, full audit logging, and per-workspace approval before lifecycle hooks defined in workspace configuration (`vtcode.toml` / `.vtcode` / agent-spec files) can run any shell command
 - **Provider governance**: `providers_whitelist` restricts which LLM providers VT Code can access, preventing accidental data leakage to unapproved endpoints
 - **Protocols**: Open Responses, Agent2Agent (A2A), ATIF, and Anthropic Messages API
+
+### Automation and planning
+
 - **Loop engineering**: worktree isolation for parallel agents, propose/verify sub-agent separation, durable loop state, and cost guardrails
 - **Planning workflow**: iterate on a build plan with `/plan` and the `plan` primary agent, then hand off to `build`/`auto` via a structured review gate
 
 ## Quick start
 
-Recommended: use one-liner for macOS/Linux (also installs ripgrep + ast-grep).
+### Install
 
-```yaml
+The native installer is recommended for macOS and Linux. It also installs the
+`ripgrep` and `ast-grep` search tools used by VT Code.
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/vinhnx/vtcode/main/scripts/install.sh | bash
 ```
 
-> Optional:
-> Install via homebrew
->
-> ```yaml
-> brew trust vinhnx/tap
-> brew install vinhnx/tap/vtcode
-> ```
+Other installation methods are documented in the
+[Installation Guide](./docs/installation/README.md).
 
-Scaffolds `vtcode.toml`, `.vtcode/`, and `AGENTS.md` in your project
+```bash
+# Homebrew
+brew trust vinhnx/tap
+brew install vinhnx/tap/vtcode
 
-```yaml
+# Cargo
+cargo install vtcode
+```
+
+### Initialize a workspace
+
+Run this from the project you want VT Code to work on:
+
+```bash
 vtcode init
 ```
 
-Launch VT Code
+This scaffolds `vtcode.toml`, `.vtcode/`, and `AGENTS.md`.
 
-```yaml
+### Configure a provider
+
+Set the API key for the provider you want to use. For example:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+See the [provider guides](./docs/providers/PROVIDER_GUIDES.md) for supported
+providers, local inference options, and authentication details.
+
+### Launch VT Code
+
+```bash
 vtcode
 ```
 
 ### Common commands
 
-```yaml
+```bash
 vtcode                         # interactive TUI
 vtcode init                    # scaffold project config + AGENTS.md
 vtcode ask "explain Rc vs Arc" # one-shot question
@@ -72,15 +110,25 @@ vtcode update                  # self-update
 
 ## Documentation
 
+### User guides
+
 - [**Wiki**](https://github.com/vinhnx/VTCode/wiki): community wiki — getting started, configuration, providers, local models, skills, MCP, automation, security, and FAQ
+- [**Installation**](./docs/installation/README.md): installation methods, provider setup, and troubleshooting
 - [**Interactive TUI**](./docs/user-guide/interactive-mode.md): primary agents, slash commands (`/model`, `/review`, `/mcp`, `/skills`, `/theme`, `/compact`)
+- [**CLI commands**](./docs/user-guide/commands.md): command reference for interactive, headless, review, and automation workflows
 - [**Full automation**](./docs/guides/full-automation.md): `--full-auto` CLI, plan-build-evaluate harness, subagents, and scheduled tasks
 - [**Providers**](./docs/providers/PROVIDER_GUIDES.md): setup guides for all 26+ providers
 - [**Configuration**](./docs/config/CONFIG_FIELD_REFERENCE.md): `vtcode.toml`, tool config, and lifecycle hooks
+
+### Integrations
+
 - [**Agent Skills**](./docs/skills/SKILLS_GUIDE.md): creating, loading, and sharing skills
 - [**Agent Plugins**](./docs/guides/agent-plugins.md): portable skill + MCP packages via `vtcode plugins`
 - [**MCP Integration**](./docs/guides/mcp-integration.md): client and server modes
 - [**Editor guides**](./docs/guides/zed-acp.md): Zed ACP, VS Code, and Claude Code
+
+### Operations and architecture
+
 - [**Safety**](./docs/security/SECURITY_MODEL.md): shell sandbox, security hardening, and threat model
 - [**Protocols**](./docs/protocols/OPEN_RESPONSES.md): Open Responses, ATIF, A2A, and Anthropic Messages API
 - [**Loop engineering**](./docs/project/PLAN-loop-engineering.md): worktree isolation, propose/verify, loop state, and cost guardrails
@@ -88,23 +136,44 @@ vtcode update                  # self-update
 
 ## Providers
 
-VT Code supports 26+ LLM providers out of the box, plus any custom API via `[[custom_providers]]`. Custom providers can declare their model capability with `context_window` (tokens), an optional `api_format` hint, and capability defaults such as `supports_tools` or `supports_vision`. `api_format` accepts `auto`, `openai-chat`, `openai-responses`, or `anthropic-messages`; when omitted VT Code preserves legacy autodetection, while an explicit value is honored and will not silently fall back. Per-model sparse profiles under `custom_providers.profiles."<model-id>"` can override these defaults for an already-allowed model — profiles do not add models to the picker. The configured `context_window` still drives UI context sizing, compaction thresholds, and preflight token checks. Merge Gateway is a built-in OpenAI-compatible gateway with curated routes plus pass-through support for other explicit valid Merge `provider/model` IDs.
+VT Code supports 26+ built-in providers, local inference backends, and
+custom OpenAI-compatible endpoints.
 
-| Category            | Providers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+### Provider directory
+
+| Category            | Providers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Cloud LLMs**      | [Anthropic](./docs/providers/PROVIDER_GUIDES.md#anthropic-claude) · [OpenAI](./docs/providers/PROVIDER_GUIDES.md#openai-gpt) · [Gemini](./docs/providers/PROVIDER_GUIDES.md#google-gemini) · [Meta AI (Muse)](./docs/providers/PROVIDER_GUIDES.md#meta-ai) · [Z.AI](./docs/providers/PROVIDER_GUIDES.md#zai-zai) · [Moonshot (Kimi)](./docs/providers/PROVIDER_GUIDES.md#moonshot-kimi) · [StepFun](./docs/providers/PROVIDER_GUIDES.md#stepfun) · [MiniMax](./docs/providers/PROVIDER_GUIDES.md#minimax) · [Mistral](./docs/providers/PROVIDER_GUIDES.md#mistral) · [Qwen](./docs/providers/PROVIDER_GUIDES.md#qwen) |
-| **Foundations**     | [NVIDIA NIM](./docs/providers/PROVIDER_GUIDES.md#nvidia-nim) · [Xiaomi MiMo](./docs/providers/PROVIDER_GUIDES.md#xiaomi-mimo)                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| **Gateways**        | [OpenRouter](./docs/providers/PROVIDER_GUIDES.md#openrouter-marketplace) · [Merge Gateway](./docs/providers/PROVIDER_GUIDES.md#merge-gateway) · [Evolink](./docs/providers/PROVIDER_GUIDES.md#evolink-multi-model-gateway) · [HuggingFace](./docs/providers/PROVIDER_GUIDES.md#huggingface) · [Atlas Cloud](./docs/providers/PROVIDER_GUIDES.md#atlas-cloud) · [OmniRoute](./docs/providers/PROVIDER_GUIDES.md#omniroute)                                                                                                                                                                  |
-| **Local inference** | [Ollama](./docs/providers/PROVIDER_GUIDES.md#ollama-local--cloud-models) · [LM Studio](./docs/providers/PROVIDER_GUIDES.md#lm-studio-local-server) · [llama.cpp](./docs/providers/PROVIDER_GUIDES.md#llamacpp-local-server)                                                                                                                                                                                                                                                                                                                           |
-| **Other**           | [GitHub Copilot](./docs/providers/PROVIDER_GUIDES.md#github-copilot) · [Anthropic API Compat](./docs/providers/PROVIDER_GUIDES.md#anthropic-api-compatibility-server) · [Poolside](./docs/providers/PROVIDER_GUIDES.md#poolside)                                                                                                                                                                                                                                                                                                                      |
+| **Foundations**     | [NVIDIA NIM](./docs/providers/PROVIDER_GUIDES.md#nvidia-nim) · [Xiaomi MiMo](./docs/providers/PROVIDER_GUIDES.md#xiaomi-mimo)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| **Gateways**        | [OpenRouter](./docs/providers/PROVIDER_GUIDES.md#openrouter-marketplace) · [Merge Gateway](./docs/providers/PROVIDER_GUIDES.md#merge-gateway) · [Evolink](./docs/providers/PROVIDER_GUIDES.md#evolink-multi-model-gateway) · [HuggingFace](./docs/providers/PROVIDER_GUIDES.md#huggingface) · [Atlas Cloud](./docs/providers/PROVIDER_GUIDES.md#atlas-cloud) · [OmniRoute](./docs/providers/PROVIDER_GUIDES.md#omniroute)                                                                                                                                                                                             |
+| **Local inference** | [Ollama](./docs/providers/PROVIDER_GUIDES.md#ollama-local--cloud-models) · [LM Studio](./docs/providers/PROVIDER_GUIDES.md#lm-studio-local-server) · [llama.cpp](./docs/providers/PROVIDER_GUIDES.md#llamacpp-local-server)                                                                                                                                                                                                                                                                                                                                                                                           |
+| **Other**           | [GitHub Copilot](./docs/providers/PROVIDER_GUIDES.md#github-copilot) · [Anthropic API Compat](./docs/providers/PROVIDER_GUIDES.md#anthropic-api-compatibility-server) · [Poolside](./docs/providers/PROVIDER_GUIDES.md#poolside)                                                                                                                                                                                                                                                                                                                                                                                      |
 
-Read: [Provider Guides](./docs/providers/PROVIDER_GUIDES.md).
+Additional built-in providers include [DeepSeek](./docs/providers/PROVIDER_GUIDES.md#deepseek),
+[xAI](./docs/providers/PROVIDER_GUIDES.md#xai-grok), [OpenCode Zen](./docs/providers/PROVIDER_GUIDES.md#opencode-zen),
+and [OpenCode Go](./docs/providers/PROVIDER_GUIDES.md#opencode-go).
+
+See the [Provider Guides](./docs/providers/PROVIDER_GUIDES.md) for credentials,
+model defaults, API capabilities, and setup details.
+Merge Gateway is a built-in OpenAI-compatible gateway with curated routes and
+pass-through support for valid explicit `provider/model` IDs.
+
+### Configure a provider
+
+List available providers and configure one from the CLI:
+
+```bash
+vtcode models list
+vtcode models config
+```
+
+For a quick start, set the environment variable documented by your provider.
+OAuth-based providers can use their dedicated `vtcode login` command.
 
 ### Custom providers
 
-Use `[[custom_providers]]` to add any OpenAI-compatible endpoint (a private
-gateway, an aggregator such as Atlas Cloud or OmniRoute, or an internal
-inference cluster):
+Use `[[custom_providers]]` to add a private gateway, an aggregator such as
+Atlas Cloud or OmniRoute, or an internal inference cluster:
 
 ```toml
 [[custom_providers]]
@@ -116,37 +185,51 @@ model = "gpt-5-mini"
 context_window = 256000   # optional; defaults to 128000 tokens
 ```
 
-`context_window` is the provider capability in tokens. The separate
-`context.max_context_tokens` setting can still impose a lower session budget.
-See [Configuration](./docs/config/CONFIG_FIELD_REFERENCE.md) for the full field
-reference, the [custom providers section of the config guide](./docs/config/config.md#custom_providers)
-for the complete reference (including per-model `profiles` and `api_format`),
-and the [provider guides](./docs/providers/PROVIDER_GUIDES.md#custom-providers)
-for worked examples such as Atlas Cloud and OmniRoute. At the CLI, `vtcode models list`
-shows built-in and custom providers, and `vtcode models config` configures
-provider settings.
+Custom provider settings include:
+
+- `context_window`: capability size in tokens. It controls UI context sizing,
+  compaction thresholds, and preflight token checks.
+- `api_format`: optional value of `auto`, `openai-chat`, `openai-responses`, or
+  `anthropic-messages`. Omit it to preserve autodetection, or set it explicitly
+  to prevent fallback to another format.
+- Capability defaults such as `supports_tools` and `supports_vision`.
+- `profiles."<model-id>"`: sparse overrides for an existing model. Profiles do
+  not add models to the picker.
+
+The separate `context.max_context_tokens` setting can impose a lower session
+budget. See the [configuration reference](./docs/config/CONFIG_FIELD_REFERENCE.md),
+the [custom provider configuration](./docs/config/config.md#custom_providers),
+and the [worked provider examples](./docs/providers/PROVIDER_GUIDES.md#custom-providers).
 
 ### Provider governance
 
-Use `providers_whitelist` in `vtcode.toml` to restrict which LLM providers VT Code may access. This prevents accidental data leakage to unapproved endpoints in corporate or air-gapped environments.
+Use `providers_whitelist` in `vtcode.toml` to restrict access to approved
+providers. This helps prevent accidental data leakage in corporate or
+air-gapped environments.
 
 ```toml
 # vtcode.toml
 providers_whitelist = ["opencode-zen", "opencode-go", "gemini"]
 ```
 
-Leave it empty (the default) to allow all built-in and custom providers. See [Configuration](./docs/config/CONFIG_FIELD_REFERENCE.md) and [Getting Started](./docs/user-guide/getting-started.md) for full setup instructions.
+Leave it empty, the default, to allow all built-in and custom providers. See
+the [configuration reference](./docs/config/CONFIG_FIELD_REFERENCE.md) and
+[Getting Started](./docs/user-guide/getting-started.md) for setup instructions.
 
 ## Local models (experimental)
 
 Run models entirely on your machine for privacy, offline use, or zero token
 cost. VT Code supports three local backends, all managed from the TUI:
 
+### Supported backends
+
 - **Ollama** (`ollama serve`), best-supported local backend; auto-loads pulled models.
 - **LM Studio** (`lms server start`), OpenAI-compatible; select the loaded model in the picker.
 - **llama.cpp** (`llama-server -m model.gguf`), most automated; auto-starts via `LLAMACPP_MODEL_PATH`.
 
-```yaml
+### TUI commands
+
+```text
 /local                 # interactive local server manager
 /local start ollama   # start a specific backend
 /local troubleshoot   # diagnose connection / model issues
@@ -162,11 +245,15 @@ sizing, and a reliable-setup checklist. For the full `/local` reference, see
 
 ## Development
 
-```yaml
+### Build from source
+
+```bash
 git clone https://github.com/vinhnx/vtcode.git
 cd vtcode
 ./scripts/run-debug.sh
 ```
+
+### Workspace layout
 
 Rust stable, edition 2024, MSRV 1.93.0. Workspace of ~30 crates:
 
@@ -176,9 +263,13 @@ Rust stable, edition 2024, MSRV 1.93.0. Workspace of ~30 crates:
 | Common  | `vtcode-commons`, `vtcode-exec-events`, `vtcode-macros`, `vtcode-utility-tool-specs`                                                                                                                                         |
 | Codegen | `vtcode-core`, `vtcode-ui`, `vtcode-config`, `vtcode-llm`, `vtcode-skills`, `vtcode-safety`, `vtcode-a2a`, `vtcode-mcp`, `vtcode-auth`, `vtcode-acp`, `vtcode-indexer`, `vtcode-bash-runner`, `vtcode-memory`, `vtcode-eval` |
 
+### Library use
+
 Want to use VT Code as a library? See [`vtcode-battery-pack`](https://github.com/vinhnx/vtcode-battery-pack) for a curated set of crates you can add to your own Rust projects.
 
-```yaml
+### Quality checks
+
+```bash
 ./scripts/check-dev.sh  # fast quality gate (clippy, fmt, check)
 cargo nextest run        # parallel test runner
 ```
@@ -189,19 +280,21 @@ Read more about Rust Cargo Battery Pack in the [blog](https://smallcultfollowing
 
 VT Code is built by an open source community. Whether you're fixing bugs, improving docs, proposing features, reporting security issues, or shipping patches, all contributions are welcome.
 
-**Ways to contribute:**
+### Ways to contribute
 
-- **Security advisories**, responsible disclosure makes everyone safer. See the [Security Policy](https://github.com/vinhnx/VTCode/security/policy) for reporting guidelines.
-- **Bug fixes & patches**, small or large, every fix matters.
-- **Documentation**, guides, examples, and improvements help the whole ecosystem.
-- **Features & ideas**, open an issue or start a discussion.
-- **Code reviews & testing**, help keep the project healthy.
+- **Security advisories**: Responsible disclosure makes everyone safer. See the [Security Policy](https://github.com/vinhnx/VTCode/security/policy) for reporting guidelines.
+- **Bug fixes and patches**: Small or large, every fix matters.
+- **Documentation**: Guides, examples, and improvements help the whole ecosystem.
+- **Features and ideas**: Open an issue or start a discussion.
+- **Code reviews and testing**: Help keep the project healthy.
 
-**Getting started:**
+### Getting started
 
 - Browse [good first issues](https://github.com/vinhnx/vtcode/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22)
 - Read [CONTRIBUTING.md](./docs/CONTRIBUTING.md) for humans
 - Check [AGENTS.md](./AGENTS.md) for AI agents
+
+### Contributors
 
 Thank you to everyone who has contributed to VT Code, your work makes this project better for all of us.
 
@@ -228,6 +321,8 @@ Thank you to everyone who has contributed to VT Code, your work makes this proje
 </p>
 
 ## Support
+
+### Sponsorship
 
 VT Code is a labor of love built in my spare time. If it's helped you ship something or learn something, a [sponsorship](https://github.com/sponsors/vinhnx) would mean the world.
 

@@ -189,19 +189,19 @@ VT Code implements a **multi-layered security model** to protect against prompt 
 
 ## Quick Start Guide
 
-### For New Users
+### Quick Start for New Users
 
-1. **[Installation](../README.md#installation)** - Get VT Code running in minutes
+1. **[Installation](./installation/README.md)** - Get VT Code running in minutes
 2. **[Basic Configuration](./config/config.md)** - Set up your environment
 3. **[First Chat Session](../README.md#quick-start)** - Try interactive coding assistance
 
-### For Developers
+### Quick Start for Developers
 
 1. **[Architecture Overview](./ARCHITECTURE.md)** - Understand the system design
 2. **[Development Setup](./development/README.md)** - Configure development environment
 3. **[Decision Ledger](./context/context_engineering.md#4-decision-ledger-structured-note-taking)** - Learn decision tracking and context engineering
 
-### For Organizations
+### Quick Start for Organizations
 
 1. **[Security Implementation](./development/PROCESS_HARDENING.md)** - Enterprise security features
 2. **[Provider Integration](./providers/PROVIDER_GUIDES.md)** - LLM provider setup (Gemini, OpenAI, Anthropic, Meta AI, OpenRouter, Merge Gateway)
