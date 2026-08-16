@@ -2,6 +2,17 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.146.3 - 2026-08-16
+
+### Highlights
+#### Bug Fixes
+
+- Fail fast on unknown LLM provider (d0f24091) 
+- Emit terminal restore only when the terminal was modified (75a21c7b) 
+#### Features
+
+- Add native responses and catalog integration (b6f6e533) 
+### Other Changes
 ## 0.146.2 - 2026-08-16
 
 ### Highlights
