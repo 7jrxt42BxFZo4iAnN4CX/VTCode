@@ -80,7 +80,7 @@ Provider settings can make the endpoint and credential identity explicit:
 ```toml
 [agent.provider_settings.merge-gateway]
 name = "Merge Gateway"
-base_url = "https://api-gateway.merge.dev/v1/openai"
+base_url = "https://api-gateway.merge.dev/v1"
 env_key = "MERGE_GATEWAY_API_KEY"
 ```
 
@@ -127,9 +127,8 @@ VT Code reports normalized token usage through its existing response contract.
 - A model is rejected by Merge: confirm the exact vendor-prefixed route ID in
   Merge's catalog. VT Code deliberately does not reject unknown Merge IDs
   locally.
-- Reasoning output is absent: this is expected for the compatibility adapter;
-  Merge reasoning controls are route-specific and are not projected into the
-  generic VT Code reasoning fields.
+- Reasoning output is absent: Merge reasoning controls are route-specific and
+  are not projected into the generic VT Code reasoning fields.
 
 See the [Merge Gateway quick reference](./merge-gateway-quick-reference.md) for
 the shortest setup checklist.

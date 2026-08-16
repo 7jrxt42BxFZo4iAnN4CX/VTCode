@@ -193,7 +193,7 @@ impl ManPageGenerator {
             .text([roman("API key for Merge Gateway routes")])
             .control("TP", [])
             .text([bold("MERGE_GATEWAY_BASE_URL")])
-            .text([roman("Optional OpenAI-compatible Merge Gateway endpoint override")])
+            .text([roman("Optional Merge Gateway endpoint override; /v1/openai selects legacy compatibility")])
             .control("SH", ["FILES"])
             .control("TP", [])
             .text([bold("vtcode.toml")])

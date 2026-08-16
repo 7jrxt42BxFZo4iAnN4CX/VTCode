@@ -425,7 +425,7 @@ mod tests {
         assert_eq!(<MergeGatewayProviderConfig as CanDescribeProvider>::PROVIDER_KEY, "merge-gateway");
         assert_eq!(
             <MergeGatewayProviderConfig as CanDescribeProvider>::API_BASE_URL,
-            vtcode_config::constants::urls::MERGE_GATEWAY_API_BASE
+            vtcode_config::constants::urls::MERGE_GATEWAY_NATIVE_API_BASE
         );
     }
 

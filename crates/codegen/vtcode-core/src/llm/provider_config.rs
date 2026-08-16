@@ -297,7 +297,7 @@ define_provider_config!(
     "merge-gateway",
     "Merge Gateway",
     crate::config::constants::models::merge_gateway::DEFAULT_MODEL,
-    crate::config::constants::urls::MERGE_GATEWAY_API_BASE,
+    crate::config::constants::urls::MERGE_GATEWAY_NATIVE_API_BASE,
     Some(crate::config::constants::env_vars::MERGE_GATEWAY_BASE_URL),
     ()
 );

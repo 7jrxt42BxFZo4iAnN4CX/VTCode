@@ -25,7 +25,7 @@ use vtcode_config::TimeoutsConfig;
 use vtcode_config::constants::{env_vars, models, urls};
 use vtcode_config::core::{AnthropicConfig, ModelConfig, PromptCachingConfig};
 
-/// Static configuration for Merge Gateway's legacy OpenAI-compatible route.
+/// Static provider metadata shared by native and explicit legacy routes.
 pub struct MergeGatewaySpec;
 
 fn no_reasoning(_message: &Value, _choice: &Value) -> Option<String> {
@@ -421,6 +421,12 @@ impl MergeGatewayProvider {
                 Err(provider_error("Merge Gateway stream ended before a terminal response event"))?;
             }
 
+            if let Some(response) = state.native_snapshot.take() {
+                for event in state.apply_native_snapshot(response)? {
+                    yield event;
+                }
+            }
+
             let response = state.finish()?;
             if let Some(usage) = response.usage.clone() {
                 yield NormalizedStreamEvent::Usage { usage };
@@ -442,6 +448,17 @@ impl MergeGatewayProvider {
         let data = payload.get("data").cloned().unwrap_or(payload.clone());
         let mut events = Vec::new();
 
+        let fallback_restart = data
+            .get("fallback_restart")
+            .or_else(|| payload.get("fallback_restart"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if fallback_restart {
+            let model = data.get("model").or_else(|| payload.get("model")).and_then(Value::as_str);
+            state.reset_for_fallback_restart(model);
+            return Ok(events);
+        }
+
         if event_name.is_empty() {
             if data.get("response").is_some()
                 || data.get("output").is_some()
@@ -450,13 +467,44 @@ impl MergeGatewayProvider {
             {
                 let response_value = data.get("response").cloned().unwrap_or_else(|| data.clone());
                 let response = Self::parse_native_response_payload(response_value, state.model.clone())?;
-                state.final_response = Some(response);
+                state.native_snapshot = None;
+                events.extend(state.apply_native_snapshot(response)?);
                 state.done = true;
             }
             return Ok(events);
         }
 
         match event_name.as_str() {
+            // Native `/v1/responses` streams cumulative snapshots. The
+            // OpenAI-compatible `/v1/openai/responses` surface uses the
+            // delta-oriented events handled below, so keep both protocols
+            // explicit at this boundary.
+            "response.stream" | "response.done" => {
+                let response_value = data.get("response").cloned().or_else(|| {
+                    if data.get("output").is_some() {
+                        Some(data.clone())
+                    } else {
+                        None
+                    }
+                });
+
+                let response = match response_value {
+                    Some(response_value) => Self::parse_native_response_payload(response_value, state.model.clone())?,
+                    None if event_name == "response.done" => state
+                        .native_snapshot
+                        .take()
+                        .ok_or_else(|| provider_error("Merge Gateway response.done event was missing the response"))?,
+                    None => return Ok(events),
+                };
+
+                if event_name == "response.done" {
+                    state.native_snapshot = None;
+                    events.extend(state.apply_native_snapshot(response)?);
+                    state.done = true;
+                } else {
+                    state.remember_native_snapshot(response);
+                }
+            }
             "response.output_text.delta" | "response.output_text.done" => {
                 if let Some(fragment) = Self::stream_text_fragment(&data) {
                     if let Some(delta) = state.apply_text_fragment(fragment, event_name.ends_with(".done")) {
@@ -522,7 +570,7 @@ impl MergeGatewayProvider {
                     state.done = true;
                 }
             }
-            "response.failed" | "error" => {
+            "response.failed" | "response.error" | "error" => {
                 let message = data
                     .get("error")
                     .and_then(Value::as_object)
@@ -858,6 +906,8 @@ struct MergeStreamState {
     seen_tool_calls: HashSet<String>,
     tool_call_names: HashMap<String, String>,
     tool_call_args: HashMap<String, String>,
+    /// Keep only the latest cumulative snapshot until its terminal event.
+    native_snapshot: Option<LLMResponse>,
     incomplete: bool,
     done: bool,
 }
@@ -868,7 +918,76 @@ impl MergeStreamState {
     }
 
     fn has_streamed_output(&self) -> bool {
-        !self.content.is_empty() || !self.tool_call_order.is_empty() || self.usage.is_some()
+        !self.content.is_empty()
+            || !self.tool_call_order.is_empty()
+            || self.usage.is_some()
+            || self.native_snapshot.is_some()
+    }
+
+    fn reset_for_fallback_restart(&mut self, model: Option<&str>) {
+        self.content.clear();
+        self.usage = None;
+        self.request_id = None;
+        self.final_response = None;
+        self.tool_call_order.clear();
+        self.seen_tool_calls.clear();
+        self.tool_call_names.clear();
+        self.tool_call_args.clear();
+        self.native_snapshot = None;
+        self.incomplete = false;
+        self.done = false;
+
+        if let Some(model) = model.filter(|model| !model.trim().is_empty()) {
+            self.model = model.to_owned();
+        }
+    }
+
+    fn remember_native_snapshot(&mut self, response: LLMResponse) {
+        if response.usage.is_some() {
+            self.usage = response.usage.clone();
+        }
+        if response.request_id.is_some() {
+            self.request_id = response.request_id.clone();
+        }
+        self.native_snapshot = Some(response);
+    }
+
+    fn apply_native_snapshot(&mut self, response: LLMResponse) -> Result<Vec<NormalizedStreamEvent>, LLMError> {
+        let mut events = Vec::new();
+
+        if let Some(content) = response.content.clone()
+            && let Some(delta) = self.apply_text_fragment(content, true)
+            && !delta.is_empty()
+        {
+            events.push(NormalizedStreamEvent::TextDelta { delta });
+        }
+
+        if let Some(tool_calls) = &response.tool_calls {
+            for call in tool_calls {
+                let call_id = call.id.clone();
+                let name = call.tool_name().map(ToOwned::to_owned);
+                let arguments = call.raw_input().unwrap_or_default().to_owned();
+
+                if arguments.trim().is_empty() || arguments.trim() == "{}" {
+                    if let Some(start) = self.record_tool_start(call_id, name) {
+                        events.push(start);
+                    }
+                    continue;
+                }
+
+                events.extend(self.apply_tool_fragment(call_id, name, arguments, true)?);
+            }
+        }
+
+        if response.usage.is_some() {
+            self.usage = response.usage.clone();
+        }
+        if response.request_id.is_some() {
+            self.request_id = response.request_id.clone();
+        }
+        self.final_response = Some(response);
+
+        Ok(events)
     }
 
     fn apply_text_fragment(&mut self, fragment: String, full_value: bool) -> Option<String> {
@@ -1263,6 +1382,10 @@ mod tests {
         format!("event: {event}\ndata: {}\n\n", serde_json::to_string(&data).expect("event payload"))
     }
 
+    fn sse_data(data: Value) -> String {
+        format!("data: {}\n\n", serde_json::to_string(&data).expect("event payload"))
+    }
+
     #[test]
     fn native_payload_serializes_message_tool_use_and_tool_result_items() {
         let provider = MergeGatewayProvider::with_model(
@@ -1291,7 +1414,8 @@ mod tests {
                     "type": "object",
                     "properties": {
                         "location": {"type": "string"}
-                    }
+                    },
+                    "required": ["location"]
                 }),
             )])),
             model: models::merge_gateway::DEFAULT_ROUTING.to_string(),
@@ -1324,6 +1448,7 @@ mod tests {
         assert_eq!(payload["service_tier"], "flex");
         assert_eq!(payload["tools"][0]["type"], "function");
         assert_eq!(payload["tools"][0]["name"], "get_weather");
+        assert_eq!(payload["tools"][0]["parameters"]["required"], json!(["location"]));
         assert_eq!(input.len(), 4);
         assert_eq!(input[0]["type"], "message");
         assert_eq!(input[0]["role"], "system");
@@ -1395,7 +1520,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn native_stream_normalized_emits_text_tool_call_and_usage_events() {
+    async fn response_delta_events_are_normalized_for_compatibility() {
         let server = MockServer::start().await;
         let provider = test_provider(&server.uri());
 
@@ -1503,6 +1628,289 @@ mod tests {
                 && response.content.as_deref() == Some("Hello")
                 && response.tool_calls.as_ref().is_some_and(|calls| calls.len() == 1)
         ));
+    }
+
+    #[tokio::test]
+    async fn native_stream_snapshots_emit_tool_arguments_and_done_terminal() {
+        let server = MockServer::start().await;
+        let provider = test_provider(&server.uri());
+
+        let stream_response = json!({
+            "id": "resp_123",
+            "object": "response",
+            "created_at": "2026-03-23T12:03:00Z",
+            "model": "xai/grok-4.6",
+            "output": [{
+                "type": "message",
+                "id": "msg_1",
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "exec_command"
+                }],
+                "finish_reason": "tool_use"
+            }],
+            "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15, "cost": 0.01}
+        });
+        let done_response = json!({
+            "id": "resp_123",
+            "object": "response",
+            "created_at": "2026-03-23T12:03:00Z",
+            "model": "xai/grok-4.6",
+            "output": [{
+                "type": "message",
+                "id": "msg_1",
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "exec_command",
+                    "input": {"cmd": "pwd"}
+                }],
+                "finish_reason": "tool_use"
+            }],
+            "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15, "cost": 0.01}
+        });
+        let stream_body = [
+            sse("response.stream", stream_response),
+            sse("response.done", done_response),
+        ]
+        .concat();
+
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(stream_body),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut stream = provider
+            .stream_normalized(LLMRequest {
+                model: models::merge_gateway::XAI_GROK_4_6.to_string(),
+                messages: vec![Message::user("run pwd".to_string())].into(),
+                ..Default::default()
+            })
+            .await
+            .expect("normalized stream");
+
+        let mut events = Vec::new();
+        while let Some(event) = stream.next().await {
+            events.push(event.expect("stream event"));
+        }
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                NormalizedStreamEvent::ToolCallStart { call_id, name },
+                NormalizedStreamEvent::ToolCallDelta { call_id: delta_call_id, delta },
+                NormalizedStreamEvent::Usage { usage },
+                NormalizedStreamEvent::Done { response }
+            ]
+            if call_id == "call_1"
+                && name.as_deref() == Some("exec_command")
+                && delta_call_id == "call_1"
+                && delta == r#"{"cmd":"pwd"}"#
+                && usage.prompt_tokens == 10
+                && usage.completion_tokens == 5
+                && usage.total_tokens == 15
+                && response.tool_calls.as_ref().is_some_and(|calls| {
+                    calls.len() == 1
+                        && calls[0].tool_name() == Some("exec_command")
+                        && calls[0].parsed_arguments().expect("tool args") == json!({"cmd": "pwd"})
+                })
+        ));
+    }
+
+    #[tokio::test]
+    async fn native_stream_uses_latest_cumulative_snapshot() {
+        let server = MockServer::start().await;
+        let provider = test_provider(&server.uri());
+
+        let first_response = json!({
+            "id": "resp_123",
+            "object": "response",
+            "model": "xai/grok-4.6",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "obsolete"}],
+                "finish_reason": "stop"
+            }]
+        });
+        let final_response = json!({
+            "id": "resp_123",
+            "object": "response",
+            "model": "xai/grok-4.6",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "final"}],
+                "finish_reason": "stop"
+            }]
+        });
+        let stream_body = [
+            sse("response.stream", first_response),
+            sse("response.stream", final_response.clone()),
+            sse("response.done", final_response),
+        ]
+        .concat();
+
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(stream_body),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut stream = provider
+            .stream_normalized(LLMRequest {
+                model: models::merge_gateway::XAI_GROK_4_6.to_string(),
+                messages: vec![Message::user("hello".to_string())].into(),
+                ..Default::default()
+            })
+            .await
+            .expect("normalized stream");
+
+        let mut events = Vec::new();
+        while let Some(event) = stream.next().await {
+            events.push(event.expect("stream event"));
+        }
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                NormalizedStreamEvent::TextDelta { delta },
+                NormalizedStreamEvent::Done { response }
+            ]
+            if delta == "final" && response.content.as_deref() == Some("final")
+        ));
+    }
+
+    #[tokio::test]
+    async fn native_stream_fallback_restart_discards_previous_snapshot() {
+        let server = MockServer::start().await;
+        let provider = test_provider(&server.uri());
+
+        let old_response = json!({
+            "id": "resp_old",
+            "object": "response",
+            "model": "xai/grok-4.6",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "old"},
+                    {"type": "tool_use", "id": "call_old", "name": "exec_command"}
+                ],
+                "finish_reason": "tool_use"
+            }]
+        });
+        let new_response = json!({
+            "id": "resp_new",
+            "object": "response",
+            "model": "xai/grok-4.6",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "new"}],
+                "finish_reason": "stop"
+            }],
+            "usage": {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4}
+        });
+        let stream_body = [
+            sse("response.stream", old_response),
+            sse_data(json!({"fallback_restart": true, "model": "xai/grok-4.6", "vendor": "xai"})),
+            sse("response.stream", new_response.clone()),
+            sse("response.done", new_response),
+        ]
+        .concat();
+
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(stream_body),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut stream = provider
+            .stream_normalized(LLMRequest {
+                model: models::merge_gateway::XAI_GROK_4_6.to_string(),
+                messages: vec![Message::user("hello".to_string())].into(),
+                ..Default::default()
+            })
+            .await
+            .expect("normalized stream");
+
+        let mut events = Vec::new();
+        while let Some(event) = stream.next().await {
+            events.push(event.expect("stream event"));
+        }
+
+        let text = events
+            .iter()
+            .filter_map(|event| match event {
+                NormalizedStreamEvent::TextDelta { delta } => Some(delta.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(text, "new", "events: {events:?}");
+        assert!(matches!(
+            events.last(),
+            Some(NormalizedStreamEvent::Done { response })
+                if response.content.as_deref() == Some("new")
+                    && response.request_id.as_deref() == Some("resp_new")
+        ));
+    }
+
+    #[tokio::test]
+    async fn native_stream_error_frame_is_returned_as_provider_error() {
+        let server = MockServer::start().await;
+        let provider = test_provider(&server.uri());
+
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(sse(
+                        "response.error",
+                        json!({
+                            "error": {
+                                "type": "provider_error",
+                                "message": "upstream failed",
+                                "status_code": 502
+                            }
+                        }),
+                    )),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut stream = provider
+            .stream_normalized(LLMRequest {
+                model: models::merge_gateway::XAI_GROK_4_6.to_string(),
+                messages: vec![Message::user("hello".to_string())].into(),
+                ..Default::default()
+            })
+            .await
+            .expect("normalized stream");
+
+        let error = stream.next().await.expect("error event").expect_err("stream should fail");
+        assert!(error.to_string().contains("upstream failed"));
     }
 
     #[tokio::test]
