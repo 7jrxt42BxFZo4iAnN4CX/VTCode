@@ -524,6 +524,61 @@ Keep the launch check descriptive while still embedding a real command.
     }
 
     #[test]
+    fn validate_plan_content_accepts_env_prefixed_verification_commands() {
+        for verify in [
+            "VTCODE_STARTUP_TRACE=1 ./scripts/bench-startup.sh",
+            "VTCODE_STARTUP_TRACE=1 cargo run --quiet -- --version",
+        ] {
+            let plan = format!(
+                r#"# Env-prefixed verification
+
+## Summary
+Keep startup verification concrete.
+
+## Steps
+1. Check the startup path -> files: [src/main.rs] -> verify: {verify}
+
+## Validation
+1. Run cargo check.
+
+## Assumptions
+1. Keep the current workflow.
+"#
+            );
+            let report = validate_plan_content(&plan);
+            assert!(report.is_ready(), "env-prefixed verification should validate: {:?}", report.reasons());
+        }
+    }
+
+    #[test]
+    fn validate_plan_content_rejects_env_prefixed_non_command_prose() {
+        let report = validate_plan_content(
+            r#"# Env-prefixed prose
+
+## Summary
+Reject prose that only looks like a command.
+
+## Steps
+1. Check the startup path -> files: [src/main.rs] -> verify: VTCODE_STARTUP_TRACE=1 build output
+
+## Validation
+1. Run cargo check.
+
+## Assumptions
+1. Keep the current workflow.
+"#,
+        );
+
+        assert!(!report.is_ready());
+        assert!(
+            report
+                .invalid_implementation_steps
+                .iter()
+                .any(|reason| reason.contains("verification marker must include a concrete command or check"))
+        );
+    }
+
+    #[test]
     fn validate_plan_content_preserves_concrete_tests_pass_verification() {
         let report = validate_plan_content(
             r#"# Test verification

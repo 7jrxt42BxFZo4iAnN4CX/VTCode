@@ -750,6 +750,25 @@ fn is_actual_command_token(raw_word: &str) -> bool {
         || word.ends_with(".bat")
 }
 
+fn is_shell_assignment_token(raw_word: &str) -> bool {
+    let word = raw_word.trim_matches(|character: char| matches!(character, '`' | '"' | '\''));
+    let Some((name, value)) = word.split_once('=') else {
+        return false;
+    };
+
+    if name.is_empty() || value.is_empty() {
+        return false;
+    }
+
+    let mut name_chars = name.chars();
+    match name_chars.next() {
+        Some(first) if first == '_' || first.is_ascii_alphabetic() => {}
+        _ => return false,
+    }
+
+    name_chars.all(|character| character == '_' || character.is_ascii_alphanumeric())
+}
+
 fn is_pathlike_command_token(raw_word: &str) -> bool {
     let word = raw_word.trim_matches(|character: char| matches!(character, '`' | '"' | '\''));
     word.starts_with("./")
@@ -765,6 +784,22 @@ fn contains_actual_command_invocation(value: &str) -> bool {
     let words = verification_words(value);
     if words.len() < 2 {
         return false;
+    }
+
+    let mut assignment_prefix_end = 0;
+    while words
+        .get(assignment_prefix_end)
+        .is_some_and(|word| is_shell_assignment_token(word))
+    {
+        assignment_prefix_end += 1;
+    }
+    if assignment_prefix_end > 0
+        && words
+            .get(assignment_prefix_end)
+            .is_some_and(|word| is_actual_command_token(word))
+        && (is_pathlike_command_token(words[assignment_prefix_end]) || words.len() > assignment_prefix_end + 1)
+    {
+        return true;
     }
 
     for index in 0..words.len() {

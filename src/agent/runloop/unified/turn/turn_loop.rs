@@ -121,13 +121,14 @@ const RECOVERY_SYNTHESIS_FALLBACK_FINAL_ANSWER: &str = "Recovery synthesis faile
 /// interview is re-forced on the next turn (the planning session state is left
 /// `interview_pending`), so this message tells the user to continue planning
 /// rather than re-state a generic request.
-const PLANNING_RECOVERY_SYNTHESIS_FALLBACK: &str = "Planning research completed, but the final synthesis failed (transient provider error). Your gathered context is preserved and the planning interview will be presented on the next turn — re-state your request or press Enter to continue planning.";
+const PLANNING_RECOVERY_SYNTHESIS_FALLBACK: &str = "Planning research completed, but final synthesis failed after one bounded automatic retry. The gathered context is preserved, no implementation has been approved, and the next planning turn will reuse this research.";
+const PLANNING_RECOVERY_SYNTHESIS_FALLBACK_NO_RETRY: &str = "Planning research completed, but final synthesis failed to produce an approval-ready plan. The gathered context is preserved, no implementation has been approved, and the next planning turn will reuse this research.";
 /// Variant of [`PLANNING_RECOVERY_SYNTHESIS_FALLBACK`] used once
 /// `request_user_input` has been permanently denied by policy this session
 /// (`PlanningWorkflowSessionState::is_interview_denied`). The transient-error
-/// variant above falsely promises "the planning interview will be presented
-/// on the next turn" — a denial recurs on every attempt, so no interview will
-/// ever be shown again. This presents a clean yes/no/edit HITL prompt to the
+/// variant above assumes the interview can be re-forced on the next turn — a
+/// denial recurs on every attempt, so no interview will ever be shown again.
+/// This presents a clean yes/no/edit HITL prompt to the
 /// user instead of a confusing "synthesis failed" message (checkpoint
 /// turn_655/turn_660/turn_725). The plan draft from gathered research is
 /// preserved in the session plan file; the user picks one of three paths:
@@ -194,7 +195,7 @@ const RECOVERY_TOOL_CALL_RETRY_DIRECTIVE: &str = "Recovery: tools are disabled, 
 /// Without this, the model treats the tool-free recovery pass as another
 /// research step and emits `<invoke>`/`<tool_call>` markup instead of a plan
 /// (observed in checkpoints turn_648 and turn_650).
-const POST_TOOL_RECOVERY_REASON_PLAN_MODE: &str = "Planning research completed, but the final plan synthesis failed (transient provider error). Tools are disabled. Produce the `<proposed_plan>` NOW from the context and tool outputs already in this conversation: keep each step to a single line (`Action -> files: [path] -> verify: [command]`), prefer file:symbol references, and do NOT emit any tool calls or tool-call markup.";
+const POST_TOOL_RECOVERY_REASON_PLAN_MODE: &str = "Planning research completed, but final plan synthesis needs recovery. Tools are disabled. Produce the `<proposed_plan>` NOW from the context and tool outputs already in this conversation: keep each step to a single line (`Action -> files: [path] -> verify: [command]`), prefer file:symbol references, and do NOT emit any tool calls or tool-call markup.";
 /// Plan-mode variant of [`RECOVERY_TOOL_CALL_RETRY_DIRECTIVE`]. The generic
 /// directive only says \"respond with plain text\"; in plan mode the agent must
 /// instead finalize the `<proposed_plan>` from gathered research, otherwise it

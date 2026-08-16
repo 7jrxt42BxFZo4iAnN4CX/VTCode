@@ -7,8 +7,9 @@ use vtcode_core::utils::ansi::{AnsiRenderer, MessageStyle};
 
 use super::{
     MAX_POST_TOOL_RECOVERY_CYCLES, PLANNING_RECOVERY_SYNTHESIS_FALLBACK,
-    PLANNING_RECOVERY_SYNTHESIS_FALLBACK_NO_INTERVIEW, POST_TOOL_RECOVERY_REASON, POST_TOOL_RECOVERY_REASON_PLAN_MODE,
-    POST_TOOL_RESUME_DIRECTIVE, POST_TOOL_TOOL_ENABLED_RETRY_DIRECTIVE, RECOVERY_CONTRACT_VIOLATION_REASON,
+    PLANNING_RECOVERY_SYNTHESIS_FALLBACK_NO_INTERVIEW, PLANNING_RECOVERY_SYNTHESIS_FALLBACK_NO_RETRY,
+    POST_TOOL_RECOVERY_REASON, POST_TOOL_RECOVERY_REASON_PLAN_MODE, POST_TOOL_RESUME_DIRECTIVE,
+    POST_TOOL_TOOL_ENABLED_RETRY_DIRECTIVE, RECOVERY_CONTRACT_VIOLATION_REASON,
     RECOVERY_SYNTHESIS_FALLBACK_FINAL_ANSWER,
 };
 use crate::agent::runloop::unified::inline_events::harness::HarnessEventEmitter;
@@ -32,6 +33,7 @@ pub(super) enum PostToolFailureRecovery {
 
 const POST_TOOL_TOOL_ENABLED_RETRY_FAILED_REASON: &str = "Post-tool recovery could not confirm the requested work after one bounded tool-enabled retry. The completed tool outputs and resume handoff were retained; retry from the pending step.";
 pub(super) const POST_TOOL_CONTEXT_COMPACTION_FAILED_REASON: &str = "The provider rejected the follow-up because the context exceeded its capacity, and the bounded recovery compaction could not reduce the request. Completed tool outputs were retained; retry after reducing context or switching model.";
+const MAX_PLANNING_SYNTHESIS_RECOVERY_RETRIES: u8 = 1;
 
 #[derive(Clone, Copy)]
 pub(super) struct PlanRecoveryEventContext<'a> {
@@ -52,6 +54,23 @@ pub(super) fn has_tool_response_since(messages: &[uni::Message], baseline_len: u
 /// and schedule an unrelated write-capable retry.
 fn is_provider_context_capacity_failure(failure_stage: &str, err: &anyhow::Error) -> bool {
     failure_stage == "execute_llm_request" && vtcode_commons::is_context_capacity_error(err)
+}
+
+fn planning_synthesis_retry_allowed(
+    tool_free_recovery: bool,
+    planning_active: bool,
+    err: &anyhow::Error,
+    plan_session: Option<&PlanningWorkflowSessionState>,
+    harness_state: &HarnessTurnState,
+) -> bool {
+    tool_free_recovery
+        && planning_active
+        && vtcode_commons::classify_anyhow_error(err).is_retryable()
+        && harness_state.recovery_retry_count() < MAX_PLANNING_SYNTHESIS_RECOVERY_RETRIES
+        && !harness_state.wall_clock_exhausted_emitted
+        && !harness_state.wall_clock_exhausted()
+        && !harness_state.tool_budget_exhausted_emitted
+        && plan_session.is_some_and(|session| !session.is_budget_exhausted() && !session.is_recovery_exhausted())
 }
 
 fn ensure_recent_system_message(working_history: &mut Vec<uni::Message>, content: &str) {
@@ -122,8 +141,13 @@ pub(super) fn maybe_recover_after_post_tool_llm_failure(
 
     let err_cat = vtcode_commons::classify_anyhow_error(err);
     let context_capacity_failure = is_provider_context_capacity_failure(failure_stage, err);
+    let retry_scheduled = allow_tool_free_retry || allow_tool_enabled_retry;
     let transient_hint = if err_cat.is_retryable() && !context_capacity_failure {
-        " (transient — may resolve on retry)"
+        if retry_scheduled {
+            " (transient; bounded retry scheduled)"
+        } else {
+            " (transient; retry budget exhausted)"
+        }
     } else {
         ""
     };
@@ -447,8 +471,12 @@ pub(super) async fn complete_turn_after_failed_tool_free_recovery_with_events(
         } else {
             plan_session.mark_interview_pending();
         }
-        let mut planning_fallback =
-            plan_mode_recovery_fallback(persisted_salvage, PLANNING_RECOVERY_SYNTHESIS_FALLBACK, working_history);
+        let fallback_notice = if is_transient_error {
+            PLANNING_RECOVERY_SYNTHESIS_FALLBACK
+        } else {
+            PLANNING_RECOVERY_SYNTHESIS_FALLBACK_NO_RETRY
+        };
+        let mut planning_fallback = plan_mode_recovery_fallback(persisted_salvage, fallback_notice, working_history);
         planning_fallback.push_str("\n\n");
         if persisted_plan_ready {
             planning_fallback.push_str(&short_confirmation_hint_with_fallback());
@@ -636,6 +664,13 @@ pub(super) async fn dispatch_post_tool_failure(ctx: PostToolRecoveryContext<'_>)
     }
     let post_tool_retry_exhausted =
         !tool_free_recovery && harness_state.post_tool_tool_enabled_retry_used() && harness_state.recovery_pass_used();
+    let planning_synthesis_retry = planning_synthesis_retry_allowed(
+        tool_free_recovery,
+        planning_active,
+        err,
+        plan_session.as_deref(),
+        harness_state,
+    );
     let recovery = maybe_recover_after_post_tool_llm_failure(
         renderer,
         working_history,
@@ -643,7 +678,7 @@ pub(super) async fn dispatch_post_tool_failure(ctx: PostToolRecoveryContext<'_>)
         step_count,
         turn_history_start_len,
         stage,
-        !tool_free_recovery && !post_tool_retry_exhausted,
+        (!tool_free_recovery && !post_tool_retry_exhausted) || planning_synthesis_retry,
         !tool_free_recovery
             && !harness_state.post_tool_tool_enabled_retry_used()
             && !harness_state.recovery_pass_used(),
@@ -690,6 +725,19 @@ pub(super) async fn dispatch_post_tool_failure(ctx: PostToolRecoveryContext<'_>)
             Ok(PostToolFailureAction::Continue)
         }
         PostToolFailureRecovery::RetryToolFree => {
+            if planning_synthesis_retry && harness_state.retry_recovery_pass() {
+                prepare_post_tool_tool_free_recovery(working_history, POST_TOOL_RECOVERY_REASON_PLAN_MODE);
+                renderer.line(
+                    MessageStyle::Info,
+                    "[!] Final plan synthesis failed transiently; retrying once from the gathered research with tools disabled.",
+                )?;
+                tracing::warn!(
+                    retry = harness_state.recovery_retry_count(),
+                    max_retries = MAX_PLANNING_SYNTHESIS_RECOVERY_RETRIES,
+                    "Retrying transient plan synthesis failure without re-enabling tools"
+                );
+                return Ok(PostToolFailureAction::Continue);
+            }
             let salvaged = harness_state.take_recovery_rejected_synthesis();
             let cycle_stage = concat_compact(stage, ".recovery_cycle_cap");
             if let Some(r) = check_recovery_cycle_cap(
@@ -1023,6 +1071,67 @@ mod tests {
         .expect("second recovery dispatch should produce a truthful handoff");
 
         assert!(matches!(second, PostToolFailureAction::Break(TurnLoopResult::Blocked { reason: Some(_) })));
+    }
+
+    #[tokio::test]
+    async fn planning_synthesis_transient_failure_gets_one_outer_retry() {
+        use crate::agent::runloop::unified::run_loop_context::{HarnessTurnState, TurnId, TurnRunId};
+
+        let mut renderer = AnsiRenderer::stdout();
+        let mut working_history = vec![
+            uni::Message::user("plan the launch-time optimization".to_string()),
+            uni::Message::tool_response("call-1".to_string(), "{\"evidence\":\"startup path\"}".to_string()),
+        ];
+        let mut harness_state =
+            HarnessTurnState::new(TurnRunId("test-run".to_string()), TurnId("test-turn".to_string()), 4, 600, 0);
+        let mut plan_session = PlanningWorkflowSessionState::default();
+        let err = transient_err();
+
+        harness_state.switch_to_tool_free_recovery();
+        assert!(harness_state.consume_recovery_pass());
+
+        let first = dispatch_post_tool_failure(PostToolRecoveryContext {
+            renderer: &mut renderer,
+            working_history: &mut working_history,
+            harness_state: &mut harness_state,
+            harness_emitter: None,
+            plan_session: Some(&mut plan_session),
+            plan_state: None,
+            err: &err,
+            step_count: 1,
+            turn_history_start_len: 0,
+            stage: "execute_llm_request",
+            tool_free_recovery: true,
+        })
+        .await
+        .expect("the first synthesis failure should schedule a retry");
+
+        assert!(matches!(first, PostToolFailureAction::Continue));
+        assert_eq!(harness_state.recovery_retry_count(), 1);
+        assert!(harness_state.consume_recovery_pass());
+
+        let second = dispatch_post_tool_failure(PostToolRecoveryContext {
+            renderer: &mut renderer,
+            working_history: &mut working_history,
+            harness_state: &mut harness_state,
+            harness_emitter: None,
+            plan_session: Some(&mut plan_session),
+            plan_state: None,
+            err: &err,
+            step_count: 2,
+            turn_history_start_len: 0,
+            stage: "execute_llm_request",
+            tool_free_recovery: true,
+        })
+        .await
+        .expect("the bounded retry should finalize recovery");
+
+        assert!(matches!(second, PostToolFailureAction::Break(TurnLoopResult::Completed { .. })));
+        assert!(
+            plan_session.interview_pending(),
+            "after the bounded retry, planning must remain resumable instead of approving an incomplete plan"
+        );
+        assert_eq!(harness_state.recovery_retry_count(), 1);
     }
 
     #[tokio::test]
