@@ -2,6 +2,30 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.146.4 - 2026-08-16
+
+### Highlights
+#### Bug Fixes
+
+- Recognize native object stream frames (46021049) 
+- Honor SSE event framing (776580ff) 
+- Sanitize Gemini tool schemas (e57f07be) 
+- Emit native response snapshots incrementally (589b3b60) 
+- Avoid double safety admission for prevalidated tool calls (36c1ed22) 
+- Add blocked-tool recovery and status sync (2413d7fd) 
+- Require concrete verify commands in plan steps (5942c350) 
+#### Documentation
+
+- Document native response streaming (914eac51) 
+#### Features
+
+- Default to native /v1/responses API (7163aeef) 
+- Add DSML markup detection and stripping (80044ab3) 
+- Allow shell env assignments in plan artifact validation (8353cd3a) 
+### Other Changes
+#### Other
+
+- Update README (1f60985e) 
 ## 0.146.3 - 2026-08-16
 
 ### Highlights
