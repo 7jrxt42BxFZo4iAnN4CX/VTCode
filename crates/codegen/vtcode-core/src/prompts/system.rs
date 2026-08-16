@@ -46,7 +46,7 @@ pub const PLANNING_WORKFLOW_EXIT_INSTRUCTION_LINE: &str = "Only a validated plan
 /// exact shape up front matters: the repair directive prints it only after a
 /// rejection, and turn_912/913 showed planners repeatedly failing "step lacks
 /// a concrete target or verification" without ever seeing an example.
-pub const PLANNING_WORKFLOW_PLAN_QUALITY_LINE: &str = "Keep plans compact and spec-like. Emit ONE `<proposed_plan>` with these sections: `## Summary`; `## Implementation Steps` (or `## Steps`); `## Test Cases and Validation` (or `## Validation`); `## Assumptions and Defaults` (or `## Assumptions`). Every numbered implementation step must name a concrete file, symbol, behavior, or other repository target and include a non-empty `verify:`/`verification:` command or check, written in the canonical one-line form `1. Action -> files: [path/to/file.rs] -> verify: [cargo check]`; generic `1. Do the work` steps are not plans. Prefer file:symbol references over prose, written as plain text or inline code (e.g. `src/main.rs:42`) — never as markdown links or editor/IDE URIs (no `[label](url)`, no `vscode-file://`/`file://` schemes). Resolve placeholders and open decisions before approval; use `Next open decision:` or `Open question:` only when a decision remains unresolved.";
+pub const PLANNING_WORKFLOW_PLAN_QUALITY_LINE: &str = "Keep plans compact and spec-like. Emit ONE `<proposed_plan>` with these sections: `## Summary`; `## Implementation Steps` (or `## Steps`); `## Test Cases and Validation` (or `## Validation`); `## Assumptions and Defaults` (or `## Assumptions`). Every numbered implementation step must name a concrete file, symbol, behavior, or other repository target and include one concrete `verify:`/`verification:` command or observable check, written in the canonical one-line form `1. Action -> files: [path/to/file.rs] -> verify: [cargo check]`; generic `1. Do the work` steps, vague prose, and comma-separated verify entries that are not commands or observable checks are not plans. Prefer file:symbol references over prose, written as plain text or inline code (e.g. `src/main.rs:42`) — never as markdown links or editor/IDE URIs (no `[label](url)`, no `vscode-file://`/`file://` schemes). Resolve placeholders and open decisions before approval; use `Next open decision:` or `Open question:` only when a decision remains unresolved.";
 /// Scale research effort to the request instead of always exhaustively
 /// enumerating the repository. Checkpoint turn_647 showed a "make a simple
 /// plan to improve launch time" request burn 70+ tool calls across dozens of
@@ -821,6 +821,14 @@ mod tests {
                 .contains(crate::tools::handlers::planning_workflow::artifacts::CANONICAL_STEP_FORMAT),
             "quality line must embed artifacts::CANONICAL_STEP_FORMAT verbatim"
         );
+    }
+
+    #[test]
+    fn plan_quality_line_requires_concrete_verify_checks() {
+        let line = PLANNING_WORKFLOW_PLAN_QUALITY_LINE;
+        assert!(line.contains("one concrete `verify:`/`verification:` command or observable check"));
+        assert!(line.contains("vague prose"));
+        assert!(line.contains("comma-separated verify entries that are not commands or observable checks"));
     }
 
     #[test]

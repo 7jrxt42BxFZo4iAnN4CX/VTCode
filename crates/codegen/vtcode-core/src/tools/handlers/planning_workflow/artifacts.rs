@@ -146,7 +146,8 @@ impl PlanValidationReport {
         result.push_str("\n\nRewrite every implementation step in this canonical one-line form:\n");
         result.push_str(CANONICAL_STEP_FORMAT);
         result.push_str(
-            "\nEach step MUST name a concrete file path or symbol (not prose) and a concrete verify command.",
+            "\nEach step MUST name a concrete file path or symbol (not prose) and one concrete verify command or observable check. \
+             Comma-separated verify entries must each be a command or an observable check.",
         );
         result
     }
@@ -497,7 +498,7 @@ fn is_concrete_target(value: &str) -> bool {
     let lower = target.to_ascii_lowercase();
     if lower.starts_with('[') && lower.ends_with(']') {
         let items = parse_bracket_list(target);
-        return !items.is_empty() && items.iter().all(|item| is_concrete_target(item));
+        return !items.is_empty() && items.iter().any(|item| is_concrete_target(item));
     }
 
     let has_structural_reference = target.split_whitespace().any(|token| {
@@ -674,21 +675,40 @@ fn is_concrete_target(value: &str) -> bool {
     lower.split_whitespace().count() >= 2 && concrete_word_count >= 2
 }
 
-fn is_concrete_verification(value: &str) -> bool {
-    let value = value.trim();
-    if !is_concrete_value(value) {
-        return false;
-    }
+fn verification_words(value: &str) -> Vec<&str> {
+    value
+        .split_whitespace()
+        .map(|word| {
+            word.trim_matches(|character: char| {
+                character.is_ascii_punctuation() && character != '_' && character != '/' && character != '.'
+            })
+        })
+        .filter(|word| !word.is_empty())
+        .collect()
+}
 
-    if value.starts_with('[') && value.ends_with(']') {
-        let items = parse_bracket_list(value);
-        return !items.is_empty() && items.iter().all(|item| is_concrete_verification(item));
-    }
+fn is_invocation_cue(word: &str) -> bool {
+    word.eq_ignore_ascii_case("run")
+        || word.eq_ignore_ascii_case("running")
+        || word.eq_ignore_ascii_case("execute")
+        || word.eq_ignore_ascii_case("executing")
+        || word.eq_ignore_ascii_case("invoke")
+        || word.eq_ignore_ascii_case("invoking")
+        || word.eq_ignore_ascii_case("use")
+        || word.eq_ignore_ascii_case("using")
+        || word.eq_ignore_ascii_case("with")
+        || word.eq_ignore_ascii_case("by")
+        || word.eq_ignore_ascii_case("via")
+        || word.eq_ignore_ascii_case("through")
+        || word.eq_ignore_ascii_case("then")
+        || word.eq_ignore_ascii_case("plus")
+        || word.eq_ignore_ascii_case("after")
+        || word.eq_ignore_ascii_case("rerun")
+}
 
-    let lower = value.to_ascii_lowercase();
-    // A command/tool name is a concrete check even when its arguments are
-    // short (for example, `cargo check` or `nextest passes`). Do not treat
-    // generic words such as `check` or `run` as commands by themselves.
+fn is_actual_command_token(raw_word: &str) -> bool {
+    let word = raw_word.trim_matches(|character: char| matches!(character, '`' | '"' | '\''));
+    let bare_word = word.trim_matches(|character: char| character.is_ascii_punctuation());
     const COMMAND_NAMES: &[&str] = &[
         "bun",
         "cargo",
@@ -720,37 +740,140 @@ fn is_concrete_verification(value: &str) -> bool {
         "xcodebuild",
         "yarn",
     ];
-    let raw_words = lower.split_whitespace().collect::<Vec<_>>();
-    let is_command_token = |raw_word: &str| {
-        let word = raw_word.trim_matches(|character: char| matches!(character, '`' | '"' | '\''));
-        let bare_word = word.trim_matches(|character: char| character.is_ascii_punctuation());
-        COMMAND_NAMES.contains(&bare_word)
-            || word.starts_with("./")
-            || word.starts_with("../")
-            || word.starts_with('/')
-            || word.ends_with(".sh")
-            || word.ends_with(".cmd")
-            || word.ends_with(".ps1")
-            || word.ends_with(".bat")
-    };
-    let leading_wrapper = raw_words.first().is_some_and(|word| {
-        matches!(
-            word.trim_matches(|character: char| character.is_ascii_punctuation()),
-            "command" | "execute" | "invoke" | "run" | "use"
-        )
-    });
-    if raw_words.first().is_some_and(|word| is_command_token(word))
-        || (leading_wrapper && raw_words.get(1).is_some_and(|word| is_command_token(word)))
-    {
-        return true;
-    }
+    COMMAND_NAMES.iter().any(|candidate| bare_word.eq_ignore_ascii_case(candidate))
+        || word.starts_with("./")
+        || word.starts_with("../")
+        || word.starts_with('/')
+        || word.ends_with(".sh")
+        || word.ends_with(".cmd")
+        || word.ends_with(".ps1")
+        || word.ends_with(".bat")
+}
 
-    let words = lower.split_whitespace().collect::<Vec<_>>();
+fn is_pathlike_command_token(raw_word: &str) -> bool {
+    let word = raw_word.trim_matches(|character: char| matches!(character, '`' | '"' | '\''));
+    word.starts_with("./")
+        || word.starts_with("../")
+        || word.starts_with('/')
+        || word.ends_with(".sh")
+        || word.ends_with(".cmd")
+        || word.ends_with(".ps1")
+        || word.ends_with(".bat")
+}
+
+fn contains_actual_command_invocation(value: &str) -> bool {
+    let words = verification_words(value);
     if words.len() < 2 {
         return false;
     }
 
-    let observable_markers = [
+    for index in 0..words.len() {
+        let word = words[index];
+        if !is_actual_command_token(word) {
+            continue;
+        }
+
+        if index == 0 {
+            return words.len() > 1 || is_pathlike_command_token(word);
+        }
+
+        if (is_pathlike_command_token(word) || words.get(index + 1).is_some())
+            && words[..index].iter().rev().take(3).any(|previous| is_invocation_cue(previous))
+        {
+            return true;
+        }
+    }
+
+    value
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .any(|span| contains_actual_command_invocation(span.trim()))
+}
+
+fn is_observable_manual_verification(value: &str) -> bool {
+    let words = verification_words(value);
+    if words.len() < 2 {
+        return false;
+    }
+
+    const CUES: &[&str] = &[
+        "benchmark",
+        "benchmarks",
+        "compare",
+        "compares",
+        "confirm",
+        "confirms",
+        "instrument",
+        "instrumented",
+        "launch",
+        "launches",
+        "measure",
+        "measures",
+        "record",
+        "records",
+        "observe",
+        "observes",
+        "inspect",
+        "inspects",
+        "profile",
+        "profiles",
+        "run",
+        "runs",
+        "test",
+        "tests",
+        "validate",
+        "validates",
+        "verify",
+        "verifies",
+    ];
+    const EVIDENCE: &[&str] = &[
+        "after",
+        "before",
+        "cold",
+        "debug",
+        "fewer",
+        "log",
+        "logs",
+        "metric",
+        "metrics",
+        "output",
+        "outputs",
+        "phase",
+        "phases",
+        "read",
+        "reads",
+        "reported",
+        "result",
+        "results",
+        "startup",
+        "timing",
+        "unchanged",
+        "warm",
+        "launch",
+        "launches",
+        "prompt",
+    ];
+
+    let cue_count = words
+        .iter()
+        .filter(|word| CUES.iter().any(|cue| word.eq_ignore_ascii_case(cue)))
+        .count();
+    if cue_count == 0 {
+        return false;
+    }
+
+    let evidence_count = words
+        .iter()
+        .filter(|word| {
+            word.chars().any(|character| character.is_ascii_digit())
+                || EVIDENCE.iter().any(|evidence| word.eq_ignore_ascii_case(evidence))
+        })
+        .count();
+    let has_non_temporal_evidence = words.iter().any(|word| {
+        !matches!(*word, "after" | "before") && EVIDENCE.iter().any(|evidence| word.eq_ignore_ascii_case(evidence))
+    });
+    let legacy_observable_marker = [
         "assert",
         "available",
         "completes",
@@ -781,9 +904,47 @@ fn is_concrete_verification(value: &str) -> bool {
         "updates",
         "visible",
         "waits",
-    ];
-    words.iter().any(|word| observable_markers.contains(word))
-        || ((words.contains(&"tests") || words.contains(&"checks")) && words.contains(&"pass"))
+    ]
+    .iter()
+    .any(|marker| words.iter().any(|word| word.eq_ignore_ascii_case(marker)));
+    let tests_pass = words
+        .iter()
+        .any(|word| word.eq_ignore_ascii_case("tests") || word.eq_ignore_ascii_case("checks"))
+        && words.iter().any(|word| word.eq_ignore_ascii_case("pass"));
+
+    (evidence_count >= 2 && has_non_temporal_evidence) || legacy_observable_marker || tests_pass
+}
+
+fn is_concrete_verification(value: &str) -> bool {
+    let value = value.trim();
+    if !is_concrete_value(value) {
+        return false;
+    }
+
+    if value.starts_with('[') && value.ends_with(']') {
+        let items = parse_bracket_list(value);
+        return !items.is_empty() && items.iter().all(|item| is_concrete_verification(item));
+    }
+
+    let words = verification_words(value);
+    let leading_wrapper = words.first().is_some_and(|word| {
+        word.eq_ignore_ascii_case("command")
+            || word.eq_ignore_ascii_case("execute")
+            || word.eq_ignore_ascii_case("invoke")
+            || word.eq_ignore_ascii_case("run")
+            || word.eq_ignore_ascii_case("use")
+    });
+    if (words.first().is_some_and(|word| is_actual_command_token(word))
+        && (words.len() > 1 || words.first().is_some_and(|word| is_pathlike_command_token(word))))
+        || (leading_wrapper
+            && words.get(1).is_some_and(|word| is_actual_command_token(word))
+            && (words.len() > 2 || words.get(1).is_some_and(|word| is_pathlike_command_token(word))))
+        || contains_actual_command_invocation(value)
+    {
+        return true;
+    }
+
+    is_observable_manual_verification(value)
 }
 
 /// Normalize a step action line for `->` segmentation, tolerating the

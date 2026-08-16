@@ -446,6 +446,106 @@ Make the workflow better.
     }
 
     #[test]
+    fn validate_plan_content_rejects_generic_bracket_target_lists_without_concrete_items() {
+        let report = validate_plan_content(
+            r#"# Generic target list
+
+## Summary
+Reject vague target lists.
+
+## Steps
+1. Update the workflow -> files: [relevant code, appropriate files] -> verify: cargo check
+
+## Validation
+1. Run cargo check.
+
+## Assumptions
+1. Keep the current workflow.
+"#,
+        );
+
+        assert!(!report.is_ready());
+        assert!(
+            report
+                .invalid_implementation_steps
+                .iter()
+                .any(|reason| reason.contains("concrete")),
+            "generic target lists should still fail: {:?}",
+            report.reasons()
+        );
+    }
+
+    #[test]
+    fn validate_plan_content_accepts_mixed_bracket_target_lists_and_manual_verification_checks() {
+        let report = validate_plan_content(
+            r#"# Launch plan
+
+## Summary
+Improve startup observability and benchmark the launch path.
+
+## Implementation Steps
+1. Add startup debug logging -> files: [crates/codegen/vtcode-core/src/tools/handlers/planning_workflow/artifacts.rs] -> verify: launch with startup debug logging and confirm each phase is reported
+2. Record launch comparisons -> files: [docs/development/testing.md, relevant quick-reference documentation] -> verify: run at least 10 cold and warm launches before and after changes
+3. Compare benchmark reads -> files: [src/main.rs] -> verify: instrumented benchmark confirms fewer reads and unchanged startup results
+4. Document benchmark results -> files: [docs/development/testing.md, relevant quick-reference documentation] -> verify: documentation review plus cargo fmt --check
+
+## Test Cases and Validation
+1. Run cargo nextest run -p vtcode-core.
+
+## Assumptions and Defaults
+1. Keep existing behavior.
+"#,
+        );
+
+        assert!(report.is_ready(), "turn_947-style launch plan should validate: {:?}", report.reasons());
+        assert_eq!(report.implementation_step_count, 4);
+    }
+
+    #[test]
+    fn validate_plan_content_accepts_embedded_command_invocation_in_descriptive_verification() {
+        let report = validate_plan_content(
+            r#"# Embedded command
+
+## Summary
+Keep the launch check descriptive while still embedding a real command.
+
+## Steps
+1. Improve launch debug capture -> files: [src/main.rs] -> verify: launch with startup debug logging, then use cargo nextest run -p vtcode-core to confirm each phase is reported
+
+## Validation
+1. Run cargo check.
+
+## Assumptions
+1. Keep the current workflow.
+"#,
+        );
+
+        assert!(report.is_ready(), "embedded command invocation should validate: {:?}", report.reasons());
+    }
+
+    #[test]
+    fn validate_plan_content_preserves_concrete_tests_pass_verification() {
+        let report = validate_plan_content(
+            r#"# Test verification
+
+## Summary
+Preserve concise test-result checks.
+
+## Steps
+1. Keep the test gate -> files: [src/main.rs] -> verify: tests pass
+
+## Validation
+1. Run cargo check.
+
+## Assumptions
+1. Keep the current workflow.
+"#,
+        );
+
+        assert!(report.is_ready(), "tests-pass verification should remain valid: {:?}", report.reasons());
+    }
+
+    #[test]
     fn validate_plan_content_rejects_arbitrary_verification_prose() {
         let report = validate_plan_content(
             "# Verification plan\n\n## Summary\nReject arbitrary checks.\n\n## Steps\n1. Update -> src/main.rs -> verify: run banana\n\n## Validation\n1. Run cargo check.\n\n## Assumptions\n1. Keep the current workflow.\n",
