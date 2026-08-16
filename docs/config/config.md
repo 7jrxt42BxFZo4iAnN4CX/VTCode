@@ -102,8 +102,9 @@ env_key = "NVIDIA_API_KEY"
 
 [agent.provider_settings.merge-gateway]
 name = "Merge Gateway"
-base_url = "https://api-gateway.merge.dev/v1/openai"
+base_url = "https://api-gateway.merge.dev/v1"
 env_key = "MERGE_GATEWAY_API_KEY"
+# Native Responses is the default; an explicit /v1/openai base URL keeps Chat Completions compatibility.
 # Override the endpoint with MERGE_GATEWAY_BASE_URL when using a proxy.
 # The default model is default_routing; explicit provider/model routes are also valid.
 
@@ -922,8 +923,8 @@ STEPFUN_API_KEY=your_stepfun_api_key
 QWEN_API_KEY=your_qwen_api_key
 NVIDIA_API_KEY=your_nvidia_api_key
 MERGE_GATEWAY_API_KEY=your_merge_gateway_api_key
-# Optional Merge Gateway endpoint override:
-# MERGE_GATEWAY_BASE_URL=https://api-gateway.merge.dev/v1/openai
+# Optional Merge Gateway endpoint override (native default):
+# MERGE_GATEWAY_BASE_URL=https://api-gateway.merge.dev/v1
 OLLAMA_HOST=http://localhost:11434  # For Ollama
 ```
 

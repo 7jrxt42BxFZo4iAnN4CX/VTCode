@@ -27,4 +27,5 @@ pub const QWEN_API_BASE: &str = "https://dashscope.aliyuncs.com/compatible-mode/
 pub const STEPFUN_API_BASE: &str = "https://api.stepfun.ai/v1";
 pub const EVOLINK_API_BASE: &str = "https://direct.evolink.ai/v1";
 pub const POOLSIDE_API_BASE: &str = "https://api.poolsi.de/openai/v1";
+pub const MERGE_GATEWAY_NATIVE_API_BASE: &str = "https://api-gateway.merge.dev/v1";
 pub const MERGE_GATEWAY_API_BASE: &str = "https://api-gateway.merge.dev/v1/openai";

@@ -6,22 +6,28 @@
 //! - Disk caching with TTL
 //! - Model family resolution
 
+use anyhow::Context;
 use chrono::Utc;
 use hashbrown::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info};
 
 use super::cache::{self, ModelsCache};
 use super::model_family::{ModelFamily, find_family_for_model};
 use super::model_presets::{ModelInfo, ModelPreset, builtin_model_presets, presets_for_provider};
 use crate::config::models::Provider;
-use crate::llm::providers::llamacpp::fetch_llamacpp_models;
+use crate::llm::providers::{
+    MergeCatalogAvailability, MergeCatalogFilters, MergeCatalogModel, MergeGatewayCatalogClient,
+    llamacpp::fetch_llamacpp_models,
+};
+use vtcode_config::constants::{env_vars, urls};
 
-/// Cache file name
-const MODEL_CACHE_FILE: &str = "models_cache.json";
+/// Legacy cache file name retained for one-time compatible reads.
+const LEGACY_MODEL_CACHE_FILE: &str = "models_cache.json";
 
 /// Default cache TTL (2 minutes)
 const DEFAULT_MODEL_CACHE_TTL: Duration = Duration::from_secs(120);
@@ -50,8 +56,12 @@ pub struct ModelsManager {
     cache_ttl: Duration,
     /// Current active provider
     current_provider: RwLock<Provider>,
+    /// Monotonically increasing generation used to reject late refresh results.
+    refresh_generation: AtomicU64,
     /// Whether remote model fetching is enabled
     remote_models_enabled: bool,
+    /// Serializes cache writes so stale concurrent refreshes cannot overwrite newer snapshots.
+    cache_write_lock: Mutex<()>,
 }
 
 impl Default for ModelsManager {
@@ -71,7 +81,9 @@ impl ModelsManager {
             vtcode_home,
             cache_ttl: DEFAULT_MODEL_CACHE_TTL,
             current_provider: RwLock::new(Provider::default()),
+            refresh_generation: AtomicU64::new(0),
             remote_models_enabled: true,
+            cache_write_lock: Mutex::new(()),
         }
     }
 
@@ -84,7 +96,9 @@ impl ModelsManager {
             vtcode_home,
             cache_ttl: DEFAULT_MODEL_CACHE_TTL,
             current_provider: RwLock::new(Provider::default()),
+            refresh_generation: AtomicU64::new(0),
             remote_models_enabled: true,
+            cache_write_lock: Mutex::new(()),
         }
     }
 
@@ -98,7 +112,9 @@ impl ModelsManager {
             vtcode_home,
             cache_ttl: DEFAULT_MODEL_CACHE_TTL,
             current_provider: RwLock::new(provider),
+            refresh_generation: AtomicU64::new(0),
             remote_models_enabled: true,
+            cache_write_lock: Mutex::new(()),
         }
     }
 
@@ -111,7 +127,9 @@ impl ModelsManager {
             vtcode_home,
             cache_ttl: DEFAULT_MODEL_CACHE_TTL,
             current_provider: RwLock::new(provider),
+            refresh_generation: AtomicU64::new(0),
             remote_models_enabled: true,
+            cache_write_lock: Mutex::new(()),
         }
     }
 
@@ -139,13 +157,14 @@ impl ModelsManager {
             return Ok(());
         }
 
+        let provider = *self.current_provider.read().await;
+        let generation = self.refresh_generation.fetch_add(1, Ordering::AcqRel) + 1;
+
         // Try to load from cache first
-        if self.try_load_cache().await {
+        if self.try_load_cache_for_at(provider, generation).await {
             debug!("Using cached models");
             return Ok(());
         }
-
-        let provider = *self.current_provider.read().await;
 
         match provider {
             Provider::Ollama => {
@@ -153,8 +172,12 @@ impl ModelsManager {
                 match self.fetch_ollama_models().await {
                     Ok(models) => {
                         info!("Fetched {} models from Ollama", models.len());
-                        self.apply_remote_models(models.clone()).await;
-                        self.persist_cache(&models, None).await;
+                        if self
+                            .apply_remote_state_for_provider_at(provider, generation, models.clone(), None)
+                            .await
+                        {
+                            self.persist_cache_for_at(provider, generation, &models, None).await;
+                        }
                         Ok(())
                     }
                     Err(e) => {
@@ -169,8 +192,12 @@ impl ModelsManager {
                 match self.fetch_llamacpp_models().await {
                     Ok(models) => {
                         info!("Fetched {} models from llama.cpp", models.len());
-                        self.apply_remote_models(models.clone()).await;
-                        self.persist_cache(&models, None).await;
+                        if self
+                            .apply_remote_state_for_provider_at(provider, generation, models.clone(), None)
+                            .await
+                        {
+                            self.persist_cache_for_at(provider, generation, &models, None).await;
+                        }
                         Ok(())
                     }
                     Err(e) => {
@@ -179,12 +206,107 @@ impl ModelsManager {
                     }
                 }
             }
+            Provider::MergeGateway => self.refresh_merge_gateway_models(generation).await,
             _ => {
                 // For other providers, we don't have remote discovery yet
                 info!("Remote model discovery for {:?} not implemented, using local presets", provider);
                 Ok(())
             }
         }
+    }
+
+    async fn refresh_merge_gateway_models(&self, generation: u64) -> anyhow::Result<()> {
+        let api_key = std::env::var(env_vars::MERGE_GATEWAY_API_KEY)
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        let Some(api_key) = api_key else {
+            debug!("Merge Gateway API key is unavailable; using cached or static models");
+            let _ = self.try_load_stale_cache_for_at(Provider::MergeGateway, generation).await;
+            return Ok(());
+        };
+
+        let base_url = std::env::var(env_vars::MERGE_GATEWAY_BASE_URL)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| urls::MERGE_GATEWAY_NATIVE_API_BASE.to_string());
+        let client = MergeGatewayCatalogClient::try_with_timeouts(api_key, base_url, None)
+            .context("failed to initialize Merge Gateway catalog client")?;
+        let cached = self.load_cache_for(Provider::MergeGateway).await;
+        let etag = self
+            .etag
+            .read()
+            .await
+            .clone()
+            .or_else(|| cached.as_ref().and_then(|cache| cache.etag.clone()));
+
+        match client.fetch_snapshot(&MergeCatalogFilters::default(), etag.as_deref()).await {
+            Ok(None) => {
+                debug!("Merge Gateway catalog is unchanged");
+                if let Some(cache) = cached {
+                    let _ = self
+                        .apply_remote_state_for_provider_at(
+                            Provider::MergeGateway,
+                            generation,
+                            cache.models,
+                            cache.etag,
+                        )
+                        .await;
+                }
+                Ok(())
+            }
+            Ok(Some(snapshot)) => {
+                let models = snapshot
+                    .models
+                    .into_iter()
+                    .filter_map(Self::merge_catalog_model_info)
+                    .collect::<Vec<_>>();
+                if self
+                    .apply_remote_state_for_provider_at(
+                        Provider::MergeGateway,
+                        generation,
+                        models.clone(),
+                        snapshot.etag.clone(),
+                    )
+                    .await
+                {
+                    self.persist_cache_for_at(Provider::MergeGateway, generation, &models, snapshot.etag)
+                        .await;
+                }
+                Ok(())
+            }
+            Err(error) => {
+                error!("Failed to fetch Merge Gateway model catalog: {error}");
+                let _ = self.try_load_stale_cache_for_at(Provider::MergeGateway, generation).await;
+                Ok(())
+            }
+        }
+    }
+
+    fn merge_catalog_model_info(model: MergeCatalogModel) -> Option<ModelInfo> {
+        if model.availability != MergeCatalogAvailability::Available {
+            return None;
+        }
+
+        let display_name = model.display_name.unwrap_or_else(|| model.model.clone());
+        Some(ModelInfo {
+            slug: model.model.clone(),
+            display_name,
+            description: format!("Merge Gateway model: {}", model.model),
+            provider: Provider::MergeGateway,
+            default_reasoning_level: crate::config::types::ReasoningEffortLevel::Medium,
+            supported_reasoning_levels: Vec::new(),
+            context_window: model.context_window.map(i64::from),
+            supports_tool_use: model.supports_tool_use,
+            supports_streaming: model.supports_streaming,
+            supports_vision: model.supports_vision,
+            supports_structured_output: model.supports_structured_output,
+            supports_reasoning: false,
+            max_output_tokens: model.max_output_tokens.map(i64::from),
+            priority: 50,
+            visibility: "list".to_string(),
+            supported_in_api: true,
+            upgrade: None,
+        })
     }
 
     /// Fetch models from Ollama API
@@ -212,7 +334,10 @@ impl ModelsManager {
                         context_window: Some(32_000), // Default for most Ollama models
                         supports_tool_use: true,
                         supports_streaming: true,
+                        supports_vision: false,
+                        supports_structured_output: false,
                         supports_reasoning: false,
+                        max_output_tokens: None,
                         priority: 100,
                         visibility: "list".to_string(),
                         supported_in_api: true,
@@ -238,7 +363,10 @@ impl ModelsManager {
                 context_window: Some(131_072),
                 supports_tool_use: true,
                 supports_streaming: true,
+                supports_vision: false,
+                supports_structured_output: false,
                 supports_reasoning: true,
+                max_output_tokens: None,
                 priority: 100,
                 visibility: "list".to_string(),
                 supported_in_api: true,
@@ -342,47 +470,144 @@ impl ModelsManager {
     }
 
     /// Apply remote models (replace cached state)
-    async fn apply_remote_models(&self, models: Vec<ModelInfo>) {
+    #[cfg(test)]
+    async fn apply_remote_state_for_provider(
+        &self,
+        provider: Provider,
+        models: Vec<ModelInfo>,
+        etag: Option<String>,
+    ) -> bool {
+        let generation = self.refresh_generation.load(Ordering::Acquire);
+        self.apply_remote_state_for_provider_at(provider, generation, models, etag)
+            .await
+    }
+
+    async fn apply_remote_state_for_provider_at(
+        &self,
+        provider: Provider,
+        generation: u64,
+        models: Vec<ModelInfo>,
+        etag: Option<String>,
+    ) -> bool {
+        let current_provider = self.current_provider.read().await;
+        if *current_provider != provider || self.refresh_generation.load(Ordering::Acquire) != generation {
+            debug!(
+                requested_provider = %provider,
+                current_provider = %*current_provider,
+                "Discarding stale model metadata for a provider that is no longer active"
+            );
+            return false;
+        }
+
         *self.remote_models.write().await = models;
+        *self.etag.write().await = etag;
+        true
     }
 
     /// Try to load from cache
+    #[cfg(test)]
     async fn try_load_cache(&self) -> bool {
-        let cache_path = self.cache_path();
-        let cache = match cache::load_cache(&cache_path).await {
-            Ok(Some(cache)) => cache,
-            Ok(None) => {
-                debug!("No cache file found at {:?}", cache_path);
-                return false;
-            }
-            Err(err) => {
-                error!("Failed to load models cache: {err}");
-                return false;
-            }
-        };
+        let provider = *self.current_provider.read().await;
+        self.try_load_cache_for(provider).await
+    }
 
+    #[cfg(test)]
+    async fn try_load_cache_for(&self, provider: Provider) -> bool {
+        let generation = self.refresh_generation.load(Ordering::Acquire);
+        self.try_load_cache_for_at(provider, generation).await
+    }
+
+    async fn try_load_cache_for_at(&self, provider: Provider, generation: u64) -> bool {
+        let Some(cache) = self.load_cache_for(provider).await else {
+            return false;
+        };
         if !cache.is_fresh(self.cache_ttl) {
             debug!("Cache is stale (age: {:?})", cache.age());
             return false;
         }
+        self.apply_remote_state_for_provider_at(provider, generation, cache.models.into_iter().collect(), cache.etag)
+            .await
+    }
 
-        let models: Vec<ModelInfo> = cache.models.into_iter().collect();
+    async fn try_load_stale_cache_for_at(&self, provider: Provider, generation: u64) -> bool {
+        let Some(cache) = self.load_cache_for(provider).await else {
+            return false;
+        };
+        self.apply_remote_state_for_provider_at(provider, generation, cache.models.into_iter().collect(), cache.etag)
+            .await
+    }
 
-        *self.etag.write().await = cache.etag;
-        self.apply_remote_models(models).await;
-        true
+    async fn load_cache_for(&self, provider: Provider) -> Option<ModelsCache> {
+        let cache_path = self.cache_path_for(provider);
+        let cache = match cache::load_cache(&cache_path).await {
+            Ok(Some(cache)) => Some(cache),
+            Ok(None) if cache_path != self.legacy_cache_path() => {
+                match cache::load_cache(&self.legacy_cache_path()).await {
+                    Ok(cache) => cache,
+                    Err(err) => {
+                        error!("Failed to load legacy models cache: {err}");
+                        None
+                    }
+                }
+            }
+            Ok(None) => None,
+            Err(err) => {
+                error!("Failed to load models cache: {err}");
+                None
+            }
+        }?;
+
+        if cache.provider != provider.to_string() {
+            debug!(
+                cached_provider = %cache.provider,
+                requested_provider = %provider,
+                "Ignoring model cache for a different provider"
+            );
+            return None;
+        }
+
+        Some(cache)
     }
 
     /// Persist cache to disk
+    #[cfg(test)]
     async fn persist_cache(&self, models: &[ModelInfo], etag: Option<String>) {
         let provider = *self.current_provider.read().await;
+        let generation = self.refresh_generation.load(Ordering::Acquire);
+        self.persist_cache_for_at(provider, generation, models, etag).await;
+    }
+
+    #[cfg(test)]
+    async fn persist_cache_for(&self, provider: Provider, models: &[ModelInfo], etag: Option<String>) {
         let cache = ModelsCache {
             fetched_at: Utc::now(),
             etag,
             provider: provider.to_string(),
             models: models.to_vec(),
         };
-        let cache_path = self.cache_path();
+        let cache_path = self.cache_path_for(provider);
+        cache::save_cache(&cache_path, &cache).await.expect("test cache write");
+    }
+
+    async fn persist_cache_for_at(
+        &self,
+        provider: Provider,
+        generation: u64,
+        models: &[ModelInfo],
+        etag: Option<String>,
+    ) {
+        let _write_guard = self.cache_write_lock.lock().await;
+        let current_provider = self.current_provider.read().await;
+        if *current_provider != provider || self.refresh_generation.load(Ordering::Acquire) != generation {
+            return;
+        }
+        let cache = ModelsCache {
+            fetched_at: Utc::now(),
+            etag,
+            provider: provider.to_string(),
+            models: models.to_vec(),
+        };
+        let cache_path = self.cache_path_for(provider);
         if let Err(err) = cache::save_cache(&cache_path, &cache).await {
             error!("Failed to write models cache: {err}");
         }
@@ -441,14 +666,21 @@ impl ModelsManager {
         }
     }
 
-    /// Get the cache file path
-    fn cache_path(&self) -> PathBuf {
-        self.vtcode_home.join(MODEL_CACHE_FILE)
+    /// Get the provider-scoped cache file path.
+    fn cache_path_for(&self, provider: Provider) -> PathBuf {
+        self.vtcode_home.join(format!("models_cache_{provider}.json"))
+    }
+
+    fn legacy_cache_path(&self) -> PathBuf {
+        self.vtcode_home.join(LEGACY_MODEL_CACHE_FILE)
     }
 
     /// Set the current provider
     pub async fn set_provider(&self, provider: Provider) {
         *self.current_provider.write().await = provider;
+        self.refresh_generation.fetch_add(1, Ordering::AcqRel);
+        self.remote_models.write().await.clear();
+        *self.etag.write().await = None;
     }
 
     /// Get the current provider
@@ -573,6 +805,50 @@ mod tests {
         assert_eq!(manager.get_provider().await, Provider::Anthropic);
     }
 
+    #[test]
+    fn merge_catalog_models_map_to_picker_metadata_and_hide_deprecated_routes() {
+        let model = MergeCatalogModel {
+            model: "anthropic/claude-sonnet-5".to_string(),
+            provider: "anthropic".to_string(),
+            display_name: Some("Claude Sonnet 5".to_string()),
+            availability: MergeCatalogAvailability::Available,
+            context_window: Some(200_000),
+            max_output_tokens: Some(16_384),
+            supports_tool_use: true,
+            supports_streaming: true,
+            supports_vision: true,
+            supports_structured_output: true,
+            service_tiers: Vec::new(),
+        };
+
+        let info = ModelsManager::merge_catalog_model_info(model).expect("available model should map");
+        assert_eq!(info.slug, "anthropic/claude-sonnet-5");
+        assert_eq!(info.display_name, "Claude Sonnet 5");
+        assert_eq!(info.provider, Provider::MergeGateway);
+        assert_eq!(info.context_window, Some(200_000));
+        assert_eq!(info.max_output_tokens, Some(16_384));
+        assert!(info.supports_vision);
+        assert!(info.supports_structured_output);
+
+        let deprecated = MergeCatalogModel {
+            availability: MergeCatalogAvailability::Deprecated,
+            ..MergeCatalogModel {
+                model: "openai/old".to_string(),
+                provider: "openai".to_string(),
+                display_name: None,
+                availability: MergeCatalogAvailability::Available,
+                context_window: None,
+                max_output_tokens: None,
+                supports_tool_use: false,
+                supports_streaming: false,
+                supports_vision: false,
+                supports_structured_output: false,
+                service_tiers: Vec::new(),
+            }
+        };
+        assert!(ModelsManager::merge_catalog_model_info(deprecated).is_none());
+    }
+
     #[tokio::test]
     async fn test_cache_operations() {
         let dir = tempdir().expect("create temp dir");
@@ -593,7 +869,10 @@ mod tests {
             context_window: Some(128_000),
             supports_tool_use: true,
             supports_streaming: true,
+            supports_vision: false,
+            supports_structured_output: false,
             supports_reasoning: false,
+            max_output_tokens: None,
             priority: 0,
             visibility: "list".to_string(),
             supported_in_api: true,
@@ -604,6 +883,93 @@ mod tests {
         // Now cache should load
         let cached = manager.try_load_cache().await;
         assert!(cached);
+    }
+
+    #[tokio::test]
+    async fn ignores_fresh_cache_for_another_provider() {
+        let dir = tempdir().expect("create temp dir");
+        let manager = ModelsManager::with_home_and_provider(dir.path().to_path_buf(), Provider::Gemini);
+        let cache = ModelsCache::new("openai", Vec::new());
+        cache::save_cache(&manager.cache_path_for(Provider::Gemini), &cache)
+            .await
+            .expect("save mismatched cache");
+
+        assert!(!manager.try_load_cache().await);
+        assert!(manager.remote_models.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn ignores_stale_inflight_models_after_provider_switch() {
+        let dir = tempdir().expect("create temp dir");
+        let manager = ModelsManager::with_home_and_provider(dir.path().to_path_buf(), Provider::Gemini);
+        manager.set_provider(Provider::Anthropic).await;
+
+        let models = vec![ModelInfo {
+            slug: "gemini-stale".to_string(),
+            display_name: "Gemini Stale".to_string(),
+            description: "Stale fetch result".to_string(),
+            provider: Provider::Gemini,
+            default_reasoning_level: crate::config::types::ReasoningEffortLevel::Medium,
+            supported_reasoning_levels: vec![],
+            context_window: Some(128_000),
+            supports_tool_use: true,
+            supports_streaming: true,
+            supports_vision: false,
+            supports_structured_output: false,
+            supports_reasoning: false,
+            max_output_tokens: None,
+            priority: 0,
+            visibility: "list".to_string(),
+            supported_in_api: true,
+            upgrade: None,
+        }];
+
+        assert!(
+            !manager
+                .apply_remote_state_for_provider(Provider::Gemini, models, Some("etag-1".to_string()))
+                .await
+        );
+        assert!(manager.remote_models.read().await.is_empty());
+        assert!(manager.etag.read().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn persists_cache_under_requested_provider_scope() {
+        let dir = tempdir().expect("create temp dir");
+        let manager = ModelsManager::with_home_and_provider(dir.path().to_path_buf(), Provider::Gemini);
+        manager.set_provider(Provider::Anthropic).await;
+
+        let models = vec![ModelInfo {
+            slug: "gemini-cached".to_string(),
+            display_name: "Gemini Cached".to_string(),
+            description: "Cached fetch result".to_string(),
+            provider: Provider::Gemini,
+            default_reasoning_level: crate::config::types::ReasoningEffortLevel::Medium,
+            supported_reasoning_levels: vec![],
+            context_window: Some(128_000),
+            supports_tool_use: true,
+            supports_streaming: true,
+            supports_vision: false,
+            supports_structured_output: false,
+            supports_reasoning: false,
+            max_output_tokens: None,
+            priority: 0,
+            visibility: "list".to_string(),
+            supported_in_api: true,
+            upgrade: None,
+        }];
+
+        manager.persist_cache_for(Provider::Gemini, &models, None).await;
+
+        let gemini_cache = cache::load_cache(&manager.cache_path_for(Provider::Gemini))
+            .await
+            .expect("load gemini cache");
+        let anthropic_cache = cache::load_cache(&manager.cache_path_for(Provider::Anthropic))
+            .await
+            .expect("load anthropic cache");
+
+        assert!(gemini_cache.is_some());
+        assert!(anthropic_cache.is_none());
     }
 
     #[test]

@@ -78,7 +78,7 @@ Choose one of the supported LLM providers:
 -   **Merge Gateway**: `export MERGE_GATEWAY_API_KEY=your_key_here`
     -   Create a key in the [Merge dashboard](https://dashboard.merge.dev/), then configure `provider = "merge-gateway"`.
     -   Default model: `default_routing`; curated routes include `openai/gpt-5.5`, `anthropic/claude-opus-5`, and `google/gemini-3.6-flash`.
-    -   See the [Merge Gateway provider guide](../providers/merge-gateway.md) for endpoint and compatibility details.
+    -   Native Requests API and authenticated `/v1/models` catalog discovery are used by default; see the [Merge Gateway provider guide](../providers/merge-gateway.md) for legacy `/v1/openai` compatibility.
 
 For more providers, see the [Provider Guides](../providers/PROVIDER_GUIDES.md).
 

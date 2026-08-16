@@ -67,9 +67,18 @@ pub struct ModelInfo {
     /// Whether this model supports streaming
     #[serde(default = "default_true")]
     pub supports_streaming: bool,
+    /// Whether this model accepts image inputs
+    #[serde(default)]
+    pub supports_vision: bool,
+    /// Whether this model supports schema-constrained structured output
+    #[serde(default)]
+    pub supports_structured_output: bool,
     /// Whether this model supports reasoning/thinking
     #[serde(default)]
     pub supports_reasoning: bool,
+    /// Maximum generated output tokens, when published by the provider
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<i64>,
     /// Priority for sorting (lower = higher priority)
     #[serde(default)]
     pub priority: i32,
@@ -276,7 +285,10 @@ mod tests {
             context_window: Some(128_000),
             supports_tool_use: true,
             supports_streaming: true,
+            supports_vision: false,
+            supports_structured_output: false,
             supports_reasoning: false,
+            max_output_tokens: None,
             priority: 0,
             visibility: "list".to_string(),
             supported_in_api: true,

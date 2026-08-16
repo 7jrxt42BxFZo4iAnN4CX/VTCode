@@ -4,14 +4,16 @@
 | --- | --- |
 | Provider key | `merge-gateway` |
 | API key | `MERGE_GATEWAY_API_KEY` |
-| Default endpoint | `https://api-gateway.merge.dev/v1/openai` |
+| Native endpoint | `https://api-gateway.merge.dev/v1` |
 | Endpoint override | `MERGE_GATEWAY_BASE_URL` |
 | Default model | `default_routing` |
 | Curated routes | See the full list below; all are available in the model picker |
-| Transport | OpenAI-compatible Chat Completions |
-| Authentication | Bearer token |
+| Default transport | Merge Responses API (`POST /responses`) |
+| Legacy transport | Explicit base URLs ending in `/v1/openai` use Chat Completions |
+| Catalog | Authenticated `GET /models`, paginated and cache-backed |
+| Authentication | ****** |
 | Tool calls | Supported |
-| Streaming usage | Supported via `stream_options.include_usage` |
+| Streaming usage | Supported via native Responses SSE |
 | Reasoning effort | Not forwarded; controls are route-specific |
 
 Curated routes:

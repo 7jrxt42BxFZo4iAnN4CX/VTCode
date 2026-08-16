@@ -124,7 +124,7 @@ All VT Code crates require Rust 1.88 or later due to dependencies (ratatui 0.30,
 | HuggingFace | Yes | `huggingface` | Inference Providers |
 | xAI | Yes | `xai` | Grok models |
 | NVIDIA | Yes | `nvidia` | NVIDIA NIM, OpenAI compatible |
-| Merge Gateway | Yes | `merge-gateway` | OpenAI-compatible Merge multi-provider gateway |
+| Merge Gateway | Yes | `merge-gateway` | Native Merge Responses API and authenticated model catalog; explicit `/v1/openai` Chat compatibility |
 | OpenCode Zen | Yes | `opencode-zen` | Full support |
 | OpenCode Go | Yes | `opencode-go` | Full support |
 | Mistral | Yes | `mistral` | Full support |

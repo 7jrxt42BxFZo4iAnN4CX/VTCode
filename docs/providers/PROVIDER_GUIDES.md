@@ -239,11 +239,11 @@ complete field reference and precedence rules.
 -   **Official docs:** [Merge Gateway API overview](https://docs.merge.dev/merge-gateway/api-overview/llms.txt) · [Coding-agent integration](https://docs.merge.dev/merge-gateway/features/use-in-your-ide/overview)
 -   **Provider key:** `merge-gateway`
 -   **Authentication:** `MERGE_GATEWAY_API_KEY` (Bearer token; create a key in the [Merge dashboard](https://dashboard.merge.dev/))
--   **Base URL:** `https://api-gateway.merge.dev/v1/openai`, override with `MERGE_GATEWAY_BASE_URL`
+-   **Base URL:** `https://api-gateway.merge.dev/v1` (native Responses), override with `MERGE_GATEWAY_BASE_URL`; explicit `/v1/openai` selects legacy Chat Completions
 -   **Default model:** `default_routing`
 -   **Curated picker models:** `openai/gpt-5.5`, `anthropic/claude-opus-5`, `google/gemini-3.6-flash`, `google/gemini-3.7-flash`, `deepseek/deepseek-v4-pro-0813`, `deepseek/deepseek-v4-flash-0731`, `xai/grok-4.6`, `qwen/qwen3.8-max`, `minimax/minimax-h3`, `moonshot/kimi-k3`, `thinkingmachines/inkling`, `meta/muse-spark-1.1`, `openai/gpt-5.6-luna`, `openai/gpt-5.6-sol`, and `openai/gpt-5.6-terra`
--   **Features:** OpenAI-compatible Chat Completions, streaming usage, tool calling, curated vision metadata, and arbitrary explicit Merge route IDs
--   **Limitations:** This integration intentionally uses only Merge's OpenAI-compatible Chat Completions surface. Native Responses routing metadata, service tiers, Gateway-controlled thinking fields, prompt-cache headers, and per-call cost extraction are not forwarded.
+-   **Features:** Native Responses, streaming, tool calling, structured outputs, authenticated paginated model catalog, cache-backed picker metadata, and arbitrary explicit Merge route IDs
+-   **Limitations:** Reasoning controls remain route-specific and are not inferred generically; routing metadata and billed cost remain outside VT Code's normalized response fields. Explicit `/v1/openai` endpoints retain the legacy compatibility path.
 
 ## GitHub Copilot
 

@@ -1,9 +1,9 @@
 # Merge Gateway Integration
 
-Merge Gateway gives VT Code one OpenAI-compatible endpoint for routing requests
-to Merge's supported model vendors. VT Code integrates the compatibility surface
-at `/v1/openai` and keeps Merge's route-specific controls out of the generic
-provider contract.
+Merge Gateway gives VT Code one native Responses API endpoint for routing
+requests to Merge's supported model vendors. VT Code also retains the
+OpenAI-compatible Chat Completions surface for explicitly configured legacy
+`/v1/openai` endpoints.
 
 ## Setup
 
@@ -23,15 +23,17 @@ provider contract.
    api_key_env = "MERGE_GATEWAY_API_KEY"
    ```
 
-The default endpoint is:
+The default endpoint is the native Merge API:
 
 ```text
-https://api-gateway.merge.dev/v1/openai
+https://api-gateway.merge.dev/v1
 ```
 
-Set `MERGE_GATEWAY_BASE_URL` when a proxy or compatible gateway endpoint is
-required. The value should remain the provider base URL; VT Code appends
-`/chat/completions` for requests.
+VT Code posts native requests to `/responses` and discovers authenticated model
+metadata from `/models`. Set `MERGE_GATEWAY_BASE_URL` when a proxy is required.
+To keep an existing OpenAI-compatible deployment, explicitly set the base URL
+to a path ending in `/v1/openai`; that selects the legacy Chat Completions
+transport and appends `/chat/completions`.
 
 ## Quick start
 
@@ -87,32 +89,41 @@ The environment variables are:
 | Variable | Purpose |
 | --- | --- |
 | `MERGE_GATEWAY_API_KEY` | Bearer token used for Merge Gateway requests |
-| `MERGE_GATEWAY_BASE_URL` | Optional override for the OpenAI-compatible base URL |
+| `MERGE_GATEWAY_BASE_URL` | Optional native `/v1` override; ending in `/v1/openai` selects legacy Chat Completions |
 
-## Compatibility behavior
+## Responses and catalog behavior
 
-VT Code uses the shared OpenAI-compatible Chat Completions transport. The
-integration supports bearer authentication, streaming, usage reporting in
-streaming requests, standard tool serialization, and the normal message
-format. It does not add a native Merge Responses implementation.
+Native requests preserve text, images/documents, tool calls, tool results,
+structured-output schemas, streaming, and the model selected by Merge. Tool
+results are sent as top-level `tool_result` input items, matching Merge's
+multi-turn contract.
 
-Merge's reasoning controls vary by route and vendor. For that reason VT Code
-does not send a generic `reasoning_effort` field and does not infer
-`reasoning_content` from compatibility responses. Configure reasoning through
-the selected Merge route's documented behavior.
+When the Merge provider is selected and `MERGE_GATEWAY_API_KEY` is available,
+VT Code fetches the authenticated `GET /v1/models` catalog with cursor
+pagination. Catalog data is cached per provider and reused when refresh fails;
+unknown explicit `provider/model` route IDs remain valid and use conservative
+capabilities. Deprecated catalog routes are not added to the picker.
 
-The local catalog supplies conservative capability metadata for the curated
-routes. It does not promise that every route supports vision, structured
-output, or the same context window. Prompt-cache session headers, routing
-metadata, service tiers, Gateway-controlled thinking, and per-call cost
-extraction remain outside this compatibility-only integration.
+The supplied [`models/catalog/llms.txt`](https://docs.merge.dev/merge-gateway/models/catalog/llms.txt)
+file is a documentation index, not a runtime model dataset. Runtime discovery
+uses the authenticated `/v1/models` endpoint.
+
+Merge's reasoning behavior is vendor- and route-specific. VT Code does not
+infer reasoning support from unrelated catalog fields or send a generic
+`reasoning_effort` field unless a future explicit Merge capability exposes that
+contract. Merge routing metadata and billed cost remain provider-side metadata;
+VT Code reports normalized token usage through its existing response contract.
 
 ## Troubleshooting
 
 - `401` or authentication errors: confirm `MERGE_GATEWAY_API_KEY` is set and
   points to a key created in Merge.
-- `404` errors: verify the base URL ends at `/v1/openai`, not `/v1` or
-  `/chat/completions`; VT Code appends the chat-completions path.
+- `404` errors: verify the native base URL ends at `/v1`, or that an explicitly
+  configured legacy base URL ends at `/v1/openai`; do not include
+  `/responses` or `/chat/completions` in the configured base URL.
+- No dynamic models appear: confirm the API key is available in
+  `MERGE_GATEWAY_API_KEY`; VT Code keeps curated/static models available when
+  catalog discovery is unavailable.
 - A model is rejected by Merge: confirm the exact vendor-prefixed route ID in
   Merge's catalog. VT Code deliberately does not reject unknown Merge IDs
   locally.

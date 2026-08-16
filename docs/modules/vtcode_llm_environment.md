@@ -23,7 +23,7 @@ the secret values.
 | `deepseek`   | `DEEPSEEK_API_KEY`   | –                | Required for DeepSeek models.                                                                                     |
 | `meta`       | `META_API_KEY`       | `MODEL_API_KEY`   | Required for official Meta AI Muse models; both variable names are accepted.                                      |
 | `openrouter` | `OPENROUTER_API_KEY` | –                | Required for OpenRouter routing.                                                                                  |
-| `merge-gateway` | `MERGE_GATEWAY_API_KEY` | –                | Required for Merge Gateway routes; override the OpenAI-compatible endpoint with `MERGE_GATEWAY_BASE_URL`.       |
+| `merge-gateway` | `MERGE_GATEWAY_API_KEY` | –                | Required for native Merge Responses/catalog access; set `MERGE_GATEWAY_BASE_URL` for a proxy or explicit `/v1/openai` legacy compatibility. |
 | `zai`        | `ZAI_API_KEY`        | –                | Required for Zhipu AI (Z.AI) models.                                                                              |
 | `moonshot`   | `MOONSHOT_API_KEY`   | –                | Required for Moonshot AI models.                                                                                  |
 | `lmstudio`   | `LMSTUDIO_API_KEY`   | –                | Optional; provide when the LM Studio developer server enforces auth. Override host/port with `LMSTUDIO_BASE_URL`. |

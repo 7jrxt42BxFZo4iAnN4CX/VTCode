@@ -8,8 +8,9 @@ Regenerate:
 python3 scripts/generate_config_field_reference.py
 ```
 
-Built-in providers include `merge-gateway`. Configure it with a Merge API key
-and the OpenAI-compatible endpoint when using the provider directly:
+Built-in providers include `merge-gateway`. Configure it with a Merge API key.
+Native Responses is the default; use an explicit `/v1/openai` base URL only for
+legacy Chat Completions compatibility:
 
 ```toml
 [agent]
@@ -18,13 +19,14 @@ default_model = "default_routing"
 api_key_env = "MERGE_GATEWAY_API_KEY"
 
 [agent.provider_settings.merge-gateway]
-base_url = "https://api-gateway.merge.dev/v1/openai"
+base_url = "https://api-gateway.merge.dev/v1"
 ```
 
 Set `MERGE_GATEWAY_BASE_URL` to override the endpoint. Curated model IDs are
 `default_routing`, `openai/gpt-5.5`, `anthropic/claude-opus-5`, and
 `google/gemini-3.6-flash`; other valid Merge `provider/model` IDs are accepted
-through explicit provider configuration.
+through explicit provider configuration. With credentials available, the model
+picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
