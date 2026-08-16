@@ -2,6 +2,27 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.146.2 - 2026-08-16
+
+### Highlights
+#### Bug Fixes
+
+- Record requested tool calls at shared dispatch point (6e642424) 
+- Clear inline TUI frames on exit via restore_tui (fixes #729) (8b8846c6) 
+- Harden context compaction and post-tool recovery (38a03b34) 
+#### Documentation
+
+- Sync provider guides with current model constants (652fd95d) 
+- Restructure documentation for better clarity (71675723) 
+- Expand custom provider configuration guide (43051191) 
+### Other Changes
+#### Other
+
+- [fixes #727] chore: remove duplicate unused_results lint expectations (289228aa) 
+- Update README (4d951b8a) 
+#### Refactors
+
+- Replace instruction summary rendering with full renderer (6a8eee73) 
 ## 0.146.1 - 2026-08-15
 
 ### Highlights
