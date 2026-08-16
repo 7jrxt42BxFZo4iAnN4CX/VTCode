@@ -513,6 +513,20 @@ impl MergeGatewayProvider {
                     events.extend(state.apply_native_snapshot(response)?);
                     state.done = true;
                 } else {
+                    if let Some(previous) = state.native_snapshot.take() {
+                        if Self::native_snapshots_are_cumulative(&previous, &response) {
+                            if !state.native_snapshot_streaming {
+                                events.extend(state.apply_native_snapshot(previous)?);
+                                state.native_snapshot_streaming = true;
+                            }
+                            events.extend(state.apply_native_snapshot(response.clone())?);
+                        } else if state.native_snapshot_streaming {
+                            // A provider replacement cannot retract already-emitted
+                            // deltas, but it must not leak the old snapshot into the
+                            // terminal response or subsequent deltas.
+                            state.reset_native_snapshot_accumulator();
+                        }
+                    }
                     state.remember_native_snapshot(response);
                 }
             }
@@ -621,6 +635,36 @@ impl MergeGatewayProvider {
             return event.to_string();
         }
         String::new()
+    }
+
+    fn native_snapshots_are_cumulative(previous: &LLMResponse, current: &LLMResponse) -> bool {
+        let content_is_cumulative = match (previous.content.as_deref(), current.content.as_deref()) {
+            (Some(previous), Some(current)) => current.starts_with(previous),
+            (Some(_), None) => false,
+            (None, _) => true,
+        };
+        if !content_is_cumulative {
+            return false;
+        }
+
+        let previous_calls = previous.tool_calls.as_deref().unwrap_or_default();
+        let current_calls = current.tool_calls.as_deref().unwrap_or_default();
+        previous_calls.iter().all(|previous_call| {
+            let Some(current_call) = current_calls.iter().find(|call| call.id == previous_call.id) else {
+                return false;
+            };
+
+            let previous_name = previous_call.tool_name().unwrap_or_default();
+            let current_name = current_call.tool_name().unwrap_or_default();
+            if previous_name != current_name {
+                return false;
+            }
+
+            let previous_arguments = previous_call.raw_input().unwrap_or_default();
+            previous_arguments.is_empty()
+                || previous_arguments == "{}"
+                || current_call.raw_input().unwrap_or_default().starts_with(previous_arguments)
+        })
     }
 
     fn stream_text_fragment(data: &Value) -> Option<String> {
@@ -922,8 +966,10 @@ struct MergeStreamState {
     seen_tool_calls: HashSet<String>,
     tool_call_names: HashMap<String, String>,
     tool_call_args: HashMap<String, String>,
-    /// Keep only the latest cumulative snapshot until its terminal event.
+    /// Keep the latest cumulative snapshot as a rollback buffer until the
+    /// stream proves that subsequent snapshots extend it.
     native_snapshot: Option<LLMResponse>,
+    native_snapshot_streaming: bool,
     incomplete: bool,
     done: bool,
 }
@@ -941,6 +987,14 @@ impl MergeStreamState {
     }
 
     fn reset_for_fallback_restart(&mut self, model: Option<&str>) {
+        self.reset_native_snapshot_accumulator();
+
+        if let Some(model) = model.filter(|model| !model.trim().is_empty()) {
+            self.model = model.to_owned();
+        }
+    }
+
+    fn reset_native_snapshot_accumulator(&mut self) {
         self.content.clear();
         self.usage = None;
         self.request_id = None;
@@ -950,12 +1004,9 @@ impl MergeStreamState {
         self.tool_call_names.clear();
         self.tool_call_args.clear();
         self.native_snapshot = None;
+        self.native_snapshot_streaming = false;
         self.incomplete = false;
         self.done = false;
-
-        if let Some(model) = model.filter(|model| !model.trim().is_empty()) {
-            self.model = model.to_owned();
-        }
     }
 
     fn remember_native_snapshot(&mut self, response: LLMResponse) {
@@ -1783,6 +1834,78 @@ mod tests {
                         && calls[0].tool_name() == Some("exec_command")
                         && calls[0].parsed_arguments().expect("tool args") == json!({"cmd": "pwd"})
                 })
+        ));
+    }
+
+    #[tokio::test]
+    async fn native_stream_snapshots_emit_text_before_terminal_frame() {
+        let server = MockServer::start().await;
+        let provider = test_provider(&server.uri());
+
+        let first_response = json!({
+            "id": "resp_123",
+            "object": "response",
+            "model": "xai/grok-4.6",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Hello"}],
+                "finish_reason": null
+            }]
+        });
+        let cumulative_response = json!({
+            "id": "resp_123",
+            "object": "response",
+            "model": "xai/grok-4.6",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Hello world"}],
+                "finish_reason": "stop"
+            }]
+        });
+        let stream_body = [
+            sse("response.stream", first_response),
+            sse("response.stream", cumulative_response.clone()),
+            sse("response.done", cumulative_response),
+        ]
+        .concat();
+
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(stream_body),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut stream = provider
+            .stream_normalized(LLMRequest {
+                model: models::merge_gateway::XAI_GROK_4_6.to_string(),
+                messages: vec![Message::user("hello".to_string())].into(),
+                ..Default::default()
+            })
+            .await
+            .expect("normalized stream");
+
+        let mut events = Vec::new();
+        while let Some(event) = stream.next().await {
+            events.push(event.expect("stream event"));
+        }
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                NormalizedStreamEvent::TextDelta { delta: first_delta },
+                NormalizedStreamEvent::TextDelta { delta: second_delta },
+                NormalizedStreamEvent::Done { response }
+            ]
+            if first_delta == "Hello"
+                && second_delta == " world"
+                && response.content.as_deref() == Some("Hello world")
         ));
     }
 

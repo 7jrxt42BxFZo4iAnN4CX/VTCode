@@ -104,11 +104,16 @@ VT Code's native `stream` and `stream_normalized` paths send
 `POST /v1/responses` with `"stream": true`. Merge returns SSE-style `data:`
 frames: native `response.stream` frames are cumulative snapshots,
 `response.done` is the successful terminal frame, and `response.error` is an
-in-band provider failure. Usage is emitted from the final response snapshot.
+in-band provider failure. VT Code converts cumulative snapshots into text and
+tool deltas as they arrive. It retains the first snapshot until the next frame
+confirms that the response is cumulative, preserving the ability to discard a
+pre-output `fallback_restart`; a stream with only one snapshot necessarily
+emits that snapshot at the terminal frame. Usage is emitted from the final
+response snapshot.
 
 The parser also accepts the frame kind from the JSON `object` field, which is
 the native Merge form, and resets the buffered snapshot when Merge emits a
-`fallback_restart` frame. See the [Merge streaming contract](https://docs.merge.dev/merge-gateway/features/embedded-routing)
+`fallback_restart` frame. See the [Merge streaming contract](https://docs.merge.dev/merge-gateway/streaming)
 for the upstream response and error behavior.
 
 When the Merge provider is selected and `MERGE_GATEWAY_API_KEY` is available,
