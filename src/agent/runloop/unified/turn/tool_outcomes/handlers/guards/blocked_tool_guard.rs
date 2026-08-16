@@ -1,7 +1,8 @@
 //! Guard for blocked tool calls.
 //!
 //! Tracks consecutive and total blocked tool calls per turn. When the cap is
-//! reached, the turn is stopped to prevent retry churn.
+//! reached, the current batch is closed and one bounded tool-free recovery
+//! pass is scheduled to prevent retry churn without dropping the turn.
 //!
 //! The guard has two thresholds:
 //! - **Consecutive cap**: Stops the turn after N consecutive blocked calls
@@ -88,23 +89,23 @@ pub(crate) fn blocked_tool_call_messages(
     let (block_reason, error_msg, error_label) = match (fuse_trip, recovery_mode) {
         (BlockedToolCallFuseTrip::Total { cap }, true) => (
             format!(
-                "Blocked tool calls reached the recovery-mode cap ({cap}) for this turn. Last blocked call: '{display_tool}'. Stopping turn."
+                "Recovery tool-call limit reached after {cap} blocked calls. Last blocked call: '{display_tool}'. Tools remain disabled while the recovery response is finalized."
             ),
-            format!("Blocked tool calls exceeded the recovery-mode cap ({cap}) for this turn."),
+            format!("The recovery tool-call limit of {cap} blocked calls was exceeded for this turn."),
             "blocked_total",
         ),
         (BlockedToolCallFuseTrip::Total { cap }, false) => (
             format!(
-                "Blocked tool calls reached per-turn cap ({cap}). Last blocked call: '{display_tool}'. Stopping turn to prevent retry churn."
+                "Blocked tool-call limit reached after {cap} total blocked calls this turn. Last blocked call: '{display_tool}'. A bounded recovery response will run without more tool calls."
             ),
-            format!("Blocked tool calls exceeded cap ({cap}) for this turn."),
+            format!("The tool-call safety limit of {cap} blocked calls was exceeded for this turn."),
             "blocked_total",
         ),
         (BlockedToolCallFuseTrip::Consecutive { cap }, _) => (
             format!(
-                "Consecutive blocked tool calls reached per-turn cap ({cap}). Last blocked call: '{display_tool}'. Stopping turn to prevent retry churn."
+                "Blocked tool-call limit reached after {cap} consecutive blocked calls. Last blocked call: '{display_tool}'. A bounded recovery response will run without more tool calls."
             ),
-            format!("Consecutive blocked tool calls exceeded cap ({cap}) for this turn."),
+            format!("The tool-call safety limit of {cap} consecutive blocked calls was exceeded for this turn."),
             "blocked_streak",
         ),
     };
@@ -114,8 +115,9 @@ pub(crate) fn blocked_tool_call_messages(
 
 /// Enforce the blocked tool call guard.
 ///
-/// Returns `Some(TurnHandlerOutcome)` when the guard trips (turn should stop),
-/// or `None` when the guard passes (continue processing).
+/// Returns `Some(TurnHandlerOutcome)` when the guard trips, or `None` when the
+/// guard passes. A fuse trip returns `Continue` once so the caller can flush
+/// the current tool responses and schedule bounded recovery.
 pub(crate) fn enforce_blocked_tool_call_guard(
     ctx: &mut TurnProcessingContext<'_>,
     tool_call_id: &str,
@@ -132,8 +134,24 @@ pub(crate) fn enforce_blocked_tool_call_guard(
 
     let fuse_trip = blocked_tool_call_fuse_trip(streak, blocked_total, limits)?;
     let display_tool = tool_action_label(tool_name, args);
-    let (block_reason, error_content) = blocked_tool_call_messages(fuse_trip, ctx.is_recovery_active(), &display_tool);
-    push_guard_failure_messages(ctx, tool_call_id, tool_name, error_content, &block_reason);
+    let recovery_active = ctx.is_recovery_active();
+    let (block_reason, error_content) = blocked_tool_call_messages(fuse_trip, recovery_active, &display_tool);
 
-    Some(TurnHandlerOutcome::Break(TurnLoopResult::Blocked { reason: Some(block_reason) }))
+    // Clear any inline loading placeholder and restore the input status so
+    // the UI doesn't remain in a stale "loading" or shimmer state after the
+    // guard trips.
+    ctx.reset_input_to_default_placeholder();
+    ctx.restore_input_status(None, None);
+
+    if !recovery_active {
+        // Keep the current tool response contiguous with any later responses
+        // in the assistant batch. The recovery directive is appended only
+        // after the caller drains those remaining calls.
+        ctx.push_tool_response(tool_call_id, Some(tool_name), error_content);
+        ctx.harness_state.arm_blocked_tool_recovery(block_reason);
+        Some(TurnHandlerOutcome::Continue)
+    } else {
+        push_guard_failure_messages(ctx, tool_call_id, tool_name, error_content, &block_reason);
+        Some(TurnHandlerOutcome::Break(TurnLoopResult::Blocked { reason: Some(block_reason) }))
+    }
 }

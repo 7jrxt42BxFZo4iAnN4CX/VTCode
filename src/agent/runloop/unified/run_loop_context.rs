@@ -419,6 +419,11 @@ pub(crate) struct HarnessTurnState {
     /// instead of the turn hard-blocking and silently dropping an approved
     /// plan build.
     preflight_circuit_recovery_pending: bool,
+    /// Set when the blocked-tool fuse trips. The current tool response batch
+    /// drains this flag after all responses are appended, then arms one
+    /// tool-free synthesis pass instead of terminating the turn immediately.
+    blocked_tool_recovery_pending: bool,
+    blocked_tool_recovery_reason: Option<String>,
     pub max_tool_calls: usize,
     pub max_tool_wall_clock: Duration,
     pub max_tool_retries: u32,
@@ -498,6 +503,8 @@ impl HarnessTurnState {
             approved_plan_recovery_retries: 0,
             interview_denial_recovery_pending: false,
             preflight_circuit_recovery_pending: false,
+            blocked_tool_recovery_pending: false,
+            blocked_tool_recovery_reason: None,
             max_tool_calls,
             max_tool_wall_clock: Duration::from_secs(max_tool_wall_clock_secs),
             max_tool_retries,
@@ -838,6 +845,26 @@ impl HarnessTurnState {
 
     pub(crate) fn take_preflight_circuit_recovery(&mut self) -> bool {
         std::mem::take(&mut self.preflight_circuit_recovery_pending)
+    }
+
+    /// Arm the bounded tool-free recovery used after repeated blocked calls.
+    /// The response batch consumes this flag after appending every required
+    /// tool response, preserving provider message ordering.
+    pub(crate) fn arm_blocked_tool_recovery(&mut self, reason: impl Into<String>) {
+        self.blocked_tool_recovery_pending = true;
+        self.blocked_tool_recovery_reason = Some(reason.into());
+    }
+
+    pub(crate) fn take_blocked_tool_recovery(&mut self) -> bool {
+        std::mem::take(&mut self.blocked_tool_recovery_pending)
+    }
+
+    pub(crate) fn blocked_tool_recovery_pending(&self) -> bool {
+        self.blocked_tool_recovery_pending
+    }
+
+    pub(crate) fn take_blocked_tool_recovery_reason(&mut self) -> Option<String> {
+        self.blocked_tool_recovery_reason.take()
     }
 
     pub(crate) fn recovery_is_tool_free(&self) -> bool {

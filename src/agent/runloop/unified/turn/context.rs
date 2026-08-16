@@ -149,6 +149,7 @@ impl<'a> TurnProcessingContext<'a> {
         self.handle.set_input_status(left.clone(), right.clone());
         self.input_status_state.left = left;
         self.input_status_state.right = right;
+        self.input_status_state.input_status_sync_pending = false;
     }
 
     pub(crate) fn reset_input_to_default_placeholder(&mut self) {

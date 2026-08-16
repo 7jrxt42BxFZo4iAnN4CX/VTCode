@@ -1173,10 +1173,9 @@ async fn test_prevalidated_runloop_execution_consumes_safety_budget_once() {
             tools::READ_FILE.to_string(),
             serde_json::to_string(&args).expect("serialize args"),
         );
-        let outcome =
-            run_tool_call(&mut ctx, &call, &ctrl_c_state, &ctrl_c_notify, None, None, true, None, 0, true)
-                .await
-                .expect("run_tool_call must run");
+        let outcome = run_tool_call(&mut ctx, &call, &ctrl_c_state, &ctrl_c_notify, None, None, true, None, 0, true)
+            .await
+            .expect("run_tool_call must run");
         assert!(
             matches!(outcome.status, ToolExecutionStatus::Success { .. }),
             "prevalidated call {index} must succeed: {:?}",

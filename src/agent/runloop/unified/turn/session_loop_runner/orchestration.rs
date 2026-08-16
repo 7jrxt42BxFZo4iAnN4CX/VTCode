@@ -1028,7 +1028,10 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                 } {
                     Ok(outcome) => outcome,
                     Err(err) => {
-                        handle.set_input_status(None, None);
+                        crate::agent::runloop::unified::status_line::clear_input_status(
+                            &handle,
+                            &mut input_status_state,
+                        );
                         handle.set_activity_state(ActivityState::Idle);
                         let _ = renderer.line_if_not_empty(MessageStyle::Output);
                         tracing::error!("Turn execution error: {}", err);

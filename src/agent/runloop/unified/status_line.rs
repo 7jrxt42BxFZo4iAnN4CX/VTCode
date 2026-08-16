@@ -44,6 +44,10 @@ pub(crate) struct InputStatusState {
     /// uses it to skip `update_input_status_if_changed` when nothing changed
     /// and the clock second hasn't ticked.
     pub(crate) status_dirty: bool,
+    /// Set when an error/idle path writes a terminal status directly. The
+    /// next status refresh must send even when the cached layout is unchanged,
+    /// because the direct write may have been made by another UI component.
+    pub(crate) input_status_sync_pending: bool,
     /// The Unix-second of the last formatted clock value. Used to detect when
     /// the `HH:MM:SS` display would actually change (once per second) so the
     /// status rebuild can be skipped between ticks.
@@ -196,9 +200,18 @@ pub(crate) fn clock_second_ticked(state: &mut InputStatusState) -> bool {
 /// immediately rather than waiting for an old interval to expire.
 pub(crate) fn invalidate_for_config_reload(state: &mut InputStatusState) {
     state.status_dirty = true;
+    state.input_status_sync_pending = true;
     state.last_git_refresh = None;
     state.last_command_refresh = None;
     state.command_value = None;
+}
+
+pub(crate) fn clear_input_status(handle: &InlineHandle, state: &mut InputStatusState) {
+    handle.set_input_status(None, None);
+    state.left = None;
+    state.right = None;
+    state.status_dirty = true;
+    state.input_status_sync_pending = true;
 }
 
 pub(crate) fn sync_terminal_title(handle: &InlineHandle, state: &mut InputStatusState, title_items: Option<&[String]>) {
@@ -357,10 +370,11 @@ pub(crate) async fn update_input_status_if_changed(
         }
     };
 
-    if state.left != left || state.right != right {
+    if state.input_status_sync_pending || state.left != left || state.right != right {
         handle.set_input_status(left.clone(), right.clone());
         state.left = left;
         state.right = right;
+        state.input_status_sync_pending = false;
     }
 
     if let Some(error) = command_error {
@@ -557,7 +571,8 @@ pub(crate) async fn refresh_balance_info(
 mod tests {
     use super::{
         InputStatusState, build_model_status_with_context_and_spooled, cached_cleaned_reasoning, cached_model_display,
-        invalidate_for_config_reload, status_line_shows_clock, sync_terminal_title, update_thread_context,
+        clear_input_status, invalidate_for_config_reload, status_line_shows_clock, sync_terminal_title,
+        update_thread_context,
     };
     use vtcode_core::config::StatusLineConfig;
     use vtcode_ui::tui::app::{InlineCommand, InlineHandle};
@@ -575,6 +590,28 @@ mod tests {
         let status = build_model_status_with_context_and_spooled(Some("main"), false, None);
 
         assert_eq!(status.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn clearing_input_status_marks_the_cached_layout_for_resync() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let handle = InlineHandle::new_for_tests(sender);
+        let mut state = InputStatusState {
+            left: Some("stale loading".to_string()),
+            right: Some("model".to_string()),
+            ..Default::default()
+        };
+
+        clear_input_status(&handle, &mut state);
+
+        assert!(state.left.is_none());
+        assert!(state.right.is_none());
+        assert!(state.status_dirty);
+        assert!(state.input_status_sync_pending);
+        assert!(matches!(
+            receiver.try_recv().expect("status clear command"),
+            InlineCommand::SetInputStatus { left: None, right: None }
+        ));
     }
 
     #[test]

@@ -315,9 +315,14 @@ async fn handle_failure<'a>(
             && !interview_denial_recovery
         {
             let display_tool = tool_action_label(tool_name, args_val);
+            let recovery_active = t_ctx.ctx.is_recovery_active();
             let (block_reason, _) =
-                super::handlers::blocked_tool_call_messages(fuse_trip, t_ctx.ctx.is_recovery_active(), &display_tool);
+                super::handlers::blocked_tool_call_messages(fuse_trip, recovery_active, &display_tool);
             emit_turn_metric_log(t_ctx.ctx, fuse_trip.metric(), tool_name, streak, fuse_trip.cap());
+            if !recovery_active {
+                t_ctx.ctx.harness_state.arm_blocked_tool_recovery(block_reason);
+                return Ok(Some(TurnHandlerOutcome::Continue));
+            }
             t_ctx.ctx.push_system_message(block_reason.clone());
             return Ok(Some(TurnHandlerOutcome::Break(TurnLoopResult::Blocked { reason: Some(block_reason) })));
         }
@@ -489,6 +494,6 @@ mod blocked_fuse_tests {
     fn denied_execution_result_uses_shared_total_fuse_message() {
         let (reason, _) =
             blocked_tool_call_messages(BlockedToolCallFuseTrip::Total { cap: 28 }, false, "read_file 'src/main.rs'");
-        assert!(reason.contains("Blocked tool calls reached per-turn cap (28)"));
+        assert!(reason.contains("28 total blocked calls"));
     }
 }

@@ -84,6 +84,9 @@ pub(crate) async fn handle_tool_calls<'a, 'b>(
 
             let outcome = handle_prepared_tool_call_dispatch(t_ctx, tool_call).await?;
             if let Some(o) = outcome {
+                if t_ctx.ctx.harness_state.blocked_tool_recovery_pending() {
+                    super::handlers::drain_blocked_tool_recovery_responses(t_ctx.ctx, &tool_calls[index + 1..]);
+                }
                 if t_ctx.ctx.harness_state.consecutive_preflight_failures
                     >= super::handlers::max_consecutive_blocked_tool_calls_per_turn(t_ctx.ctx)
                 {
@@ -106,4 +109,5 @@ pub(crate) async fn handle_tool_calls<'a, 'b>(
 fn flush_dispatch_recovery(ctx: &mut crate::agent::runloop::unified::turn::context::TurnProcessingContext<'_>) {
     super::handlers::flush_interview_denial_recovery(ctx);
     super::handlers::flush_preflight_circuit_recovery(ctx);
+    super::handlers::flush_blocked_tool_recovery(ctx);
 }

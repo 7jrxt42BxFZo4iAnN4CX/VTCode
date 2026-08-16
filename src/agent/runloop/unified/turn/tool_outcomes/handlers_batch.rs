@@ -261,6 +261,14 @@ async fn execute_parallel_group<'a, 'b>(
                     .await,
                 ));
             }
+            if matches!(outcome, TurnHandlerOutcome::Continue)
+                && t_ctx.ctx.harness_state.blocked_tool_recovery_pending()
+            {
+                // Finish already-admitted read-only futures so every tool
+                // call in the assistant batch receives a response before the
+                // recovery directive is appended.
+                continue;
+            }
             return Ok(Some(outcome));
         }
     }
@@ -303,7 +311,11 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
                 {
                     super::drain_preflight_circuit_responses(t_ctx.ctx, &tool_calls[index + 1..]);
                 }
+                if t_ctx.ctx.harness_state.blocked_tool_recovery_pending() {
+                    super::drain_blocked_tool_recovery_responses(t_ctx.ctx, &tool_calls[index + 1..]);
+                }
                 flush_budget_synthesis_directives(t_ctx.ctx);
+                super::flush_blocked_tool_recovery(t_ctx.ctx);
                 return Ok(Some(outcome));
             }
             ValidationTransition::Return(None) => continue,
@@ -343,11 +355,25 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
             PreparedToolBatchKind::ParallelReadonly => {
                 if let Some(outcome) = execute_parallel_group(t_ctx, group, &mut batch_tracker).await? {
                     crate::agent::runloop::unified::tool_summary::flush_compact_tool_summary_batch(t_ctx.ctx.renderer)?;
+                    if t_ctx.ctx.harness_state.blocked_tool_recovery_pending() {
+                        for remaining in validated_calls.by_ref() {
+                            super::push_blocked_tool_recovery_response(t_ctx.ctx, remaining.tool_call);
+                        }
+                        super::flush_blocked_tool_recovery(t_ctx.ctx);
+                    }
                     return Ok(Some(outcome));
+                }
+                if t_ctx.ctx.harness_state.blocked_tool_recovery_pending() {
+                    for remaining in validated_calls.by_ref() {
+                        super::push_blocked_tool_recovery_response(t_ctx.ctx, remaining.tool_call);
+                    }
+                    super::flush_blocked_tool_recovery(t_ctx.ctx);
+                    return Ok(Some(TurnHandlerOutcome::Continue));
                 }
             }
             PreparedToolBatchKind::Sequential => {
-                for validated_call in group {
+                let mut group_iter = group.into_iter().enumerate();
+                while let Some((_group_index, validated_call)) = group_iter.next() {
                     let tool_call_id = validated_call.call_id().to_string();
                     let tool_name = validated_call.prepared.canonical_name;
                     let args = validated_call.prepared.effective_args;
@@ -366,6 +392,15 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
                         crate::agent::runloop::unified::tool_summary::flush_compact_tool_summary_batch(
                             t_ctx.ctx.renderer,
                         )?;
+                        if t_ctx.ctx.harness_state.blocked_tool_recovery_pending() {
+                            for (_, remaining) in group_iter {
+                                super::push_blocked_tool_recovery_response(t_ctx.ctx, remaining.tool_call);
+                            }
+                            for remaining in validated_calls.by_ref() {
+                                super::push_blocked_tool_recovery_response(t_ctx.ctx, remaining.tool_call);
+                            }
+                            super::flush_blocked_tool_recovery(t_ctx.ctx);
+                        }
                         return Ok(Some(outcome));
                     }
                 }

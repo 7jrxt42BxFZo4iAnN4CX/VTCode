@@ -159,6 +159,8 @@ const INTERVIEW_DENIAL_RECOVERY_DIRECTIVE: &str = "Planning recovery: the intera
 
 const PREFLIGHT_CIRCUIT_RECOVERY_DIRECTIVE: &str = "Recovery: repeated tool preflight validation failures tripped the circuit breaker, so tools are disabled for this pass. Do not emit tool calls. Summarize what you were trying to do and the validation errors above, then tell the user in plain text what you need to proceed (e.g. re-state the request so the next turn retries with correct arguments). End your turn after this response.";
 
+const BLOCKED_TOOL_RECOVERY_DIRECTIVE: &str = "Recovery: repeated tool calls were blocked by the active safety or permission policy, so tools are disabled for one bounded pass. Do not retry or re-emit blocked commands. Synthesize a plain-text response from the tool responses above, explain the blocked action and the safe next step, and end your turn.";
+
 /// Convert a permanent interview denial into a bounded, tool-free planning
 /// pass. This is flushed after the current tool batch so the directive follows
 /// every tool response and remains valid for providers that require strict
@@ -198,6 +200,57 @@ pub(crate) fn flush_preflight_circuit_recovery(ctx: &mut TurnProcessingContext<'
         target: "vtcode.turn.metrics",
         "preflight circuit breaker tripped; scheduling bounded tool-free synthesis"
     );
+}
+
+/// Convert a blocked-call fuse trip into one bounded, tool-free synthesis pass.
+/// This is flushed after all responses from the current assistant batch so a
+/// recovery directive is never interleaved with tool responses.
+pub(crate) fn flush_blocked_tool_recovery(ctx: &mut TurnProcessingContext<'_>) {
+    if !ctx.harness_state.take_blocked_tool_recovery() {
+        return;
+    }
+
+    let directive = ctx
+        .harness_state
+        .take_blocked_tool_recovery_reason()
+        .map(|reason| format!("{BLOCKED_TOOL_RECOVERY_DIRECTIVE} Trigger: {reason}"))
+        .unwrap_or_else(|| BLOCKED_TOOL_RECOVERY_DIRECTIVE.to_string());
+    ctx.push_system_message(directive);
+    if ctx.harness_state.recovery_reason.is_none() {
+        ctx.harness_state.recovery_reason = Some("blocked tool-call fuse tripped".to_string());
+    }
+    ctx.harness_state.switch_to_tool_free_recovery();
+    tracing::info!(
+        target: "vtcode.turn.metrics",
+        "blocked tool-call fuse tripped; scheduling bounded tool-free synthesis"
+    );
+}
+
+/// Emit matching responses for calls that remain in an assistant batch after
+/// the blocked-call fuse trips. These calls are not admitted or executed, but
+/// providers still require one response per assistant tool call.
+pub(crate) fn drain_blocked_tool_recovery_responses(
+    ctx: &mut TurnProcessingContext<'_>,
+    remaining_tool_calls: &[PreparedAssistantToolCall],
+) {
+    for tool_call in remaining_tool_calls {
+        push_blocked_tool_recovery_response(ctx, tool_call);
+    }
+}
+
+pub(crate) fn push_blocked_tool_recovery_response(
+    ctx: &mut TurnProcessingContext<'_>,
+    tool_call: &PreparedAssistantToolCall,
+) {
+    let tool_name = tool_call.tool_name();
+    let payload = serde_json::json!({
+        "error": format!("Tool call '{tool_name}' was not executed because blocked-call recovery started."),
+        "failure_kind": "blocked_tool_call_recovery",
+        "tool_name": tool_name,
+        "next_action": "Do not retry this call. Tools are disabled for the next pass; synthesize a plain-text response from the available context.",
+        "retryable": false,
+    });
+    ctx.push_tool_response(tool_call.call_id(), Some(tool_name), payload.to_string());
 }
 
 /// Push the one-time budget-exhaustion synthesis directive (wall-clock or
@@ -440,7 +493,10 @@ pub(crate) async fn handle_single_tool_call<'a, 'b, 'tool>(
     tool_name: &'tool str,
     args_val: serde_json::Value,
 ) -> Result<Option<TurnHandlerOutcome>> {
-    handle_tool_call_inner(t_ctx, tool_call_id, tool_name, &args_val).await
+    let outcome = handle_tool_call_inner(t_ctx, tool_call_id, tool_name, &args_val).await?;
+    flush_budget_synthesis_directives(t_ctx.ctx);
+    flush_blocked_tool_recovery(t_ctx.ctx);
+    Ok(outcome)
 }
 
 async fn handle_tool_call_inner<'a, 'b, 'tool>(
@@ -457,7 +513,6 @@ async fn handle_tool_call_inner<'a, 'b, 'tool>(
     let prepared = match finalize_validation_result(t_ctx.ctx, tool_call_id, tool_name, args_val, validation_result) {
         ValidationTransition::Proceed(prepared) => prepared,
         ValidationTransition::Return(outcome) => {
-            flush_budget_synthesis_directives(t_ctx.ctx);
             return Ok(outcome);
         }
     };

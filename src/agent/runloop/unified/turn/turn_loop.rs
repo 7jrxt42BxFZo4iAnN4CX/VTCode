@@ -1167,6 +1167,12 @@ pub(crate) async fn run_turn_loop(
                 let tool_free_recovery =
                     turn_processing_ctx.recovery_pass_used() && turn_processing_ctx.recovery_is_tool_free();
                 let planning = turn_processing_ctx.is_planning_active();
+
+                // Restore the input status/UI before dispatching recovery handling
+                // so the bottom-line is not left in a loading state if recovery
+                // ultimately ends the turn or returns an error.
+                turn_processing_ctx.restore_input_status(restore_status_left.clone(), restore_status_right.clone());
+
                 match dispatch_post_tool_failure(PostToolRecoveryContext {
                     renderer: &mut *turn_processing_ctx.renderer,
                     working_history: &mut *turn_processing_ctx.working_history,
@@ -1287,6 +1293,16 @@ pub(crate) async fn run_turn_loop(
                 let tool_free_recovery =
                     ctx.harness_state.recovery_pass_used() && ctx.harness_state.recovery_is_tool_free();
                 let planning = ctx.is_planning_active();
+
+                // Ensure the inline input and status line are not left showing a
+                // loading or shimmer state when the result handler fails and the
+                // turn may exit early. Keep the terminal state synchronized.
+                crate::agent::runloop::unified::display::reset_inline_input(
+                    ctx.handle,
+                    ctx.default_placeholder.clone(),
+                );
+                crate::agent::runloop::unified::status_line::clear_input_status(ctx.handle, ctx.input_status_state);
+
                 match dispatch_post_tool_failure(PostToolRecoveryContext {
                     renderer: &mut *ctx.renderer,
                     working_history: &mut *working_history,
