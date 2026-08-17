@@ -689,6 +689,107 @@ async fn turn_loop_preserves_legacy_loop_detector_state() {
     assert!(backing.is_hard_limit_exceeded(tool_names::READ_FILE));
 }
 
+#[tokio::test]
+async fn anti_blind_guard_stops_outer_loop_after_two_pending_text_responses() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Clone)]
+    struct RepeatedTextAfterMutationsProvider {
+        requests: Arc<AtomicUsize>,
+        text_responses: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl uni::LLMProvider for RepeatedTextAfterMutationsProvider {
+        fn name(&self) -> &str {
+            "openai"
+        }
+
+        fn supports_streaming(&self) -> bool {
+            false
+        }
+
+        async fn generate(&self, request: uni::LLMRequest) -> Result<uni::LLMResponse, uni::LLMError> {
+            let request_number = self.requests.fetch_add(1, Ordering::SeqCst);
+            let response = if request_number < 4 {
+                let path = format!("anti-blind-regression-{request_number}.txt");
+                let patch =
+                    format!("*** Begin Patch\n*** Add File: {path}\n+mutation {request_number}\n*** End Patch\n");
+                uni::LLMResponse {
+                    content: None,
+                    model: request.model.clone(),
+                    tool_calls: Some(vec![uni::ToolCall::function(
+                        format!("mutation-{request_number}"),
+                        tool_names::APPLY_PATCH.to_string(),
+                        json!({"patch": patch}).to_string(),
+                    )]),
+                    usage: None,
+                    finish_reason: uni::FinishReason::Stop,
+                    reasoning: None,
+                    reasoning_details: None,
+                    organization_id: None,
+                    request_id: None,
+                    tool_references: Vec::new(),
+                    compaction: None,
+                }
+            } else {
+                self.text_responses.fetch_add(1, Ordering::SeqCst);
+                uni::LLMResponse {
+                    content: Some("The change is complete.".to_string()),
+                    model: request.model.clone(),
+                    tool_calls: None,
+                    usage: None,
+                    finish_reason: uni::FinishReason::Stop,
+                    reasoning: None,
+                    reasoning_details: None,
+                    organization_id: None,
+                    request_id: None,
+                    tool_references: Vec::new(),
+                    compaction: None,
+                }
+            };
+            Ok(response)
+        }
+
+        fn supported_models(&self) -> Vec<String> {
+            vec!["noop-model".to_string()]
+        }
+
+        fn validate_request(&self, _request: &uni::LLMRequest) -> Result<(), uni::LLMError> {
+            Ok(())
+        }
+    }
+
+    let requests = Arc::new(AtomicUsize::new(0));
+    let text_responses = Arc::new(AtomicUsize::new(0));
+    let mut backing = TestTurnProcessingBacking::new(8).await;
+    backing.set_provider(Box::new(RepeatedTextAfterMutationsProvider {
+        requests: requests.clone(),
+        text_responses: text_responses.clone(),
+    }));
+
+    let mut history = vec![uni::Message::user("apply and verify the requested change".to_string())];
+    let outcome = run_turn_loop(&mut history, backing.turn_loop_context())
+        .await
+        .expect("turn loop should stop at the pending-verification response cap");
+
+    assert!(matches!(outcome.result, TurnLoopResult::Blocked { .. }));
+    assert_eq!(text_responses.load(Ordering::SeqCst), 2);
+    assert_eq!(requests.load(Ordering::SeqCst), 6, "the provider must not receive a third pending text request");
+    assert!(!outcome.final_response_was_fallback);
+    assert!(
+        !history
+            .iter()
+            .any(|message| message.content.as_text().contains("The change is complete."))
+    );
+    assert!(
+        !history
+            .iter()
+            .any(|message| message.phase == Some(uni::AssistantPhase::FinalAnswer))
+    );
+}
+
 #[test]
 fn count_assistant_text_responses_in_turn_zero_for_empty_history() {
     let history: Vec<uni::Message> = Vec::new();
