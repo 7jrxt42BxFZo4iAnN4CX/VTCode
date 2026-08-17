@@ -14,7 +14,9 @@ use crate::agent::runloop::unified::turn::context::{
 };
 use crate::agent::runloop::unified::turn::guards::handle_turn_balancer;
 use crate::agent::runloop::unified::turn::tool_outcomes::{ToolOutcomeContext, helpers};
-use crate::agent::runloop::unified::turn::turn_loop::RECOVERY_CONTRACT_VIOLATION_REASON;
+use crate::agent::runloop::unified::turn::turn_loop::{
+    MAX_ASSISTANT_TEXT_RESPONSES_PER_TURN, RECOVERY_CONTRACT_VIOLATION_REASON,
+};
 
 /// Result of processing a single turn.
 pub(crate) struct HandleTurnProcessingResultParams<'a> {
@@ -204,6 +206,15 @@ pub(crate) async fn handle_turn_processing_result<'a>(
                         .working_history
                         .push(uni::Message::system(helpers::ANTI_BLIND_EDITING_DIRECTIVE.to_string()));
                     params.repeated_tool_attempts.verification_warning_emitted = true;
+                }
+                let response_count = params.ctx.harness_state.record_assistant_text_response();
+                if response_count >= MAX_ASSISTANT_TEXT_RESPONSES_PER_TURN {
+                    return Ok(TurnHandlerOutcome::Break(TurnLoopResult::Blocked {
+                        reason: Some(
+                            "Turn blocked after repeated unverified assistant responses; verification is still pending."
+                                .to_string(),
+                        ),
+                    }));
                 }
                 return Ok(TurnHandlerOutcome::Continue);
             }
@@ -503,6 +514,61 @@ mod tests {
 
         assert!(matches!(outcome, TurnHandlerOutcome::Continue));
         assert!(backing.last_history_message_contains("verification"));
+    }
+
+    #[tokio::test]
+    async fn anti_blind_guard_blocks_repeated_unverified_text_responses() {
+        let mut backing = TestTurnProcessingBacking::new(4).await;
+        let mut repeated_tool_attempts = LoopTracker::new();
+        repeated_tool_attempts.consecutive_mutations =
+            crate::agent::runloop::unified::turn::tool_outcomes::helpers::BLIND_EDITING_THRESHOLD;
+        let mut turn_modified_files = BTreeSet::new();
+
+        let first_outcome = {
+            let mut ctx = backing.turn_processing_context();
+            handle_turn_processing_result(HandleTurnProcessingResultParams {
+                ctx: &mut ctx,
+                processing_result: TurnProcessingResult::TextResponse {
+                    text: "The change is complete.".to_string(),
+                    reasoning: Vec::new(),
+                    reasoning_details: None,
+                    proposed_plan: None,
+                },
+                response_streamed: false,
+                step_count: 1,
+                repeated_tool_attempts: &mut repeated_tool_attempts,
+                turn_modified_files: &mut turn_modified_files,
+                max_tool_loops: 4,
+                tool_repeat_limit: 4,
+            })
+            .await
+            .expect("first anti-blind response should be handled")
+        };
+        assert!(matches!(first_outcome, TurnHandlerOutcome::Continue));
+
+        let second_outcome = {
+            let mut ctx = backing.turn_processing_context();
+            handle_turn_processing_result(HandleTurnProcessingResultParams {
+                ctx: &mut ctx,
+                processing_result: TurnProcessingResult::TextResponse {
+                    text: "The change is complete.".to_string(),
+                    reasoning: Vec::new(),
+                    reasoning_details: None,
+                    proposed_plan: None,
+                },
+                response_streamed: false,
+                step_count: 2,
+                repeated_tool_attempts: &mut repeated_tool_attempts,
+                turn_modified_files: &mut turn_modified_files,
+                max_tool_loops: 4,
+                tool_repeat_limit: 4,
+            })
+            .await
+            .expect("second anti-blind response should be handled")
+        };
+
+        assert!(matches!(second_outcome, TurnHandlerOutcome::Break(TurnLoopResult::Blocked { reason: Some(_) })));
+        assert!(!backing.last_history_message_contains("The change is complete."));
     }
 
     #[tokio::test]

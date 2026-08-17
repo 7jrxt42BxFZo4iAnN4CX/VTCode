@@ -101,7 +101,7 @@ const MAX_RECOVERY_RETRIES: u8 = 3;
 /// 6500-token outline responses and burned ~90 seconds.  Capping at 2
 /// responses terminates the runaway loop while still allowing one retry
 /// for genuine recovery scenarios.
-const MAX_ASSISTANT_TEXT_RESPONSES_PER_TURN: u32 = 2;
+pub(crate) const MAX_ASSISTANT_TEXT_RESPONSES_PER_TURN: u32 = 2;
 /// Maximum number of times the post-tool follow-up failure path may schedule
 /// a tool-free recovery pass within a single turn. This is a defense-in-depth
 /// backstop: the recovery pass itself is terminal (a text response ends the
