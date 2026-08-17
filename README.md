@@ -22,6 +22,22 @@ long-running autonomous workflows. It combines OS-native sandboxing,
 multi-provider LLM support, open protocols, and extensible Skills in one
 tool.
 
+> **Project status:** Active development. VT Code is currently at version
+> `0.146.4`; local inference and some automation workflows are experimental.
+> Interfaces and configuration may change between releases.
+
+## Contents
+
+- [Features](#features)
+- [Quick start](#quick-start)
+- [Documentation](#documentation)
+- [Providers](#providers)
+- [Local models](#local-models-experimental)
+- [Development](#development)
+- [Contributing](#contributing)
+- [Support](#support)
+- [License](#license)
+
 ## Features
 
 ### Runtime and coding
@@ -131,6 +147,14 @@ vtcode update                  # self-update
 - [**Protocols**](./docs/protocols/OPEN_RESPONSES.md): Open Responses, ATIF, A2A, and Anthropic Messages API
 - [**Loop engineering**](./docs/project/PLAN-loop-engineering.md): worktree isolation, propose/verify, loop state, and cost guardrails
 - [**Planning workflow**](./docs/guides/planning-workflow.md): `/plan`, review gate, and plan handoff to build/auto agents
+
+### Reference
+
+- [**Architecture**](./docs/ARCHITECTURE.md): workspace boundaries and runtime design
+- [**Configuration field reference**](./docs/config/CONFIG_FIELD_REFERENCE.md): complete `vtcode.toml` reference
+- [**Command security model**](./docs/development/COMMAND_SECURITY_MODEL.md): execution policy and sandbox boundaries
+- [**Development setup**](./docs/development/DEVELOPMENT_SETUP.md): prerequisites and local workflow
+- [**Testing**](./docs/development/testing.md): test profiles and verification commands
 
 ## Providers
 
@@ -292,7 +316,8 @@ cd vtcode
 
 ### Workspace layout
 
-Rust stable, edition 2024, MSRV 1.93.0. Workspace of ~30 crates:
+Rust stable, edition 2024, MSRV 1.93.0. The workspace contains 30 crates,
+with the root binary and the core/UI crates included in the default build:
 
 | Layer   | Crates                                                                                                                                                                                                                       |
 | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -310,6 +335,10 @@ Want to use VT Code as a library? See [`vtcode-battery-pack`](https://github.com
 ./scripts/check-dev.sh  # fast quality gate (clippy, fmt, check)
 cargo nextest run        # parallel test runner
 ```
+
+CI runs locked dependency resolution and treats warnings as errors. For a
+faster local iteration loop, use `./scripts/check-dev.sh`; use nextest rather
+than `cargo test` for the project's test suite.
 
 Read more about Rust Cargo Battery Pack in the [blog](https://smallcultfollowing.com/babysteps/blog/2026/07/15/battery-packs/).
 
