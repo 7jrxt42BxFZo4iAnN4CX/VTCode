@@ -71,12 +71,81 @@ fn is_legacy_openai_base_url(base_url: &str) -> bool {
         .ends_with("/v1/openai")
 }
 
+/// How a Merge Gateway route exposes reasoning controls. Merge Gateway routes
+/// reasoning per provider: some vendors expose a provider-native
+/// `reasoning_effort` parameter, others only accept a Gateway-managed thinking
+/// budget through the top-level `thinking` field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MergeReasoningControl {
+    /// Provider-native `reasoning_effort` string on the payload root.
+    ReasoningEffort,
+    /// Gateway-controlled `thinking.budget_tokens` object on the payload root.
+    ThinkingBudget,
+}
+
+/// Classifies a Merge Gateway route by its reasoning control surface. Unknown
+/// routes stay conservative: reasoning is never forwarded for them.
+fn merge_reasoning_control_for_model(model: &str) -> Option<MergeReasoningControl> {
+    let model = model.trim();
+    if model.starts_with("openai/")
+        || model.starts_with("xai/")
+        || model.starts_with("moonshot/")
+        || model.starts_with("meta/")
+    {
+        Some(MergeReasoningControl::ReasoningEffort)
+    } else if model.starts_with("anthropic/")
+        || model.starts_with("google/gemini-")
+        || model.starts_with("deepseek/")
+        || model.starts_with("qwen/")
+        || model.starts_with("minimax/")
+        || model.starts_with("thinkingmachines/")
+    {
+        Some(MergeReasoningControl::ThinkingBudget)
+    } else {
+        None
+    }
+}
+
+/// Maps a reasoning effort level to a Gateway thinking budget in tokens,
+/// mirroring the Anthropic budget mapping.
+fn merge_thinking_budget(effort: vtcode_config::types::ReasoningEffortLevel) -> Option<u32> {
+    match effort {
+        vtcode_config::types::ReasoningEffortLevel::None | vtcode_config::types::ReasoningEffortLevel::Unknown => None,
+        vtcode_config::types::ReasoningEffortLevel::Minimal => Some(1024),
+        vtcode_config::types::ReasoningEffortLevel::Low => Some(4096),
+        vtcode_config::types::ReasoningEffortLevel::Medium => Some(8192),
+        vtcode_config::types::ReasoningEffortLevel::High => Some(16384),
+        vtcode_config::types::ReasoningEffortLevel::XHigh | vtcode_config::types::ReasoningEffortLevel::Max => {
+            Some(32768)
+        }
+    }
+}
+
+/// Builds the top-level `thinking` payload for a thinking-budget route. The
+/// budget is clamped below `max_tokens`; when the output budget cannot fit even
+/// a minimal thinking budget, thinking is omitted instead of erroring.
+fn merge_thinking_payload(
+    effort: vtcode_config::types::ReasoningEffortLevel,
+    max_tokens: Option<u32>,
+) -> Option<Value> {
+    let budget = merge_thinking_budget(effort)?;
+    let budget = match max_tokens {
+        Some(max_tokens) if max_tokens > 0 => budget.min(max_tokens.saturating_sub(100)),
+        _ => budget,
+    };
+    if budget < 1024 {
+        return None;
+    }
+    Some(json!({ "type": "enabled", "budget_tokens": budget }))
+}
+
 #[derive(Debug)]
 struct NativeMergeGatewayCore {
     api_key: String,
     http_client: HttpClient,
     base_url: String,
     model: String,
+    model_behavior: Option<ModelConfig>,
 }
 
 pub struct MergeGatewayProvider {
@@ -128,14 +197,20 @@ impl MergeGatewayProvider {
                 Some(base_url.clone()),
                 prompt_cache,
                 Some(timeouts),
-                model_behavior,
+                model_behavior.clone(),
             ))
         } else {
             None
         };
 
         Self {
-            native: NativeMergeGatewayCore { api_key, http_client, base_url, model },
+            native: NativeMergeGatewayCore {
+                api_key,
+                http_client,
+                base_url,
+                model,
+                model_behavior,
+            },
             legacy_core,
         }
     }
@@ -148,7 +223,13 @@ impl MergeGatewayProvider {
         };
 
         Self {
-            native: NativeMergeGatewayCore { api_key, http_client, base_url, model },
+            native: NativeMergeGatewayCore {
+                api_key,
+                http_client,
+                base_url,
+                model,
+                model_behavior: None,
+            },
             legacy_core,
         }
     }
@@ -323,6 +404,25 @@ impl MergeGatewayProvider {
         }
         if stream {
             payload.insert("stream".to_owned(), Value::Bool(true));
+        }
+
+        if let Some(effort) = request.reasoning_effort
+            && !matches!(
+                effort,
+                vtcode_config::types::ReasoningEffortLevel::None | vtcode_config::types::ReasoningEffortLevel::Unknown
+            )
+            && let Some(control) = merge_reasoning_control_for_model(&request.model)
+        {
+            match control {
+                MergeReasoningControl::ReasoningEffort => {
+                    payload.insert("reasoning_effort".to_owned(), Value::String(effort.as_str().to_owned()));
+                }
+                MergeReasoningControl::ThinkingBudget => {
+                    if let Some(thinking) = merge_thinking_payload(effort, request.max_tokens) {
+                        payload.insert("thinking".to_owned(), thinking);
+                    }
+                }
+            }
         }
 
         Ok(Value::Object(payload))
@@ -1366,12 +1466,20 @@ impl LLMProvider for MergeGatewayProvider {
         false
     }
 
-    fn supports_reasoning(&self, _model: &str) -> bool {
-        false
+    fn supports_reasoning(&self, model: &str) -> bool {
+        self.native
+            .model_behavior
+            .as_ref()
+            .and_then(|behavior| behavior.model_supports_reasoning)
+            .unwrap_or_else(|| merge_reasoning_control_for_model(model).is_some())
     }
 
-    fn supports_reasoning_effort(&self, _model: &str) -> bool {
-        false
+    fn supports_reasoning_effort(&self, model: &str) -> bool {
+        self.native
+            .model_behavior
+            .as_ref()
+            .and_then(|behavior| behavior.model_supports_reasoning_effort)
+            .unwrap_or_else(|| merge_reasoning_control_for_model(model).is_some())
     }
 
     fn supports_vision(&self, model: &str) -> bool {
@@ -1550,6 +1658,117 @@ mod tests {
         let payload = provider.build_native_payload(&request, true).expect("payload");
 
         assert_eq!(payload["stream"], true);
+    }
+
+    #[test]
+    fn native_payload_forwards_reasoning_effort_on_native_routes() {
+        let provider =
+            MergeGatewayProvider::with_model("test-key".to_string(), models::merge_gateway::OPENAI_GPT_5_5.to_string());
+        let request = LLMRequest {
+            model: models::merge_gateway::OPENAI_GPT_5_5.to_string(),
+            reasoning_effort: Some(vtcode_config::types::ReasoningEffortLevel::High),
+            messages: vec![Message::user("hello".to_string())].into(),
+            ..Default::default()
+        };
+
+        let payload = provider.build_native_payload(&request, false).expect("payload");
+
+        assert_eq!(payload["reasoning_effort"], "high");
+        assert!(payload.get("thinking").is_none());
+    }
+
+    #[test]
+    fn native_payload_forwards_thinking_budget_for_budget_routes() {
+        let provider = MergeGatewayProvider::with_model(
+            "test-key".to_string(),
+            models::merge_gateway::ANTHROPIC_CLAUDE_OPUS_5.to_string(),
+        );
+        let request = LLMRequest {
+            model: models::merge_gateway::ANTHROPIC_CLAUDE_OPUS_5.to_string(),
+            reasoning_effort: Some(vtcode_config::types::ReasoningEffortLevel::High),
+            max_tokens: Some(2000),
+            messages: vec![Message::user("hello".to_string())].into(),
+            ..Default::default()
+        };
+
+        let payload = provider.build_native_payload(&request, false).expect("payload");
+
+        assert!(payload.get("reasoning_effort").is_none());
+        assert_eq!(payload["thinking"]["type"], "enabled");
+        assert_eq!(payload["thinking"]["budget_tokens"], 1900);
+    }
+
+    #[test]
+    fn native_payload_omits_thinking_when_budget_exceeds_max_tokens() {
+        let provider = MergeGatewayProvider::with_model(
+            "test-key".to_string(),
+            models::merge_gateway::DEEPSEEK_V4_PRO_0813.to_string(),
+        );
+        let request = LLMRequest {
+            model: models::merge_gateway::DEEPSEEK_V4_PRO_0813.to_string(),
+            reasoning_effort: Some(vtcode_config::types::ReasoningEffortLevel::Medium),
+            max_tokens: Some(1000),
+            messages: vec![Message::user("hello".to_string())].into(),
+            ..Default::default()
+        };
+
+        let payload = provider.build_native_payload(&request, false).expect("payload");
+
+        assert!(payload.get("reasoning_effort").is_none());
+        assert!(payload.get("thinking").is_none());
+    }
+
+    #[test]
+    fn native_payload_omits_reasoning_for_unclassified_routes() {
+        let provider = MergeGatewayProvider::with_model(
+            "test-key".to_string(),
+            models::merge_gateway::DEFAULT_ROUTING.to_string(),
+        );
+        let request = LLMRequest {
+            model: models::merge_gateway::DEFAULT_ROUTING.to_string(),
+            reasoning_effort: Some(vtcode_config::types::ReasoningEffortLevel::High),
+            messages: vec![Message::user("hello".to_string())].into(),
+            ..Default::default()
+        };
+
+        let payload = provider.build_native_payload(&request, false).expect("payload");
+
+        assert!(payload.get("reasoning_effort").is_none());
+        assert!(payload.get("thinking").is_none());
+    }
+
+    #[test]
+    fn reasoning_capabilities_are_route_aware() {
+        let provider =
+            MergeGatewayProvider::with_model("test-key".to_string(), models::merge_gateway::OPENAI_GPT_5_5.to_string());
+        assert!(provider.supports_reasoning(models::merge_gateway::OPENAI_GPT_5_5));
+        assert!(provider.supports_reasoning_effort(models::merge_gateway::OPENAI_GPT_5_5));
+        assert!(provider.supports_reasoning(models::merge_gateway::ANTHROPIC_CLAUDE_OPUS_5));
+        assert!(provider.supports_reasoning_effort(models::merge_gateway::ANTHROPIC_CLAUDE_OPUS_5));
+        assert!(!provider.supports_reasoning(models::merge_gateway::DEFAULT_ROUTING));
+        assert!(!provider.supports_reasoning_effort(models::merge_gateway::DEFAULT_ROUTING));
+    }
+
+    #[test]
+    fn model_behavior_override_wins_for_reasoning_capabilities() {
+        let model = models::merge_gateway::ANTHROPIC_CLAUDE_OPUS_5.to_string();
+        let model_behavior = serde_json::from_value::<ModelConfig>(json!({
+            "model_supports_reasoning": true,
+            "model_supports_reasoning_effort": true,
+        }))
+        .expect("model behavior");
+        let provider = MergeGatewayProvider::from_config(
+            Some("test-key".to_string()),
+            Some(model.clone()),
+            None,
+            None,
+            None,
+            None,
+            Some(model_behavior),
+        );
+
+        assert!(provider.supports_reasoning(&model));
+        assert!(provider.supports_reasoning_effort(&model));
     }
 
     #[test]

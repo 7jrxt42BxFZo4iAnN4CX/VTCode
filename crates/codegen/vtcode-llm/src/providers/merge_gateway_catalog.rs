@@ -88,6 +88,9 @@ pub struct MergeCatalogModel {
     pub supports_vision: bool,
     pub supports_structured_output: bool,
     pub service_tiers: Vec<MergeCatalogServiceTier>,
+    pub supports_reasoning: bool,
+    pub reasoning_disable_supported: bool,
+    pub reasoning_controls: Vec<String>,
 }
 
 /// Full normalized snapshot of the Merge catalog.
@@ -329,6 +332,13 @@ fn normalize_catalog_model(record: MergeModelRecord) -> MergeCatalogModel {
     let supports_structured_output =
         all_vendors_support(&record.vendors, |vendor| vendor.capabilities.supports_structured_outputs);
     let service_tiers = aggregate_service_tiers(&record.vendors);
+    let supports_reasoning = all_vendors_support(&record.vendors, |vendor| vendor.capabilities.supports_reasoning());
+    let reasoning_disable_supported = !record.vendors.is_empty()
+        && record
+            .vendors
+            .values()
+            .all(|vendor| vendor.capabilities.reasoning_disable_supported());
+    let reasoning_controls = aggregate_reasoning_controls(&record.vendors);
 
     MergeCatalogModel {
         model: record.model.to_string(),
@@ -342,6 +352,9 @@ fn normalize_catalog_model(record: MergeModelRecord) -> MergeCatalogModel {
         supports_vision,
         supports_structured_output,
         service_tiers,
+        supports_reasoning,
+        reasoning_disable_supported,
+        reasoning_controls,
     }
 }
 
@@ -378,6 +391,24 @@ fn aggregate_service_tiers(vendors: &BTreeMap<CompactStr, MergeVendorModelInfo>)
     }
 
     intersection.map(|tiers| tiers.into_iter().collect()).unwrap_or_default()
+}
+
+fn aggregate_reasoning_controls(vendors: &BTreeMap<CompactStr, MergeVendorModelInfo>) -> Vec<String> {
+    if !all_vendors_support(vendors, |vendor| vendor.capabilities.supports_reasoning()) {
+        return Vec::new();
+    }
+
+    let mut controls = BTreeSet::new();
+    for vendor in vendors.values() {
+        controls.extend(
+            vendor
+                .capabilities
+                .reasoning_controls()
+                .into_iter()
+                .map(|control| control.to_string()),
+        );
+    }
+    controls.into_iter().collect()
 }
 
 #[cfg(test)]

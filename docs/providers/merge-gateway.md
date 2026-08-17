@@ -126,11 +126,18 @@ The supplied [`models/catalog/llms.txt`](https://docs.merge.dev/merge-gateway/mo
 file is a documentation index, not a runtime model dataset. Runtime discovery
 uses the authenticated `/v1/models` endpoint.
 
-Merge's reasoning behavior is vendor- and route-specific. VT Code does not
-infer reasoning support from unrelated catalog fields or send a generic
-`reasoning_effort` field unless a future explicit Merge capability exposes that
-contract. Merge routing metadata and billed cost remain provider-side metadata;
-VT Code reports normalized token usage through its existing response contract.
+Merge's reasoning behavior is vendor- and route-specific. VT Code discovers each
+route's reasoning capability from the authenticated `/v1/models` catalog and
+applies the configured reasoning effort using the route's advertised control:
+routes advertising a provider-native `reasoning_effort` (OpenAI, xAI, Moonshot,
+Meta prefixes) receive a `reasoning_effort` string, while routes advertising a
+Gateway-managed thinking budget (Anthropic, Gemini, DeepSeek, Qwen, MiniMax,
+Thinking Machines prefixes) receive a top-level `thinking` block with a
+`budget_tokens` value derived from the effort level and clamped below
+`max_tokens`. Unclassified routes such as `default_routing` and unknown explicit
+route IDs never receive reasoning controls. Merge routing metadata and billed
+cost remain provider-side metadata; VT Code reports normalized token usage
+through its existing response contract.
 
 ## Troubleshooting
 
@@ -146,7 +153,8 @@ VT Code reports normalized token usage through its existing response contract.
   Merge's catalog. VT Code deliberately does not reject unknown Merge IDs
   locally.
 - Reasoning output is absent: Merge reasoning controls are route-specific and
-  are not projected into the generic VT Code reasoning fields.
+  are not projected into the generic VT Code reasoning fields; the reasoning
+  effort is still honored on reasoning-capable routes.
 
 See the [Merge Gateway quick reference](./merge-gateway-quick-reference.md) for
 the shortest setup checklist.

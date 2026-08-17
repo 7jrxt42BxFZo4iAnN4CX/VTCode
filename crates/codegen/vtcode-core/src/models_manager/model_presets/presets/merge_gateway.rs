@@ -1,9 +1,35 @@
-use super::super::ModelPreset;
+use super::super::{ModelPreset, ReasoningEffortPreset};
 use crate::config::constants::models;
 use crate::config::models::Provider;
 use crate::config::types::ReasoningEffortLevel;
 
+fn merge_reasoning_presets() -> Vec<ReasoningEffortPreset> {
+    vec![
+        ReasoningEffortPreset {
+            effort: ReasoningEffortLevel::Minimal,
+            description: "Minimal reasoning depth".to_string(),
+        },
+        ReasoningEffortPreset {
+            effort: ReasoningEffortLevel::Low,
+            description: "Fast, less thinking".to_string(),
+        },
+        ReasoningEffortPreset {
+            effort: ReasoningEffortLevel::Medium,
+            description: "Balanced thinking".to_string(),
+        },
+        ReasoningEffortPreset {
+            effort: ReasoningEffortLevel::High,
+            description: "Deep thinking".to_string(),
+        },
+        ReasoningEffortPreset {
+            effort: ReasoningEffortLevel::XHigh,
+            description: "Maximum reasoning depth".to_string(),
+        },
+    ]
+}
+
 pub(crate) fn merge_gateway_presets() -> Vec<ModelPreset> {
+    let reasoning_routes = models::merge_gateway::REASONING_MODELS;
     [
         (
             models::merge_gateway::DEFAULT_ROUTING,
@@ -119,19 +145,30 @@ pub(crate) fn merge_gateway_presets() -> Vec<ModelPreset> {
         ),
     ]
     .into_iter()
-    .map(|(model, display_name, description, context_window, is_default)| ModelPreset {
-        id: model.to_string(),
-        model: model.to_string(),
-        display_name: display_name.to_string(),
-        description: description.to_string(),
-        provider: Provider::MergeGateway,
-        default_reasoning_effort: ReasoningEffortLevel::None,
-        supported_reasoning_efforts: Vec::new(),
-        is_default,
-        upgrade: None,
-        show_in_picker: true,
-        supported_in_api: true,
-        context_window: Some(context_window),
+    .map(|(model, display_name, description, context_window, is_default)| {
+        let supports_reasoning = reasoning_routes.contains(&model);
+        ModelPreset {
+            id: model.to_string(),
+            model: model.to_string(),
+            display_name: display_name.to_string(),
+            description: description.to_string(),
+            provider: Provider::MergeGateway,
+            default_reasoning_effort: if supports_reasoning {
+                ReasoningEffortLevel::Medium
+            } else {
+                ReasoningEffortLevel::None
+            },
+            supported_reasoning_efforts: if supports_reasoning {
+                merge_reasoning_presets()
+            } else {
+                Vec::new()
+            },
+            is_default,
+            upgrade: None,
+            show_in_picker: true,
+            supported_in_api: true,
+            context_window: Some(context_window),
+        }
     })
     .collect()
 }

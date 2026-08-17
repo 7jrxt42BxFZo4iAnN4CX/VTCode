@@ -18,7 +18,9 @@ use tracing::{debug, error, info};
 
 use super::cache::{self, ModelsCache};
 use super::model_family::{ModelFamily, find_family_for_model};
-use super::model_presets::{ModelInfo, ModelPreset, builtin_model_presets, presets_for_provider};
+use super::model_presets::{
+    ModelInfo, ModelPreset, ReasoningEffortPreset, builtin_model_presets, presets_for_provider,
+};
 use crate::config::models::Provider;
 use crate::llm::providers::{
     MergeCatalogAvailability, MergeCatalogFilters, MergeCatalogModel, MergeGatewayCatalogClient,
@@ -288,25 +290,57 @@ impl ModelsManager {
         }
 
         let display_name = model.display_name.unwrap_or_else(|| model.model.clone());
+        let supported_reasoning_levels = Self::merge_supported_reasoning_presets(model.supports_reasoning);
         Some(ModelInfo {
             slug: model.model.clone(),
             display_name,
             description: format!("Merge Gateway model: {}", model.model),
             provider: Provider::MergeGateway,
             default_reasoning_level: crate::config::types::ReasoningEffortLevel::Medium,
-            supported_reasoning_levels: Vec::new(),
+            supported_reasoning_levels,
             context_window: model.context_window.map(i64::from),
             supports_tool_use: model.supports_tool_use,
             supports_streaming: model.supports_streaming,
             supports_vision: model.supports_vision,
             supports_structured_output: model.supports_structured_output,
-            supports_reasoning: false,
+            supports_reasoning: model.supports_reasoning,
             max_output_tokens: model.max_output_tokens.map(i64::from),
             priority: 50,
             visibility: "list".to_string(),
             supported_in_api: true,
             upgrade: None,
         })
+    }
+
+    fn merge_supported_reasoning_presets(supports_reasoning: bool) -> Vec<ReasoningEffortPreset> {
+        if !supports_reasoning {
+            return Vec::new();
+        }
+
+        use crate::config::types::ReasoningEffortLevel;
+
+        vec![
+            ReasoningEffortPreset {
+                effort: ReasoningEffortLevel::Minimal,
+                description: "Minimal reasoning depth".to_string(),
+            },
+            ReasoningEffortPreset {
+                effort: ReasoningEffortLevel::Low,
+                description: "Fast responses with lightweight reasoning".to_string(),
+            },
+            ReasoningEffortPreset {
+                effort: ReasoningEffortLevel::Medium,
+                description: "Balanced depth and speed".to_string(),
+            },
+            ReasoningEffortPreset {
+                effort: ReasoningEffortLevel::High,
+                description: "Maximum reasoning depth for complex problems".to_string(),
+            },
+            ReasoningEffortPreset {
+                effort: ReasoningEffortLevel::XHigh,
+                description: "Extra high effort for long-running tasks".to_string(),
+            },
+        ]
     }
 
     /// Fetch models from Ollama API
@@ -819,6 +853,9 @@ mod tests {
             supports_vision: true,
             supports_structured_output: true,
             service_tiers: Vec::new(),
+            supports_reasoning: true,
+            reasoning_disable_supported: true,
+            reasoning_controls: vec!["thinking.budget_tokens".to_string()],
         };
 
         let info = ModelsManager::merge_catalog_model_info(model).expect("available model should map");
@@ -829,6 +866,8 @@ mod tests {
         assert_eq!(info.max_output_tokens, Some(16_384));
         assert!(info.supports_vision);
         assert!(info.supports_structured_output);
+        assert!(info.supports_reasoning);
+        assert_eq!(info.supported_reasoning_levels.len(), ModelsManager::merge_supported_reasoning_presets(true).len());
 
         let deprecated = MergeCatalogModel {
             availability: MergeCatalogAvailability::Deprecated,
@@ -844,6 +883,9 @@ mod tests {
                 supports_vision: false,
                 supports_structured_output: false,
                 service_tiers: Vec::new(),
+                supports_reasoning: false,
+                reasoning_disable_supported: false,
+                reasoning_controls: Vec::new(),
             }
         };
         assert!(ModelsManager::merge_catalog_model_info(deprecated).is_none());

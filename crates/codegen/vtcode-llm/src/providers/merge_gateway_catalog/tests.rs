@@ -64,6 +64,24 @@ fn vendor_info(
     vendor
 }
 
+fn vendor_info_with_reasoning(
+    context_window: Option<u32>,
+    max_output_tokens: Option<u32>,
+    service_tiers: &[&str],
+    disable_supported: bool,
+    controls: &[&str],
+) -> Value {
+    let mut vendor = vendor_info(context_window, max_output_tokens, true, true, true, &["text"], service_tiers);
+    vendor["capabilities"]["reasoning"] = json!({
+        "configurable": true,
+        "disable_supported": disable_supported,
+        "default_enabled": true,
+        "controls": controls,
+        "output_style": "summary",
+    });
+    vendor
+}
+
 #[tokio::test]
 async fn fetch_snapshot_paginates_and_preserves_filters() {
     let server = MockServer::start().await;
@@ -311,7 +329,90 @@ async fn fetch_snapshot_aggregates_capabilities_conservatively() {
     assert!(!model.supports_streaming);
     assert!(!model.supports_vision);
     assert!(!model.supports_structured_output);
+    assert!(!model.supports_reasoning);
+    assert!(!model.reasoning_disable_supported);
+    assert!(model.reasoning_controls.is_empty());
     assert_eq!(model.service_tiers, vec![MergeCatalogServiceTier::Standard]);
+}
+
+#[tokio::test]
+async fn fetch_snapshot_aggregates_reasoning_capability() {
+    let server = MockServer::start().await;
+    let client = client_for(&server);
+
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .and(query_param("limit", "500"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "object": "list",
+            "data": [
+                catalog_record(
+                    "openai/gpt-5.5",
+                    "openai",
+                    Some("GPT 5.5"),
+                    "available",
+                    json!({
+                        "openai": vendor_info_with_reasoning(
+                            Some(400_000),
+                            Some(128_000),
+                            &["standard"],
+                            true,
+                            &["reasoning_effort"]
+                        ),
+                        "azure": vendor_info_with_reasoning(
+                            Some(400_000),
+                            Some(128_000),
+                            &["standard"],
+                            true,
+                            &["reasoning_effort", "reasoning_summary"]
+                        )
+                    })
+                ),
+                catalog_record(
+                    "vendor/limited",
+                    "vendor",
+                    None,
+                    "available",
+                    json!({
+                        "a": vendor_info_with_reasoning(
+                            Some(128_000),
+                            Some(8_192),
+                            &["standard"],
+                            true,
+                            &["thinking.budget_tokens"]
+                        ),
+                        "b": vendor_info(
+                            Some(128_000),
+                            Some(8_192),
+                            true,
+                            true,
+                            true,
+                            &["text"],
+                            &["standard"]
+                        )
+                    })
+                )
+            ]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let snapshot = client
+        .fetch_snapshot(&MergeCatalogFilters::default(), None)
+        .await
+        .expect("snapshot fetch should succeed")
+        .expect("catalog should be modified");
+
+    let reasoning = &snapshot.models[0];
+    assert!(reasoning.supports_reasoning);
+    assert!(reasoning.reasoning_disable_supported);
+    assert_eq!(reasoning.reasoning_controls, vec!["reasoning_effort", "reasoning_summary"]);
+
+    let limited = &snapshot.models[1];
+    assert!(!limited.supports_reasoning);
+    assert!(!limited.reasoning_disable_supported);
+    assert!(limited.reasoning_controls.is_empty());
 }
 
 #[tokio::test]

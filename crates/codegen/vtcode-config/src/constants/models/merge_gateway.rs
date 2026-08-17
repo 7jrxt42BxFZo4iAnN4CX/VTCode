@@ -40,6 +40,77 @@ pub const SUPPORTED_MODELS: &[&str] = &[
     OPENAI_GPT_5_6_TERRA,
 ];
 
-/// Merge controls reasoning per route, so VT Code does not forward a
-/// provider-wide reasoning effort parameter for these models.
-pub const REASONING_MODELS: &[&str] = &[];
+/// Routes that advertise provider-native `reasoning_effort` controls through
+/// Merge's `/v1/models` catalog.
+pub const REASONING_EFFORT_ROUTES: &[&str] = &[
+    OPENAI_GPT_5_5,
+    XAI_GROK_4_6,
+    MOONSHOT_KIMI_K3,
+    META_MUSE_SPARK_1_1,
+    OPENAI_GPT_5_6_LUNA,
+    OPENAI_GPT_5_6_SOL,
+    OPENAI_GPT_5_6_TERRA,
+];
+
+/// Routes that advertise Gateway-controlled `thinking.budget_tokens` controls.
+pub const THINKING_BUDGET_ROUTES: &[&str] = &[
+    ANTHROPIC_CLAUDE_OPUS_5,
+    GOOGLE_GEMINI_3_6_FLASH,
+    GOOGLE_GEMINI_3_7_FLASH,
+    DEEPSEEK_V4_PRO_0813,
+    DEEPSEEK_V4_FLASH_0731,
+    QWEN_3_8_MAX,
+    MINIMAX_H3,
+    THINKINGMACHINES_INKLING,
+];
+
+/// Curated Merge Gateway routes that support reasoning. Reasoning is controlled
+/// per route: either a provider-native `reasoning_effort` or a Gateway-managed
+/// thinking budget.
+pub const REASONING_MODELS: &[&str] = &[
+    OPENAI_GPT_5_5,
+    ANTHROPIC_CLAUDE_OPUS_5,
+    GOOGLE_GEMINI_3_6_FLASH,
+    GOOGLE_GEMINI_3_7_FLASH,
+    DEEPSEEK_V4_PRO_0813,
+    DEEPSEEK_V4_FLASH_0731,
+    XAI_GROK_4_6,
+    QWEN_3_8_MAX,
+    MINIMAX_H3,
+    MOONSHOT_KIMI_K3,
+    THINKINGMACHINES_INKLING,
+    META_MUSE_SPARK_1_1,
+    OPENAI_GPT_5_6_LUNA,
+    OPENAI_GPT_5_6_SOL,
+    OPENAI_GPT_5_6_TERRA,
+];
+
+/// Returns true when the route exposes a provider-native `reasoning_effort`
+/// control through Merge Gateway. Explicit `provider/model` route identifiers
+/// follow the same prefix convention as the curated routes.
+pub fn route_uses_reasoning_effort(model: &str) -> bool {
+    let model = model.trim();
+    model.starts_with("openai/")
+        || model.starts_with("xai/")
+        || model.starts_with("moonshot/")
+        || model.starts_with("meta/")
+}
+
+/// Returns true when the route exposes a Gateway-managed `thinking.budget_tokens`
+/// control. Explicit `provider/model` route identifiers follow the same prefix
+/// convention as the curated routes.
+pub fn route_uses_thinking_budget(model: &str) -> bool {
+    let model = model.trim();
+    model.starts_with("anthropic/")
+        || model.starts_with("google/gemini-")
+        || model.starts_with("deepseek/")
+        || model.starts_with("qwen/")
+        || model.starts_with("minimax/")
+        || model.starts_with("thinkingmachines/")
+}
+
+/// Returns true when the route supports configurable reasoning through Merge
+/// Gateway. Unclassified routes (including `default_routing`) stay conservative.
+pub fn route_supports_reasoning(model: &str) -> bool {
+    route_uses_reasoning_effort(model) || route_uses_thinking_budget(model)
+}

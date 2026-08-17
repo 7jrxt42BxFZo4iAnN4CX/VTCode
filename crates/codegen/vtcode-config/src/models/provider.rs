@@ -67,7 +67,7 @@ impl ProviderModelSupport for Provider {
             Provider::Poolside => false,
             Provider::XAI => models::xai::REASONING_MODELS.contains(&model),
             Provider::NVIDIA => models::nvidia::REASONING_MODELS.contains(&model),
-            Provider::MergeGateway => false,
+            Provider::MergeGateway => models::merge_gateway::route_supports_reasoning(model),
         }
     }
 

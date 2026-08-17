@@ -202,6 +202,47 @@ pub struct MergeVendorCapabilities {
     pub supports_structured_outputs: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub streaming: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<MergeReasoningCapability>,
+    #[serde(flatten, default)]
+    pub extra: Map<String, Value>,
+}
+
+impl MergeVendorCapabilities {
+    pub fn supports_reasoning(&self) -> bool {
+        self.reasoning.is_some()
+    }
+
+    pub fn reasoning_controls(&self) -> Vec<CompactStr> {
+        self.reasoning
+            .as_ref()
+            .map(|reasoning| reasoning.controls.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn reasoning_disable_supported(&self) -> bool {
+        self.reasoning
+            .as_ref()
+            .map(|reasoning| reasoning.disable_supported)
+            .unwrap_or(false)
+    }
+}
+
+/// Per-vendor reasoning capability advertised through Merge's `/v1/models`
+/// catalog. Reasoning controls are route-specific: either a provider-native
+/// `reasoning_effort` or a Gateway-managed `thinking.budget_tokens`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MergeReasoningCapability {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub configurable: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub disable_supported: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub controls: Vec<CompactStr>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_style: Option<CompactStr>,
     #[serde(flatten, default)]
     pub extra: Map<String, Value>,
 }

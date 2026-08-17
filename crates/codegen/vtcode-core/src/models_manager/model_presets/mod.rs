@@ -369,11 +369,25 @@ mod tests {
             .expect("Merge Gateway default preset");
         assert_eq!(default.model, "default_routing");
         assert_eq!(default.context_window, Some(128_000));
-        assert!(presets.iter().all(|preset| {
-            preset.provider == Provider::MergeGateway
-                && preset.show_in_picker
-                && preset.supported_reasoning_efforts.is_empty()
-        }));
+        assert!(
+            presets
+                .iter()
+                .all(|preset| preset.provider == Provider::MergeGateway && preset.show_in_picker)
+        );
+
+        use crate::config::constants::models;
+        let reasoning_models: Vec<&str> = presets
+            .iter()
+            .filter(|preset| !preset.supported_reasoning_efforts.is_empty())
+            .map(|preset| preset.model.as_str())
+            .collect();
+        assert_eq!(reasoning_models, models::merge_gateway::REASONING_MODELS.to_vec());
+        assert!(
+            presets
+                .iter()
+                .filter(|preset| !preset.supported_reasoning_efforts.is_empty())
+                .all(|preset| preset.default_reasoning_effort == ReasoningEffortLevel::Medium)
+        );
     }
 
     #[test]
