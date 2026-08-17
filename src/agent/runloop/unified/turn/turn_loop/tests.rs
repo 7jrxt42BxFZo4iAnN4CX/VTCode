@@ -775,6 +775,12 @@ async fn anti_blind_guard_stops_outer_loop_after_two_pending_text_responses() {
         .expect("turn loop should stop at the pending-verification response cap");
 
     assert!(matches!(outcome.result, TurnLoopResult::Blocked { .. }));
+    assert!(matches!(
+        outcome.result,
+        TurnLoopResult::Blocked {
+            reason: Some(ref reason)
+        } if reason == "Turn blocked after repeated unverified assistant responses; verification is still pending."
+    ));
     assert_eq!(text_responses.load(Ordering::SeqCst), 2);
     assert_eq!(requests.load(Ordering::SeqCst), 6, "the provider must not receive a third pending text request");
     assert!(!outcome.final_response_was_fallback);
