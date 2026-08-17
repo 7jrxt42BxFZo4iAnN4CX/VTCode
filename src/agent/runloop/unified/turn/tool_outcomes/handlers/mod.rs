@@ -542,7 +542,7 @@ async fn handle_tool_call_inner<'a, 'b, 'tool>(
 
 pub(crate) fn block_mutation_until_verification(
     ctx: &mut TurnProcessingContext<'_>,
-    repeated_tool_attempts: &mut super::super::helpers::LoopTracker,
+    repeated_tool_attempts: &mut super::helpers::LoopTracker,
     tool_call_id: &str,
     tool_name: &str,
     args_val: &serde_json::Value,
