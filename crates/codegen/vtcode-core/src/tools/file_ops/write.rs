@@ -111,6 +111,7 @@ impl FileOpsTool {
                 .message("File already exists")
                 .field("skipped", json!(true))
                 .field("reason", json!("File already exists"))
+                .field("diff", json!([]))
                 .build_json());
         }
         if effective_mode == "fail_if_exists" && file_exists {
@@ -169,6 +170,7 @@ impl FileOpsTool {
                             .message("File already exists")
                             .field("skipped", json!(true))
                             .field("reason", json!("File already exists"))
+                            .field("diff", json!([]))
                             .build_json());
                     }
                     return Err(err).with_context(|| format!("Failed to create file content: {}", file_path.display()));
@@ -243,7 +245,15 @@ impl FileOpsTool {
             .field("file_existed", json!(file_exists));
 
         if let Some(preview) = diff_preview {
-            builder = builder.field("diff_preview", preview);
+            let mut canonical_preview = preview.clone();
+            if let Some(fields) = canonical_preview.as_object_mut() {
+                fields.insert("path".to_string(), json!(self.workspace_relative_display(&file_path)));
+                fields.insert("operation".to_string(), json!(if file_exists { "updated" } else { "created" }));
+            }
+            builder = builder
+                .field("created", json!(!file_exists))
+                .field("diff_preview", preview)
+                .field("diff", json!([canonical_preview]));
         }
 
         Ok(builder.build_json())

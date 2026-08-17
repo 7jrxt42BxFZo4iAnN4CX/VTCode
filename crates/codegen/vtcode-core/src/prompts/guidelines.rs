@@ -55,6 +55,7 @@ pub fn generate_tool_guidelines_for_profile(
     }
     if has_apply_patch {
         lines.push("- Use `apply_patch` for file edits after inspection; keep patches small.".to_string());
+        lines.push("- File-edit results include bounded `diff` entries with path, operation, and change counts; inspect them and run verification when the anti-blind-editing checkpoint asks.".to_string());
     }
     if has_exec {
         lines.push(shell_task_guidance(shell_profile).to_string());

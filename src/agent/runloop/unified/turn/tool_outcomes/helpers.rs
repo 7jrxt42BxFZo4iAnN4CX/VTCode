@@ -12,6 +12,8 @@ use crate::agent::runloop::unified::turn::tool_outcomes::read_extent;
 /// Threshold: number of consecutive file mutations before the Anti-Blind-Editing
 /// warning fires. NL2Repo-Bench recommends verifying after every few edits.
 pub(crate) const BLIND_EDITING_THRESHOLD: usize = 4;
+pub(crate) const ANTI_BLIND_EDITING_WARNING: &str = "[!] Anti-Blind-Editing: Pause to run verification/tests.";
+pub(crate) const ANTI_BLIND_EDITING_DIRECTIVE: &str = "CRITICAL: Multiple edits were made without verification. Stop editing and run `exec_command` to compile or test before proceeding.";
 
 /// Threshold: number of consecutive read/search operations before the Navigation
 /// Loop warning fires.
@@ -29,6 +31,12 @@ pub(crate) struct LoopTracker {
     low_signal_attempts: FxHashMap<String, (usize, Instant)>,
     /// Counter for consecutive mutating file operations without execution/verification
     pub consecutive_mutations: usize,
+    /// True after the mutation threshold until a verification command completes.
+    pub verification_pending: bool,
+    /// Prevent repeated warning output while verification remains pending.
+    pub verification_warning_emitted: bool,
+    /// Prevent repeated inline block notices for a single verification checkpoint.
+    pub verification_block_notice_emitted: bool,
     /// Counter for consecutive read/search operations without action or synthesis
     pub consecutive_navigations: usize,
     /// Number of times navigation-loop recovery has fired in this session.
@@ -53,6 +61,9 @@ impl LoopTracker {
             attempts: FxHashMap::with_capacity_and_hasher(16, Default::default()),
             low_signal_attempts: FxHashMap::with_capacity_and_hasher(8, Default::default()),
             consecutive_mutations: 0,
+            verification_pending: false,
+            verification_warning_emitted: false,
+            verification_block_notice_emitted: false,
             consecutive_navigations: 0,
             navigation_loop_recoveries: 0,
             consecutive_low_signal_navigations: 0,
@@ -127,8 +138,31 @@ impl LoopTracker {
         self.low_signal_attempts.clear();
         self.nav_signatures.clear();
         self.consecutive_mutations = 0;
+        self.verification_block_notice_emitted = false;
         self.consecutive_navigations = 0;
         self.reset_low_signal_navigation_counters();
+    }
+
+    pub(crate) fn verification_is_pending(&self) -> bool {
+        self.verification_pending || self.consecutive_mutations >= BLIND_EDITING_THRESHOLD
+    }
+
+    pub(crate) fn mark_verification_pending(&mut self) {
+        self.verification_pending = true;
+    }
+
+    fn record_successful_mutation(&mut self) {
+        self.consecutive_mutations = self.consecutive_mutations.saturating_add(1);
+        if self.consecutive_mutations >= BLIND_EDITING_THRESHOLD {
+            self.verification_pending = true;
+        }
+    }
+
+    fn mark_verification_complete(&mut self) {
+        self.consecutive_mutations = 0;
+        self.verification_pending = false;
+        self.verification_warning_emitted = false;
+        self.verification_block_notice_emitted = false;
     }
 }
 
@@ -531,7 +565,7 @@ fn path_targets_plan_artifact(path: &str) -> bool {
         || normalized.contains("/tmp/vtcode-plans/")
 }
 
-fn is_plan_artifact_write(name: &str, args: &serde_json::Value) -> bool {
+pub(crate) fn is_plan_artifact_write(name: &str, args: &serde_json::Value) -> bool {
     use vtcode_core::config::constants::tools as tool_names;
     use vtcode_core::tools::names::canonical_tool_name;
     use vtcode_core::tools::tool_intent::file_operation_action;
@@ -570,10 +604,45 @@ fn is_plan_artifact_write(name: &str, args: &serde_json::Value) -> bool {
     }
 }
 
+fn is_execution_tool(name: &str) -> bool {
+    use vtcode_core::config::constants::tools as tool_names;
+
+    matches!(
+        name,
+        tool_names::UNIFIED_EXEC
+            | tool_names::EXEC_COMMAND
+            | tool_names::EXEC_PTY_CMD
+            | tool_names::RUN_PTY_CMD
+            | tool_names::EXECUTE_CODE
+            | tool_names::SHELL
+    )
+}
+
+/// Return whether a tool call must wait for a successful verification step.
+///
+/// Reads, inspections, verification commands, task tracking, and dedicated
+/// plan-artifact writes remain available while the checkpoint is pending.
+pub(crate) fn mutation_blocked_until_verification(
+    loop_tracker: &LoopTracker,
+    name: &str,
+    args: &serde_json::Value,
+) -> bool {
+    if !loop_tracker.verification_is_pending() || is_plan_artifact_write(name, args) {
+        return false;
+    }
+
+    let canonical_name = canonical_tool_name(name);
+    if is_execution_tool(canonical_name) {
+        return matches!(classify_shell_activity(canonical_name, args), ShellActivity::Mutation);
+    }
+
+    vtcode_core::tools::tool_intent::classify_tool_intent(canonical_name, args).mutating
+}
+
 /// Updates the tool repetition tracker based on the execution outcome.
 ///
-/// Count every completed attempt except user-triggered cancellations so the turn
-/// balancer can stop low-signal retry loops even when tools keep failing.
+/// Count completed attempts for repetition detection, but only successful
+/// mutations contribute to anti-blind-editing verification pressure.
 pub(crate) fn update_repetition_tracker(
     loop_tracker: &mut LoopTracker,
     outcome: &ToolPipelineOutcome,
@@ -602,28 +671,17 @@ pub(crate) fn update_repetition_tracker(
     // mutate state, but for the Edit-Test heuristic, any execution/verification
     // step (cargo check, cargo test, etc.) should RESET the mutation counter,
     // not increment it.
-    use vtcode_core::config::constants::tools as tool_names;
-
-    let is_execution_tool = matches!(
-        canonical_name,
-        n if n == tool_names::UNIFIED_EXEC
-            || n == tool_names::EXEC_COMMAND
-            || n == tool_names::EXEC_PTY_CMD
-            || n == tool_names::RUN_PTY_CMD
-            || n == tool_names::EXECUTE_CODE
-            || n == tool_names::SHELL
-    );
-
-    if is_execution_tool {
+    if is_execution_tool(canonical_name) {
         match classify_shell_activity(canonical_name, args) {
             ShellActivity::Inspection => {
-                loop_tracker.consecutive_mutations = 0;
                 loop_tracker.consecutive_navigations = loop_tracker.consecutive_navigations.saturating_add(1);
                 loop_tracker.nav_signatures.insert(signature_key);
                 loop_tracker.record_navigation_signal(is_low_signal_navigation);
             }
             ShellActivity::Verification => {
-                loop_tracker.consecutive_mutations = 0;
+                if matches!(&outcome.status, ToolExecutionStatus::Success { .. }) {
+                    loop_tracker.mark_verification_complete();
+                }
                 loop_tracker.consecutive_navigations = 0;
                 loop_tracker.nav_signatures.clear();
                 loop_tracker.reset_low_signal_navigation_counters();
@@ -632,7 +690,9 @@ pub(crate) fn update_repetition_tracker(
                 }
             }
             ShellActivity::Mutation => {
-                loop_tracker.consecutive_mutations = loop_tracker.consecutive_mutations.saturating_add(1);
+                if mutation_was_applied(outcome) {
+                    loop_tracker.record_successful_mutation();
+                }
                 loop_tracker.consecutive_navigations = 0;
                 loop_tracker.nav_signatures.clear();
                 loop_tracker.reset_low_signal_navigation_counters();
@@ -650,7 +710,9 @@ pub(crate) fn update_repetition_tracker(
     } else {
         let intent = vtcode_core::tools::tool_intent::classify_tool_intent(canonical_name, args);
         if intent.mutating {
-            loop_tracker.consecutive_mutations += 1;
+            if mutation_was_applied(outcome) {
+                loop_tracker.record_successful_mutation();
+            }
             loop_tracker.consecutive_navigations = 0;
             loop_tracker.nav_signatures.clear();
             loop_tracker.reset_low_signal_navigation_counters();
@@ -662,6 +724,20 @@ pub(crate) fn update_repetition_tracker(
             loop_tracker.consecutive_navigations += 1;
             loop_tracker.nav_signatures.insert(signature_key);
             loop_tracker.record_navigation_signal(is_low_signal_navigation);
+        }
+    }
+}
+
+fn mutation_was_applied(outcome: &ToolPipelineOutcome) -> bool {
+    match &outcome.status {
+        ToolExecutionStatus::Success { output, command_success, modified_files, .. } => {
+            if let Some(effective_change) = vtcode_core::tools::file_ops::diff_output_has_effective_change(output) {
+                return effective_change;
+            }
+            *command_success || !modified_files.is_empty()
+        }
+        ToolExecutionStatus::Failure { .. } | ToolExecutionStatus::Timeout { .. } | ToolExecutionStatus::Cancelled => {
+            false
         }
     }
 }
@@ -824,6 +900,169 @@ mod tests {
         update_repetition_tracker(&mut tracker, &outcome, "edit_file", &json!({"path":"src/main.rs"}));
 
         assert_eq!(tracker.max_count_filtered(|_| false), 1);
+    }
+
+    #[test]
+    fn failed_file_mutations_do_not_trigger_verification_pressure() {
+        let mut tracker = LoopTracker::new();
+        let outcome = ToolPipelineOutcome::from_status(ToolExecutionStatus::Failure {
+            error: vtcode_core::tools::registry::ToolExecutionError::new(
+                "apply_patch".to_string(),
+                vtcode_core::tools::registry::ToolErrorType::ExecutionError,
+                "invalid patch path".to_string(),
+            ),
+        });
+
+        update_repetition_tracker(
+            &mut tracker,
+            &outcome,
+            tools::APPLY_PATCH,
+            &json!({"input":"*** Begin Patch\n*** Update File: /absolute/path\n*** End Patch"}),
+        );
+
+        assert_eq!(tracker.consecutive_mutations, 0);
+    }
+
+    #[test]
+    fn no_op_write_does_not_trigger_verification_pressure() {
+        let mut tracker = LoopTracker::new();
+        let outcome = ToolPipelineOutcome::from_status(ToolExecutionStatus::Success {
+            output: json!({
+                "success": true,
+                "path": "README.md",
+                "diff_preview": {
+                    "content": "",
+                    "truncated": false,
+                    "omitted_line_count": 0,
+                    "skipped": false,
+                    "is_empty": true
+                },
+                "diff": [{
+                    "path": "README.md",
+                    "content": "",
+                    "truncated": false,
+                    "omitted_line_count": 0,
+                    "skipped": false,
+                    "is_empty": true
+                }]
+            }),
+            stdout: None,
+            modified_files: vec![],
+            command_success: true,
+        });
+
+        update_repetition_tracker(
+            &mut tracker,
+            &outcome,
+            tools::WRITE_FILE,
+            &json!({"path":"README.md","content":"same\n","mode":"overwrite"}),
+        );
+
+        assert_eq!(tracker.consecutive_mutations, 0);
+    }
+
+    #[test]
+    fn skipped_write_does_not_trigger_verification_pressure() {
+        let mut tracker = LoopTracker::new();
+        let outcome = ToolPipelineOutcome::from_status(ToolExecutionStatus::Success {
+            output: json!({
+                "success": true,
+                "skipped": true,
+                "reason": "File already exists"
+            }),
+            stdout: None,
+            modified_files: vec![],
+            command_success: true,
+        });
+
+        update_repetition_tracker(
+            &mut tracker,
+            &outcome,
+            tools::WRITE_FILE,
+            &json!({"path":"README.md","content":"same\n","mode":"skip_if_exists"}),
+        );
+
+        assert_eq!(tracker.consecutive_mutations, 0);
+    }
+
+    #[test]
+    fn verification_gate_blocks_mutations_but_allows_reads_checks_and_plan_artifacts() {
+        let mut tracker = LoopTracker::new();
+        tracker.verification_pending = true;
+
+        assert!(mutation_blocked_until_verification(
+            &tracker,
+            tools::WRITE_FILE,
+            &json!({"path":"README.md","content":"new"})
+        ));
+        assert!(mutation_blocked_until_verification(
+            &tracker,
+            tools::EXEC_COMMAND,
+            &json!({"cmd":"sed -i '' 's/old/new/' README.md"})
+        ));
+        assert!(!mutation_blocked_until_verification(&tracker, tools::READ_FILE, &json!({"path":"README.md"})));
+        assert!(!mutation_blocked_until_verification(
+            &tracker,
+            tools::EXEC_COMMAND,
+            &json!({"cmd":"cargo check --locked"})
+        ));
+        assert!(!mutation_blocked_until_verification(
+            &tracker,
+            tools::WRITE_FILE,
+            &json!({"path":".vtcode/plans/next.md","content":"plan"})
+        ));
+        assert!(!mutation_blocked_until_verification(&tracker, tools::TASK_TRACKER, &json!({"action":"update"})));
+    }
+
+    #[test]
+    fn inspection_does_not_clear_mutations_waiting_for_verification() {
+        let mut tracker = LoopTracker::new();
+        let success = ToolPipelineOutcome::from_status(ToolExecutionStatus::Success {
+            output: serde_json::json!({}),
+            stdout: None,
+            modified_files: vec![],
+            command_success: true,
+        });
+        tracker.consecutive_mutations = BLIND_EDITING_THRESHOLD;
+
+        update_repetition_tracker(&mut tracker, &success, tools::EXEC_COMMAND, &json!({"cmd":"git diff -- README.md"}));
+
+        assert_eq!(tracker.consecutive_mutations, BLIND_EDITING_THRESHOLD);
+    }
+
+    #[test]
+    fn only_a_completed_verification_clears_pending_mutation_pressure() {
+        let mut tracker = LoopTracker::new();
+        let edit = ToolPipelineOutcome::from_status(ToolExecutionStatus::Success {
+            output: serde_json::json!({}),
+            stdout: None,
+            modified_files: vec![],
+            command_success: true,
+        });
+
+        for _ in 0..BLIND_EDITING_THRESHOLD {
+            update_repetition_tracker(&mut tracker, &edit, tools::EDIT_FILE, &json!({"path":"README.md"}));
+        }
+        assert!(tracker.verification_is_pending());
+
+        let failed_check = ToolPipelineOutcome::from_status(ToolExecutionStatus::Failure {
+            error: vtcode_core::tools::registry::ToolExecutionError::new(
+                tools::EXEC_COMMAND.to_string(),
+                vtcode_core::tools::registry::ToolErrorType::ExecutionError,
+                "check could not start".to_string(),
+            ),
+        });
+        update_repetition_tracker(
+            &mut tracker,
+            &failed_check,
+            tools::EXEC_COMMAND,
+            &json!({"cmd":"cargo nextest run"}),
+        );
+        assert!(tracker.verification_is_pending());
+
+        update_repetition_tracker(&mut tracker, &edit, tools::EXEC_COMMAND, &json!({"cmd":"cargo nextest run"}));
+        assert!(!tracker.verification_is_pending());
+        assert_eq!(tracker.consecutive_mutations, 0);
     }
 
     #[test]

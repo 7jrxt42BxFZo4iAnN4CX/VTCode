@@ -3,8 +3,8 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use vtcode_core::core::agent::harness_kernel::{PreparedToolBatch, PreparedToolBatchKind};
 
 use super::{
-    PreparedToolCall, ToolOutcomeContext, ValidationTransition, finalize_validation_result,
-    flush_budget_synthesis_directives, validate_tool_call,
+    PreparedToolCall, ToolOutcomeContext, ValidationTransition, block_mutation_until_verification,
+    finalize_validation_result, flush_budget_synthesis_directives, validate_tool_call,
 };
 use crate::agent::runloop::unified::progress::ProgressReporter;
 use crate::agent::runloop::unified::tool_pipeline::{
@@ -299,6 +299,16 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
             continue;
         };
 
+        if block_mutation_until_verification(
+            t_ctx.ctx,
+            t_ctx.repeated_tool_attempts,
+            tool_call.call_id(),
+            tool_call.tool_name(),
+            args,
+        )? {
+            continue;
+        }
+
         let validation_result = validate_tool_call(t_ctx.ctx, tool_call.call_id(), tool_call.tool_name(), args).await?;
         match finalize_validation_result(t_ctx.ctx, tool_call.call_id(), tool_call.tool_name(), args, validation_result)
         {
@@ -458,6 +468,10 @@ async fn execute_and_handle_tool_call_inner<'a>(
     args_val: serde_json::Value,
     batch_tracker: Option<&mut crate::agent::runloop::unified::tool_pipeline::ToolBatchOutcome>,
 ) -> Result<Option<TurnHandlerOutcome>> {
+    if block_mutation_until_verification(ctx, repeated_tool_attempts, tool_call_id.as_str(), tool_name, &args_val)? {
+        return Ok(None);
+    }
+
     // Show pre-execution indicator for file modification operations
     if crate::agent::runloop::unified::tool_summary::is_file_modification_tool(tool_name, &args_val) {
         let summary_ctx = crate::agent::runloop::unified::tool_summary::ToolSummaryRenderContext {

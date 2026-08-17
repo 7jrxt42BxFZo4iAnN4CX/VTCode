@@ -13,7 +13,7 @@ use crate::agent::runloop::unified::turn::context::{
     PreparedAssistantToolCall, TurnHandlerOutcome, TurnLoopResult, TurnProcessingContext, TurnProcessingResult,
 };
 use crate::agent::runloop::unified::turn::guards::handle_turn_balancer;
-use crate::agent::runloop::unified::turn::tool_outcomes::ToolOutcomeContext;
+use crate::agent::runloop::unified::turn::tool_outcomes::{ToolOutcomeContext, helpers};
 use crate::agent::runloop::unified::turn::turn_loop::RECOVERY_CONTRACT_VIOLATION_REASON;
 
 /// Result of processing a single turn.
@@ -22,7 +22,7 @@ pub(crate) struct HandleTurnProcessingResultParams<'a> {
     pub processing_result: TurnProcessingResult,
     pub response_streamed: bool,
     pub step_count: usize,
-    pub repeated_tool_attempts: &'a mut crate::agent::runloop::unified::turn::tool_outcomes::helpers::LoopTracker,
+    pub repeated_tool_attempts: &'a mut helpers::LoopTracker,
     pub turn_modified_files: &'a mut BTreeSet<PathBuf>,
     /// Pre-computed max tool loops limit for efficiency.
     pub max_tool_loops: usize,
@@ -191,6 +191,23 @@ pub(crate) async fn handle_turn_processing_result<'a>(
             Ok(balancer_outcome)
         }
         TurnProcessingResult::TextResponse { text, reasoning, reasoning_details, proposed_plan } => {
+            if params.repeated_tool_attempts.verification_is_pending() {
+                params.repeated_tool_attempts.mark_verification_pending();
+                if !params.repeated_tool_attempts.verification_warning_emitted {
+                    params
+                        .ctx
+                        .renderer
+                        .line(MessageStyle::Warning, helpers::ANTI_BLIND_EDITING_WARNING)
+                        .unwrap_or(());
+                    params
+                        .ctx
+                        .working_history
+                        .push(uni::Message::system(helpers::ANTI_BLIND_EDITING_DIRECTIVE.to_string()));
+                    params.repeated_tool_attempts.verification_warning_emitted = true;
+                }
+                return Ok(TurnHandlerOutcome::Continue);
+            }
+
             if params.ctx.is_recovery_active()
                 && params.ctx.recovery_pass_used()
                 && params.ctx.recovery_is_tool_free()
@@ -453,6 +470,39 @@ mod tests {
             TurnHandlerOutcome::Break(TurnLoopResult::Blocked { reason: Some(reason) })
             if reason == RECOVERY_CONTRACT_VIOLATION_REASON
         ));
+    }
+
+    #[tokio::test]
+    async fn anti_blind_guard_does_not_allow_final_response_before_verification() {
+        let mut backing = TestTurnProcessingBacking::new(4).await;
+        let mut repeated_tool_attempts = LoopTracker::new();
+        repeated_tool_attempts.consecutive_mutations =
+            crate::agent::runloop::unified::turn::tool_outcomes::helpers::BLIND_EDITING_THRESHOLD;
+        let mut turn_modified_files = BTreeSet::new();
+
+        let outcome = {
+            let mut ctx = backing.turn_processing_context();
+            handle_turn_processing_result(HandleTurnProcessingResultParams {
+                ctx: &mut ctx,
+                processing_result: TurnProcessingResult::TextResponse {
+                    text: "The README update is complete.".to_string(),
+                    reasoning: Vec::new(),
+                    reasoning_details: None,
+                    proposed_plan: None,
+                },
+                response_streamed: false,
+                step_count: 1,
+                repeated_tool_attempts: &mut repeated_tool_attempts,
+                turn_modified_files: &mut turn_modified_files,
+                max_tool_loops: 4,
+                tool_repeat_limit: 4,
+            })
+            .await
+            .expect("anti-blind guard should handle the unverified response")
+        };
+
+        assert!(matches!(outcome, TurnHandlerOutcome::Continue));
+        assert!(backing.last_history_message_contains("verification"));
     }
 
     #[tokio::test]

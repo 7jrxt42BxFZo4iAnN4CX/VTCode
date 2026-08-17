@@ -3,6 +3,7 @@ use crate::exec::events::{
     ThreadItem, ThreadItemDetails, ToolCallStatus, ToolInvocationItem, ToolOutcome, ToolOutputItem,
     tool_outcome_from_status,
 };
+use crate::tools::file_ops::canonical_diff_previews;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt::Write;
@@ -60,6 +61,51 @@ fn trimmed_string_field<'a>(output: &'a Value, key: &str) -> Option<&'a str> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|text| !text.is_empty())
+}
+
+fn diff_preview_output(output: &Value) -> Option<String> {
+    let diffs = canonical_diff_previews(output);
+    if diffs.is_empty() {
+        return None;
+    }
+    let mut sections = Vec::new();
+
+    for diff in &diffs {
+        let path = diff.get("path").and_then(Value::as_str).unwrap_or("file");
+        let operation = diff
+            .get("operation")
+            .and_then(Value::as_str)
+            .map(|operation| format!(" ({operation})"))
+            .unwrap_or_default();
+        let counts =
+            match (diff.get("additions").and_then(Value::as_u64), diff.get("deletions").and_then(Value::as_u64)) {
+                (Some(additions), Some(deletions)) if additions > 0 || deletions > 0 => {
+                    format!(" (+{additions} -{deletions})")
+                }
+                _ => String::new(),
+            };
+        if let Some(content) = diff
+            .get("content")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|content| !content.is_empty())
+        {
+            sections.push(format!("diff preview for {path}{operation}{counts}:\n{content}"));
+            continue;
+        }
+
+        if diff.get("skipped").and_then(Value::as_bool) == Some(true) {
+            let reason = diff.get("reason").and_then(Value::as_str).unwrap_or("preview skipped");
+            sections.push(format!("diff preview for {path}{operation}{counts}: {reason}"));
+            continue;
+        }
+
+        if diff.get("is_empty").and_then(Value::as_bool) == Some(true) {
+            sections.push(format!("diff preview for {path}{operation}: no changes"));
+        }
+    }
+
+    (!sections.is_empty()).then(|| sections.join("\n"))
 }
 
 #[cold]
@@ -277,6 +323,10 @@ pub fn tool_output_payload_from_value(output: &Value) -> ToolOutputPayload {
             aggregated_output: String::new(),
             spool_path: Some(spool_path.to_string()),
         };
+    }
+
+    if let Some(diff) = diff_preview_output(output) {
+        return ToolOutputPayload { aggregated_output: diff, spool_path: None };
     }
 
     let mut primary_text = Vec::new();
@@ -973,6 +1023,40 @@ mod tests {
 
         assert_eq!(payload.aggregated_output, "");
         assert_eq!(payload.spool_path.as_deref(), Some(".vtcode/context/tool_outputs/run-1.txt"));
+    }
+
+    #[test]
+    fn tool_output_payload_includes_apply_patch_diff_content() {
+        let payload = tool_output_payload_from_value(&json!({
+            "success": true,
+            "applied": ["[1/1] Updated file: README.md (1 chunk)"],
+            "modified_files": ["README.md"],
+            "diff": [{
+                "path": "README.md",
+                "content": "diff --git a/README.md b/README.md\n-before\n+after\n",
+                "skipped": false
+            }]
+        }));
+
+        assert!(payload.aggregated_output.contains("diff --git a/README.md b/README.md"));
+        assert!(payload.aggregated_output.contains("-before"));
+        assert!(payload.aggregated_output.contains("+after"));
+    }
+
+    #[test]
+    fn tool_output_payload_normalizes_legacy_write_diff_preview() {
+        let payload = tool_output_payload_from_value(&json!({
+            "success": true,
+            "path": "README.md",
+            "diff_preview": {
+                "content": "diff --git a/README.md b/README.md\n-before\n+after\n",
+                "skipped": false
+            }
+        }));
+
+        assert!(payload.aggregated_output.contains("diff preview for README.md"));
+        assert!(payload.aggregated_output.contains("-before"));
+        assert!(payload.aggregated_output.contains("+after"));
     }
 
     #[test]

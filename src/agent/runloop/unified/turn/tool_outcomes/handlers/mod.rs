@@ -9,7 +9,7 @@ use vtcode_core::tools::registry::labels::tool_action_label;
 use vtcode_core::utils::ansi::MessageStyle;
 
 use super::error_handling::tool_denial_diagnostic;
-use super::helpers::check_is_argument_error;
+use super::helpers::{check_is_argument_error, mutation_blocked_until_verification};
 use crate::agent::runloop::unified::async_mcp_manager::approval_policy_from_human_in_the_loop;
 use crate::agent::runloop::unified::tool_call_safety::invocation_id_from_call_id;
 use crate::agent::runloop::unified::tool_pipeline::validation::{
@@ -508,6 +508,10 @@ async fn handle_tool_call_inner<'a, 'b, 'tool>(
     use crate::agent::runloop::unified::run_loop_context::TurnPhase;
     t_ctx.ctx.set_phase(TurnPhase::ExecutingTools);
 
+    if block_mutation_until_verification(t_ctx.ctx, t_ctx.repeated_tool_attempts, tool_call_id, tool_name, args_val)? {
+        return Ok(None);
+    }
+
     // 1. Validate (Circuit Breaker, Rate Limit, Loop Detection, Safety, Permission)
     let validation_result = validate_tool_call(t_ctx.ctx, tool_call_id, tool_name, args_val).await?;
     let prepared = match finalize_validation_result(t_ctx.ctx, tool_call_id, tool_name, args_val, validation_result) {
@@ -534,6 +538,44 @@ async fn handle_tool_call_inner<'a, 'b, 'tool>(
     }
 
     Ok(None)
+}
+
+pub(crate) fn block_mutation_until_verification(
+    ctx: &mut TurnProcessingContext<'_>,
+    repeated_tool_attempts: &mut super::super::helpers::LoopTracker,
+    tool_call_id: &str,
+    tool_name: &str,
+    args_val: &serde_json::Value,
+) -> Result<bool> {
+    if !mutation_blocked_until_verification(repeated_tool_attempts, tool_name, args_val) {
+        return Ok(false);
+    }
+
+    let pending_mutations = repeated_tool_attempts.consecutive_mutations;
+    let message = format!(
+        "Mutation blocked until verification: {pending_mutations} effective file changes are awaiting a successful build, test, lint, or compile command."
+    );
+    if !repeated_tool_attempts.verification_block_notice_emitted {
+        ctx.renderer.line(MessageStyle::Warning, &message)?;
+        repeated_tool_attempts.verification_block_notice_emitted = true;
+    }
+    ctx.push_tool_response(
+        tool_call_id,
+        Some(tool_name),
+        serde_json::json!({
+            "success": false,
+            "blocked": true,
+            "tool_name": tool_name,
+            "failure_kind": "anti_blind_editing_verification_required",
+            "verification_required": true,
+            "pending_mutations": pending_mutations,
+            "error": message,
+            "next_action": "Run a successful verification command with exec_command before making another workspace mutation.",
+            "retryable": true,
+        })
+        .to_string(),
+    );
+    Ok(true)
 }
 
 /// Validates a tool call against all safety and permission checks.

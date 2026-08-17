@@ -1230,6 +1230,43 @@ async fn end_to_end_blocked_calls_do_not_burn_budget_before_valid_call() {
 }
 
 #[tokio::test]
+async fn pending_verification_blocks_patch_before_filesystem_mutation() {
+    let mut backing = TestContextBacking::new(4).await;
+    backing.select_build_primary_agent();
+    let patch_args = json!({
+        "input": "*** Begin Patch\n*** Update File: sample.txt\n@@\n-hello\n+goodbye\n*** End Patch\n"
+    });
+    cache_tool_permission(&mut backing, tool_names::APPLY_PATCH, &patch_args, PermissionGrant::Permanent).await;
+
+    let mut repeated_tool_attempts = LoopTracker::new();
+    repeated_tool_attempts.verification_pending = true;
+    let mut turn_modified_files = BTreeSet::new();
+    let sample_file = backing.sample_file.clone();
+    let mut ctx = backing.turn_processing_context();
+    let mut outcome_ctx = ToolOutcomeContext {
+        ctx: &mut ctx,
+        repeated_tool_attempts: &mut repeated_tool_attempts,
+        turn_modified_files: &mut turn_modified_files,
+    };
+
+    let outcome = handle_single_tool_call(
+        &mut outcome_ctx,
+        "patch_while_verification_pending",
+        tool_names::APPLY_PATCH,
+        patch_args,
+    )
+    .await
+    .expect("pending verification should return a structured tool response");
+
+    assert!(outcome.is_none());
+    assert_eq!(std::fs::read_to_string(sample_file).expect("read sample file"), "hello\n");
+    assert!(outcome_ctx.ctx.working_history.iter().any(|message| {
+        message.role == uni::MessageRole::Tool
+            && message.content.as_text().contains("anti_blind_editing_verification_required")
+    }));
+}
+
+#[tokio::test]
 async fn repeated_read_only_guard_dedups_plan_file_in_planning_mode() {
     let mut backing = TestContextBacking::new(4).await;
     backing.select_build_primary_agent();

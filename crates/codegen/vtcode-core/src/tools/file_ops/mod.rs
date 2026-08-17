@@ -15,7 +15,10 @@ use std::path::Path;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, BufReader};
 use vtcode_commons::async_utils::read_exact_uninit;
 
-pub use diff_preview::{build_diff_preview, diff_preview_error_skip, diff_preview_size_skip, diff_preview_suppressed};
+pub use diff_preview::{
+    build_diff_preview, canonical_diff_previews, diff_output_has_effective_change, diff_preview_error_skip,
+    diff_preview_size_skip, diff_preview_suppressed,
+};
 pub use tool::FileOpsTool;
 pub use vtcode_commons::fs::is_image_path;
 

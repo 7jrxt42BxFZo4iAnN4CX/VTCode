@@ -1422,6 +1422,95 @@ async fn apply_patch_alias_executes_without_recursive_reentry() -> Result<()> {
 }
 
 #[tokio::test]
+async fn apply_patch_response_includes_a_bounded_diff_preview() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    fs::write(temp_dir.path().join("README.md"), "before\n")?;
+    let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
+    registry.allow_all_tools().await?;
+
+    let patch = "*** Begin Patch\n*** Update File: README.md\n@@\n-before\n+after\n*** End Patch\n";
+    let response = registry.execute_tool(tools::APPLY_PATCH, json!({ "input": patch })).await?;
+
+    let diff = response
+        .get("diff")
+        .and_then(Value::as_array)
+        .and_then(|diffs| diffs.first())
+        .and_then(|entry| entry.get("content"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("apply_patch response did not include a diff preview"))?;
+    assert!(diff.contains("-before"));
+    assert!(diff.contains("+after"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn write_file_response_includes_a_canonical_diff_preview() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    fs::write(temp_dir.path().join("README.md"), "before\n")?;
+    let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
+    registry.allow_all_tools().await?;
+
+    let response = registry
+        .execute_tool(
+            tools::WRITE_FILE,
+            json!({
+                "path": "README.md",
+                "content": "after\n",
+                "mode": "overwrite"
+            }),
+        )
+        .await?;
+
+    let diff_entry = response
+        .get("diff")
+        .and_then(Value::as_array)
+        .and_then(|diffs| diffs.first())
+        .ok_or_else(|| anyhow::anyhow!("write_file response did not include a canonical diff entry"))?;
+    assert_eq!(diff_entry.get("path").and_then(Value::as_str), Some("README.md"));
+    assert_eq!(diff_entry.get("operation").and_then(Value::as_str), Some("updated"));
+    assert_eq!(diff_entry.get("additions").and_then(Value::as_u64), Some(1));
+    assert_eq!(diff_entry.get("deletions").and_then(Value::as_u64), Some(1));
+    let diff_content = diff_entry
+        .get("content")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("canonical write_file diff did not include content"))?;
+    assert!(diff_content.contains("-before"));
+    assert!(diff_content.contains("+after"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn write_file_noop_response_exposes_an_empty_canonical_diff_entry() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    fs::write(temp_dir.path().join("README.md"), "same\n")?;
+    let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
+    registry.allow_all_tools().await?;
+
+    let response = registry
+        .execute_tool(
+            tools::WRITE_FILE,
+            json!({
+                "path": "README.md",
+                "content": "same\n",
+                "mode": "overwrite"
+            }),
+        )
+        .await?;
+
+    let diff_entry = response
+        .get("diff")
+        .and_then(Value::as_array)
+        .and_then(|diffs| diffs.first())
+        .ok_or_else(|| anyhow::anyhow!("no-op write did not include a canonical diff entry"))?;
+    assert_eq!(diff_entry.get("is_empty").and_then(Value::as_bool), Some(true));
+    assert_eq!(diff_entry.get("operation").and_then(Value::as_str), Some("updated"));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn apply_patch_reports_deduplicated_paths_for_every_successful_operation() -> Result<()> {
     let temp_dir = TempDir::new()?;
     fs::create_dir(temp_dir.path().join("src"))?;

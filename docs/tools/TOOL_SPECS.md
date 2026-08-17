@@ -75,7 +75,15 @@ Example:
 
 Applies a freeform patch through VT Code's workspace-boundary and edit-safety
 checks. Use it for file edits, additions, moves, and deletions when the model has
-the patch tool.
+the patch tool. Successful responses include a bounded `diff` array with one
+entry per planned file (`path`, `operation`, bounded unified `content`, and
+available `additions`/`deletions`); no-op entries are marked `is_empty`. The
+legacy single-file `diff_preview` response is normalized to this same shape by
+the terminal and session renderers.
+
+After several effective mutations, anti-blind-editing temporarily allows reads,
+inspection, task tracking, and verification while blocking further workspace
+mutations until a verification command completes.
 
 Example:
 

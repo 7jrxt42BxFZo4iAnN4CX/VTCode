@@ -13,7 +13,8 @@ mod styles;
 use anyhow::Result;
 use commands::render_terminal_command_panel;
 use files::{
-    format_diff_content_lines_with_numbers, render_list_dir_output, render_read_file_output, render_write_file_preview,
+    format_diff_content_lines_with_numbers, render_apply_patch_diff_preview, render_list_dir_output,
+    render_read_file_output, render_write_file_preview,
 };
 use mcp::{render_context7_output, render_generic_output, render_sequential_output, resolve_renderer_profile};
 use serde_json::Value;
@@ -159,8 +160,13 @@ pub(crate) async fn render_tool_output(
             let ls_styles = LsStyles::from_env();
             return render_write_file_preview(renderer, val, &git_styles, &ls_styles);
         }
+        Some(tools::APPLY_PATCH) => {
+            let git_styles = GitStyles::new();
+            let ls_styles = LsStyles::from_env();
+            return render_apply_patch_diff_preview(renderer, val, &git_styles, &ls_styles);
+        }
         Some(tools::UNIFIED_FILE) => {
-            if val.get("diff_preview").is_some() {
+            if val.get("diff").is_some() || val.get("diff_preview").is_some() {
                 let git_styles = GitStyles::new();
                 let ls_styles = LsStyles::from_env();
                 return render_write_file_preview(renderer, val, &git_styles, &ls_styles);
@@ -663,6 +669,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn render_tool_output_apply_patch_renders_diff_content() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let mut renderer = AnsiRenderer::with_inline_ui(InlineHandle::new_for_tests(sender), Default::default());
+        let payload = json!({
+            "success": true,
+            "diff": [{
+                "path": "README.md",
+                "content": "diff --git a/README.md b/README.md\n-before\n+after\n",
+                "skipped": false
+            }]
+        });
+
+        render_tool_output(&mut renderer, Some(vtcode_core::config::constants::tools::APPLY_PATCH), &payload, None)
+            .await
+            .expect("apply_patch diff payload should render");
+
+        let inline_output = collect_inline_output(&mut receiver);
+        assert!(inline_output.contains("README.md"));
+        assert!(inline_output.contains("-before"));
+        assert!(inline_output.contains("+after"));
+    }
+
+    #[tokio::test]
+    async fn render_tool_output_apply_patch_parses_ansi_diff_payloads() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let mut renderer = AnsiRenderer::with_inline_ui(InlineHandle::new_for_tests(sender), Default::default());
+        let payload = json!({
+            "success": true,
+            "diff": [{
+                "path": "README.md",
+                "operation": "updated",
+                "content": "\u{1b}[36mdiff --git a/README.md b/README.md\u{1b}[0m\n\u{1b}[36m@@ -1 +1 @@\u{1b}[0m\n\u{1b}[31m-before\u{1b}[0m\n\u{1b}[32m+after\u{1b}[0m\n",
+                "additions": 1,
+                "deletions": 1,
+                "skipped": false
+            }]
+        });
+
+        render_tool_output(&mut renderer, Some(vtcode_core::config::constants::tools::APPLY_PATCH), &payload, None)
+            .await
+            .expect("ANSI apply_patch diff payload should render");
+
+        let inline_output = collect_inline_output(&mut receiver);
+        assert!(inline_output.contains("-    1 before"));
+        assert!(inline_output.contains("+    1 after"));
+    }
+
+    #[tokio::test]
     async fn render_tool_output_command_session_renders_structured_hints() {
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
         let mut renderer = AnsiRenderer::with_inline_ui(InlineHandle::new_for_tests(sender), Default::default());
@@ -979,6 +1033,33 @@ mod tests {
         let inline_output = collect_inline_output(&mut receiver);
         assert!(inline_output.contains("use exec_command with sed for full view"));
         assert!(!inline_output.contains("use read_file for full view"));
+    }
+
+    #[tokio::test]
+    async fn render_tool_output_write_file_uses_canonical_diff_entries() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let mut renderer = AnsiRenderer::with_inline_ui(InlineHandle::new_for_tests(sender), Default::default());
+        let payload = json!({
+            "path": "README.md",
+            "diff": [{
+                "path": "README.md",
+                "operation": "updated",
+                "content": "@@ -1 +1 @@\n-before\n+after\n",
+                "additions": 1,
+                "deletions": 1,
+                "truncated": false,
+                "skipped": false
+            }]
+        });
+
+        render_tool_output(&mut renderer, Some(vtcode_core::config::constants::tools::WRITE_FILE), &payload, None)
+            .await
+            .expect("canonical write diff should render");
+
+        let inline_output = collect_inline_output(&mut receiver);
+        assert!(inline_output.contains("Edited README.md (+1 -1)"));
+        assert!(inline_output.contains("-before"));
+        assert!(inline_output.contains("+after"));
     }
 
     #[test]

@@ -322,23 +322,24 @@ pub(crate) async fn handle_turn_balancer(
     use vtcode_core::llm::provider as uni;
 
     use crate::agent::runloop::unified::turn::tool_outcomes::helpers::{
-        BLIND_EDITING_THRESHOLD, NAVIGATION_LOOP_THRESHOLD, PLANNING_CONSECUTIVE_LOW_SIGNAL_THRESHOLD,
-        PLANNING_TOTAL_LOW_SIGNAL_THRESHOLD,
+        ANTI_BLIND_EDITING_DIRECTIVE, ANTI_BLIND_EDITING_WARNING, NAVIGATION_LOOP_THRESHOLD,
+        PLANNING_CONSECUTIVE_LOW_SIGNAL_THRESHOLD, PLANNING_TOTAL_LOW_SIGNAL_THRESHOLD,
     };
 
     // NL2Repo-Bench checks run on every step (no backoff) since they
     // are safety guardrails, not performance optimizations.
 
     // NL2Repo-Bench: Edit-Test Validation Loop (Anti-Blind-Editing)
-    if repeated_tool_attempts.consecutive_mutations >= BLIND_EDITING_THRESHOLD {
-        ctx.renderer
-            .line(MessageStyle::Warning, "[!] Anti-Blind-Editing: Pause to run verification/tests.")
-            .unwrap_or(());
-        ctx.working_history.push(uni::Message::system(
-            "CRITICAL: Multiple edits were made without verification. Stop editing and run `exec_command` to compile or test before proceeding."
-                .to_string(),
-        ));
-        repeated_tool_attempts.consecutive_mutations = 0;
+    if repeated_tool_attempts.verification_is_pending() {
+        repeated_tool_attempts.mark_verification_pending();
+        if !repeated_tool_attempts.verification_warning_emitted {
+            ctx.renderer
+                .line(MessageStyle::Warning, ANTI_BLIND_EDITING_WARNING)
+                .unwrap_or(());
+            ctx.working_history
+                .push(uni::Message::system(ANTI_BLIND_EDITING_DIRECTIVE.to_string()));
+            repeated_tool_attempts.verification_warning_emitted = true;
+        }
         return TurnHandlerOutcome::Continue;
     }
 
@@ -500,7 +501,7 @@ mod tests {
     use crate::agent::runloop::unified::tool_pipeline::{ToolExecutionStatus, ToolPipelineOutcome};
     use crate::agent::runloop::unified::turn::context::{TurnHandlerOutcome, TurnLoopResult};
     use crate::agent::runloop::unified::turn::tool_outcomes::helpers::{
-        LoopTracker, NAVIGATION_LOOP_THRESHOLD, PLANNING_CONSECUTIVE_LOW_SIGNAL_THRESHOLD,
+        BLIND_EDITING_THRESHOLD, LoopTracker, NAVIGATION_LOOP_THRESHOLD, PLANNING_CONSECUTIVE_LOW_SIGNAL_THRESHOLD,
         PLANNING_TOTAL_LOW_SIGNAL_THRESHOLD, update_repetition_tracker,
     };
     use crate::agent::runloop::unified::turn::turn_processing::test_support::TestTurnProcessingBacking;
@@ -625,6 +626,24 @@ mod tests {
             message.content.as_text().contains("adaptive synthesis threshold")
                 || message.content.as_text().contains("synthesize the plan")
         }));
+    }
+
+    #[tokio::test]
+    async fn anti_blind_warning_keeps_verification_pending_until_a_check_runs() {
+        let mut backing = TestTurnProcessingBacking::new(8).await;
+        let mut ctx = backing.turn_processing_context();
+        let mut tracker = LoopTracker::new();
+        tracker.consecutive_mutations = BLIND_EDITING_THRESHOLD;
+
+        let outcome = super::handle_turn_balancer(&mut ctx, 1, &mut tracker, 8, 3).await;
+
+        assert!(matches!(outcome, TurnHandlerOutcome::Continue));
+        assert_eq!(tracker.consecutive_mutations, BLIND_EDITING_THRESHOLD);
+        assert!(
+            ctx.working_history
+                .iter()
+                .any(|message| { message.content.as_text().contains("run `exec_command` to compile or test") })
+        );
     }
 
     #[tokio::test]

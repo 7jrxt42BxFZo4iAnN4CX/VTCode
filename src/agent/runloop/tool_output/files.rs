@@ -6,9 +6,10 @@ use vtcode_core::config::constants::tools;
 use vtcode_core::utils::ansi::{AnsiRenderer, MessageStyle};
 
 use super::render_tree_detail;
-use super::streams::render_diff_content_block;
+use super::streams::{render_diff_content_block, strip_ansi_codes};
 use super::styles::{GitStyles, LsStyles};
 pub(crate) use vtcode_commons::diff_preview::format_numbered_unified_diff as format_diff_content_lines_with_numbers;
+use vtcode_core::tools::file_ops::canonical_diff_previews;
 
 /// Constants for line and content limits (compact display)
 const MAX_DISPLAYED_FILES: usize = 100; // Limit displayed files to reduce clutter
@@ -34,8 +35,10 @@ pub(crate) fn render_write_file_preview(
     git_styles: &GitStyles,
     ls_styles: &LsStyles,
 ) -> Result<()> {
+    let diffs = canonical_diff_previews(payload);
+
     // Show basic metadata (compact format)
-    if get_bool(payload, "created") {
+    if get_bool(payload, "created") && diffs.is_empty() {
         renderer.line(MessageStyle::ToolDetail, "File created")?;
     }
 
@@ -43,42 +46,101 @@ pub(crate) fn render_write_file_preview(
         renderer.line(MessageStyle::ToolDetail, &format!("encoding: {encoding}"))?;
     }
 
-    // Handle diff preview
-    let diff_value = match payload.get("diff_preview") {
-        Some(value) => value,
-        None => return Ok(()),
-    };
-
-    if get_bool(diff_value, "skipped") {
-        let reason = get_string(diff_value, "reason").unwrap_or("skipped");
-        if let Some(detail) = get_string(diff_value, "detail") {
-            renderer.line(MessageStyle::ToolDetail, &format!("diff: {reason} ({detail})"))?;
-        } else {
-            renderer.line(MessageStyle::ToolDetail, &format!("diff: {reason}"))?;
+    if diffs.is_empty() {
+        if get_bool(payload, "skipped") {
+            let reason = get_string(payload, "reason").unwrap_or("already exists");
+            renderer.line(MessageStyle::ToolDetail, &format!("write skipped: {reason}"))?;
+        } else if get_bool(payload, "conflict") {
+            renderer.line(MessageStyle::ToolDetail, "write blocked: file conflict")?;
+        } else if let Some(error) = get_string(payload, "error") {
+            renderer.line(MessageStyle::ToolDetail, error)?;
         }
         return Ok(());
     }
 
-    let diff_content = get_string(diff_value, "content").unwrap_or("");
+    render_diff_preview_entries(renderer, &diffs, git_styles, ls_styles)
+}
 
-    if diff_content.is_empty() && get_bool(diff_value, "is_empty") {
-        renderer.line(MessageStyle::ToolDetail, "(no changes)")?;
+pub(crate) fn render_apply_patch_diff_preview(
+    renderer: &mut AnsiRenderer,
+    payload: &Value,
+    git_styles: &GitStyles,
+    ls_styles: &LsStyles,
+) -> Result<()> {
+    let diffs = canonical_diff_previews(payload);
+    if diffs.is_empty() {
+        if get_bool(payload, "conflict") {
+            renderer.line(MessageStyle::ToolDetail, "patch blocked: file conflict")?;
+        } else if let Some(error) = get_string(payload, "error") {
+            renderer.line(MessageStyle::ToolDetail, error)?;
+        }
         return Ok(());
     }
 
-    if !diff_content.is_empty() {
-        renderer.line(MessageStyle::ToolDetail, "")?;
-        render_diff_content(renderer, diff_content, git_styles, ls_styles)?;
-    }
+    render_diff_preview_entries(renderer, &diffs, git_styles, ls_styles)
+}
 
-    if get_bool(diff_value, "truncated") {
-        if let Some(omitted) = get_u64(diff_value, "omitted_line_count") {
-            renderer.line(
-                MessageStyle::ToolDetail,
-                &format!("… +{omitted} lines (use exec_command with sed for full view)"),
-            )?;
-        } else {
-            renderer.line(MessageStyle::ToolDetail, "… diff truncated")?;
+fn render_diff_preview_entries(
+    renderer: &mut AnsiRenderer,
+    diffs: &[Value],
+    git_styles: &GitStyles,
+    ls_styles: &LsStyles,
+) -> Result<()> {
+    for diff in diffs.iter().take(MAX_DISPLAYED_FILES) {
+        let path = get_string(diff, "path");
+        let operation = get_string(diff, "operation");
+        let additions = get_u64(diff, "additions").or_else(|| {
+            diff.get("summary")
+                .and_then(|summary| summary.get("additions"))
+                .and_then(Value::as_u64)
+        });
+        let deletions = get_u64(diff, "deletions").or_else(|| {
+            diff.get("summary")
+                .and_then(|summary| summary.get("deletions"))
+                .and_then(Value::as_u64)
+        });
+
+        let action = match operation {
+            Some("created") => "Created",
+            Some("deleted") => "Deleted",
+            _ => "Edited",
+        };
+        let mut heading = path.map_or_else(|| format!("{action} file"), |path| format!("{action} {path}"));
+        if additions.is_some() || deletions.is_some() {
+            heading.push_str(&format!(" (+{} -{})", additions.unwrap_or_default(), deletions.unwrap_or_default()));
+        }
+        renderer.line(MessageStyle::ToolDetail, &heading)?;
+
+        if get_bool(diff, "skipped") {
+            let reason = get_string(diff, "reason").unwrap_or("skipped");
+            if let Some(detail) = get_string(diff, "detail") {
+                renderer.line(MessageStyle::ToolDetail, &format!("preview: {reason} ({detail})"))?;
+            } else {
+                renderer.line(MessageStyle::ToolDetail, &format!("preview: {reason}"))?;
+            }
+            continue;
+        }
+
+        let diff_content = get_string(diff, "content").unwrap_or("");
+        if diff_content.is_empty() && get_bool(diff, "is_empty") {
+            renderer.line(MessageStyle::ToolDetail, "(no changes)")?;
+            continue;
+        }
+
+        if !diff_content.is_empty() {
+            renderer.line(MessageStyle::ToolDetail, "")?;
+            render_diff_content(renderer, diff_content, git_styles, ls_styles)?;
+        }
+
+        if get_bool(diff, "truncated") {
+            if let Some(omitted) = get_u64(diff, "omitted_line_count") {
+                renderer.line(
+                    MessageStyle::ToolDetail,
+                    &format!("… +{omitted} lines (use exec_command with sed for full view)"),
+                )?;
+            } else {
+                renderer.line(MessageStyle::ToolDetail, "… diff truncated")?;
+            }
         }
     }
 
@@ -326,9 +388,10 @@ fn render_diff_content(
     git_styles: &GitStyles,
     ls_styles: &LsStyles,
 ) -> Result<()> {
+    let plain_diff = strip_ansi_codes(diff_content);
     render_diff_content_block(
         renderer,
-        diff_content,
+        plain_diff.as_ref(),
         Some(tools::WRITE_FILE),
         git_styles,
         ls_styles,
