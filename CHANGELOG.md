@@ -2,6 +2,29 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.146.5 - 2026-08-18
+
+### Highlights
+#### Bug Fixes
+
+- Render diffs and enforce verification checkpoints (c8b7a1f0) 
+- Correct LoopTracker path in handlers module (6f397554) 
+- Bound pending verification responses (02334328) 
+- Block unverified streaming responses (960a80cc) 
+- Track in-stream verification state (0359a87e) 
+- Prevent false anti-blind edit blocks (c1aec0d3) 
+#### Features
+
+- Forward reasoning effort per route (af93832d) 
+### Other Changes
+#### Other
+
+- Update README (3b99941b) 
+- Update notes (4199ce58) 
+#### Tests
+
+- Cover pending response cap in outer loop (21289fdb) 
+- Assert repeated response block reason (900c766b) 
 ## 0.146.4 - 2026-08-16
 
 ### Highlights
