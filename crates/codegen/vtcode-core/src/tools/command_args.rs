@@ -1,5 +1,7 @@
 //! Shared helpers for command-style tool arguments.
 
+use std::path::Path;
+
 use serde_json::Value;
 
 use crate::tools::tool_intent::{command_session_action, command_session_action_in, command_session_action_is};
@@ -267,6 +269,327 @@ pub fn contains_dynamic_shell_syntax(command: &str) -> bool {
     crate::command_safety::shell_parser::contains_dynamic_shell_syntax(command)
 }
 
+/// Skip an optional `env` prefix and leading shell environment assignments.
+///
+/// The returned slice starts at the executable that will actually run. Keep
+/// this helper shared by intent and activity classification so both paths
+/// inspect the same command shape.
+pub(crate) fn command_words_after_environment_prefix(words: &[String]) -> &[String] {
+    let mut start = 0;
+    loop {
+        if words.get(start).is_some_and(|word| word == "env") {
+            start += 1;
+            loop {
+                let Some(word) = words.get(start) else {
+                    break;
+                };
+                if word == "--" {
+                    start += 1;
+                    break;
+                }
+                let is_split_string = word == "-S"
+                    || word == "--split-string"
+                    || word.starts_with("-S")
+                    || word.starts_with("--split-string=");
+                let consumes_next = matches!(word.as_str(), "-u" | "--unset" | "-C" | "--chdir");
+                start += 1;
+                if is_split_string {
+                    return &words[words.len()..];
+                }
+                if consumes_next {
+                    if words.get(start).is_some() {
+                        start += 1;
+                    }
+                    continue;
+                }
+                if word.starts_with('-') || word.contains('=') {
+                    continue;
+                }
+                start -= 1;
+                break;
+            }
+            continue;
+        }
+        if words
+            .get(start)
+            .is_some_and(|word| !word.starts_with('-') && word.contains('='))
+        {
+            start += 1;
+            continue;
+        }
+        break;
+    }
+    &words[start..]
+}
+
+/// Return whether a parsed command uses an option that can turn an otherwise
+/// read-only inspection program into a writer or command launcher.
+///
+/// This is deliberately option-focused; the read-only executable/subcommand
+/// allow-list remains in `tool_intent::readonly`. Keeping the unsafe option
+/// rules here lets raw argument validation and activity classification share
+/// the same token-aware guard without searching quoted text.
+pub(crate) fn has_unsafe_readonly_options(words: &[String]) -> bool {
+    let command_words = command_words_after_environment_prefix(words);
+    let Some(program) = command_words
+        .first()
+        .and_then(|word| Path::new(word).file_name())
+        .and_then(|name| name.to_str())
+    else {
+        return false;
+    };
+    let program = program.to_ascii_lowercase();
+
+    match program.as_str() {
+        "git" => command_words.iter().skip(1).any(|word| {
+            crate::command_safety::git_global_option_requires_prompt(word)
+                || word == "--ext-diff"
+                || word == "--textconv"
+                || word == "-o"
+                || word.starts_with("-o")
+                || word == "--output"
+                || word.starts_with("--output=")
+        }),
+        "sed" => has_unsafe_sed_options(&command_words[1..]),
+        "find" => command_words.iter().skip(1).any(|word| {
+            matches!(
+                word.as_str(),
+                "-delete" | "-exec" | "-execdir" | "-ok" | "-okdir" | "-fls" | "-fprint" | "-fprint0" | "-fprintf"
+            )
+        }),
+        "sort" => command_words.iter().skip(1).any(|word| {
+            word == "-o"
+                || word.starts_with("-o")
+                || word == "--output"
+                || word.starts_with("--output=")
+                || word == "--compress-program"
+                || word.starts_with("--compress-program=")
+        }),
+        "date" => command_words
+            .iter()
+            .skip(1)
+            .any(|word| word == "-s" || word.starts_with("-s") || word == "--set" || word.starts_with("--set=")),
+        "rg" => command_words.iter().skip(1).any(|word| {
+            matches!(word.as_str(), "--pre" | "--hostname-bin" | "--search-zip" | "-z")
+                || word.starts_with("--pre=")
+                || word.starts_with("--hostname-bin=")
+        }),
+        "ast-grep" | "sg" => command_words
+            .iter()
+            .skip(1)
+            .any(|word| word == "-r" || word == "--rewrite" || word.starts_with("--rewrite=")),
+        "fd" => command_words
+            .iter()
+            .skip(1)
+            .any(|word| word == "-x" || word == "--exec" || word == "--exec-batch" || word.starts_with("--exec=")),
+        "tree" => command_words
+            .iter()
+            .skip(1)
+            .any(|word| word == "-o" || word.starts_with("-o") || word == "--output" || word.starts_with("--output=")),
+        // `awk -i inplace` and `awk` scripts containing `system()`/redirection
+        // are not safely distinguishable from ordinary inspection here. The
+        // executable is therefore removed from the read-only allow-list, but
+        // keep its obvious in-place option guarded for raw validation too.
+        "awk" => command_words
+            .iter()
+            .skip(1)
+            .any(|word| word == "-i" || word.starts_with("--include")),
+        _ => false,
+    }
+}
+
+fn has_unsafe_sed_options(arguments: &[String]) -> bool {
+    let mut expects_expression = false;
+    let mut expression_seen = false;
+
+    for word in arguments {
+        if expects_expression {
+            if sed_script_may_write(word) {
+                return true;
+            }
+            expects_expression = false;
+            expression_seen = true;
+            continue;
+        }
+
+        if word == "-e" || word == "--expression" {
+            expects_expression = true;
+            continue;
+        }
+        if let Some(expression) = word.strip_prefix("--expression=") {
+            if sed_script_may_write(expression) {
+                return true;
+            }
+            expression_seen = true;
+            continue;
+        }
+        if let Some(expression) = word.strip_prefix("-e")
+            && !expression.is_empty()
+        {
+            if sed_script_may_write(expression) {
+                return true;
+            }
+            expression_seen = true;
+            continue;
+        }
+
+        if word == "-f"
+            || word.starts_with("-f")
+            || word.starts_with("--file")
+            || word == "-i"
+            || word.starts_with("-i")
+            || word == "-I"
+            || word.starts_with("-I")
+            || word.starts_with("--in-place")
+        {
+            return true;
+        }
+
+        if word == "--" {
+            expects_expression = true;
+            continue;
+        }
+        if !word.starts_with('-') && !expression_seen {
+            if sed_script_may_write(word) {
+                return true;
+            }
+            expression_seen = true;
+        }
+    }
+
+    // A missing argument makes the command invalid. Treat it as unsafe here
+    // so malformed input never receives a read-only classification.
+    expects_expression || !expression_seen
+}
+
+fn sed_script_may_write(script: &str) -> bool {
+    let chars = script.to_ascii_lowercase().chars().collect::<Vec<_>>();
+    let mut index = 0;
+
+    while index < chars.len() {
+        while chars
+            .get(index)
+            .is_some_and(|character| character.is_whitespace() || *character == ';')
+        {
+            index += 1;
+        }
+
+        if let Some(after_address) = consume_sed_address(&chars, index) {
+            index = after_address;
+            if chars.get(index) == Some(&',') {
+                index += 1;
+                let Some(after_second_address) = consume_sed_address(&chars, index) else {
+                    return true;
+                };
+                index = after_second_address;
+            }
+            if chars.get(index) == Some(&'!') {
+                index += 1;
+            }
+            while chars.get(index).is_some_and(|character| character.is_whitespace()) {
+                index += 1;
+            }
+        }
+
+        let Some(&command) = chars.get(index) else {
+            break;
+        };
+        match command {
+            'e' | 'r' | 'w' => return true,
+            's' => {
+                let Some(after_replacement) = consume_sed_substitution(&chars, index) else {
+                    return true;
+                };
+                if sed_substitution_may_write(&chars, after_replacement) {
+                    return true;
+                }
+                index = after_replacement;
+                while chars.get(index).is_some_and(|character| !matches!(*character, ';' | '\n')) {
+                    index += 1;
+                }
+            }
+            _ => {
+                while chars.get(index).is_some_and(|character| !matches!(*character, ';' | '\n')) {
+                    index += 1;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+fn consume_sed_address(chars: &[char], start: usize) -> Option<usize> {
+    match chars.get(start)? {
+        character if character.is_ascii_digit() => {
+            let mut index = start + 1;
+            while chars.get(index).is_some_and(|character| character.is_ascii_digit()) {
+                index += 1;
+            }
+            Some(index)
+        }
+        '$' => Some(start + 1),
+        '/' => find_unescaped_sed_delimiter(chars, start + 1, '/').map(|index| index + 1),
+        _ => None,
+    }
+}
+
+fn find_unescaped_sed_delimiter(chars: &[char], start: usize, delimiter: char) -> Option<usize> {
+    let mut index = start;
+    while index < chars.len() {
+        if chars[index] == '\\' {
+            index = index.saturating_add(2);
+            continue;
+        }
+        if chars[index] == delimiter {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn consume_sed_substitution(chars: &[char], start: usize) -> Option<usize> {
+    let delimiter = *chars.get(start + 1)?;
+    if delimiter.is_whitespace() {
+        return None;
+    }
+    let pattern_end = find_unescaped_sed_delimiter(chars, start + 2, delimiter)?;
+    let replacement_end = find_unescaped_sed_delimiter(chars, pattern_end + 1, delimiter)?;
+    Some(replacement_end + 1)
+}
+
+fn sed_substitution_may_write(chars: &[char], start: usize) -> bool {
+    let mut index = start;
+    while chars.get(index).is_some_and(|character| character.is_whitespace()) {
+        index += 1;
+    }
+    matches!(chars.get(index), Some('e' | 'w'))
+        && chars
+            .get(index + 1)
+            .is_none_or(|character| character.is_whitespace() || *character == ';')
+}
+
+fn has_unsafe_readonly_options_in_command(command: &str) -> bool {
+    let Ok(commands) = crate::command_safety::shell_parser::parse_shell_commands_tree_sitter(command) else {
+        return true;
+    };
+    if commands.is_empty() {
+        return true;
+    }
+
+    commands.into_iter().any(|command| {
+        let mut words = Vec::new();
+        for word in command {
+            let Ok(tokens) = shell_words::split(&word) else {
+                return true;
+            };
+            words.extend(tokens);
+        }
+        has_unsafe_readonly_options(&words)
+    })
+}
+
 /// Returns true if the raw command string appears to be a safe read-only
 /// inspection command. It checks for shell write operators, process
 /// substitutions, and common destructive subcommands/flags.
@@ -323,6 +646,9 @@ pub fn is_readonly_command_string(args: &Value) -> bool {
     // Check the full command (catches destructive commands in any segment) AND
     // each segment individually (catches segment-starting destructive commands).
     let lower = trimmed.to_ascii_lowercase();
+    if has_unsafe_readonly_options_in_command(trimmed) {
+        return false;
+    }
     for destructive in [
         " rm ",
         "rm ",
@@ -404,11 +730,8 @@ pub fn is_readonly_command_string(args: &Value) -> bool {
         }
     }
 
-    // Deny in-place editing commands (sed -i, perl -i, ruby -i) which modify files
+    // Deny in-place editing commands (sed -i/--in-place, perl -i, ruby -i) which modify files
     // despite being in the read-only allow-list.
-    if lower.contains("sed ") && lower.contains(" -i") {
-        return false;
-    }
     if lower.contains("perl ") && lower.contains(" -i") {
         return false;
     }
@@ -801,6 +1124,32 @@ mod tests {
         for cmd in [
             "cat a.txt > b.txt",
             "grep x src >> out.txt",
+            "git diff --output=out.txt",
+            "git diff '--output=out.txt'",
+            "git diff -o out.txt",
+            "git diff -oout.txt",
+            "git log --output=out.txt",
+            "git -c diff.external=sh diff",
+            "git -C /external/repo=alt status",
+            "git --git-dir=.evil-git diff",
+            "git --exec-path=.evil-git diff",
+            "find . -fprint output.txt",
+            "find . -fprintf output.txt '%p'",
+            "rg --hostname-bin sh pattern",
+            "rg --search-zip pattern",
+            "rg -z pattern",
+            "sed --in-place= README.md",
+            "sort -o out.txt README.md",
+            "sort --compress-program=sh README.md",
+            "date -s now",
+            "awk -i inplace '{print}' README.md",
+            "sed -n 's/a/b/e' README.md",
+            "fd --exec sh -c 'touch out'",
+            "tree -o out.txt",
+            "ast-grep -r 'README.md'",
+            "sed -n -fmalicious.sed -e '1p' src/main.rs",
+            "sed -I '' 's/a/b/' src/main.rs",
+            "sed -n '1p\nw leaked.txt' src/main.rs",
             "echo $(date)",
             "echo `date`",
             "cat <(echo hi)",
@@ -809,6 +1158,10 @@ mod tests {
         ] {
             assert!(!is_readonly_command_string(&json!({"command": cmd})), "expected '{cmd}' to be rejected");
         }
+
+        assert!(is_readonly_command_string(&json!({
+            "command": "echo 'git diff --output=out.txt'"
+        })));
     }
 
     #[test]

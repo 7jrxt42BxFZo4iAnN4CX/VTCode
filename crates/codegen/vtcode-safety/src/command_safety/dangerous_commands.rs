@@ -68,15 +68,16 @@ fn is_git_global_option_with_inline_value(arg: &str) -> bool {
     ) || ((arg.starts_with("-C") || arg.starts_with("-c")) && arg.len() > 2)
 }
 
-/// Git global options that can redirect config, repository, or helper lookup
-/// and therefore must never be auto-approved as "safe".
-pub(crate) fn git_global_option_requires_prompt(arg: &str) -> bool {
+/// Returns whether a git global option can redirect repository, config, or
+/// helper lookup and therefore must not be treated as an inspection flag.
+pub fn git_global_option_requires_prompt(arg: &str) -> bool {
     matches!(
         arg,
-        "-c" | "--config-env" | "--exec-path" | "--git-dir" | "--namespace" | "--super-prefix" | "--work-tree"
+        "-C" | "-c" | "--config-env" | "--exec-path" | "--git-dir" | "--namespace" | "--super-prefix" | "--work-tree"
     ) || matches!(
         arg,
-        s if (s.starts_with("-c") && s.len() > 2)
+        s if (s.starts_with("-C") && s.len() > 2)
+            || (s.starts_with("-c") && s.len() > 2)
             || s.starts_with("--config-env=")
             || s.starts_with("--exec-path=")
             || s.starts_with("--git-dir=")

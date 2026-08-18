@@ -679,7 +679,7 @@ pub(crate) fn update_repetition_tracker(
                 loop_tracker.record_navigation_signal(is_low_signal_navigation);
             }
             ShellActivity::Verification => {
-                if matches!(&outcome.status, ToolExecutionStatus::Success { .. }) {
+                if matches!(&outcome.status, ToolExecutionStatus::Success { command_success: true, .. }) {
                     loop_tracker.mark_verification_complete();
                 }
                 loop_tracker.consecutive_navigations = 0;
@@ -1025,9 +1025,70 @@ mod tests {
         });
         tracker.consecutive_mutations = BLIND_EDITING_THRESHOLD;
 
-        update_repetition_tracker(&mut tracker, &success, tools::EXEC_COMMAND, &json!({"cmd":"git diff -- README.md"}));
+        for command in ["git diff -- README.md", "git diff --check"] {
+            update_repetition_tracker(&mut tracker, &success, tools::EXEC_COMMAND, &json!({"cmd":command}));
+        }
 
         assert_eq!(tracker.consecutive_mutations, BLIND_EDITING_THRESHOLD);
+    }
+
+    #[test]
+    fn failed_verification_does_not_clear_mutations_waiting_for_verification() {
+        let mut tracker = LoopTracker::new();
+        tracker.consecutive_mutations = BLIND_EDITING_THRESHOLD;
+        tracker.verification_pending = true;
+        let failed_check = ToolPipelineOutcome::from_status(ToolExecutionStatus::Success {
+            output: serde_json::json!({"exit_code": 1}),
+            stdout: None,
+            modified_files: vec![],
+            command_success: false,
+        });
+
+        update_repetition_tracker(&mut tracker, &failed_check, tools::EXEC_COMMAND, &json!({"cmd":"cargo check"}));
+
+        assert!(tracker.verification_is_pending());
+        assert_eq!(tracker.consecutive_mutations, BLIND_EDITING_THRESHOLD);
+    }
+
+    #[test]
+    fn logged_compound_inspections_do_not_trigger_anti_blind_pressure() {
+        let mut tracker = LoopTracker::new();
+        let success = ToolPipelineOutcome::from_status(ToolExecutionStatus::Success {
+            output: serde_json::json!({}),
+            stdout: None,
+            modified_files: vec![],
+            command_success: true,
+        });
+
+        for command in [
+            "cat README.md && printf '\\n--- git status ---\\n' && git status --short",
+            "wc -l README.md; rg -n '^#' README.md",
+            "git diff --stat; find docs -maxdepth 2 -type f | sort | head -40",
+        ] {
+            update_repetition_tracker(&mut tracker, &success, tools::EXEC_COMMAND, &json!({"cmd":command}));
+        }
+
+        assert_eq!(tracker.consecutive_mutations, 0);
+        assert!(!tracker.verification_is_pending());
+        assert_eq!(tracker.consecutive_navigations, 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn logged_compound_inspection_with_unix_stderr_suppression_does_not_trigger_pressure() {
+        let mut tracker = LoopTracker::new();
+        let success = ToolPipelineOutcome::from_status(ToolExecutionStatus::Success {
+            output: serde_json::json!({}),
+            stdout: None,
+            modified_files: vec![],
+            command_success: true,
+        });
+
+        let command = r###"git diff --stat; find docs -maxdepth 2 -type f | sort | head -40; rg -n "vtcode init|vtcode models|full-auto|run-debug|cargo install" docs/user-guide docs/installation docs/development 2>/dev/null | head -50"###;
+        update_repetition_tracker(&mut tracker, &success, tools::EXEC_COMMAND, &json!({"cmd":command}));
+
+        assert_eq!(tracker.consecutive_mutations, 0);
+        assert_eq!(tracker.consecutive_navigations, 1);
     }
 
     #[test]
@@ -1120,12 +1181,23 @@ mod tests {
             "cargo build --release",
             "./scripts/check-dev.sh --changed",
             "cargo check --locked > build.log",
-            "cargo nextest run -p vtcode 2>&1 | head -c 4000",
+            "cargo check &> build.log",
         ] {
             assert_eq!(
                 classify_shell_activity(tools::EXEC_COMMAND, &json!({"cmd":command})),
                 ShellActivity::Verification,
                 "{command}"
+            );
+        }
+
+        for command in [
+            "cargo nextest run -p vtcode 2>&1 | head -c 4000",
+            "cargo check | head -40",
+        ] {
+            assert_eq!(
+                classify_shell_activity(tools::EXEC_COMMAND, &json!({"cmd":command})),
+                ShellActivity::Mutation,
+                "verification pipelines require reliable aggregate status: {command}"
             );
         }
 

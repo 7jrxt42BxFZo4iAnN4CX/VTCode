@@ -1,4 +1,8 @@
-use crate::tools::command_args::{is_readonly_command_string, raw_command_text};
+use std::path::Path;
+
+use crate::tools::command_args::{
+    command_words_after_environment_prefix, has_unsafe_readonly_options, raw_command_text,
+};
 use serde_json::Value;
 
 const TOOL_OUTPUT_SPOOL_DIRECTORY: &str = ".vtcode/context/tool_outputs";
@@ -11,7 +15,7 @@ const TOOL_OUTPUT_SPOOL_DIRECTORY: &str = ".vtcode/context/tool_outputs";
 /// models habitually prefix exploration with `cd <workspace> && …` and plan
 /// mode must not reject that pattern (checkpoint turn_810).
 const READONLY_UNIFIED_EXEC_COMMANDS: &[&str] = &[
-    "rg", "ls", "cat", "diff", "find", "wc", "grep", "egrep", "fgrep", "head", "tail", "sort", "uniq", "awk", "sed",
+    "rg", "ls", "cat", "diff", "find", "wc", "grep", "egrep", "fgrep", "head", "tail", "sort", "uniq", "bat", "sed",
     "cut", "tr", "ast-grep", "sg", "echo", "pwd", "printf", "true", "false", "test", "cd", "fd", "tree", "which",
     "stat", "file", "du", "df", "realpath", "basename", "dirname", "nl", "column", "jq", "date", "whoami", "uname",
 ];
@@ -55,60 +59,179 @@ fn is_readonly_subcommand(first: &str, second: Option<&str>, third: Option<&str>
     }
 }
 
-/// Leading command words of a shell segment, skipping flags and `VAR=value`
-/// assignments. Bounded to the first three words, which is all the
-/// subcommand allow-list needs (e.g. `cargo nextest run`).
-fn segment_command_words(segment: &str) -> Vec<String> {
-    segment
-        .split_whitespace()
-        .filter(|token| !token.starts_with('-') && !token.contains('='))
-        .take(3)
-        .map(|token| token.to_ascii_lowercase())
+/// Parse a shell script into simple command words after proving that it has no
+/// dynamic expansion, file redirection, or unsupported background operator.
+///
+/// The tree-sitter parser is the single shell-grammar boundary used by the
+/// safety subsystem. Callers receive already-tokenized command words and must
+/// still apply their own command-policy predicate; an unknown command never
+/// becomes read-only merely because parsing succeeded.
+pub(crate) fn static_shell_command_words(command: &str) -> Option<Vec<Vec<String>>> {
+    let sanitized = sanitize_static_shell_command(command)?;
+    parse_static_shell_command_words(&sanitized)
+}
+
+/// Parse a command whose only shell operators outside quotes are output
+/// redirections. This is intentionally separate from the read-only parser:
+/// writing a build log is still a mutating command for the authoritative tool
+/// intent, but it should not hide the verification nature of `cargo check` in
+/// progress accounting.
+pub(crate) fn static_shell_command_words_with_output_plumbing(command: &str) -> Option<Vec<Vec<String>>> {
+    if !crate::command_safety::shell_parser::has_only_output_redirections(command) {
+        return None;
+    }
+    parse_static_shell_command_words(command)
+}
+
+fn parse_static_shell_command_words(command: &str) -> Option<Vec<Vec<String>>> {
+    let commands = crate::command_safety::shell_parser::parse_shell_commands_tree_sitter(command).ok()?;
+    if commands.is_empty() {
+        return None;
+    }
+
+    commands
+        .into_iter()
+        .map(|command| {
+            let mut words = Vec::new();
+            for word in command {
+                let tokens = shell_words::split(&word).ok()?;
+                words.extend(tokens);
+            }
+            (!words.is_empty()).then_some(words)
+        })
         .collect()
 }
 
-/// A shell segment (one `&&`-chain element, possibly a `|` pipeline) is
-/// read-only when every pipeline stage starts with an allow-listed base
-/// command or an allow-listed read-only subcommand (`git log`, `cargo tree`).
-fn is_readonly_segment(segment: &str) -> bool {
-    let trimmed = segment.trim();
-    if trimmed.is_empty() {
+/// Returns whether one parsed command is an allow-listed read-only command.
+/// Option-level guards are shared with raw argument validation so activity
+/// accounting cannot accidentally become less strict than tool intent.
+pub(crate) fn command_words_are_readonly(words: &[String]) -> bool {
+    let command_words = command_words_after_environment_prefix(words);
+    let Some(first) = command_words
+        .first()
+        .and_then(|word| Path::new(word).file_name())
+        .and_then(|name| name.to_str())
+    else {
+        return false;
+    };
+    let lowered_words = command_words
+        .iter()
+        .filter(|word| !word.starts_with('-') && !word.contains('='))
+        .take(3)
+        .map(|word| word.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    let first = first.to_ascii_lowercase();
+
+    if has_unsafe_readonly_options(words) {
         return false;
     }
-    trimmed.split('|').all(|sub| {
-        let words = segment_command_words(sub);
-        let Some(first) = words.first() else {
-            return false;
-        };
-        is_readonly_base_command(first)
-            || is_readonly_subcommand(first, words.get(1).map(String::as_str), words.get(2).map(String::as_str))
-    })
+
+    is_readonly_base_command(&first)
+        || is_known_readonly_dry_run(command_words, &first)
+        || is_readonly_subcommand(
+            &first,
+            lowered_words.get(1).map(String::as_str),
+            lowered_words.get(2).map(String::as_str),
+        )
 }
 
-pub fn is_readonly_command_session_command(args: &Value) -> bool {
-    let Ok(Some(parts)) = crate::tools::command_args::command_words(args) else {
+fn is_known_readonly_dry_run(words: &[String], program: &str) -> bool {
+    if !matches!(program, "npm" | "pnpm" | "yarn") {
+        return false;
+    }
+
+    let Some(subcommand) = words.iter().skip(1).find(|word| !word.starts_with('-') && !word.contains('=')) else {
         return false;
     };
 
-    if parts.iter().any(|part| part == "--dry-run") {
-        return true;
+    subcommand == "install" && words.iter().any(|word| word == "--dry-run")
+}
+
+fn matches_at(chars: &[char], index: usize, pattern: &[char]) -> bool {
+    chars
+        .get(index..index.saturating_add(pattern.len()))
+        .is_some_and(|candidate| candidate == pattern)
+}
+
+/// Remove only stderr plumbing that cannot write workspace state and reject
+/// all other redirection/background syntax. Operators inside quoted arguments
+/// remain ordinary data and are never rewritten.
+fn sanitize_static_shell_command(command: &str) -> Option<String> {
+    if crate::command_safety::shell_parser::contains_dynamic_shell_syntax(command) {
+        return None;
     }
 
+    let chars = command.chars().collect::<Vec<_>>();
+    let mut sanitized = String::with_capacity(command.len());
+    let mut index = 0;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+
+    while index < chars.len() {
+        let character = chars[index];
+        if character == '\'' && !in_double_quote {
+            in_single_quote = !in_single_quote;
+            sanitized.push(character);
+            index += 1;
+            continue;
+        }
+        if character == '"' && !in_single_quote {
+            in_double_quote = !in_double_quote;
+            sanitized.push(character);
+            index += 1;
+            continue;
+        }
+        if in_single_quote || in_double_quote {
+            sanitized.push(character);
+            index += 1;
+            continue;
+        }
+
+        let preceded_by_boundary = index == 0
+            || chars
+                .get(index.saturating_sub(1))
+                .is_some_and(|previous| previous.is_whitespace() || matches!(previous, '|' | '&' | ';'));
+        if preceded_by_boundary && matches_at(&chars, index, &['2', '>', '&', '1']) {
+            index += 4;
+            continue;
+        }
+        if cfg!(unix)
+            && preceded_by_boundary
+            && matches_at(&chars, index, &['2', '>', '/', 'd', 'e', 'v', '/', 'n', 'u', 'l', 'l'])
+        {
+            index += 11;
+            continue;
+        }
+
+        match character {
+            '<' | '>' => return None,
+            '&' if matches_at(&chars, index, &['&', '&']) => {
+                sanitized.push('&');
+                sanitized.push('&');
+                index += 2;
+            }
+            '&' => return None,
+            _ => {
+                sanitized.push(character);
+                index += 1;
+            }
+        }
+    }
+
+    (!sanitized.trim().is_empty()).then_some(sanitized)
+}
+
+pub fn is_readonly_command_session_command(args: &Value) -> bool {
     let Some(raw) = raw_command_text(args) else {
         return false;
     };
 
-    // Verify the raw command has no redirections, command substitutions, or
-    // destructive subcommands (e.g. `find -delete`, `-exec rm`, `sed -i`).
-    if !is_readonly_command_string(args) {
-        return false;
-    }
-
-    // Every `&&`-chain segment — and every `|` pipeline stage within each
-    // segment — must be an allow-listed read-only command. This permits
-    // harmless exploration like `cd repo && git log --oneline | head -20`
-    // while rejecting `ls && rm foo.txt` (checkpoints turn_726, turn_810).
-    raw.split("&&").all(is_readonly_segment)
+    // `is_readonly_command_string` intentionally rejects compound separators
+    // for its conservative raw-string API. The static parser above is the
+    // stricter structured boundary for this allow-list and accepts a compound
+    // command only when every parsed command is independently safe.
+    static_shell_command_words(&raw)
+        .is_some_and(|commands| commands.iter().all(|words| command_words_are_readonly(words)))
 }
 
 /// Returns `true` when a safe shell inspection command reads the internal tool
@@ -143,6 +266,17 @@ mod tests {
     }
 
     #[test]
+    fn compound_inspection_commands_share_the_readonly_policy() {
+        for command in [
+            "cat README.md; rg -n '^#' README.md",
+            "git diff --stat; find docs -maxdepth 2 -type f | sort | head -40",
+            "cat README.md\nrg -n '^version' Cargo.toml",
+        ] {
+            assert!(is_readonly_command_session_command(&run_cmd(command)), "expected readonly command: {command}");
+        }
+    }
+
+    #[test]
     fn and_chain_rejects_destructive_segments() {
         assert!(!is_readonly_command_session_command(&run_cmd("ls -la && rm foo.txt")));
         assert!(!is_readonly_command_session_command(&run_cmd("cat x && mv a b")));
@@ -153,6 +287,8 @@ mod tests {
     fn and_chain_rejects_non_allowlisted_segments() {
         assert!(!is_readonly_command_session_command(&run_cmd("ls -la && python script.py")));
         assert!(!is_readonly_command_session_command(&run_cmd("ls -la && cargo build")));
+        assert!(!is_readonly_command_session_command(&run_cmd("python3 mutate.py --dry-run")));
+        assert!(!is_readonly_command_session_command(&run_cmd("npm install --dry-run && rm output")));
     }
 
     #[test]
@@ -200,6 +336,38 @@ mod tests {
         assert!(!is_readonly_command_session_command(&run_cmd("git checkout main")));
         assert!(!is_readonly_command_session_command(&run_cmd("cd /repo && git push")));
         assert!(!is_readonly_command_session_command(&run_cmd("git commit -m 'x'")));
+    }
+
+    #[test]
+    fn readonly_git_and_inspection_options_stay_fail_closed() {
+        for command in [
+            "git diff -o output.txt",
+            "git diff '--output=output.txt'",
+            "git diff -ooutput.txt",
+            "git log --output=output.txt",
+            "git show --textconv",
+            "git -C /external/repo=alt status",
+            "find . -fprint output.txt",
+            "find . -fprintf output.txt '%p'",
+            "rg --hostname-bin sh pattern",
+            "rg --search-zip pattern",
+            "rg -z pattern",
+            "sort -o output.txt README.md",
+            "sort --compress-program=sh README.md",
+            "date -s now",
+            "awk -i inplace '{print}' README.md",
+            "sed -n 's/a/b/e' README.md",
+            "fd --exec sh -c 'touch out'",
+            "tree -o out.txt",
+            "ast-grep -r 'README.md'",
+            "sed -n -fmalicious.sed -e '1p' src/main.rs",
+            "sed -I '' 's/a/b/' src/main.rs",
+            "sed -n '1p\nw leaked.txt' src/main.rs",
+            "sed -n 'woutput.txt' src/main.rs",
+            "cargo check & rm output",
+        ] {
+            assert!(!is_readonly_command_session_command(&run_cmd(command)), "unexpected readonly command: {command}");
+        }
     }
 
     #[test]

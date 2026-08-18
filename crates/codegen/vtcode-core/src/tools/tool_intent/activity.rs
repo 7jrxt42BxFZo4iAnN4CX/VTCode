@@ -8,6 +8,10 @@ use std::path::Path;
 
 use serde_json::Value;
 
+use super::readonly::{
+    command_words_are_readonly, static_shell_command_words, static_shell_command_words_with_output_plumbing,
+};
+
 /// Progress semantics for a command invocation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ShellActivity {
@@ -20,13 +24,10 @@ pub enum ShellActivity {
 }
 
 fn is_verification_invocation(words: &[String]) -> bool {
-    let mut words = words
-        .iter()
-        .map(String::as_str)
-        .filter(|word| !word.contains('=') && *word != "env");
-    let first = words.next().unwrap_or_default();
-    let second = words.next().map(str::to_ascii_lowercase);
-    let third = words.next().map(str::to_ascii_lowercase);
+    let command_words = crate::tools::command_args::command_words_after_environment_prefix(words);
+    let first = command_words.first().map(String::as_str).unwrap_or_default();
+    let second = command_words.get(1).map(|word| word.to_ascii_lowercase());
+    let third = command_words.get(2).map(|word| word.to_ascii_lowercase());
     let program = Path::new(first)
         .file_name()
         .and_then(|name| name.to_str())
@@ -50,11 +51,8 @@ fn is_verification_invocation(words: &[String]) -> bool {
 }
 
 fn contains_verification_invocation(command: &str) -> bool {
-    command.split(['&', '|', ';']).any(|segment| {
-        shell_words::split(segment)
-            .ok()
-            .is_some_and(|words| is_verification_invocation(&words))
-    })
+    static_shell_command_words(command)
+        .is_some_and(|commands| commands.iter().any(|words| is_verification_invocation(words)))
 }
 
 fn has_logical_sequencing(words: &[String]) -> bool {
@@ -62,42 +60,77 @@ fn has_logical_sequencing(words: &[String]) -> bool {
 }
 
 fn is_known_inspection(words: &[String]) -> bool {
-    let Some(program) = words
-        .first()
-        .and_then(|word| Path::new(word).file_name())
-        .and_then(|name| name.to_str())
-    else {
-        return false;
-    };
     if words
         .iter()
         .any(|word| matches!(word.as_str(), ">" | ">>" | "|" | "&&" | ";" | "||"))
     {
         return false;
     }
+    command_words_are_readonly(words)
+}
 
-    let program = program.to_ascii_lowercase();
-    match program.as_str() {
-        "rg" | "grep" | "cat" | "head" | "tail" | "bat" | "ls" | "pwd" | "wc" => true,
-        "sed" => !words.iter().any(|word| word == "-i" || word.starts_with("--in-place")),
-        "find" => !words
-            .iter()
-            .any(|word| matches!(word.as_str(), "-delete" | "-exec" | "-execdir" | "-ok")),
-        _ => false,
+fn classify_provable_shell_sequence(command: &str) -> Option<ShellActivity> {
+    let (segments, has_output_plumbing) = if let Some(segments) = static_shell_command_words(command) {
+        (segments, false)
+    } else {
+        (static_shell_command_words_with_output_plumbing(command)?, true)
+    };
+    if has_output_plumbing && segments.len() != 1 {
+        return None;
     }
+    let has_multiple_segments = segments.len() > 1;
+    let mut saw_verification = false;
+
+    for words in segments {
+        if is_verification_invocation(&words) {
+            saw_verification = true;
+        } else if !command_words_are_readonly(&words) {
+            return None;
+        }
+    }
+
+    if has_output_plumbing && !saw_verification {
+        return None;
+    }
+
+    // Shell execution does not guarantee that a pipeline or logical chain's
+    // final status reflects every verification stage. Do not let a successful
+    // downstream command clear the anti-blind checkpoint after an earlier
+    // verifier failed.
+    if saw_verification && has_multiple_segments {
+        return Some(ShellActivity::Mutation);
+    }
+
+    Some(if saw_verification {
+        ShellActivity::Verification
+    } else {
+        ShellActivity::Inspection
+    })
+}
+
+fn has_shell_sequence(command: &str) -> bool {
+    static_shell_command_words(command).is_none_or(|segments| segments.len() > 1)
 }
 
 /// Classify a shell call without weakening the authoritative mutation guard.
 ///
-/// Output plumbing such as `2>&1`, `> build.log`, or `| head` does not turn a
+/// Standalone output plumbing such as `2>&1` or `> build.log` does not turn a
 /// primary verification command into a mutation for progress accounting.
+/// Multi-stage pipelines and chains remain mutations because their final
+/// status does not reliably represent every verification stage.
 #[must_use]
 pub fn classify_shell_activity(tool_name: &str, args: &Value) -> ShellActivity {
-    let intent = super::classify_tool_intent(tool_name, args);
     let command = crate::tools::command_args::raw_command_text(args);
     let words = crate::tools::command_args::command_words(args).ok().flatten();
+    let has_unclassified_shell_sequence = command.as_deref().is_some_and(has_shell_sequence);
 
-    if words.as_deref().is_some_and(is_known_inspection) {
+    if let Some(activity) = command.as_deref().and_then(classify_provable_shell_sequence) {
+        return activity;
+    }
+
+    let intent = super::classify_tool_intent(tool_name, args);
+
+    if !has_unclassified_shell_sequence && words.as_deref().is_some_and(is_known_inspection) {
         return ShellActivity::Inspection;
     }
 
@@ -112,9 +145,142 @@ pub fn classify_shell_activity(tool_name: &str, args: &Value) -> ShellActivity {
         };
     }
 
-    if starts_with_verification && !words.as_deref().is_some_and(has_logical_sequencing) {
+    if starts_with_verification
+        && !has_unclassified_shell_sequence
+        && !words.as_deref().is_some_and(has_logical_sequencing)
+    {
         ShellActivity::Verification
     } else {
         ShellActivity::Mutation
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::config::constants::tools;
+
+    fn exec_command(command: &str) -> Value {
+        json!({"cmd": command})
+    }
+
+    #[test]
+    fn logged_compound_inspection_commands_are_not_mutations() {
+        for command in [
+            "cat README.md && printf '\\n--- git status ---\\n' && git status --short",
+            "wc -l README.md; rg -n '^#' README.md",
+            "git diff --stat; find docs -maxdepth 2 -type f | sort | head -40",
+        ] {
+            assert_eq!(
+                classify_shell_activity(tools::EXEC_COMMAND, &exec_command(command)),
+                ShellActivity::Inspection,
+                "{command}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn captured_read_commands_with_output_suppression_are_inspection() {
+        for command in [
+            r#"sed -n '1,180p' README.md; sed -n '280,350p' README.md; sed -n '389,411p' README.md; printf '\n--- repo metadata ---\n'; git log -1 --format='%h %s'; sed -n '1,100p' Cargo.toml; rg -n '^version\s*=|rust-version|workspace\.package' Cargo.toml crates -g Cargo.toml | head -40"#,
+            r###"git diff --stat; find docs -maxdepth 2 -type f | sort | head -40; rg -n "vtcode init|vtcode models|full-auto|run-debug|cargo install" docs/user-guide docs/installation docs/development 2>/dev/null | head -50"###,
+        ] {
+            assert_eq!(
+                classify_shell_activity(tools::EXEC_COMMAND, &exec_command(command)),
+                ShellActivity::Inspection,
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn git_diff_check_chain_remains_inspection() {
+        assert_eq!(
+            classify_shell_activity(
+                tools::EXEC_COMMAND,
+                &exec_command("git diff --check && git status --short && git diff --stat"),
+            ),
+            ShellActivity::Inspection
+        );
+    }
+
+    #[test]
+    fn verification_detection_skips_environment_prefixes() {
+        for command in [
+            "env RUSTFLAGS=-Dwarnings cargo check",
+            "RUSTFLAGS=-Dwarnings env cargo check",
+            "env -u PATH cargo check",
+            "env -C /tmp cargo check",
+        ] {
+            assert_eq!(
+                classify_shell_activity(tools::EXEC_COMMAND, &exec_command(command)),
+                ShellActivity::Verification,
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn ambiguous_or_mutating_compounds_remain_mutations() {
+        for command in [
+            "git diff --stat; python3 -c 'open(\"out\", \"w\").write(\"x\")'",
+            "cat README.md; sed -i '' 's/a/b/' README.md",
+            "sed --in-place= README.md",
+            "git diff --output=out",
+            "git diff '--output=out'",
+            "git diff -o out",
+            "git diff -oout",
+            "git log --output=out",
+            "git show --textconv",
+            "git -C /external/repo=alt status",
+            "find . -fprint output.txt",
+            "find . -fprintf output.txt '%p'",
+            "rg --hostname-bin sh pattern",
+            "rg --search-zip pattern",
+            "rg -z pattern",
+            "sort -o generated.txt README.md",
+            "sort --compress-program=sh README.md",
+            "date -s now",
+            "awk -i inplace '{print}' README.md",
+            "sed -n 's/a/b/e' README.md",
+            "fd --exec sh -c 'touch output'",
+            "tree -o output.txt",
+            "ast-grep -r 'README.md'",
+            "sed -n -fmalicious.sed -e '1p' src/main.rs",
+            "sed -I '' 's/a/b/' src/main.rs",
+            "sed -n '1p\nw leaked.txt' src/main.rs",
+            "cargo check & rm output",
+            "cargo check > build.log | rm output",
+            "cargo check | head -40 > build.log",
+            "cargo check | echo x > output.log",
+            "cargo check | head -40",
+            "cargo check > build.log &",
+            "env -S 'cargo check'",
+            "echo x > output.log && cargo check",
+            "cargo check < build-input.log",
+            "cat README.md > copied.txt",
+            "git diff --check; rm output",
+            "cat README.md\nrm output",
+        ] {
+            assert_eq!(
+                classify_shell_activity(tools::EXEC_COMMAND, &exec_command(command)),
+                ShellActivity::Mutation,
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn quoted_output_text_does_not_change_inspection_classification() {
+        for command in ["echo 'git diff --output=out'", "printf 'sort -o out input'"] {
+            assert_eq!(
+                classify_shell_activity(tools::EXEC_COMMAND, &exec_command(command)),
+                ShellActivity::Inspection,
+                "{command}"
+            );
+        }
     }
 }

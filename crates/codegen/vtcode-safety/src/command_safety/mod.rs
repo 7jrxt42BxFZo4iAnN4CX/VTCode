@@ -36,7 +36,7 @@ mod integration_tests;
 pub use audit::{AuditEntry, SafetyAuditLogger};
 pub use cache::SafetyDecisionCache;
 pub use command_db::CommandDatabase;
-pub use dangerous_commands::command_might_be_dangerous;
+pub use dangerous_commands::{command_might_be_dangerous, git_global_option_requires_prompt};
 pub use safe_command_registry::{SafeCommandRegistry, SafetyDecision};
 pub use shell_parser::parse_bash_lc_commands;
 pub use unified::{EvaluationReason, EvaluationResult, PolicyAwareEvaluator, UnifiedCommandEvaluator};

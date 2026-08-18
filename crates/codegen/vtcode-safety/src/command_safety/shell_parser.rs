@@ -122,7 +122,7 @@ pub fn prewarm_bash_parser() -> Result<(), String> {
 /// If tree-sitter parsing fails, falls back to simple tokenization
 pub fn parse_shell_commands(script: &str) -> Result<Vec<Vec<String>>, String> {
     // Try tree-sitter parsing first
-    match parse_with_tree_sitter(script) {
+    match parse_with_tree_sitter(script, false) {
         Ok(commands) if !commands.is_empty() => return Ok(commands),
         Ok(_) => {} // Empty result, fall through to basic parsing
         Err(e) => {
@@ -138,11 +138,119 @@ pub fn parse_shell_commands(script: &str) -> Result<Vec<Vec<String>>, String> {
 ///
 /// Use this when caller behavior must be strictly gated on bash grammar validity.
 pub fn parse_shell_commands_tree_sitter(script: &str) -> Result<Vec<Vec<String>>, String> {
-    parse_with_tree_sitter(script)
+    parse_with_tree_sitter(script, true)
 }
 
-/// Parses shell script using tree-sitter bash grammar
-fn parse_with_tree_sitter(script: &str) -> Result<Vec<Vec<String>>, String> {
+/// Returns whether every redirection in a static shell script only routes
+/// command output. Input, heredoc, and descriptor-closing redirections remain
+/// unsupported so progress classification can fail closed.
+pub fn has_only_output_redirections(script: &str) -> bool {
+    if contains_dynamic_shell_syntax(script) {
+        return false;
+    }
+    if contains_background_operator(script) {
+        return false;
+    }
+
+    let Ok(parser) = get_bash_parser() else {
+        return false;
+    };
+    let Ok(mut parser) = parser.lock() else {
+        return false;
+    };
+    let Some(tree) = parser.parse(script, None) else {
+        return false;
+    };
+    if tree.root_node().has_error() {
+        return false;
+    }
+
+    let mut saw_redirection = false;
+    if !collect_output_redirections(tree.root_node(), script, &mut saw_redirection) {
+        return false;
+    }
+    saw_redirection
+}
+
+fn contains_background_operator(script: &str) -> bool {
+    let chars = script.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+
+    while index < chars.len() {
+        let character = chars[index];
+        if character == '\'' && !in_double_quote {
+            in_single_quote = !in_single_quote;
+            index += 1;
+            continue;
+        }
+        if character == '"' && !in_single_quote {
+            in_double_quote = !in_double_quote;
+            index += 1;
+            continue;
+        }
+        if in_single_quote || in_double_quote {
+            index += 1;
+            continue;
+        }
+
+        if character == '&' {
+            let previous = index.checked_sub(1).and_then(|position| chars.get(position));
+            let next = chars.get(index + 1);
+            if next == Some(&'&') {
+                index += 2;
+                continue;
+            }
+            let part_of_allowed_operator = next == Some(&'&')
+                || next == Some(&'>')
+                || previous == Some(&'>')
+                || previous == Some(&'|')
+                || previous == Some(&'<');
+            if !part_of_allowed_operator {
+                return true;
+            }
+        }
+        index += 1;
+    }
+
+    false
+}
+
+fn collect_output_redirections(node: tree_sitter::Node, source: &str, saw_redirection: &mut bool) -> bool {
+    match node.kind() {
+        "file_redirect" => {
+            *saw_redirection = true;
+            let Ok(text) = node.utf8_text(source.as_bytes()) else {
+                return false;
+            };
+            if !is_output_redirection(text) {
+                return false;
+            }
+        }
+        "heredoc_redirect" | "herestring_redirect" => return false,
+        _ => {}
+    }
+
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .all(|child| collect_output_redirections(child, source, saw_redirection))
+}
+
+fn is_output_redirection(text: &str) -> bool {
+    let redirect = text.trim_start_matches(|character: char| character.is_ascii_digit());
+    if redirect.starts_with("&>") {
+        return !redirect.starts_with("&>-");
+    }
+    if let Some(destination) = redirect.strip_prefix(">&") {
+        return destination.trim().chars().all(|character| character.is_ascii_digit());
+    }
+
+    redirect.starts_with('>') && !redirect.starts_with(">&-")
+}
+
+/// Parses shell script using tree-sitter bash grammar.
+fn parse_with_tree_sitter(script: &str, reject_syntax_errors: bool) -> Result<Vec<Vec<String>>, String> {
     let parser_guard = get_bash_parser()?;
     let mut parser = parser_guard.lock().map_err(|e| format!("Failed to lock parser: {e}"))?;
 
@@ -150,6 +258,9 @@ fn parse_with_tree_sitter(script: &str) -> Result<Vec<Vec<String>>, String> {
 
     let mut commands = Vec::new();
     let root = tree.root_node();
+    if reject_syntax_errors && root.has_error() {
+        return Err("Shell script contains syntax errors".to_string());
+    }
 
     // Walk the full tree so commands inside loops/conditionals are remembered
     // for approval and checked for safety.  Top-level-only extraction misses
@@ -203,7 +314,10 @@ fn extract_command_from_node(node: tree_sitter::Node, source: &str) -> Option<Ve
             continue;
         }
 
-        if matches!(child.kind(), "word" | "string" | "simple_expansion" | "variable_expansion") {
+        if matches!(
+            child.kind(),
+            "word" | "string" | "raw_string" | "ansi_c_string" | "simple_expansion" | "variable_expansion"
+        ) {
             let text = child.utf8_text(source.as_bytes());
             if let Ok(arg) = text {
                 let trimmed = arg.trim();
@@ -441,6 +555,37 @@ mod tests {
         let commands = parse_shell_commands_tree_sitter(script).unwrap();
         assert!(!commands.is_empty());
         assert_eq!(commands[0][0], "echo");
+    }
+
+    #[test]
+    fn parse_tree_sitter_preserves_single_and_ansi_quoted_args() {
+        let script = r#"printf '\n' && git diff '--output=out.txt' && printf $'\n'"#;
+        let commands = parse_shell_commands_tree_sitter(script).unwrap();
+        assert!(
+            commands
+                .iter()
+                .any(|command| command.iter().any(|word| word.contains("--output=out.txt")))
+        );
+        assert!(commands.iter().any(|command| command.iter().any(|word| word.contains("\\n"))));
+    }
+
+    #[test]
+    fn output_redirection_guard_rejects_input_and_heredoc_shapes() {
+        assert!(has_only_output_redirections("cargo check > build.log 2>&1"));
+        assert!(has_only_output_redirections("cargo check | head -40 > build.log"));
+        assert!(has_only_output_redirections("cargo check &> build.log"));
+        assert!(has_only_output_redirections("cargo check &>> build.log"));
+        assert!(!has_only_output_redirections("cargo check < build-input.log"));
+        assert!(!has_only_output_redirections("cargo check <<'EOF'\ninput\nEOF"));
+        assert!(!has_only_output_redirections("cargo check > $(printf build.log)"));
+        assert!(!has_only_output_redirections("cargo check > build.log &"));
+        assert!(!has_only_output_redirections("cargo check 2>&-"));
+    }
+
+    #[test]
+    fn strict_tree_sitter_parser_rejects_incomplete_shell_syntax() {
+        assert!(parse_shell_commands_tree_sitter("cargo check &&").is_err());
+        assert!(parse_shell_commands_tree_sitter("echo '").is_err());
     }
 
     #[test]
