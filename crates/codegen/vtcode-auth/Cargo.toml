@@ -52,7 +52,7 @@ schema = ["dep:schemars"]
 [dev-dependencies]
 assert_fs = { workspace = true }
 serial_test = { workspace = true }
-vtcode-commons = { path = "../../common/vtcode-commons", version = "0.146.4" }
+vtcode-commons = { path = "../../common/vtcode-commons", version = "0.146.5" }
 
 [lints]
 workspace = true
