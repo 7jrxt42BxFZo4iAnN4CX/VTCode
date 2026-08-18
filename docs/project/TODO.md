@@ -22,3 +22,13 @@ eg:
       behavior changes
     □ Run focused and broader verification, then review the final diff
 ```
+
+---
+
+support Vercel AI gateway https://vercel.com/docs/ai-gateway
+
+---
+
+check if vtcode can support this. https://github.com/earendil-works/pi/issues/534#issue-3789055759
+
+https://specifications.freedesktop.org/basedir/latest/

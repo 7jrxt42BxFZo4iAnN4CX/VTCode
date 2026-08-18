@@ -18,9 +18,10 @@
 </p>
 
 VT Code is an open-source Rust terminal coding agent for interactive and
-long-running autonomous workflows. It combines OS-native sandboxing,
-multi-provider LLM support, open protocols, and extensible Skills in one
-tool.
+long-running autonomous workflows. It brings a responsive TUI, safe terminal
+tools, multi-provider LLM support, open protocols, and extensible Skills into
+one tool—so you can move from a question to a reviewed change without leaving
+your terminal.
 
 > **Project status:** Active development. VT Code is currently at version
 > `0.146.4`; local inference and some automation workflows are experimental.
@@ -38,21 +39,24 @@ tool.
 - [Support](#support)
 - [License](#license)
 
+> New here? Start with [Installation](./docs/installation/README.md), then
+> [Getting Started](./docs/user-guide/getting-started.md).
+
 ## Features
 
 ### Runtime and coding
 
-- **Agent runtime**: interactive TUI, slash commands, streaming, `ask`/`exec` CLI, and session resume
-- **Coding tools**: safe file ops, [ripgrep](https://github.com/BurntSushi/ripgrep) search, [ast-grep](https://ast-grep.github.io/) outline symbol maps, fuzzy discovery, code intelligence, project indexing, and terminal execution
+- **Agent runtime**: interactive TUI, slash commands, streaming, `ask`/`exec` CLI, session resume, and review workflows
+- **Coding tools**: safe file operations, [ripgrep](https://github.com/BurntSushi/ripgrep) search, [ast-grep](https://ast-grep.github.io/) symbol maps, fuzzy discovery, code intelligence, project indexing, and terminal execution
 
 ### Extensibility and providers
 
-- **Extensibility**: [Agent Skills](https://agentskills.io), [Model Context Protocol](https://modelcontextprotocol.io/) MCP client/server, [Agent Plugins](https://agent-plugins.org) portable packages, lifecycle hooks, subagents, custom providers, and [Agent Client Protocol](https://agentclientprotocol.com) (ACP)
-- **Model providers**: 26+ LLM providers including Anthropic, OpenAI, Gemini, Meta AI (Muse), xAI, OpenRouter, Merge Gateway, NVIDIA NIM, **local inference via Ollama, LM Studio, and llama.cpp** (managed with the `/local` command), and more
+- **Extensibility**: [Agent Skills](https://agentskills.io), [MCP](https://modelcontextprotocol.io/) client/server, [Agent Plugins](https://agent-plugins.org), lifecycle hooks, subagents, custom providers, and [ACP](https://agentclientprotocol.com)
+- **Model providers**: 26+ built-in providers, custom OpenAI-compatible endpoints, and **local inference via Ollama, LM Studio, and llama.cpp** (managed with `/local`)
 
 ### Safety and protocols
 
-- **Safety**: restricted shell sandbox, tool guardrails, subprocess isolation, full audit logging, and per-workspace approval before lifecycle hooks defined in workspace configuration (`vtcode.toml` / `.vtcode` / agent-spec files) can run any shell command
+- **Safety**: restricted shell sandbox, tool guardrails, subprocess isolation, audit logging, and per-workspace approval before lifecycle hooks defined in workspace configuration (`vtcode.toml`, `.vtcode`, or agent-spec files) can run shell commands
 - **Provider governance**: `providers_whitelist` restricts which LLM providers VT Code can access, preventing accidental data leakage to unapproved endpoints
 - **Protocols**: Open Responses, Agent2Agent (A2A), ATIF, and Anthropic Messages API
 
@@ -63,10 +67,10 @@ tool.
 
 ## Quick start
 
-### Install
+### 1. Install
 
-The native installer is recommended for macOS and Linux. It also installs the
-`ripgrep` and `ast-grep` search tools used by VT Code.
+The native installer is recommended for macOS and Linux. It installs VT Code
+and the `ripgrep` and `ast-grep` search tools used by its coding workflow.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/vinhnx/vtcode/main/scripts/install.sh | bash
@@ -84,32 +88,39 @@ brew install vinhnx/tap/vtcode
 cargo install vtcode
 ```
 
-### Initialize a workspace
+### 2. Initialize a workspace
 
 Run this from the project you want VT Code to work on:
 
 ```bash
+cd path/to/your/project
 vtcode init
 ```
 
-This scaffolds `vtcode.toml`, `.vtcode/`, and `AGENTS.md`.
+This scaffolds project configuration and agent guidance. Review the generated
+files before committing them.
 
-### Configure a provider
+### 3. Configure a provider
 
-Set the API key for the provider you want to use. For example:
+Set the API key for the provider you want to use (or configure an OAuth-based
+provider with `vtcode login`). For example:
 
 ```bash
 export OPENAI_API_KEY="sk-..."
 ```
 
 See the [provider guides](./docs/providers/PROVIDER_GUIDES.md) for supported
-providers, local inference options, and authentication details.
+providers, local inference options, and authentication details. Never commit
+API keys or place them directly in `vtcode.toml`.
 
-### Launch VT Code
+### 4. Launch VT Code
 
 ```bash
 vtcode
 ```
+
+VT Code opens an interactive terminal UI in the current workspace. Use `ask`,
+`exec`, or `review` when you want a one-shot workflow.
 
 ### Common commands
 
@@ -316,8 +327,8 @@ cd vtcode
 
 ### Workspace layout
 
-Rust stable, edition 2024, MSRV 1.93.0. The workspace contains 30 crates,
-with the root binary and the core/UI crates included in the default build:
+Rust stable, edition 2024, MSRV 1.93.0. The workspace contains roughly 30
+crates; the root binary and core/UI crates are included in the default build:
 
 | Layer   | Crates                                                                                                                                                                                                                       |
 | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -327,12 +338,12 @@ with the root binary and the core/UI crates included in the default build:
 
 ### Library use
 
-Want to use VT Code as a library? See [`vtcode-battery-pack`](https://github.com/vinhnx/vtcode-battery-pack) for a curated set of crates you can add to your own Rust projects.
+For crate-based integrations, see [`vtcode-battery-pack`](https://github.com/vinhnx/vtcode-battery-pack).
 
 ### Quality checks
 
 ```bash
-./scripts/check-dev.sh  # fast quality gate (clippy, fmt, check)
+./scripts/check-dev.sh   # fast quality gate: clippy, fmt, and check
 cargo nextest run        # parallel test runner
 ```
 
@@ -340,11 +351,9 @@ CI runs locked dependency resolution and treats warnings as errors. For a
 faster local iteration loop, use `./scripts/check-dev.sh`; use nextest rather
 than `cargo test` for the project's test suite.
 
-Read more about Rust Cargo Battery Pack in the [blog](https://smallcultfollowing.com/babysteps/blog/2026/07/15/battery-packs/).
-
 ## Contributing
 
-VT Code is built by an open source community. Whether you're fixing bugs, improving docs, proposing features, reporting security issues, or shipping patches, all contributions are welcome.
+VT Code is built by an open-source community. Whether you're fixing bugs, improving docs, proposing features, reporting security issues, or shipping patches, all contributions are welcome.
 
 ### Ways to contribute
 
