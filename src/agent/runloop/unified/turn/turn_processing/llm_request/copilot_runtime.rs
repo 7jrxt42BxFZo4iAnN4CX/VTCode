@@ -52,6 +52,9 @@ use crate::agent::runloop::unified::tool_routing::{
     prompt_external_tool_permission,
 };
 use crate::agent::runloop::unified::turn::tool_outcomes::error_handling::tool_denial_diagnostic;
+use crate::agent::runloop::unified::turn::tool_outcomes::helpers::{
+    LoopTracker, mutation_blocked_until_verification, update_repetition_tracker,
+};
 use crate::agent::runloop::unified::ui_interaction::PlaceholderSpinner;
 use crate::agent::runloop::unified::ui_interaction_stream::CopilotRuntimeRequestHandler;
 
@@ -79,6 +82,8 @@ pub(super) struct CopilotRuntimeHost<'a> {
     vt_cfg: Option<&'a vtcode_config::loader::VTCodeConfig>,
     traj: &'a TrajectoryLogger,
     harness_state: &'a mut HarnessTurnState,
+    loop_tracker: Option<&'a mut LoopTracker>,
+    suppress_output_signal: Option<Arc<AtomicBool>>,
     exposed_tools: Vec<ToolDefinition>,
     exposed_tool_names: BTreeSet<String>,
     harness_emitter: Option<&'a HarnessEventEmitter>,
@@ -114,6 +119,8 @@ impl<'a> CopilotRuntimeHost<'a> {
         vt_cfg: Option<&'a vtcode_config::loader::VTCodeConfig>,
         traj: &'a TrajectoryLogger,
         harness_state: &'a mut HarnessTurnState,
+        loop_tracker: Option<&'a mut LoopTracker>,
+        suppress_output_signal: Option<Arc<AtomicBool>>,
         available_tools: Option<&Arc<Vec<ToolDefinition>>>,
         skip_confirmations: bool,
         harness_emitter: Option<&'a HarnessEventEmitter>,
@@ -162,6 +169,8 @@ impl<'a> CopilotRuntimeHost<'a> {
             vt_cfg,
             traj,
             harness_state,
+            loop_tracker,
+            suppress_output_signal,
             exposed_tools,
             exposed_tool_names,
             harness_emitter,
@@ -278,6 +287,15 @@ impl<'a> CopilotRuntimeHost<'a> {
             return Ok(tool_not_exposed_response(&canonical_tool_name));
         }
 
+        if self.loop_tracker.as_deref().is_some_and(|tracker| {
+            mutation_blocked_until_verification(tracker, &canonical_tool_name, &effective_arguments)
+        }) {
+            return Ok(denied_tool_response(
+                &canonical_tool_name,
+                "mutating tool call blocked until verification succeeds",
+            ));
+        }
+
         if let Some(response) = self
             .prepare_vtcode_tool_execution(renderer, &request.tool_call_id, &canonical_tool_name, &effective_arguments)
             .await?
@@ -341,6 +359,13 @@ impl<'a> CopilotRuntimeHost<'a> {
                 run_loop_ctx
                     .session_stats
                     .record_touched_files(modified_files.iter().map(|path| path.display().to_string()));
+            }
+
+            if let Some(loop_tracker) = self.loop_tracker.as_deref_mut() {
+                update_repetition_tracker(loop_tracker, &pipeline_outcome, &canonical_tool_name, &effective_arguments);
+                if let Some(signal) = self.suppress_output_signal.as_ref() {
+                    signal.store(loop_tracker.verification_is_pending(), Ordering::Release);
+                }
             }
 
             (pipeline_outcome, last_stdout)

@@ -5,6 +5,7 @@ use super::{
 };
 use serde_json::json;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use vtcode_core::copilot::{
     CopilotObservedToolCall, CopilotObservedToolCallStatus, CopilotPermissionRequest, CopilotTerminalCreateRequest,
@@ -25,6 +26,7 @@ use crate::agent::runloop::unified::run_loop_context::{HarnessTurnState, TurnId,
 use crate::agent::runloop::unified::state::{CtrlCState, SessionStats};
 use crate::agent::runloop::unified::tool_call_safety::ToolCallSafetyValidator;
 use crate::agent::runloop::unified::tool_routing::HitlDecision;
+use crate::agent::runloop::unified::turn::tool_outcomes::helpers::{LoopTracker, mutation_blocked_until_verification};
 use tempfile::TempDir;
 use tokio::sync::{Notify, RwLock, mpsc::unbounded_channel};
 use vtcode_core::acp::ToolPermissionCache;
@@ -284,6 +286,8 @@ async fn observed_tool_calls_emit_incremental_output_updates() {
         &traj,
         &mut harness_state,
         None,
+        None,
+        None,
         true,
         Some(&emitter),
         "turn-test-step-1".to_string(),
@@ -380,6 +384,8 @@ async fn observed_shell_tool_calls_stream_into_inline_pty_ui() {
         &traj,
         &mut harness_state,
         None,
+        None,
+        None,
         true,
         None,
         "turn-test-step-1".to_string(),
@@ -469,11 +475,12 @@ async fn copilot_terminal_sessions_bind_local_pty_output_and_release_cleanly() {
         &traj,
         &mut harness_state,
         None,
+        None,
+        None,
         true,
         Some(&emitter),
         "turn-test-step-1".to_string(),
     );
-
     let response = runtime_host
         .handle_terminal_create(CopilotTerminalCreateRequest {
             session_id: "session-terminal".to_string(),
@@ -598,12 +605,13 @@ async fn vtcode_tool_calls_render_transcript_output_via_shared_pipeline() {
         None,
         &traj,
         &mut harness_state,
+        None,
+        None,
         Some(&tools),
         true,
         None,
         "turn-test-step-1".to_string(),
     );
-
     let response = runtime_host
         .handle_vtcode_tool_call(
             &mut renderer,
@@ -634,4 +642,125 @@ async fn vtcode_tool_calls_render_transcript_output_via_shared_pipeline() {
         stripped_text.contains("Ran cat") || stripped_text.contains("Run command"),
         "expected command preview in transcript, got: {stripped_text}"
     );
+}
+
+#[tokio::test]
+async fn copilot_blocks_mutating_tool_calls_while_verification_is_pending() {
+    let temp = TempDir::new().expect("temp workspace");
+    let workspace = temp.path().to_path_buf();
+    let target = workspace.join("blocked.txt");
+    let blocked_target = workspace.join("blocked-after-checkpoint.txt");
+
+    let mut tool_registry = ToolRegistry::new(workspace).await;
+    let tool_result_cache = Arc::new(RwLock::new(ToolResultCache::new(8)));
+    let mut session = create_headless_session();
+    let handle = session.clone_inline_handle();
+    let mut renderer = AnsiRenderer::with_inline_ui(handle.clone(), Default::default());
+    let mut session_stats = SessionStats::default();
+    let mut plan_session =
+        crate::agent::runloop::unified::planning_workflow_state::PlanningWorkflowSessionState::default();
+    let mut mcp_panel_state = McpPanelState::default();
+    let ctrl_c_state = Arc::new(CtrlCState::new());
+    let ctrl_c_notify = Arc::new(Notify::new());
+    let approval_recorder = ApprovalRecorder::new(temp.path().to_path_buf());
+    let decision_ledger = Arc::new(RwLock::new(DecisionTracker::new()));
+    let tool_permission_cache = Arc::new(RwLock::new(ToolPermissionCache::new()));
+    let permissions_state = Arc::new(RwLock::new(vtcode_core::config::PermissionsConfig::default()));
+    let safety_validator = Arc::new(ToolCallSafetyValidator::new());
+    safety_validator.start_turn();
+    let traj = TrajectoryLogger::new(temp.path());
+    let mut harness_state =
+        HarnessTurnState::new(TurnRunId("run-test".to_string()), TurnId("turn-test".to_string()), 8, 60, 0);
+    let tools = Arc::new(vec![ToolDefinition::function(
+        vtcode_core::config::constants::tools::APPLY_PATCH.to_string(),
+        "Apply a patch".to_string(),
+        json!({"type": "object"}),
+    )]);
+    let mut loop_tracker = LoopTracker::new();
+    loop_tracker.consecutive_mutations =
+        crate::agent::runloop::unified::turn::tool_outcomes::helpers::BLIND_EDITING_THRESHOLD - 1;
+    assert!(!mutation_blocked_until_verification(
+        &loop_tracker,
+        vtcode_core::config::constants::tools::APPLY_PATCH,
+        &json!({"patch": "*** Begin Patch\n*** End Patch\n"}),
+    ));
+    let suppress_output_signal = Arc::new(AtomicBool::new(false));
+    let suppress_output_signal_for_assertion = suppress_output_signal.clone();
+
+    let mut runtime_host = CopilotRuntimeHost::new(
+        &mut tool_registry,
+        &tool_result_cache,
+        &mut session,
+        &mut session_stats,
+        &mut plan_session,
+        &mut mcp_panel_state,
+        &handle,
+        &ctrl_c_state,
+        &ctrl_c_notify,
+        None,
+        &approval_recorder,
+        &decision_ledger,
+        &tool_permission_cache,
+        &permissions_state,
+        None,
+        &safety_validator,
+        None,
+        None,
+        &traj,
+        &mut harness_state,
+        Some(&mut loop_tracker),
+        Some(suppress_output_signal),
+        Some(&tools),
+        true,
+        None,
+        "turn-test-step-1".to_string(),
+    );
+    let response = runtime_host
+        .handle_vtcode_tool_call(
+            &mut renderer,
+            vtcode_core::copilot::CopilotToolCallRequest {
+                tool_call_id: "mutation-call".to_string(),
+                tool_name: vtcode_core::config::constants::tools::APPLY_PATCH.to_string(),
+                arguments: json!({
+                    "patch": "*** Begin Patch\n*** Add File: blocked.txt\n+mutation must trigger verification\n*** End Patch\n"
+                }),
+            },
+        )
+        .await
+        .expect("Copilot mutation should return a tool response");
+
+    match response {
+        CopilotToolCallResponse::Success(_) => {}
+        other => panic!("unexpected mutation response: {other:?}"),
+    }
+    assert!(target.exists(), "the first mutation should reach the tool pipeline");
+    assert!(
+        runtime_host
+            .loop_tracker
+            .as_deref()
+            .is_some_and(|tracker| tracker.verification_is_pending())
+    );
+    assert!(suppress_output_signal_for_assertion.load(Ordering::Acquire));
+
+    let response = runtime_host
+        .handle_vtcode_tool_call(
+            &mut renderer,
+            vtcode_core::copilot::CopilotToolCallRequest {
+                tool_call_id: "blocked-call".to_string(),
+                tool_name: vtcode_core::config::constants::tools::APPLY_PATCH.to_string(),
+                arguments: json!({
+                    "patch": "*** Begin Patch\n*** Add File: blocked-after-checkpoint.txt\n+must stay absent\n*** End Patch\n"
+                }),
+            },
+        )
+        .await
+        .expect("blocked Copilot tool call should return a denial response");
+
+    match response {
+        CopilotToolCallResponse::Failure(failure) => {
+            assert!(failure.error.contains("verification"), "unexpected denial: {}", failure.error);
+        }
+        other => panic!("unexpected Copilot response: {other:?}"),
+    }
+    assert!(!blocked_target.exists(), "blocked mutation must not reach the tool pipeline");
 }

@@ -650,11 +650,12 @@ pub(crate) fn start_loading_status(
     PlaceholderSpinner::new(handle, input_status_state.left.clone(), input_status_state.right.clone(), message)
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 pub(crate) struct StreamSpinnerOptions {
     pub defer_finish: bool,
     pub strip_proposed_plan_blocks: bool,
     pub suppress_output: bool,
+    pub suppress_output_signal: Option<Arc<AtomicBool>>,
 }
 
 pub(crate) use vtcode_core::core::agent::runtime::RuntimeModelProgress as StreamProgressEvent;

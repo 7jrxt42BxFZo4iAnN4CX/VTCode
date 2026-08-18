@@ -803,6 +803,76 @@ async fn anti_blind_guard_stops_outer_loop_after_two_pending_stale_plan_pause_re
     }));
 }
 
+#[tokio::test]
+async fn stale_plan_pause_without_mutations_consumes_text_response_budget() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Clone)]
+    struct RepeatedStalePauseProvider {
+        requests: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl uni::LLMProvider for RepeatedStalePauseProvider {
+        fn name(&self) -> &str {
+            "openai"
+        }
+
+        fn supports_streaming(&self) -> bool {
+            false
+        }
+
+        async fn generate(&self, request: uni::LLMRequest) -> Result<uni::LLMResponse, uni::LLMError> {
+            self.requests.fetch_add(1, Ordering::SeqCst);
+            Ok(uni::LLMResponse {
+                content: Some(
+                    "Implementation is paused because tool use is disabled. Wait for the next turn.".to_string(),
+                ),
+                model: request.model,
+                tool_calls: None,
+                usage: None,
+                finish_reason: uni::FinishReason::Stop,
+                reasoning: None,
+                reasoning_details: None,
+                organization_id: None,
+                request_id: None,
+                tool_references: Vec::new(),
+                compaction: None,
+            })
+        }
+
+        fn supported_models(&self) -> Vec<String> {
+            vec!["noop-model".to_string()]
+        }
+
+        fn validate_request(&self, _request: &uni::LLMRequest) -> Result<(), uni::LLMError> {
+            Ok(())
+        }
+    }
+
+    let requests = Arc::new(AtomicUsize::new(0));
+    let mut backing = TestTurnProcessingBacking::new(8).await;
+    backing.set_provider(Box::new(RepeatedStalePauseProvider { requests: requests.clone() }));
+
+    let mut history = vec![uni::Message::user("continue the approved implementation".to_string())];
+    let turn_context = backing.turn_loop_context();
+    turn_context.harness_state.set_approved_plan_execution(true);
+    let outcome = run_turn_loop(&mut history, turn_context)
+        .await
+        .expect("turn loop should stop at the discarded text response cap");
+
+    assert!(matches!(outcome.result, TurnLoopResult::Blocked { .. }));
+    assert!(outcome.final_response_was_fallback);
+    assert_eq!(requests.load(Ordering::SeqCst), 2);
+    assert!(!history.iter().any(|message| {
+        message
+            .content
+            .as_text()
+            .contains("Implementation is paused because tool use is disabled.")
+    }));
+}
+
 #[test]
 fn count_assistant_text_responses_in_turn_zero_for_empty_history() {
     let history: Vec<uni::Message> = Vec::new();

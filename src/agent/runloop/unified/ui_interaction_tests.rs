@@ -528,6 +528,7 @@ async fn strips_proposed_plan_tags_when_option_enabled() {
             defer_finish: false,
             strip_proposed_plan_blocks: true,
             suppress_output: false,
+            suppress_output_signal: None,
         },
     )
     .await

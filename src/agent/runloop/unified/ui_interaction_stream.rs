@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -441,6 +442,14 @@ pub(crate) async fn render_stream_with_options_and_progress_impl(
     .await
 }
 
+fn is_output_suppressed(options: &StreamSpinnerOptions) -> bool {
+    options.suppress_output
+        || options
+            .suppress_output_signal
+            .as_ref()
+            .is_some_and(|signal| signal.load(Ordering::Acquire))
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "Intentional compatibility, platform, test, or API-shape suppression."
@@ -627,6 +636,7 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
             Ok(LLMStreamEvent::Token { delta }) => {
                 first_progress_timeout = None;
                 token_count += 1;
+                let output_suppressed = is_output_suppressed(&options);
                 let mut visible_delta = if let Some(parser) = plan_parser.as_mut() {
                     parser.consume(&delta)
                 } else {
@@ -640,7 +650,7 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
                     aggregated = cleaned_aggregated;
                 }
 
-                if stream_reasoning_deltas && !pending_reasoning_delta.is_empty() {
+                if stream_reasoning_deltas && !output_suppressed && !pending_reasoning_delta.is_empty() {
                     flush_pending_reasoning(
                         provider_name,
                         renderer,
@@ -652,7 +662,11 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
                         &mut reasoning_emitted,
                     )?;
                 }
-                if !reasoning_emitted && reasoning_token_count > 0 && !reasoning_state.is_deferred() {
+                if !output_suppressed
+                    && !reasoning_emitted
+                    && reasoning_token_count > 0
+                    && !reasoning_state.is_deferred()
+                {
                     let rendered = reasoning_state
                         .flush_pending(renderer)
                         .map_err(|err| map_render_error(provider_name, err))?;
@@ -672,7 +686,7 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
                 if visible_delta.is_empty() {
                     continue;
                 }
-                if options.suppress_output {
+                if output_suppressed {
                     if !has_aggregated_override {
                         aggregated.push_str(&visible_delta);
                     }
@@ -715,6 +729,7 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
             Ok(LLMStreamEvent::Reasoning { delta }) => {
                 first_progress_timeout = None;
                 reasoning_token_count += 1;
+                let output_suppressed = is_output_suppressed(&options);
                 if !spinner_message_updated {
                     spinner.update_message("Processing reasoning...");
                     spinner_message_updated = true;
@@ -724,7 +739,7 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
                 }
                 finish_spinner(&mut spinner_active, false);
                 reasoning_accumulated.push_str(&delta);
-                if stream_reasoning_deltas && !options.suppress_output {
+                if stream_reasoning_deltas && !output_suppressed {
                     pending_reasoning_delta.push_str(&delta);
                     pending_reasoning_render_bytes = pending_reasoning_render_bytes.saturating_add(delta.len());
                     let should_render_now = !reasoning_emitted
@@ -747,7 +762,7 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
             }
             Ok(LLMStreamEvent::ReasoningStage { stage }) => {
                 first_progress_timeout = None;
-                if stream_reasoning_deltas && !pending_reasoning_delta.is_empty() {
+                if stream_reasoning_deltas && !is_output_suppressed(&options) && !pending_reasoning_delta.is_empty() {
                     flush_pending_reasoning(
                         provider_name,
                         renderer,
@@ -760,7 +775,7 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
                     )?;
                 }
                 if stream_reasoning_deltas {
-                    if !options.suppress_output {
+                    if !is_output_suppressed(&options) {
                         if let Some(callback) = on_progress.as_deref_mut() {
                             callback(StreamProgressEvent::ReasoningStage(stage.clone()));
                         }
@@ -786,7 +801,7 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
 
     finish_spinner(&mut spinner_active, false);
 
-    if !options.suppress_output && stream_reasoning_deltas && !pending_reasoning_delta.is_empty() {
+    if !is_output_suppressed(&options) && stream_reasoning_deltas && !pending_reasoning_delta.is_empty() {
         let rendered = flush_pending_reasoning_delta(
             provider_name,
             renderer,
@@ -801,7 +816,7 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
 
     if let Some(parser) = plan_parser.as_mut() {
         let trailing_plan_parse = parser.finish();
-        if !options.suppress_output && !trailing_plan_parse.stripped_text.is_empty() {
+        if !is_output_suppressed(&options) && !trailing_plan_parse.stripped_text.is_empty() {
             if let Some(callback) = on_progress {
                 callback(StreamProgressEvent::OutputDelta(trailing_plan_parse.stripped_text.clone()));
             }
@@ -822,7 +837,7 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
         }
     }
 
-    if !options.suppress_output && supports_streaming_markdown && pending_render_bytes > 0 {
+    if !is_output_suppressed(&options) && supports_streaming_markdown && pending_render_bytes > 0 {
         rendered_line_count =
             stream_markdown_with_provider_error(provider_name, renderer, &aggregated, rendered_line_count)?;
         emitted_tokens = true;
@@ -841,7 +856,7 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
         }
     };
 
-    if options.suppress_output {
+    if is_output_suppressed(&options) {
         return Ok((response, false));
     }
 
@@ -983,10 +998,13 @@ mod tests {
         CopilotRuntimeRequestHandler, FirstProgressTimeout, render_stream_with_options_and_copilot_runtime_impl,
     };
     use crate::agent::runloop::unified::state::CtrlCState;
-    use crate::agent::runloop::unified::ui_interaction::{PlaceholderSpinner, StreamSpinnerOptions};
+    use crate::agent::runloop::unified::ui_interaction::{
+        PlaceholderSpinner, StreamProgressEvent, StreamSpinnerOptions,
+    };
     use async_trait::async_trait;
     use futures::stream;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
     use tokio::sync::{Notify, mpsc};
     use vtcode_core::copilot::{CopilotObservedToolCall, CopilotObservedToolCallStatus, CopilotRuntimeRequest};
@@ -998,6 +1016,14 @@ mod tests {
         sleep_for: Duration,
     }
 
+    struct ToggleSuppressionRuntimeHandler {
+        signal: Arc<AtomicBool>,
+    }
+
+    struct EnableSuppressionRuntimeHandler {
+        signal: Arc<AtomicBool>,
+    }
+
     #[async_trait]
     impl CopilotRuntimeRequestHandler for SleepingRuntimeHandler {
         async fn handle_runtime_request(
@@ -1006,6 +1032,30 @@ mod tests {
             _request: CopilotRuntimeRequest,
         ) -> Result<(), uni::LLMError> {
             tokio::time::sleep(self.sleep_for).await;
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl CopilotRuntimeRequestHandler for ToggleSuppressionRuntimeHandler {
+        async fn handle_runtime_request(
+            &mut self,
+            _renderer: &mut AnsiRenderer,
+            _request: CopilotRuntimeRequest,
+        ) -> Result<(), uni::LLMError> {
+            self.signal.store(false, Ordering::Release);
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl CopilotRuntimeRequestHandler for EnableSuppressionRuntimeHandler {
+        async fn handle_runtime_request(
+            &mut self,
+            _renderer: &mut AnsiRenderer,
+            _request: CopilotRuntimeRequest,
+        ) -> Result<(), uni::LLMError> {
+            self.signal.store(true, Ordering::Release);
             Ok(())
         }
     }
@@ -1108,5 +1158,165 @@ mod tests {
 
         let err = result.expect_err("stream should time out before first progress");
         assert!(err.to_string().contains("first token timed out"));
+    }
+
+    #[tokio::test]
+    async fn dynamic_suppression_hides_output_until_copilot_verification_clears_it() {
+        let (command_tx, mut command_rx) = mpsc::unbounded_channel();
+        let handle = InlineHandle::new_for_tests(command_tx);
+        let spinner = PlaceholderSpinner::new(&handle, None, None, "");
+        let mut renderer = AnsiRenderer::with_inline_ui(handle.clone(), Default::default());
+        let ctrl_c_state = Arc::new(CtrlCState::new());
+        let ctrl_c_notify = Arc::new(Notify::new());
+        let suppress_output_signal = Arc::new(AtomicBool::new(true));
+        let handler_signal = suppress_output_signal.clone();
+
+        let mut stream: uni::LLMStream = Box::pin(async_stream::stream! {
+            yield Ok(LLMStreamEvent::Token { delta: "hidden before verification".to_string() });
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            yield Ok(LLMStreamEvent::Completed { response: Box::new(completed_response("final response")) });
+        });
+        let (runtime_tx, mut runtime_rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            runtime_tx
+                .send(CopilotRuntimeRequest::ObservedToolCall(CopilotObservedToolCall {
+                    tool_call_id: "call_1".to_string(),
+                    tool_name: "apply_patch".to_string(),
+                    status: CopilotObservedToolCallStatus::Completed,
+                    arguments: None,
+                    output: None,
+                    terminal_id: None,
+                }))
+                .expect("send runtime request");
+        });
+
+        let mut handler = ToggleSuppressionRuntimeHandler { signal: handler_signal };
+        let mut output_deltas = Vec::new();
+        let mut on_progress = |event| {
+            if let StreamProgressEvent::OutputDelta(delta) = event {
+                output_deltas.push(delta);
+            }
+        };
+
+        let (response, rendered) = render_stream_with_options_and_copilot_runtime_impl(
+            "copilot",
+            &mut stream,
+            None,
+            Some(&mut runtime_rx),
+            Some(&mut handler),
+            None,
+            &spinner,
+            &mut renderer,
+            &ctrl_c_state,
+            &ctrl_c_notify,
+            StreamSpinnerOptions {
+                suppress_output_signal: Some(suppress_output_signal),
+                ..StreamSpinnerOptions::default()
+            },
+            Some(&mut on_progress),
+        )
+        .await
+        .expect("Copilot stream should return its final response");
+
+        assert_eq!(response.content.as_deref(), Some("final response"));
+        assert!(rendered);
+        assert!(output_deltas.is_empty(), "suppressed tokens must not trigger OutputDelta callbacks");
+
+        let rendered_text = std::iter::from_fn(|| command_rx.try_recv().ok())
+            .filter_map(|command| match command {
+                InlineCommand::AppendLine { segments, .. } => {
+                    Some(segments.into_iter().map(|segment| segment.text).collect::<String>())
+                }
+                InlineCommand::Inline { segment, .. } => Some(segment.text),
+                InlineCommand::ReplaceLast { lines, .. } => Some(
+                    lines
+                        .into_iter()
+                        .flat_map(|line| line.into_iter().map(|segment| segment.text))
+                        .collect::<String>(),
+                ),
+                _ => None,
+            })
+            .collect::<String>();
+        assert!(rendered_text.contains("final response"));
+        assert!(!rendered_text.contains("hidden before verification"));
+    }
+
+    #[tokio::test]
+    async fn dynamic_suppression_does_not_flush_pending_reasoning_after_mutation() {
+        let (command_tx, mut command_rx) = mpsc::unbounded_channel();
+        let handle = InlineHandle::new_for_tests(command_tx);
+        let spinner = PlaceholderSpinner::new(&handle, None, None, "");
+        let mut renderer = AnsiRenderer::with_inline_ui(handle.clone(), Default::default());
+        renderer.set_reasoning_visible(true);
+        let ctrl_c_state = Arc::new(CtrlCState::new());
+        let ctrl_c_notify = Arc::new(Notify::new());
+        let suppress_output_signal = Arc::new(AtomicBool::new(false));
+        let handler_signal = suppress_output_signal.clone();
+
+        let mut stream: uni::LLMStream = Box::pin(async_stream::stream! {
+            yield Ok(LLMStreamEvent::Reasoning { delta: "visible reasoning".to_string() });
+            yield Ok(LLMStreamEvent::Reasoning { delta: "hidden pending reasoning".to_string() });
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            yield Ok(LLMStreamEvent::ReasoningStage { stage: "tool execution".to_string() });
+            yield Ok(LLMStreamEvent::Completed { response: Box::new(completed_response("final response")) });
+        });
+        let (runtime_tx, mut runtime_rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            runtime_tx
+                .send(CopilotRuntimeRequest::ObservedToolCall(CopilotObservedToolCall {
+                    tool_call_id: "call_1".to_string(),
+                    tool_name: "apply_patch".to_string(),
+                    status: CopilotObservedToolCallStatus::Completed,
+                    arguments: None,
+                    output: None,
+                    terminal_id: None,
+                }))
+                .expect("send runtime request");
+        });
+
+        let mut handler = EnableSuppressionRuntimeHandler { signal: handler_signal };
+        let (response, rendered) = render_stream_with_options_and_copilot_runtime_impl(
+            "copilot",
+            &mut stream,
+            None,
+            Some(&mut runtime_rx),
+            Some(&mut handler),
+            None,
+            &spinner,
+            &mut renderer,
+            &ctrl_c_state,
+            &ctrl_c_notify,
+            StreamSpinnerOptions {
+                suppress_output_signal: Some(suppress_output_signal),
+                ..StreamSpinnerOptions::default()
+            },
+            None,
+        )
+        .await
+        .expect("Copilot stream should return its final response");
+
+        assert_eq!(response.content.as_deref(), Some("final response"));
+        assert!(!rendered, "the response must remain suppressed while verification is pending");
+
+        let rendered_text = std::iter::from_fn(|| command_rx.try_recv().ok())
+            .filter_map(|command| match command {
+                InlineCommand::AppendLine { segments, .. } => {
+                    Some(segments.into_iter().map(|segment| segment.text).collect::<String>())
+                }
+                InlineCommand::Inline { segment, .. } => Some(segment.text),
+                InlineCommand::ReplaceLast { lines, .. } => Some(
+                    lines
+                        .into_iter()
+                        .flat_map(|line| line.into_iter().map(|segment| segment.text))
+                        .collect::<String>(),
+                ),
+                _ => None,
+            })
+            .collect::<String>();
+        assert!(rendered_text.contains("visible reasoning"));
+        assert!(!rendered_text.contains("hidden pending reasoning"));
+        assert!(!rendered_text.contains("final response"));
     }
 }

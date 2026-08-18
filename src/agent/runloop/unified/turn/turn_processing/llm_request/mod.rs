@@ -25,6 +25,7 @@ mod tool_shaping;
 
 use anyhow::Result;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 use tokio::task;
 #[cfg(debug_assertions)]
@@ -39,6 +40,7 @@ use crate::agent::runloop::unified::extract_action_from_messages;
 use crate::agent::runloop::unified::incremental_system_prompt::PromptCacheShapingMode;
 use crate::agent::runloop::unified::reasoning::resolve_reasoning_visibility;
 use crate::agent::runloop::unified::turn::context::TurnProcessingContext;
+use crate::agent::runloop::unified::turn::tool_outcomes::helpers::LoopTracker;
 use crate::agent::runloop::unified::ui_interaction::{PlaceholderSpinner, StreamProgressEvent, StreamSpinnerOptions};
 use crate::agent::runloop::unified::ui_interaction_stream::{
     FirstProgressTimeout, render_stream_with_options_and_copilot_runtime_impl,
@@ -118,6 +120,7 @@ pub(crate) async fn execute_llm_request(
         tool_free_recovery,
         parallel_cfg_opt,
         false,
+        None,
     )
     .await
 }
@@ -132,6 +135,7 @@ impl TurnProcessingContext<'_> {
         tool_free_recovery: bool,
         parallel_cfg_opt: Option<Box<ParallelToolConfig>>,
         suppress_output: bool,
+        loop_tracker: Option<&mut LoopTracker>,
     ) -> Result<(uni::LLMResponse, bool)> {
         execute_llm_request_with_options_impl(
             self,
@@ -141,6 +145,7 @@ impl TurnProcessingContext<'_> {
             tool_free_recovery,
             parallel_cfg_opt,
             suppress_output,
+            loop_tracker,
         )
         .await
     }
@@ -155,6 +160,7 @@ async fn execute_llm_request_with_options_impl(
     tool_free_recovery: bool,
     parallel_cfg_opt: Option<Box<ParallelToolConfig>>,
     suppress_output: bool,
+    mut loop_tracker: Option<&mut LoopTracker>,
 ) -> Result<(uni::LLMResponse, bool)> {
     let turn_snapshot = capture_turn_request_snapshot(ctx, active_model, tool_free_recovery);
     let active_model = turn_snapshot.active_model.clone();
@@ -302,6 +308,13 @@ async fn execute_llm_request_with_options_impl(
                 defer_finish: has_tools,
                 strip_proposed_plan_blocks: turn_snapshot.planning_active,
                 suppress_output,
+                suppress_output_signal: (turn_snapshot.provider_name == vtcode_core::copilot::COPILOT_PROVIDER_KEY)
+                    .then(|| {
+                        Arc::new(AtomicBool::new(
+                            suppress_output
+                                || loop_tracker.as_ref().is_some_and(|tracker| tracker.verification_is_pending()),
+                        ))
+                    }),
             };
             let mut progress = |event: StreamProgressEvent| stream_bridge.on_progress(event);
             let stream_result = if turn_snapshot.provider_name == vtcode_core::copilot::COPILOT_PROVIDER_KEY {
@@ -328,6 +341,8 @@ async fn execute_llm_request_with_options_impl(
                     ctx.vt_cfg,
                     ctx.traj,
                     ctx.harness_state,
+                    loop_tracker.as_deref_mut(),
+                    stream_options.suppress_output_signal.clone(),
                     runtime_tools.as_ref(),
                     ctx.skip_confirmations,
                     ctx.harness_emitter,

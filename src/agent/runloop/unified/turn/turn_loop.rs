@@ -896,7 +896,12 @@ pub(crate) async fn run_turn_loop(
         turn_processing_ctx.session_stats.note_request_sent();
 
         let suppress_unverified_output = repeated_tool_attempts.verification_is_pending();
-        let request_result = if suppress_unverified_output {
+        let request_result = if suppress_unverified_output
+            || turn_processing_ctx
+                .config
+                .provider
+                .eq_ignore_ascii_case(vtcode_core::copilot::COPILOT_PROVIDER_KEY)
+        {
             turn_processing_ctx
                 .execute_llm_request_with_options(
                     step_count,
@@ -904,7 +909,8 @@ pub(crate) async fn run_turn_loop(
                     tool_free_recovery.then_some(RECOVERY_SYNTHESIS_MAX_TOKENS),
                     tool_free_recovery,
                     None, // parallel_cfg_opt
-                    true,
+                    suppress_unverified_output,
+                    Some(&mut repeated_tool_attempts),
                 )
                 .await
         } else {
@@ -1268,18 +1274,27 @@ pub(crate) async fn run_turn_loop(
             }
             continue;
         }
-        if stale_approved_plan_pause
-            && turn_processing_ctx.harness_state.approved_plan_recovery_retries()
+        if stale_approved_plan_pause {
+            let response_count = turn_processing_ctx.harness_state.record_assistant_text_response();
+            if response_count >= MAX_ASSISTANT_TEXT_RESPONSES_PER_TURN {
+                result = TurnLoopResult::Blocked {
+                    reason: Some(PENDING_VERIFICATION_BLOCK_REASON.to_string()),
+                };
+                break;
+            }
+
+            if turn_processing_ctx.harness_state.approved_plan_recovery_retries()
                 < MAX_APPROVED_PLAN_STALE_PAUSE_RETRIES
-        {
-            turn_processing_ctx.harness_state.record_approved_plan_recovery_retry();
-            turn_processing_ctx
-                .working_history
-                .push(uni::Message::system(APPROVED_PLAN_STALE_PAUSE_RECOVERY_DIRECTIVE.to_string()));
-            let _ = turn_processing_ctx
-                .renderer
-                .line(MessageStyle::Info, "Approved-plan execution resumed after clearing stale recovery state.");
-            continue;
+            {
+                turn_processing_ctx.harness_state.record_approved_plan_recovery_retry();
+                turn_processing_ctx
+                    .working_history
+                    .push(uni::Message::system(APPROVED_PLAN_STALE_PAUSE_RECOVERY_DIRECTIVE.to_string()));
+                let _ = turn_processing_ctx
+                    .renderer
+                    .line(MessageStyle::Info, "Approved-plan execution resumed after clearing stale recovery state.");
+                continue;
+            }
         }
 
         // Restore input status if there are no tool calls (turn is completing)
