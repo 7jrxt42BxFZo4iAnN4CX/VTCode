@@ -690,7 +690,7 @@ async fn turn_loop_preserves_legacy_loop_detector_state() {
 }
 
 #[tokio::test]
-async fn anti_blind_guard_stops_outer_loop_after_two_pending_text_responses() {
+async fn anti_blind_guard_stops_outer_loop_after_two_pending_stale_plan_pause_responses() {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -736,7 +736,9 @@ async fn anti_blind_guard_stops_outer_loop_after_two_pending_text_responses() {
             } else {
                 self.text_responses.fetch_add(1, Ordering::SeqCst);
                 uni::LLMResponse {
-                    content: Some("The change is complete.".to_string()),
+                    content: Some(
+                        "Implementation is paused because tool use is disabled. Wait for the next turn.".to_string(),
+                    ),
                     model: request.model.clone(),
                     tool_calls: None,
                     usage: None,
@@ -770,7 +772,9 @@ async fn anti_blind_guard_stops_outer_loop_after_two_pending_text_responses() {
     }));
 
     let mut history = vec![uni::Message::user("apply and verify the requested change".to_string())];
-    let outcome = run_turn_loop(&mut history, backing.turn_loop_context())
+    let turn_context = backing.turn_loop_context();
+    turn_context.harness_state.set_approved_plan_execution(true);
+    let outcome = run_turn_loop(&mut history, turn_context)
         .await
         .expect("turn loop should stop at the pending-verification response cap");
 
@@ -783,17 +787,20 @@ async fn anti_blind_guard_stops_outer_loop_after_two_pending_text_responses() {
     ));
     assert_eq!(text_responses.load(Ordering::SeqCst), 2);
     assert_eq!(requests.load(Ordering::SeqCst), 6, "the provider must not receive a third pending text request");
-    assert!(!outcome.final_response_was_fallback);
-    assert!(
-        !history
-            .iter()
-            .any(|message| message.content.as_text().contains("The change is complete."))
-    );
-    assert!(
-        !history
-            .iter()
-            .any(|message| message.phase == Some(uni::AssistantPhase::FinalAnswer))
-    );
+    assert!(outcome.final_response_was_fallback);
+    assert!(history.iter().any(|message| {
+        message.phase == Some(uni::AssistantPhase::FinalAnswer)
+            && message
+                .content
+                .as_text()
+                .contains("The turn stopped before a final assistant response was produced.")
+    }));
+    assert!(!history.iter().any(|message| {
+        message
+            .content
+            .as_text()
+            .contains("Implementation is paused because tool use is disabled.")
+    }));
 }
 
 #[test]

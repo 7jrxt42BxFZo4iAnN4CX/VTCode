@@ -110,6 +110,52 @@ pub(crate) async fn execute_llm_request(
     tool_free_recovery: bool,
     parallel_cfg_opt: Option<Box<ParallelToolConfig>>,
 ) -> Result<(uni::LLMResponse, bool)> {
+    execute_llm_request_with_options_impl(
+        ctx,
+        step_count,
+        active_model,
+        max_tokens_opt,
+        tool_free_recovery,
+        parallel_cfg_opt,
+        false,
+    )
+    .await
+}
+
+impl TurnProcessingContext<'_> {
+    /// Execute an LLM request with per-request output handling options.
+    pub(crate) async fn execute_llm_request_with_options(
+        &mut self,
+        step_count: usize,
+        active_model: &str,
+        max_tokens_opt: Option<u32>,
+        tool_free_recovery: bool,
+        parallel_cfg_opt: Option<Box<ParallelToolConfig>>,
+        suppress_output: bool,
+    ) -> Result<(uni::LLMResponse, bool)> {
+        execute_llm_request_with_options_impl(
+            self,
+            step_count,
+            active_model,
+            max_tokens_opt,
+            tool_free_recovery,
+            parallel_cfg_opt,
+            suppress_output,
+        )
+        .await
+    }
+}
+
+#[cfg_attr(feature = "profiling", hotpath::measure)]
+async fn execute_llm_request_with_options_impl(
+    ctx: &mut TurnProcessingContext<'_>,
+    step_count: usize,
+    active_model: &str,
+    max_tokens_opt: Option<u32>,
+    tool_free_recovery: bool,
+    parallel_cfg_opt: Option<Box<ParallelToolConfig>>,
+    suppress_output: bool,
+) -> Result<(uni::LLMResponse, bool)> {
     let turn_snapshot = capture_turn_request_snapshot(ctx, active_model, tool_free_recovery);
     let active_model = turn_snapshot.active_model.clone();
     let first_progress_timeout_secs = llm_first_progress_timeout_secs(
@@ -255,6 +301,7 @@ pub(crate) async fn execute_llm_request(
             let stream_options = StreamSpinnerOptions {
                 defer_finish: has_tools,
                 strip_proposed_plan_blocks: turn_snapshot.planning_active,
+                suppress_output,
             };
             let mut progress = |event: StreamProgressEvent| stream_bridge.on_progress(event);
             let stream_result = if turn_snapshot.provider_name == vtcode_core::copilot::COPILOT_PROVIDER_KEY {

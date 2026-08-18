@@ -672,6 +672,12 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
                 if visible_delta.is_empty() {
                     continue;
                 }
+                if options.suppress_output {
+                    if !has_aggregated_override {
+                        aggregated.push_str(&visible_delta);
+                    }
+                    continue;
+                }
                 if let Some(callback) = on_progress.as_deref_mut() {
                     callback(StreamProgressEvent::OutputDelta(visible_delta.clone()));
                 }
@@ -718,7 +724,7 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
                 }
                 finish_spinner(&mut spinner_active, false);
                 reasoning_accumulated.push_str(&delta);
-                if stream_reasoning_deltas {
+                if stream_reasoning_deltas && !options.suppress_output {
                     pending_reasoning_delta.push_str(&delta);
                     pending_reasoning_render_bytes = pending_reasoning_render_bytes.saturating_add(delta.len());
                     let should_render_now = !reasoning_emitted
@@ -754,10 +760,12 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
                     )?;
                 }
                 if stream_reasoning_deltas {
-                    if let Some(callback) = on_progress.as_deref_mut() {
-                        callback(StreamProgressEvent::ReasoningStage(stage.clone()));
+                    if !options.suppress_output {
+                        if let Some(callback) = on_progress.as_deref_mut() {
+                            callback(StreamProgressEvent::ReasoningStage(stage.clone()));
+                        }
+                        spinner.set_reasoning_stage(Some(stage));
                     }
-                    spinner.set_reasoning_stage(Some(stage));
                 }
             }
             Ok(LLMStreamEvent::ReasoningSignature { .. }) => {
@@ -778,7 +786,7 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
 
     finish_spinner(&mut spinner_active, false);
 
-    if stream_reasoning_deltas && !pending_reasoning_delta.is_empty() {
+    if !options.suppress_output && stream_reasoning_deltas && !pending_reasoning_delta.is_empty() {
         let rendered = flush_pending_reasoning_delta(
             provider_name,
             renderer,
@@ -793,7 +801,7 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
 
     if let Some(parser) = plan_parser.as_mut() {
         let trailing_plan_parse = parser.finish();
-        if !trailing_plan_parse.stripped_text.is_empty() {
+        if !options.suppress_output && !trailing_plan_parse.stripped_text.is_empty() {
             if let Some(callback) = on_progress {
                 callback(StreamProgressEvent::OutputDelta(trailing_plan_parse.stripped_text.clone()));
             }
@@ -814,7 +822,7 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
         }
     }
 
-    if supports_streaming_markdown && pending_render_bytes > 0 {
+    if !options.suppress_output && supports_streaming_markdown && pending_render_bytes > 0 {
         rendered_line_count =
             stream_markdown_with_provider_error(provider_name, renderer, &aggregated, rendered_line_count)?;
         emitted_tokens = true;
@@ -832,6 +840,10 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
             return Err(uni::LLMError::Provider { message: formatted_error, metadata: None });
         }
     };
+
+    if options.suppress_output {
+        return Ok((response, false));
+    }
 
     if !pending_content.is_empty() && !content_suppressed {
         let reasoning_for_compare = response.reasoning.as_deref().unwrap_or(reasoning_accumulated.as_str());

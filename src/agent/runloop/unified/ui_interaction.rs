@@ -654,6 +654,7 @@ pub(crate) fn start_loading_status(
 pub(crate) struct StreamSpinnerOptions {
     pub defer_finish: bool,
     pub strip_proposed_plan_blocks: bool,
+    pub suppress_output: bool,
 }
 
 pub(crate) use vtcode_core::core::agent::runtime::RuntimeModelProgress as StreamProgressEvent;

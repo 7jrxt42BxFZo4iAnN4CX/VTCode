@@ -15,7 +15,7 @@ use crate::agent::runloop::unified::turn::context::{
 use crate::agent::runloop::unified::turn::guards::handle_turn_balancer;
 use crate::agent::runloop::unified::turn::tool_outcomes::{ToolOutcomeContext, helpers};
 use crate::agent::runloop::unified::turn::turn_loop::{
-    MAX_ASSISTANT_TEXT_RESPONSES_PER_TURN, RECOVERY_CONTRACT_VIOLATION_REASON,
+    MAX_ASSISTANT_TEXT_RESPONSES_PER_TURN, PENDING_VERIFICATION_BLOCK_REASON, RECOVERY_CONTRACT_VIOLATION_REASON,
 };
 
 /// Result of processing a single turn.
@@ -89,6 +89,38 @@ fn record_assistant_tool_calls(
         uni::Message::assistant_with_tools(String::new(), raw_tool_calls)
             .with_phase(Some(uni::AssistantPhase::Commentary)),
     );
+}
+
+impl TurnProcessingContext<'_> {
+    /// Account for a text response while verification is pending.
+    ///
+    /// The model response is intentionally not stored or rendered. Once the
+    /// shared per-turn cap is reached, return a blocked result so the outer
+    /// turn loop can publish its deterministic fallback without claiming
+    /// unverified work.
+    pub(crate) fn handle_pending_verification_text_response(
+        &mut self,
+        repeated_tool_attempts: &mut helpers::LoopTracker,
+    ) -> Result<Option<TurnLoopResult>> {
+        repeated_tool_attempts.mark_verification_pending();
+        if !repeated_tool_attempts.verification_warning_emitted {
+            self.renderer
+                .line(MessageStyle::Warning, helpers::ANTI_BLIND_EDITING_WARNING)
+                .unwrap_or(());
+            self.working_history
+                .push(uni::Message::system(helpers::ANTI_BLIND_EDITING_DIRECTIVE.to_string()));
+            repeated_tool_attempts.verification_warning_emitted = true;
+        }
+
+        let response_count = self.harness_state.record_assistant_text_response();
+        if response_count < MAX_ASSISTANT_TEXT_RESPONSES_PER_TURN {
+            return Ok(None);
+        }
+
+        Ok(Some(TurnLoopResult::Blocked {
+            reason: Some(PENDING_VERIFICATION_BLOCK_REASON.to_string()),
+        }))
+    }
 }
 
 /// Dispatch the appropriate response handler based on the processing result.
@@ -194,29 +226,15 @@ pub(crate) async fn handle_turn_processing_result<'a>(
         }
         TurnProcessingResult::TextResponse { text, reasoning, reasoning_details, proposed_plan } => {
             if params.repeated_tool_attempts.verification_is_pending() {
-                params.repeated_tool_attempts.mark_verification_pending();
-                if !params.repeated_tool_attempts.verification_warning_emitted {
-                    params
+                return Ok(
+                    match params
                         .ctx
-                        .renderer
-                        .line(MessageStyle::Warning, helpers::ANTI_BLIND_EDITING_WARNING)
-                        .unwrap_or(());
-                    params
-                        .ctx
-                        .working_history
-                        .push(uni::Message::system(helpers::ANTI_BLIND_EDITING_DIRECTIVE.to_string()));
-                    params.repeated_tool_attempts.verification_warning_emitted = true;
-                }
-                let response_count = params.ctx.harness_state.record_assistant_text_response();
-                if response_count >= MAX_ASSISTANT_TEXT_RESPONSES_PER_TURN {
-                    return Ok(TurnHandlerOutcome::Break(TurnLoopResult::Blocked {
-                        reason: Some(
-                            "Turn blocked after repeated unverified assistant responses; verification is still pending."
-                                .to_string(),
-                        ),
-                    }));
-                }
-                return Ok(TurnHandlerOutcome::Continue);
+                        .handle_pending_verification_text_response(params.repeated_tool_attempts)?
+                    {
+                        Some(result) => TurnHandlerOutcome::Break(result),
+                        None => TurnHandlerOutcome::Continue,
+                    },
+                );
             }
 
             if params.ctx.is_recovery_active()

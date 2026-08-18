@@ -102,6 +102,8 @@ const MAX_RECOVERY_RETRIES: u8 = 3;
 /// responses terminates the runaway loop while still allowing one retry
 /// for genuine recovery scenarios.
 pub(crate) const MAX_ASSISTANT_TEXT_RESPONSES_PER_TURN: u32 = 2;
+pub(crate) const PENDING_VERIFICATION_BLOCK_REASON: &str =
+    "Turn blocked after repeated unverified assistant responses; verification is still pending.";
 /// Maximum number of times the post-tool follow-up failure path may schedule
 /// a tool-free recovery pass within a single turn. This is a defense-in-depth
 /// backstop: the recovery pass itself is terminal (a text response ends the
@@ -175,7 +177,7 @@ const PLANNING_RECOVERY_EXHAUSTED_NO_DRAFT_NOTICE: &str = "Plan synthesis failed
 /// `result_handler` (producer) and `post_tool_recovery` (consumer).
 pub(super) const RECOVERY_CONTRACT_VIOLATION_REASON: &str =
     "Recovery mode requested a final tool-free synthesis pass, but the model attempted more tool calls.";
-const COMPLETED_TURN_FALLBACK_RESPONSE: &str = "The turn stopped before a final assistant response was produced. No final outcome was confirmed; please retry the request.";
+pub(crate) const COMPLETED_TURN_FALLBACK_RESPONSE: &str = "The turn stopped before a final assistant response was produced. No final outcome was confirmed; please retry the request.";
 const COMPLETED_TURN_FALLBACK_REASON: &str = "Turn ended with a recovery fallback; the requested work was not confirmed. The current plan and task state were retained.";
 const COMPLETED_TURN_NO_RESPONSE_REASON: &str =
     "Turn ended without a harness-visible final assistant response, so successful completion could not be confirmed.";
@@ -893,16 +895,30 @@ pub(crate) async fn run_turn_loop(
         }
         turn_processing_ctx.session_stats.note_request_sent();
 
-        let (response, response_streamed) = match execute_llm_request(
-            &mut turn_processing_ctx,
-            step_count,
-            &active_model,
-            tool_free_recovery.then_some(RECOVERY_SYNTHESIS_MAX_TOKENS),
-            tool_free_recovery,
-            None, // parallel_cfg_opt
-        )
-        .await
-        {
+        let suppress_unverified_output = repeated_tool_attempts.verification_is_pending();
+        let request_result = if suppress_unverified_output {
+            turn_processing_ctx
+                .execute_llm_request_with_options(
+                    step_count,
+                    &active_model,
+                    tool_free_recovery.then_some(RECOVERY_SYNTHESIS_MAX_TOKENS),
+                    tool_free_recovery,
+                    None, // parallel_cfg_opt
+                    true,
+                )
+                .await
+        } else {
+            execute_llm_request(
+                &mut turn_processing_ctx,
+                step_count,
+                &active_model,
+                tool_free_recovery.then_some(RECOVERY_SYNTHESIS_MAX_TOKENS),
+                tool_free_recovery,
+                None, // parallel_cfg_opt
+            )
+            .await
+        };
+        let (response, response_streamed) = match request_result {
             Ok(val) => val,
             Err(err) => {
                 // Record the error in the recovery state for diagnostics
@@ -1243,6 +1259,15 @@ pub(crate) async fn run_turn_loop(
                 if turn_processing_ctx.is_approved_plan_execution()
                     && is_stale_approved_plan_pause_response(text)
         );
+        if stale_approved_plan_pause && repeated_tool_attempts.verification_is_pending() {
+            if let Some(blocked_result) =
+                turn_processing_ctx.handle_pending_verification_text_response(&mut repeated_tool_attempts)?
+            {
+                result = blocked_result;
+                break;
+            }
+            continue;
+        }
         if stale_approved_plan_pause
             && turn_processing_ctx.harness_state.approved_plan_recovery_retries()
                 < MAX_APPROVED_PLAN_STALE_PAUSE_RETRIES
@@ -1429,6 +1454,21 @@ pub(crate) async fn run_turn_loop(
                 break;
             }
         }
+    }
+
+    if matches!(
+        &result,
+        TurnLoopResult::Blocked {
+            reason: Some(reason)
+        } if reason == PENDING_VERIFICATION_BLOCK_REASON
+    ) && !ctx.harness_state.final_response_was_fallback()
+    {
+        ctx.harness_state.mark_final_response_fallback();
+        working_history.push(
+            uni::Message::assistant(COMPLETED_TURN_FALLBACK_RESPONSE.to_string())
+                .with_phase(Some(uni::AssistantPhase::FinalAnswer)),
+        );
+        let _ = publish_final_assistant_response(&mut ctx, COMPLETED_TURN_FALLBACK_RESPONSE)?;
     }
 
     let final_response_was_fallback = if matches!(result, TurnLoopResult::Completed { .. }) {

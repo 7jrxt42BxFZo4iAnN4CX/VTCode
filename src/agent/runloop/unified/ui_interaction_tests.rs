@@ -527,6 +527,7 @@ async fn strips_proposed_plan_tags_when_option_enabled() {
         StreamSpinnerOptions {
             defer_finish: false,
             strip_proposed_plan_blocks: true,
+            suppress_output: false,
         },
     )
     .await
@@ -628,6 +629,46 @@ async fn emits_progress_events_for_stream_deltas() {
         events
             .iter()
             .any(|event| matches!(event, StreamProgressEvent::OutputDelta(delta) if delta == "final content"))
+    );
+}
+
+#[tokio::test]
+async fn suppresses_unverified_stream_output_but_returns_response_for_handling() {
+    let provider = ReasoningThenContentProvider {
+        content: "The change is complete.".to_string(),
+        reasoning: "unverified reasoning".to_string(),
+    };
+    let request = build_request();
+    let (tx, _rx) = mpsc::unbounded_channel::<InlineCommand>();
+    let handle = InlineHandle::new_for_tests(tx);
+    let spinner = PlaceholderSpinner::new(&handle, None, None, "");
+    let mut renderer = AnsiRenderer::with_inline_ui(handle, Default::default());
+    let ctrl_c_state = super::state::CtrlCState::new();
+    let ctrl_c_notify = Arc::new(Notify::new());
+    let mut events: Vec<StreamProgressEvent> = Vec::new();
+    let mut callback = |event: StreamProgressEvent| events.push(event);
+
+    let (response, emitted) = stream_and_render_response_with_options_and_progress(
+        &provider,
+        request,
+        &spinner,
+        &mut renderer,
+        &Arc::new(ctrl_c_state),
+        &ctrl_c_notify,
+        StreamSpinnerOptions {
+            suppress_output: true,
+            ..StreamSpinnerOptions::default()
+        },
+        Some(&mut callback),
+    )
+    .await
+    .expect("suppressed stream should still return its response");
+
+    assert!(!emitted, "unverified assistant output must not be rendered");
+    assert_eq!(response.content.as_deref(), Some("The change is complete."));
+    assert!(
+        !events.iter().any(|event| matches!(event, StreamProgressEvent::OutputDelta(_))),
+        "unverified assistant output must not emit lifecycle OutputDelta events"
     );
 }
 
