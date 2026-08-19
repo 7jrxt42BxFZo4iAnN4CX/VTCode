@@ -104,6 +104,14 @@ const MAX_RECOVERY_RETRIES: u8 = 3;
 pub(crate) const MAX_ASSISTANT_TEXT_RESPONSES_PER_TURN: u32 = 2;
 pub(crate) const PENDING_VERIFICATION_BLOCK_REASON: &str =
     "Turn blocked after repeated unverified assistant responses; verification is still pending.";
+const PENDING_VERIFICATION_FINAL_RESPONSE: &str = "The turn is blocked because verification is still pending. \
+    Inspection-only checks do not clear the verification gate; run `cargo check --locked` \
+    or the relevant `cargo nextest run` command, then resume the request.";
+const CONTEXT_CAPACITY_FINAL_RESPONSE: &str = "The turn is blocked because context capacity or compaction failed. \
+    The retained tool outputs and progress are preserved; resume the request or switch \
+    models and try again.";
+const GENERIC_BLOCKED_FINAL_RESPONSE: &str = "The turn is blocked before success could be confirmed. \
+    The available history and outputs are retained; resume the request to continue.";
 /// Maximum number of times the post-tool follow-up failure path may schedule
 /// a tool-free recovery pass within a single turn. This is a defense-in-depth
 /// backstop: the recovery pass itself is terminal (a text response ends the
@@ -279,6 +287,45 @@ fn publish_final_assistant_response(ctx: &mut TurnLoopContext<'_>, text: &str) -
     }
 
     Ok(ctx.harness_state.final_response_event_emitted())
+}
+
+fn blocked_turn_final_response(reason: &str) -> &'static str {
+    if reason.contains(PENDING_VERIFICATION_BLOCK_REASON) {
+        PENDING_VERIFICATION_FINAL_RESPONSE
+    } else if reason.contains(POST_TOOL_CONTEXT_COMPACTION_FAILED_REASON) {
+        CONTEXT_CAPACITY_FINAL_RESPONSE
+    } else {
+        GENERIC_BLOCKED_FINAL_RESPONSE
+    }
+}
+
+fn ensure_blocked_turn_response(
+    ctx: &mut TurnLoopContext<'_>,
+    working_history: &mut Vec<uni::Message>,
+    turn_history_start_len: usize,
+    reason: &str,
+) -> Result<()> {
+    let existing_final = latest_final_assistant_response(working_history, turn_history_start_len);
+    let generated_fallback = existing_final.is_none();
+    let final_text = existing_final.unwrap_or_else(|| blocked_turn_final_response(reason).to_string());
+    if generated_fallback {
+        ctx.harness_state.mark_final_response_fallback();
+        working_history
+            .push(uni::Message::assistant(final_text.clone()).with_phase(Some(uni::AssistantPhase::FinalAnswer)));
+    }
+    if generated_fallback && ctx.harness_state.final_response_event_emitted() {
+        // The harness already has the one allowed final assistant item. The
+        // retained history may have been compacted after that emission, so
+        // restore the deterministic handoff locally without duplicating the
+        // canonical AgentMessage event.
+        if !ctx.harness_state.final_response_rendered() {
+            ctx.renderer.line(MessageStyle::Response, &final_text)?;
+            ctx.harness_state.mark_final_response_rendered();
+        }
+    } else {
+        let _ = publish_final_assistant_response(ctx, &final_text)?;
+    }
+    Ok(())
 }
 
 /// Ensure a completed turn has crossed both user-visible response surfaces.
@@ -1471,19 +1518,13 @@ pub(crate) async fn run_turn_loop(
         }
     }
 
-    if matches!(
-        &result,
-        TurnLoopResult::Blocked {
-            reason: Some(reason)
-        } if reason == PENDING_VERIFICATION_BLOCK_REASON
-    ) && !ctx.harness_state.final_response_was_fallback()
-    {
-        ctx.harness_state.mark_final_response_fallback();
-        working_history.push(
-            uni::Message::assistant(COMPLETED_TURN_FALLBACK_RESPONSE.to_string())
-                .with_phase(Some(uni::AssistantPhase::FinalAnswer)),
-        );
-        let _ = publish_final_assistant_response(&mut ctx, COMPLETED_TURN_FALLBACK_RESPONSE)?;
+    if let TurnLoopResult::Blocked { reason } = &result {
+        ensure_blocked_turn_response(
+            &mut ctx,
+            working_history,
+            turn_history_start_len,
+            reason.as_deref().unwrap_or("blocked"),
+        )?;
     }
 
     let final_response_was_fallback = if matches!(result, TurnLoopResult::Completed { .. }) {

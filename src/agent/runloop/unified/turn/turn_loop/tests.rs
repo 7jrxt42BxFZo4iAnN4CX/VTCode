@@ -2,13 +2,19 @@ use super::post_tool_recovery::complete_turn_after_failed_tool_free_recovery;
 use super::post_tool_recovery::prepare_post_tool_tool_free_recovery;
 use super::post_tool_recovery::{ensure_post_tool_resume_directive, has_tool_response_since};
 use super::{
-    HarnessUsage, PLANNING_RECOVERY_SYNTHESIS_FALLBACK, POST_TOOL_RECOVERY_REASON, POST_TOOL_RECOVERY_REASON_PLAN_MODE,
+    HarnessUsage, PENDING_VERIFICATION_BLOCK_REASON, PLANNING_RECOVERY_SYNTHESIS_FALLBACK,
+    POST_TOOL_CONTEXT_COMPACTION_FAILED_REASON, POST_TOOL_RECOVERY_REASON, POST_TOOL_RECOVERY_REASON_PLAN_MODE,
     POST_TOOL_RESUME_DIRECTIVE, POST_TOOL_TOOL_ENABLED_RETRY_DIRECTIVE, PostToolFailureRecovery,
     RECOVERY_CONTRACT_VIOLATION_REASON, RECOVERY_SYNTHESIS_FALLBACK_FINAL_ANSWER, accumulate_turn_usage,
-    count_assistant_text_responses_for_guard, count_assistant_text_responses_in_turn, current_turn_preserve_index,
-    has_turn_usage, maybe_recover_after_post_tool_llm_failure, normalize_tool_free_recovery_break_outcome,
-    run_turn_loop,
+    blocked_turn_final_response, count_assistant_text_responses_for_guard, count_assistant_text_responses_in_turn,
+    current_turn_preserve_index, ensure_blocked_turn_response, finalize_turn, has_turn_usage,
+    maybe_recover_after_post_tool_llm_failure, normalize_tool_free_recovery_break_outcome, run_turn_loop,
 };
+use std::fs;
+use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+
 use crate::agent::runloop::unified::planning_workflow::recovery::{
     PLANNING_SYNTHESIS_TRUNCATED_CONDENSE_DIRECTIVE, plan_synthesis_was_truncated,
 };
@@ -18,9 +24,83 @@ use crate::agent::runloop::unified::turn::turn_processing::test_support::TestTur
 use anyhow::anyhow;
 use serde_json::json;
 use vtcode_core::config::constants::tools as tool_names;
+use vtcode_core::exec::events::{ThreadEvent, ThreadItemDetails, VersionedThreadEvent};
 use vtcode_core::llm::provider as uni;
 use vtcode_core::utils::ansi::AnsiRenderer;
 use vtcode_ui::tui::app::InlineHandle;
+
+const PENDING_VERIFICATION_RESPONSE_MARKER: &str = "Inspection-only checks do not clear the verification gate";
+const CONTEXT_CAPACITY_RESPONSE_MARKER: &str = "context capacity or compaction failed";
+
+fn final_answer_text(history: &[uni::Message]) -> String {
+    history
+        .iter()
+        .filter(|message| message.phase == Some(uni::AssistantPhase::FinalAnswer))
+        .map(|message| message.content.as_text())
+        .next_back()
+        .expect("blocked turn should retain a final assistant response")
+        .to_string()
+}
+
+fn assert_blocked_response_surfaces(
+    backing: &mut TestTurnProcessingBacking,
+    history: &[uni::Message],
+    harness_path: &Path,
+    response_marker: &str,
+) {
+    let response = final_answer_text(history);
+    assert!(response.contains(response_marker), "unexpected blocked response: {response}");
+    assert_eq!(
+        history
+            .iter()
+            .filter(|message| message.phase == Some(uni::AssistantPhase::FinalAnswer))
+            .count(),
+        1,
+        "blocked recovery must append exactly one final assistant message"
+    );
+
+    let rendered = backing.rendered_inline_output();
+    assert_eq!(
+        rendered.matches(response_marker).count(),
+        1,
+        "blocked recovery must render the final response exactly once: {rendered}"
+    );
+
+    let harness = fs::read_to_string(harness_path).expect("read harness events");
+    let events = harness
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<VersionedThreadEvent>(line)
+                .expect("blocked recovery harness output should use the versioned event contract")
+                .into_event()
+        })
+        .collect::<Vec<_>>();
+    let agent_messages = events
+        .iter()
+        .filter(|event| {
+            let ThreadEvent::ItemCompleted(item) = event else {
+                return false;
+            };
+            let ThreadItemDetails::AgentMessage(message) = &item.item.details else {
+                return false;
+            };
+            message.text.contains(response_marker)
+        })
+        .count();
+    assert_eq!(agent_messages, 1, "blocked recovery must emit one agent_message item: {harness}");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, ThreadEvent::TurnFailed(_)))
+            .count(),
+        1,
+        "blocked recovery must emit one turn.failed event: {harness}"
+    );
+    assert!(
+        !events.iter().any(|event| matches!(event, ThreadEvent::TurnCompleted(_))),
+        "blocked recovery must not emit turn.completed: {harness}"
+    );
+}
 
 #[test]
 fn current_turn_preserve_index_keeps_user_request_before_transient_notes() {
@@ -333,6 +413,44 @@ async fn empty_model_response_after_recovery_is_visible_and_blocked() {
         .map(|message| message.content.as_text().trim().to_string())
         .unwrap_or_default();
     assert!(!final_text.is_empty(), "recovery must not leave an empty final response");
+}
+
+#[test]
+fn blocked_turn_final_response_explains_pending_verification() {
+    let response = blocked_turn_final_response(PENDING_VERIFICATION_BLOCK_REASON);
+
+    assert!(response.contains("Inspection-only checks do not clear the verification gate"));
+    assert!(response.contains("cargo check --locked"));
+    assert!(response.contains("cargo nextest run"));
+}
+
+#[test]
+fn blocked_turn_final_response_explains_context_capacity_failure() {
+    let response =
+        blocked_turn_final_response(&format!("recovery failed: {POST_TOOL_CONTEXT_COMPACTION_FAILED_REASON}"));
+
+    assert!(response.contains("context capacity"));
+    assert!(response.contains("retained"));
+    assert!(response.contains("resume"));
+    assert!(response.contains("switch models"));
+}
+
+#[test]
+fn blocked_turn_final_response_is_not_suppressed_by_prior_event_state() {
+    // A prior streamed event is not evidence that this blocked outcome has a
+    // final assistant item; the blocked handoff must still be selected.
+    assert!(
+        blocked_turn_final_response(&format!("prior event; {PENDING_VERIFICATION_BLOCK_REASON}"))
+            .contains("Inspection-only checks")
+    );
+}
+
+#[test]
+fn blocked_turn_final_response_has_generic_fallback() {
+    let response = blocked_turn_final_response("some other blocked reason");
+
+    assert!(response.contains("blocked"));
+    assert!(response.contains("resume"));
 }
 
 #[tokio::test]
@@ -793,14 +911,303 @@ async fn anti_blind_guard_stops_outer_loop_after_two_pending_stale_plan_pause_re
             && message
                 .content
                 .as_text()
-                .contains("The turn stopped before a final assistant response was produced.")
+                .contains("Inspection-only checks do not clear the verification gate")
     }));
+    assert_eq!(
+        history
+            .iter()
+            .filter(|message| message.phase == Some(uni::AssistantPhase::FinalAnswer))
+            .count(),
+        1
+    );
     assert!(!history.iter().any(|message| {
         message
             .content
             .as_text()
             .contains("Implementation is paused because tool use is disabled.")
     }));
+}
+
+#[tokio::test]
+async fn blocked_anti_blind_recovery_publishes_one_actionable_handoff() {
+    #[derive(Clone)]
+    struct VerificationRecoveryProvider {
+        requests: Arc<AtomicUsize>,
+        steps: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl uni::LLMProvider for VerificationRecoveryProvider {
+        fn name(&self) -> &str {
+            "openai"
+        }
+
+        fn supports_streaming(&self) -> bool {
+            false
+        }
+
+        async fn generate(&self, request: uni::LLMRequest) -> Result<uni::LLMResponse, uni::LLMError> {
+            let request_number = self.requests.fetch_add(1, Ordering::SeqCst);
+            let tool_call = |label: &str, tool_name: &str, args: serde_json::Value| {
+                self.steps.lock().expect("step trace lock").push(label.to_string());
+                uni::LLMResponse {
+                    content: None,
+                    model: request.model.clone(),
+                    tool_calls: Some(vec![uni::ToolCall::function(
+                        format!("verification-{request_number}"),
+                        tool_name.to_string(),
+                        args.to_string(),
+                    )]),
+                    usage: None,
+                    finish_reason: uni::FinishReason::Stop,
+                    reasoning: None,
+                    reasoning_details: None,
+                    organization_id: None,
+                    request_id: None,
+                    tool_references: Vec::new(),
+                    compaction: None,
+                }
+            };
+
+            let patch = |path: &str, contents: &str| {
+                format!("*** Begin Patch\n*** Add File: {path}\n+{contents}\n*** End Patch\n")
+            };
+
+            let response = match request_number {
+                0..=2 => tool_call(
+                    "successful_edit",
+                    tool_names::APPLY_PATCH,
+                    json!({"patch": patch(&format!("anti-blind-sequence-{request_number}.txt"), "effective edit")}),
+                ),
+                3 => tool_call(
+                    "failed_patch",
+                    tool_names::APPLY_PATCH,
+                    json!({
+                        "patch": "*** Begin Patch\n*** Update File: missing-target.txt\n@@\n-old\n+new\n*** End Patch\n"
+                    }),
+                ),
+                4 => tool_call(
+                    "inspection",
+                    tool_names::EXEC_COMMAND,
+                    json!({"cmd": "rg -n 'effective edit' . || true"}),
+                ),
+                5 => tool_call(
+                    "link_check",
+                    tool_names::EXEC_COMMAND,
+                    json!({"cmd": "rg -n '\\[[^]]+\\]\\([^)]*\\)' . || true"}),
+                ),
+                6 => tool_call("diff_check", tool_names::EXEC_COMMAND, json!({"cmd": "git diff --check"})),
+                7 => tool_call(
+                    "successful_edit",
+                    tool_names::APPLY_PATCH,
+                    json!({"patch": patch("anti-blind-sequence-final.txt", "last effective edit")}),
+                ),
+                _ => {
+                    self.steps.lock().expect("step trace lock").push("unverified_text".to_string());
+                    uni::LLMResponse {
+                        content: Some("The edits are complete, but verification was not run.".to_string()),
+                        model: request.model.clone(),
+                        tool_calls: None,
+                        usage: None,
+                        finish_reason: uni::FinishReason::Stop,
+                        reasoning: None,
+                        reasoning_details: None,
+                        organization_id: None,
+                        request_id: None,
+                        tool_references: Vec::new(),
+                        compaction: None,
+                    }
+                }
+            };
+            Ok(response)
+        }
+
+        fn supported_models(&self) -> Vec<String> {
+            vec!["noop-model".to_string()]
+        }
+
+        fn validate_request(&self, _request: &uni::LLMRequest) -> Result<(), uni::LLMError> {
+            Ok(())
+        }
+    }
+
+    let requests = Arc::new(AtomicUsize::new(0));
+    let steps = Arc::new(Mutex::new(Vec::new()));
+    let mut backing = TestTurnProcessingBacking::new(16).await;
+    let harness_path = backing.enable_harness_emitter();
+    backing.set_provider(Box::new(VerificationRecoveryProvider { requests: requests.clone(), steps: steps.clone() }));
+
+    let mut history = vec![uni::Message::user("apply the change and verify it".to_string())];
+    let turn_context = backing.turn_loop_context();
+    turn_context.harness_state.set_approved_plan_execution(true);
+    let outcome = run_turn_loop(&mut history, turn_context)
+        .await
+        .expect("anti-blind recovery should return a blocked outcome");
+
+    assert!(matches!(
+        outcome.result,
+        TurnLoopResult::Blocked {
+            reason: Some(ref reason)
+        } if reason == PENDING_VERIFICATION_BLOCK_REASON
+    ));
+    assert_eq!(requests.load(Ordering::SeqCst), 10, "two pending text responses are the terminal cap");
+    assert_eq!(
+        steps.lock().expect("step trace lock").as_slice(),
+        [
+            "successful_edit",
+            "successful_edit",
+            "successful_edit",
+            "failed_patch",
+            "inspection",
+            "link_check",
+            "diff_check",
+            "successful_edit",
+            "unverified_text",
+            "unverified_text",
+        ]
+    );
+    assert_blocked_response_surfaces(&mut backing, &history, &harness_path, PENDING_VERIFICATION_RESPONSE_MARKER);
+}
+
+#[tokio::test]
+async fn context_capacity_blocked_recovery_publishes_one_actionable_handoff() {
+    #[derive(Clone)]
+    struct ContextCapacityProvider {
+        requests: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl uni::LLMProvider for ContextCapacityProvider {
+        fn name(&self) -> &str {
+            "openai"
+        }
+
+        fn supports_streaming(&self) -> bool {
+            false
+        }
+
+        async fn generate(&self, request: uni::LLMRequest) -> Result<uni::LLMResponse, uni::LLMError> {
+            if self.requests.fetch_add(1, Ordering::SeqCst) == 0 {
+                let patch =
+                    "*** Begin Patch\n*** Add File: context-capacity-sequence.txt\n+effective edit\n*** End Patch\n";
+                return Ok(uni::LLMResponse {
+                    content: None,
+                    model: request.model,
+                    tool_calls: Some(vec![uni::ToolCall::function(
+                        "context-capacity-edit".to_string(),
+                        tool_names::APPLY_PATCH.to_string(),
+                        json!({"patch": patch}).to_string(),
+                    )]),
+                    usage: None,
+                    finish_reason: uni::FinishReason::Stop,
+                    reasoning: None,
+                    reasoning_details: None,
+                    organization_id: None,
+                    request_id: None,
+                    tool_references: Vec::new(),
+                    compaction: None,
+                });
+            }
+
+            Err(uni::LLMError::InvalidRequest {
+                message: "maximum context length is 114688 tokens".to_string(),
+                metadata: None,
+            })
+        }
+
+        fn supported_models(&self) -> Vec<String> {
+            vec!["noop-model".to_string()]
+        }
+
+        fn validate_request(&self, _request: &uni::LLMRequest) -> Result<(), uni::LLMError> {
+            Ok(())
+        }
+    }
+
+    let requests = Arc::new(AtomicUsize::new(0));
+    let mut backing = TestTurnProcessingBacking::new(8).await;
+    let harness_path = backing.enable_harness_emitter();
+    backing.set_provider(Box::new(ContextCapacityProvider { requests: requests.clone() }));
+
+    let mut history = vec![uni::Message::user("apply the change".to_string())];
+    let outcome = run_turn_loop(&mut history, backing.turn_loop_context())
+        .await
+        .expect("context-capacity recovery should return a blocked outcome");
+
+    assert!(matches!(
+        outcome.result,
+        TurnLoopResult::Blocked {
+            reason: Some(ref reason)
+        } if reason == POST_TOOL_CONTEXT_COMPACTION_FAILED_REASON
+    ));
+    assert_eq!(requests.load(Ordering::SeqCst), 2, "context failure should stop after the bounded retry path");
+    assert!(history.iter().any(|message| {
+        message.role == uni::MessageRole::System && message.content.as_text().contains(POST_TOOL_RESUME_DIRECTIVE)
+    }));
+    assert_blocked_response_surfaces(&mut backing, &history, &harness_path, CONTEXT_CAPACITY_RESPONSE_MARKER);
+}
+
+#[tokio::test]
+async fn blocked_recovery_does_not_duplicate_prior_harness_agent_message() {
+    let prior_text = "A streamed progress message was already published.";
+    let mut backing = TestTurnProcessingBacking::new(4).await;
+    let harness_path = backing.enable_harness_emitter();
+    backing.emit_harness_assistant_message_for_test(prior_text);
+
+    let mut history = vec![uni::Message::user("resume the request".to_string())];
+    let blocked = TurnLoopResult::Blocked {
+        reason: Some(PENDING_VERIFICATION_BLOCK_REASON.to_string()),
+    };
+    {
+        let mut context = backing.turn_loop_context();
+        context.harness_state.mark_final_response_event_emitted();
+        ensure_blocked_turn_response(&mut context, &mut history, 1, PENDING_VERIFICATION_BLOCK_REASON)
+            .expect("blocked recovery handoff");
+        finalize_turn(&mut context, &history, &blocked, &HarnessUsage::default()).await;
+    }
+
+    assert_eq!(
+        history
+            .iter()
+            .filter(|message| message.phase == Some(uni::AssistantPhase::FinalAnswer))
+            .count(),
+        1
+    );
+    let final_text = final_answer_text(&history);
+    assert!(final_text.contains(PENDING_VERIFICATION_RESPONSE_MARKER));
+    let rendered = backing.rendered_inline_output();
+    assert_eq!(rendered.matches(PENDING_VERIFICATION_RESPONSE_MARKER).count(), 1);
+
+    let harness = fs::read_to_string(harness_path).expect("read harness events");
+    let events = harness
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<VersionedThreadEvent>(line)
+                .expect("versioned harness event")
+                .into_event()
+        })
+        .collect::<Vec<_>>();
+    let agent_messages = events
+        .iter()
+        .filter_map(|event| {
+            let ThreadEvent::ItemCompleted(item) = event else {
+                return None;
+            };
+            let ThreadItemDetails::AgentMessage(message) = &item.item.details else {
+                return None;
+            };
+            Some(message.text.as_str())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(agent_messages, vec![prior_text]);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, ThreadEvent::TurnFailed(_)))
+            .count(),
+        1
+    );
+    assert!(!events.iter().any(|event| matches!(event, ThreadEvent::TurnCompleted(_))));
 }
 
 #[tokio::test]

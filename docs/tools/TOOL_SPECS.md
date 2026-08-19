@@ -85,6 +85,16 @@ After several effective mutations, anti-blind-editing temporarily allows reads,
 inspection, task tracking, and verification while blocking further workspace
 mutations until a verification command completes.
 
+The checkpoint is cleared only by a successful verification command. Inspection,
+link checks, and `git diff --check` are useful diagnostics but do not prove that
+the requested build or tests pass. Failed mutations do not count as effective
+mutations, and a blocked turn remains blocked even when its recovery response is
+published successfully. The recovery response identifies the reason: pending
+verification includes `cargo check --locked` and the relevant `cargo nextest run`
+guidance; context-capacity recovery says that completed outputs were retained and
+suggests resuming after reducing context or switching models; other blocked
+turns receive a generic retry handoff.
+
 Example:
 
 ```diff

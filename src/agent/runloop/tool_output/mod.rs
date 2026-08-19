@@ -1058,8 +1058,8 @@ mod tests {
 
         let inline_output = collect_inline_output(&mut receiver);
         assert!(inline_output.contains("Edited README.md (+1 -1)"));
-        assert!(inline_output.contains("-before"));
-        assert!(inline_output.contains("+after"));
+        assert!(inline_output.contains("-    1 before"));
+        assert!(inline_output.contains("+    1 after"));
     }
 
     #[test]

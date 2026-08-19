@@ -23,6 +23,7 @@ use vtcode_ui::tui::app::{InlineHandle, InlineSession};
 
 use crate::agent::runloop::mcp_events::McpPanelState;
 use crate::agent::runloop::unified::context_manager::ContextManager;
+use crate::agent::runloop::unified::inline_events::harness::HarnessEventEmitter;
 use crate::agent::runloop::unified::run_loop_context::{HarnessTurnState, RecoveryMode, TurnId, TurnRunId};
 use crate::agent::runloop::unified::state::{CtrlCState, SessionStats};
 use crate::agent::runloop::unified::status_line::InputStatusState;
@@ -70,13 +71,16 @@ impl uni::LLMProvider for NoopProvider {
     }
 }
 
-fn create_headless_session() -> InlineSession {
-    let (command_tx, _command_rx) = tokio::sync::mpsc::unbounded_channel();
+fn create_headless_session() -> (InlineSession, tokio::sync::mpsc::UnboundedReceiver<vtcode_core::ui::InlineCommand>) {
+    let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel();
     let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
-    InlineSession {
-        handle: InlineHandle::new_for_tests(command_tx),
-        events: event_rx,
-    }
+    (
+        InlineSession {
+            handle: InlineHandle::new_for_tests(command_tx),
+            events: event_rx,
+        },
+        command_rx,
+    )
 }
 
 pub(crate) struct TestTurnProcessingBacking {
@@ -95,6 +99,7 @@ pub(crate) struct TestTurnProcessingBacking {
     last_forced_redraw: Instant,
     input_status_state: InputStatusState,
     session: InlineSession,
+    command_receiver: tokio::sync::mpsc::UnboundedReceiver<vtcode_core::ui::InlineCommand>,
     handle: InlineHandle,
     renderer: vtcode_core::utils::ansi::AnsiRenderer,
     ctrl_c_state: Arc<CtrlCState>,
@@ -107,6 +112,7 @@ pub(crate) struct TestTurnProcessingBacking {
     autonomous_executor: Arc<vtcode_core::tools::autonomous_executor::AutonomousExecutor>,
     error_recovery: Arc<RwLock<vtcode_core::core::agent::error_recovery::ErrorRecoveryState>>,
     harness_state: HarnessTurnState,
+    harness_emitter: Option<HarnessEventEmitter>,
     auto_finish_planning_attempted: bool,
     working_history: Vec<uni::Message>,
     tool_catalog: Arc<ToolCatalogState>,
@@ -139,7 +145,7 @@ impl TestTurnProcessingBacking {
         let context_manager = ContextManager::new("You are VT Code.".to_string(), (), loaded_skills, None);
         let last_forced_redraw = Instant::now();
         let input_status_state = InputStatusState::default();
-        let mut session = create_headless_session();
+        let (mut session, command_receiver) = create_headless_session();
         session.set_skip_confirmations(true);
         let handle = session.clone_inline_handle();
         let renderer = vtcode_core::utils::ansi::AnsiRenderer::with_inline_ui(handle.clone(), Default::default());
@@ -201,6 +207,7 @@ impl TestTurnProcessingBacking {
             last_forced_redraw,
             input_status_state,
             session,
+            command_receiver,
             handle,
             renderer,
             ctrl_c_state,
@@ -213,6 +220,7 @@ impl TestTurnProcessingBacking {
             autonomous_executor,
             error_recovery,
             harness_state,
+            harness_emitter: None,
             auto_finish_planning_attempted: false,
             working_history: Vec::new(),
             tool_catalog,
@@ -279,6 +287,24 @@ impl TestTurnProcessingBacking {
         self.provider_client = provider;
     }
 
+    pub(crate) fn enable_harness_emitter(&mut self) -> std::path::PathBuf {
+        let path = self._temp.path().join("harness-events.jsonl");
+        self.harness_emitter = Some(HarnessEventEmitter::new(path.clone()).expect("test harness emitter"));
+        path
+    }
+
+    pub(crate) fn emit_harness_assistant_message_for_test(&self, text: &str) {
+        self.harness_emitter
+            .as_ref()
+            .expect("test harness emitter must be enabled")
+            .emit_assistant_message("turn-test", text)
+            .expect("test harness assistant message");
+    }
+
+    pub(crate) fn rendered_inline_output(&mut self) -> String {
+        crate::agent::runloop::tool_output::collect_inline_output(&mut self.command_receiver)
+    }
+
     /// Force the turn into a tool-free recovery pass before `run_turn_loop`
     /// starts, so the first request is already a recovery synthesis pass.
     pub(crate) fn activate_tool_free_recovery_for_test(&mut self, reason: &str) {
@@ -337,7 +363,7 @@ impl TestTurnProcessingBacking {
             &self.autonomous_executor,
             &self.error_recovery,
             &mut self.harness_state,
-            None,
+            self.harness_emitter.as_ref(),
             &mut self.config,
             None,
             &mut self.turn_metadata_cache,
@@ -398,7 +424,7 @@ impl TestTurnProcessingBacking {
             skip_confirmations: true,
             full_auto: false,
             harness_state: &mut self.harness_state,
-            harness_emitter: None,
+            harness_emitter: self.harness_emitter.as_ref(),
             runtime_steering: &mut self.runtime_steering,
         };
 

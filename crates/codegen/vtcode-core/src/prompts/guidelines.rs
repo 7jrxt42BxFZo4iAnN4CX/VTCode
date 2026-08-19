@@ -589,8 +589,9 @@ mod tests {
         assert!(guidelines.contains("Batch independent read-only calls"));
         assert!(guidelines.contains("code_search"));
         let approx_tokens = guidelines.len() / 4;
-        // The batching guardrail is intentionally part of the compact shared prompt.
-        assert!(approx_tokens < 340, "got ~{approx_tokens} tokens");
+        // The batching and bounded-diff guardrails are intentionally part of
+        // the compact shared prompt; keep the budget below 400 tokens.
+        assert!(approx_tokens < 400, "got ~{approx_tokens} tokens");
     }
 
     #[test]

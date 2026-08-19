@@ -824,8 +824,15 @@ mod tests {
             .await?
             .expect("pipe sessions should expose activity receiver");
 
-        timeout(Duration::from_secs(2), activity_rx.changed()).await??;
-        let output = manager.read_session_output("run-1", true).await?.expect("session output");
+        let output = timeout(Duration::from_secs(2), async {
+            loop {
+                if let Some(output) = manager.read_session_output("run-1", true).await? {
+                    return Ok::<String, anyhow::Error>(output);
+                }
+                activity_rx.changed().await?;
+            }
+        })
+        .await??;
         assert!(output.contains("hello"));
 
         manager.close_session("run-1").await?;

@@ -1619,7 +1619,7 @@ mod tests {
         let mut tracker = LoopTracker::new();
         let miss = ToolPipelineOutcome::from_status(ToolExecutionStatus::Success {
             output: serde_json::json!({
-                "command": "grep -n '-> Result' vtcode-tui/src/**/*.rs",
+                "command": "grep -n '-> Result' vtcode-tui/src/main.rs",
                 "exit_code": 2,
                 "output": ""
             }),
@@ -1631,13 +1631,13 @@ mod tests {
             &mut tracker,
             &miss,
             tools::EXEC_COMMAND,
-            &json!({"cmd":"grep -n '-> Result' vtcode-tui/src/**/*.rs"}),
+            &json!({"cmd":"grep -n '-> Result' vtcode-tui/src/main.rs"}),
         );
         update_repetition_tracker(
             &mut tracker,
             &miss,
             tools::EXEC_COMMAND,
-            &json!({"cmd":"grep -n \"-> Result\" vtcode-tui/src/**/*.rs"}),
+            &json!({"cmd":"grep -n \"-> Result\" vtcode-tui/src/main.rs"}),
         );
 
         assert_eq!(tracker.max_low_signal_count(), 2);

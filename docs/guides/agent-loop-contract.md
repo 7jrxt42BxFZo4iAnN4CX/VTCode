@@ -145,6 +145,23 @@ required edit or verification can still run without repeating completed
 read-only exploration. A second failure produces a blocked, resumable handoff;
 the harness never reports successful completion without confirmation.
 
+### Blocked-turn recovery
+
+Every blocked turn publishes one non-empty deterministic assistant response
+through normal conversation history, the renderer, and
+`ThreadEvent::ItemCompleted` with `AgentMessage`, then emits the corresponding
+`turn.failed` event. The turn result remains `Blocked`; publishing the handoff
+does not convert it to success or emit `turn.completed`.
+
+Blocked responses are reason-specific. A pending-verification response explains
+that inspection-only checks, link checks, and `git diff --check` do not clear the
+anti-blind checkpoint and directs the operator to run `cargo check --locked` or
+the relevant `cargo nextest run`. A context-capacity response explains that
+bounded compaction could not reduce the request, retains completed tool outputs,
+and directs the operator to resume after reducing context or switching models.
+Other blocked reasons use a generic retry handoff. Existing recovery text is
+reused when it was already published, so the assistant item is never duplicated.
+
 The fork/branch history builder (`build_summarized_fork_history`) deliberately
 omits the continuity tail and produces a minimal resume artifact (envelope +
 summary + retained users only).
