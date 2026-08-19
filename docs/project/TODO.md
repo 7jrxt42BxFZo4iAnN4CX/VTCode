@@ -1,7 +1,3 @@
-https://github.com/vinhnx/VTCode/issues/731#issuecomment-5337801525
-
----
-
 apply learning from deepseek-harness and improve vtcode. https://github.com/deepseek-ai/deepseek-harness
 
 ---
