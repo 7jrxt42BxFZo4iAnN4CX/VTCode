@@ -1,11 +1,3 @@
-#![cfg_attr(
-    any(target_os = "macos", target_os = "linux"),
-    expect(
-        clippy::cast_possible_truncation,
-        reason = "RSS sampling casts platform ABI integer sizes to f64 for MB-scale reporting; truncation is acceptable."
-    )
-)]
-
 //! Resident Set Size (RSS) sampling for memory diagnostics.
 //!
 //! Used by the allocator benchmark (`vtcode bench-allocator`) to measure whether
@@ -17,6 +9,10 @@ use std::time::Duration;
 /// Returns the current process Resident Set Size in **megabytes**, or `None` if
 /// it cannot be determined on the current platform.
 #[cfg(target_os = "macos")]
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "The macOS Mach message count is defined as the platform ABI's bounded integer type."
+)]
 #[allow(
     deprecated,
     unsafe_code,
