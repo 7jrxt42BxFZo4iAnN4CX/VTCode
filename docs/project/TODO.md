@@ -32,3 +32,11 @@ support Vercel AI gateway https://vercel.com/docs/ai-gateway
 check if vtcode can support this. https://github.com/earendil-works/pi/issues/534#issue-3789055759
 
 https://specifications.freedesktop.org/basedir/latest/
+
+--
+
+check plan mode still not working,
+
+/Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/checkpoints/turn_956.json /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/checkpoints/turn_955.json /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/checkpoints/turn_954.json
+
+/Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/sessions/session-vtcode-20260819T135506Z_867199-97319 /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/sessions/session-vtcode-20260819T135406Z_526058-97319 /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/sessions/session-vtcode-20260819T135348Z_965540-97319
