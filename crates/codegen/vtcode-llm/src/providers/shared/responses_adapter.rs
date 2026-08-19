@@ -325,6 +325,11 @@ fn adapt_rig_supported_envelope_fallback(payload: &Value) -> Option<ResponsesStr
     let event_type = payload.get("type").and_then(Value::as_str)?;
 
     match event_type {
+        "response.failed" | "response.incomplete" => Some(ResponsesStreamEvent::Error {
+            message: response_error_message(payload).unwrap_or_else(|| "Unknown error from Responses API".to_string()),
+        }),
+        "response.created" => Some(ResponsesStreamEvent::Lifecycle { kind: ResponsesLifecycleEvent::Created }),
+        "response.in_progress" => Some(ResponsesStreamEvent::Lifecycle { kind: ResponsesLifecycleEvent::InProgress }),
         "response.completed" => {
             let response = payload.get("response")?;
             // Accept any response.completed where Rig deserialization failed,
@@ -1321,6 +1326,100 @@ mod tests {
                 "error": {"message": "rate limited"}
             })),
             ResponsesStreamEvent::Error { message: "rate limited".to_string() }
+        );
+    }
+
+    #[test]
+    fn response_failed_minimal_gateway_frame_surfaces_backend_message() {
+        assert_eq!(
+            event_fixture(json!({
+                "type": "response.failed",
+                "response": {
+                    "id": "resp_XXX",
+                    "object": "response",
+                    "model": "gpt-5.6-luna",
+                    "status": "failed",
+                    "output": [],
+                    "error": {
+                        "code": "rate_limit_exceeded",
+                        "message": "Concurrency limit exceeded for account, please retry later"
+                    }
+                }
+            })),
+            ResponsesStreamEvent::Error {
+                message: "Concurrency limit exceeded for account, please retry later".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn response_incomplete_minimal_frame_surfaces_backend_message() {
+        assert_eq!(
+            event_fixture(json!({
+                "type": "response.incomplete",
+                "response": {
+                    "id": "resp_incomplete",
+                    "object": "response",
+                    "model": "gpt-5.6-luna",
+                    "status": "incomplete",
+                    "output": [],
+                    "error": {
+                        "code": "max_output_tokens",
+                        "message": "max output tokens reached"
+                    }
+                }
+            })),
+            ResponsesStreamEvent::Error { message: "max output tokens reached".to_string() }
+        );
+    }
+
+    #[test]
+    fn lifecycle_minimal_frames_surface_lifecycle_events() {
+        assert_eq!(
+            event_fixture(json!({
+                "type": "response.created",
+                "response": {
+                    "id": "resp_created",
+                    "object": "response",
+                    "model": "gpt-5.6-luna",
+                    "status": "in_progress",
+                    "output": []
+                }
+            })),
+            ResponsesStreamEvent::Lifecycle { kind: ResponsesLifecycleEvent::Created }
+        );
+
+        assert_eq!(
+            event_fixture(json!({
+                "type": "response.in_progress",
+                "response": {
+                    "id": "resp_in_progress",
+                    "object": "response",
+                    "model": "gpt-5.6-luna",
+                    "status": "in_progress",
+                    "output": []
+                }
+            })),
+            ResponsesStreamEvent::Lifecycle { kind: ResponsesLifecycleEvent::InProgress }
+        );
+    }
+
+    #[test]
+    fn response_failed_without_error_falls_back_to_unknown_message() {
+        assert_eq!(
+            event_fixture(json!({
+                "type": "response.failed",
+                "response": {
+                    "id": "resp_failed",
+                    "object": "response",
+                    "model": "gpt-5.6-luna",
+                    "status": "failed",
+                    "output": []
+                }
+            })),
+            ResponsesStreamEvent::Error {
+                message: "Unknown error from Responses API".to_string()
+            }
         );
     }
 
