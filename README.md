@@ -18,22 +18,22 @@
 </p>
 
 VT Code is an open-source Rust terminal coding agent for interactive and
-long-running autonomous workflows. It brings a responsive TUI, safe terminal
-tools, multi-provider LLM support, open protocols, and extensible Skills into
-one tool—so you can move from a question to a reviewed change without leaving
-your terminal.
+long-running autonomous workflows. It combines a responsive TUI, safe terminal
+tools, multi-provider LLM support, open protocols, and extensible Skills in one
+tool—so you can move from a question to a reviewed change without leaving your
+terminal.
 
-> **Project status:** Active development. VT Code is currently at version
-> `0.146.4`; local inference and some automation workflows are experimental.
-> Interfaces and configuration may change between releases.
+> **Project status:** Active development.
+> Local inference and some automation workflows are experimental, and
+> interfaces and configuration may change between releases.
 
 ## Contents
 
-- [Features](#features)
+- [Why VT Code](#why-vt-code)
 - [Quick start](#quick-start)
 - [Documentation](#documentation)
-- [Providers](#providers)
-- [Local models](#local-models-experimental)
+- [Providers and models](#providers-and-models)
+- [Local inference](#local-inference-experimental)
 - [Development](#development)
 - [Contributing](#contributing)
 - [Support](#support)
@@ -42,7 +42,7 @@ your terminal.
 > New here? Start with [Installation](./docs/installation/README.md), then
 > [Getting Started](./docs/user-guide/getting-started.md).
 
-## Features
+## Why VT Code
 
 ### Runtime and coding
 
@@ -52,7 +52,7 @@ your terminal.
 ### Extensibility and providers
 
 - **Extensibility**: [Agent Skills](https://agentskills.io), [MCP](https://modelcontextprotocol.io/) client/server, [Agent Plugins](https://agent-plugins.org), lifecycle hooks, subagents, custom providers, and [ACP](https://agentclientprotocol.com)
-- **Model providers**: 26+ built-in providers, custom OpenAI-compatible endpoints, and **local inference via Ollama, LM Studio, and llama.cpp** (managed with `/local`)
+- **Model providers**: 30+ built-in providers, custom OpenAI-compatible endpoints, and **local inference via Ollama, LM Studio, and llama.cpp** (managed with `/local`)
 
 ### Safety and protocols
 
@@ -63,7 +63,11 @@ your terminal.
 ### Automation and planning
 
 - **Loop engineering**: worktree isolation for parallel agents, propose/verify sub-agent separation, durable loop state, and cost guardrails
-- **Planning workflow**: iterate on a build plan with `/plan` and the `plan` primary agent, then hand off to `build`/`auto` via a structured review gate
+- **Planning workflow**: iterate on a build plan with `/plan` and the `plan` primary agent, then hand off to `build`/`auto` through a structured review gate
+
+VT Code is designed for both interactive development and unattended work. It
+keeps tool execution and provider access explicit, while allowing the same
+session to move from exploration to implementation and review.
 
 ## Quick start
 
@@ -81,7 +85,6 @@ Other installation methods are documented in the
 
 ```bash
 # Homebrew
-brew trust vinhnx/tap
 brew install vinhnx/tap/vtcode
 
 # Cargo
@@ -142,7 +145,7 @@ vtcode update                  # self-update
 - [**Interactive TUI**](./docs/user-guide/interactive-mode.md): primary agents, slash commands (`/model`, `/review`, `/mcp`, `/skills`, `/theme`, `/compact`)
 - [**CLI commands**](./docs/user-guide/commands.md): command reference for interactive, headless, review, and automation workflows
 - [**Full automation**](./docs/guides/full-automation.md): `--full-auto` CLI, plan-build-evaluate harness, subagents, and scheduled tasks
-- [**Providers**](./docs/providers/PROVIDER_GUIDES.md): setup guides for all 26+ providers
+- [**Providers**](./docs/providers/PROVIDER_GUIDES.md): setup guides for all built-in providers
 - [**Configuration**](./docs/config/CONFIG_FIELD_REFERENCE.md): `vtcode.toml`, tool config, and lifecycle hooks
 
 ### Integrations
@@ -167,12 +170,16 @@ vtcode update                  # self-update
 - [**Development setup**](./docs/development/DEVELOPMENT_SETUP.md): prerequisites and local workflow
 - [**Testing**](./docs/development/testing.md): test profiles and verification commands
 
-## Providers
+## Providers and models
 
-VT Code supports 26+ built-in providers, local inference backends, and
+VT Code supports 30+ built-in providers, local inference backends, and
 custom OpenAI-compatible endpoints.
 
 ### Provider directory
+
+The list below is grouped by how a request reaches a model. The provider guide
+is the source of truth for credentials, supported capabilities, and model
+defaults.
 
 | Category            | Providers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -187,9 +194,9 @@ Additional built-in providers include [DeepSeek](./docs/providers/PROVIDER_GUIDE
 and [OpenCode Go](./docs/providers/PROVIDER_GUIDES.md#opencode-go).
 
 See the [Provider Guides](./docs/providers/PROVIDER_GUIDES.md) for credentials,
-model defaults, API capabilities, and setup details.
-Merge Gateway is a built-in OpenAI-compatible gateway with curated routes and
-pass-through support for valid explicit `provider/model` IDs.
+model defaults, API capabilities, and setup details. Merge Gateway is a
+built-in OpenAI-compatible gateway with curated routes and pass-through
+support for valid explicit `provider/model` IDs.
 
 ### Configure a provider
 
@@ -288,7 +295,7 @@ Leave it empty, the default, to allow all built-in and custom providers. See
 the [configuration reference](./docs/config/CONFIG_FIELD_REFERENCE.md) and
 [Getting Started](./docs/user-guide/getting-started.md) for setup instructions.
 
-## Local models (experimental)
+## Local inference (experimental)
 
 Run models entirely on your machine for privacy, offline use, or zero token
 cost. VT Code supports three local backends, all managed from the TUI:
@@ -327,8 +334,8 @@ cd vtcode
 
 ### Workspace layout
 
-Rust stable, edition 2024, MSRV 1.93.0. The workspace contains roughly 30
-crates; the root binary and core/UI crates are included in the default build:
+Rust stable, edition 2024, MSRV 1.88.0. The workspace contains 30 crates; the
+root binary and core/UI crates are included in the default build:
 
 | Layer   | Crates                                                                                                                                                                                                                       |
 | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -338,7 +345,8 @@ crates; the root binary and core/UI crates are included in the default build:
 
 ### Library use
 
-For crate-based integrations, see [`vtcode-battery-pack`](https://github.com/vinhnx/vtcode-battery-pack).
+For crate-based integrations, see
+[`vtcode-battery-pack`](https://github.com/vinhnx/vtcode-battery-pack).
 
 ### Quality checks
 
@@ -353,7 +361,9 @@ than `cargo test` for the project's test suite.
 
 ## Contributing
 
-VT Code is built by an open-source community. Whether you're fixing bugs, improving docs, proposing features, reporting security issues, or shipping patches, all contributions are welcome.
+VT Code is built by an open-source community. Whether you're fixing bugs,
+improving docs, proposing features, reporting security issues, or shipping
+patches, all contributions are welcome.
 
 ### Ways to contribute
 
@@ -371,7 +381,8 @@ VT Code is built by an open-source community. Whether you're fixing bugs, improv
 
 ### Contributors
 
-Thank you to everyone who has contributed to VT Code, your work makes this project better for all of us.
+Thank you to everyone who has contributed to VT Code. Your work makes this
+project better for all of us.
 
 <p align="center">
   <a href="https://github.com/kernitus"><img src="https://avatars.githubusercontent.com/u/2789734?s=60" width="40" height="40" alt="@kernitus" title="@kernitus 👑 Main Contributor (53 commits)" style="border-radius: 50%; border: 2px solid #FFD700;" /></a>&nbsp;
@@ -399,7 +410,9 @@ Thank you to everyone who has contributed to VT Code, your work makes this proje
 
 ### Sponsorship
 
-VT Code is a labor of love built in my spare time. If it's helped you ship something or learn something, a [sponsorship](https://github.com/sponsors/vinhnx) would mean the world.
+VT Code is a labor of love built in my spare time. If it has helped you ship
+something or learn something, a [sponsorship](https://github.com/sponsors/vinhnx)
+would mean the world.
 
 <p align="center">
   <a href="https://github.com/dnhn"><img src="https://avatars.githubusercontent.com/u/2561973" width="80" height="80" alt="@dnhn" style="border-radius: 50%" /></a>
