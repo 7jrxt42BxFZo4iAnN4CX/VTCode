@@ -2,6 +2,17 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.146.6 - 2026-08-19
+
+### Highlights
+#### Bug Fixes
+
+- Scope cast_possible_truncation expect to macOS (fb332e41) 
+- Surface real error from minimal response.failed frames  (48044d1e) 
+### Other Changes
+#### Other
+
+- Update TODO (18d3438a) 
 ## 0.146.5 - 2026-08-18
 
 ### Highlights
