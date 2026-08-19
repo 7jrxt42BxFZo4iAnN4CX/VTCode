@@ -96,7 +96,7 @@ pub fn resolve_lightweight_route(
 
     let mut warning = None;
     if let Some(configured_model) = explicit_override_model.map(str::trim).filter(|value| !value.is_empty()) {
-        if let Some(route) = route_for_candidate(main_provider, configured_model) {
+        if let Some(route) = route_for_candidate(main_provider, configured_model, vt_cfg) {
             return LightweightRouteResolution {
                 fallback: (route != main_route).then_some(main_route),
                 primary: route,
@@ -131,7 +131,7 @@ pub fn resolve_lightweight_route(
 
     let configured_model = shared_cfg.model.trim();
     if !configured_model.is_empty() {
-        if let Some(route) = route_for_candidate(main_provider, configured_model) {
+        if let Some(route) = route_for_candidate(main_provider, configured_model, Some(vt_cfg)) {
             return LightweightRouteResolution {
                 fallback: (route != main_route).then_some(main_route),
                 primary: route,
@@ -311,10 +311,19 @@ fn feature_uses_shared_model(
     }
 }
 
-fn route_for_candidate(main_provider: &str, candidate_model: &str) -> Option<ModelRoute> {
+fn route_for_candidate(
+    main_provider: &str,
+    candidate_model: &str,
+    vt_cfg: Option<&VTCodeConfig>,
+) -> Option<ModelRoute> {
+    let is_declared_custom_model = vt_cfg
+        .and_then(|cfg| cfg.custom_provider(main_provider))
+        .is_some_and(|provider| provider.effective_models().iter().any(|model| model == candidate_model));
+
     if infer_provider_from_model(candidate_model)
         .map(|provider| !provider.as_ref().eq_ignore_ascii_case(main_provider))
         .unwrap_or(false)
+        && !is_declared_custom_model
     {
         return None;
     }
@@ -519,6 +528,66 @@ mod tests {
         assert_eq!(route.primary.model, ModelId::GPT54Mini.as_str());
         assert_eq!(route.source, LightweightRouteSource::SharedAutomatic);
         assert!(route.warning.is_some());
+    }
+
+    #[test]
+    fn explicit_override_accepts_declared_custom_provider_model_that_infers_builtin_provider() {
+        // Arrange: the custom provider explicitly declares a GPT-slugged model.
+        let mut runtime = runtime_config();
+        runtime.provider = "my-gateway".to_string();
+        let mut vt_cfg = VTCodeConfig::default();
+        vt_cfg.custom_providers.push(vtcode_config::core::CustomProviderConfig {
+            name: "my-gateway".to_string(),
+            models: vec![" gpt-5.6-luna ".to_string()],
+            ..Default::default()
+        });
+
+        // Act: resolve an explicitly overridden model with surrounding whitespace.
+        let route = resolve_lightweight_route(
+            &runtime,
+            Some(&vt_cfg),
+            LightweightFeature::PromptSuggestions,
+            Some("  gpt-5.6-luna  "),
+        );
+
+        // Assert: declaration wins over built-in provider inference and is normalized.
+        assert_eq!(
+            route.primary,
+            ModelRoute {
+                provider_name: "my-gateway".to_string(),
+                model: "gpt-5.6-luna".to_string(),
+            }
+        );
+        assert_eq!(route.source, LightweightRouteSource::FeatureOverride);
+        assert!(route.warning.is_none());
+    }
+
+    #[test]
+    fn shared_small_model_accepts_declared_custom_provider_model_that_infers_builtin_provider() {
+        // Arrange: shared small-model config selects a model declared by the active custom provider.
+        let mut runtime = runtime_config();
+        runtime.provider = "my-gateway".to_string();
+        let mut vt_cfg = VTCodeConfig::default();
+        vt_cfg.agent.small_model.model = "  gpt-5.6-luna  ".to_string();
+        vt_cfg.custom_providers.push(vtcode_config::core::CustomProviderConfig {
+            name: "my-gateway".to_string(),
+            models: vec!["gpt-5.6-luna".to_string()],
+            ..Default::default()
+        });
+
+        // Act: resolve the shared configured lightweight model.
+        let route = resolve_lightweight_route(&runtime, Some(&vt_cfg), LightweightFeature::PromptSuggestions, None);
+
+        // Assert: the declared model is selected through the active custom provider.
+        assert_eq!(
+            route.primary,
+            ModelRoute {
+                provider_name: "my-gateway".to_string(),
+                model: "gpt-5.6-luna".to_string(),
+            }
+        );
+        assert_eq!(route.source, LightweightRouteSource::SharedConfigured);
+        assert!(route.warning.is_none());
     }
 
     #[test]
