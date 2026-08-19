@@ -2,6 +2,16 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.146.7 - 2026-08-19
+
+### Highlights
+#### Bug Fixes
+
+- Harden blocked-turn verification recovery (2f1a31a5) 
+### Other Changes
+#### Other
+
+- Update README (85415a83) 
 ## 0.146.6 - 2026-08-19
 
 ### Highlights
