@@ -2,6 +2,18 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.146.8 - 2026-08-19
+
+### Highlights
+#### Bug Fixes
+
+- Fix #733: allow custom provider models that infer as built-in providers (149c8f7a) 
+### Other Changes
+#### Other
+
+- Update TODO (fd3e3bf7) 
+- Update README (f8385d98) 
+- Update TODO (764a68e0) 
 ## 0.146.7 - 2026-08-19
 
 ### Highlights
