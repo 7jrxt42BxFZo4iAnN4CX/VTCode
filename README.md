@@ -29,7 +29,7 @@ terminal.
 
 ## Contents
 
-- [Why VT Code](#why-vt-code)
+- [Overview](#overview)
 - [Quick start](#quick-start)
 - [Documentation](#documentation)
 - [Providers and models](#providers-and-models)
@@ -42,7 +42,7 @@ terminal.
 > New here? Start with [Installation](./docs/installation/README.md), then
 > [Getting Started](./docs/user-guide/getting-started.md).
 
-## Why VT Code
+## Overview
 
 ### Runtime and coding
 
@@ -52,7 +52,7 @@ terminal.
 ### Extensibility and providers
 
 - **Extensibility**: [Agent Skills](https://agentskills.io), [MCP](https://modelcontextprotocol.io/) client/server, [Agent Plugins](https://agent-plugins.org), lifecycle hooks, subagents, custom providers, and [ACP](https://agentclientprotocol.com)
-- **Model providers**: 30+ built-in providers, custom OpenAI-compatible endpoints, and **local inference via Ollama, LM Studio, and llama.cpp** (managed with `/local`)
+- **Model providers**: 30 built-in providers, custom OpenAI-compatible endpoints, and **local inference via Ollama, LM Studio, and llama.cpp** (managed with `/local`)
 
 ### Safety and protocols
 
@@ -138,10 +138,16 @@ vtcode update                  # self-update
 
 ## Documentation
 
-### User guides
+Use the documentation by task: start with installation, then choose a user
+guide, integration guide, or reference.
 
-- [**Wiki**](https://github.com/vinhnx/VTCode/wiki): community wiki on getting started, configuration, providers, local models, skills, MCP, automation, security, and FAQ
+### Start here
+
 - [**Installation**](./docs/installation/README.md): installation methods, provider setup, and troubleshooting
+- [**Getting started**](./docs/user-guide/getting-started.md): first workspace, provider, and session
+- [**Wiki**](https://github.com/vinhnx/VTCode/wiki): community wiki on configuration, providers, local models, skills, MCP, automation, security, and FAQ
+
+### User guides
 - [**Interactive TUI**](./docs/user-guide/interactive-mode.md): primary agents, slash commands (`/model`, `/review`, `/mcp`, `/skills`, `/theme`, `/compact`)
 - [**CLI commands**](./docs/user-guide/commands.md): command reference for interactive, headless, review, and automation workflows
 - [**Full automation**](./docs/guides/full-automation.md): `--full-auto` CLI, plan-build-evaluate harness, subagents, and scheduled tasks
@@ -172,7 +178,7 @@ vtcode update                  # self-update
 
 ## Providers and models
 
-VT Code supports 30+ built-in providers, local inference backends, and
+VT Code supports 30 built-in providers, local inference backends, and
 custom OpenAI-compatible endpoints.
 
 ### Provider directory
@@ -334,7 +340,7 @@ cd vtcode
 
 ### Workspace layout
 
-Rust stable, edition 2024, MSRV 1.88.0. The workspace contains 30 crates; the
+Rust stable, edition 2024, MSRV 1.93.0. The workspace contains 21 crates; the
 root binary and core/UI crates are included in the default build:
 
 | Layer   | Crates                                                                                                                                                                                                                       |
