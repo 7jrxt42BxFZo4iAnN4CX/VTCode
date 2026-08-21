@@ -142,6 +142,19 @@ Approval is accepted only for a persisted plan that passes the artifact validato
 
 Creating the `task_tracker` checklist is part of the approval gate. If the tracker tool is unavailable, fails, or does not persist its tracker file, the planning workflow remains active and no write-capable execution turn is started. All approval routes share the same typed handoff, including direct, queued, automatic, and fresh-context execution.
 
+### Streaming-to-persistence handoff
+
+In streaming mode, `<proposed_plan>` markup is removed from the live transcript
+so the plan is rendered by the approval flow exactly once. The stream parser
+retains the plan body, including when tag boundaries are split across tokens,
+and attaches one canonical `<proposed_plan>...</proposed_plan>` block to the
+completed response before response processing runs. Completed provider content
+takes precedence over visible streamed prose; an existing recognized plan block
+is not duplicated. This semantic handoff also occurs when output is suppressed
+while verification is pending, so the normal response-processing path still
+extracts, validates, persists, and publishes approval events. Rendering
+suppression never bypasses plan validation or persistence.
+
 ### Clarification Interviews
 
 When the planning agent reaches a material ambiguity, or identifies an open

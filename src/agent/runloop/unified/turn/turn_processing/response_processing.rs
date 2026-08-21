@@ -835,6 +835,36 @@ mod tests {
     }
 
     #[test]
+    fn process_llm_response_extracts_canonical_stream_handoff_plan() {
+        let response = LLMResponse {
+            content: Some("Intro\n\nOutro\n\n<proposed_plan>\n- Streamed step\n</proposed_plan>".to_string()),
+            tool_calls: None,
+            model: "test".to_string(),
+            usage: None,
+            finish_reason: FinishReason::Stop,
+            reasoning: None,
+            reasoning_details: None,
+            tool_references: Vec::new(),
+            compaction: None,
+            request_id: None,
+            organization_id: None,
+        };
+
+        let mut renderer = AnsiRenderer::stdout();
+        let result = process_llm_response(&response, &mut renderer, 0, true, false, true, true, None, None)
+            .expect("response processing should succeed");
+
+        match result {
+            TurnProcessingResult::TextResponse { text, proposed_plan, .. } => {
+                assert_eq!(proposed_plan.as_deref(), Some("- Streamed step"));
+                assert_eq!(text.trim_end(), "Intro\n\nOutro");
+                assert!(!text.contains("<proposed_plan>"));
+            }
+            _ => panic!("expected the canonical stream handoff to produce a text response"),
+        }
+    }
+
+    #[test]
     fn process_llm_response_drops_tool_calls_attached_to_a_complete_plan() {
         let response = LLMResponse {
             content: Some(

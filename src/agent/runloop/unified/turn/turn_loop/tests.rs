@@ -32,6 +32,108 @@ use vtcode_ui::tui::app::InlineHandle;
 const PENDING_VERIFICATION_RESPONSE_MARKER: &str = "Inspection-only checks do not clear the verification gate";
 const CONTEXT_CAPACITY_RESPONSE_MARKER: &str = "context capacity or compaction failed";
 
+const STREAMED_VALID_PLAN: &str = r#"# Streamed plan
+
+## Summary
+Preserve the streamed planning handoff.
+
+## Implementation Steps
+1. Keep the semantic plan -> files: [src/agent/runloop/unified/ui_interaction_stream.rs] -> verify: cargo nextest run -p vtcode --bin vtcode
+
+## Test Cases and Validation
+1. Run the focused streamed-plan regression tests.
+
+## Assumptions and Defaults
+1. Preserve the existing response-processing and approval flow.
+"#;
+
+const STREAMED_INVALID_PLAN: &str = r#"# Invalid streamed plan
+
+## Summary
+This draft is missing concrete step evidence.
+
+## Implementation Steps
+1. Do the thing
+
+## Test Cases and Validation
+1. Run the focused planning test.
+
+## Assumptions and Defaults
+1. Preserve the existing behavior.
+"#;
+
+#[derive(Clone, Copy)]
+enum StreamedPlanScript {
+    Valid,
+    InvalidThenProse,
+}
+
+struct StreamedPlanProvider {
+    script: StreamedPlanScript,
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl uni::LLMProvider for StreamedPlanProvider {
+    fn name(&self) -> &str {
+        "openai"
+    }
+
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
+    async fn generate(&self, _request: uni::LLMRequest) -> Result<uni::LLMResponse, uni::LLMError> {
+        Err(uni::LLMError::Provider {
+            message: "streamed plan test provider should not use generate".to_string(),
+            metadata: None,
+        })
+    }
+
+    async fn stream(&self, request: uni::LLMRequest) -> Result<uni::LLMStream, uni::LLMError> {
+        let call_number = self.calls.fetch_add(1, Ordering::SeqCst);
+        let plan = match self.script {
+            StreamedPlanScript::Valid => Some(STREAMED_VALID_PLAN),
+            StreamedPlanScript::InvalidThenProse if call_number == 0 => Some(STREAMED_INVALID_PLAN),
+            StreamedPlanScript::InvalidThenProse => None,
+        };
+        let completion_content = plan
+            .is_none()
+            .then(|| "The repair response did not contain a plan.".to_string());
+        let completion = uni::LLMResponse {
+            content: completion_content,
+            model: request.model,
+            tool_calls: None,
+            usage: None,
+            finish_reason: uni::FinishReason::Stop,
+            reasoning: None,
+            reasoning_details: None,
+            organization_id: None,
+            request_id: None,
+            tool_references: Vec::new(),
+            compaction: None,
+        };
+        let stream = async_stream::stream! {
+            if let Some(plan) = plan {
+                yield Ok(uni::LLMStreamEvent::Token { delta: "Research complete.\n<propo".to_string() });
+                yield Ok(uni::LLMStreamEvent::Token {
+                    delta: format!("sed_plan>\n{plan}\n</proposed_plan>\n"),
+                });
+            }
+            yield Ok(uni::LLMStreamEvent::Completed { response: Box::new(completion) });
+        };
+        Ok(Box::pin(stream))
+    }
+
+    fn supported_models(&self) -> Vec<String> {
+        vec!["noop-model".to_string()]
+    }
+
+    fn validate_request(&self, _request: &uni::LLMRequest) -> Result<(), uni::LLMError> {
+        Ok(())
+    }
+}
+
 fn final_answer_text(history: &[uni::Message]) -> String {
     history
         .iter()
@@ -1704,6 +1806,112 @@ async fn planning_synthesis_truncated_retries_with_compact_spec() {
     assert!(
         !final_text.contains("Fix warmup -> src/main.rs -> verify: build"),
         "final answer must not be the truncated draft"
+    );
+}
+
+#[tokio::test]
+async fn streamed_invalid_plan_uses_one_bounded_repair_without_approval_artifacts() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut backing = TestTurnProcessingBacking::new(4).await;
+    backing.activate_planning_for_test();
+    let harness_path = backing.enable_harness_emitter();
+    backing.set_provider(Box::new(StreamedPlanProvider {
+        script: StreamedPlanScript::InvalidThenProse,
+        calls: calls.clone(),
+    }));
+
+    let mut history = vec![uni::Message::user("make a plan for the streamed handoff".to_string())];
+    run_turn_loop(&mut history, backing.turn_loop_context())
+        .await
+        .expect("invalid streamed plan should finish after bounded repair");
+
+    assert_eq!(calls.load(Ordering::SeqCst), 2, "invalid plans get exactly one repair response");
+    assert!(
+        history.iter().any(|message| {
+            message.role == uni::MessageRole::System
+                && message
+                    .content
+                    .as_text()
+                    .contains("Planning recovery: the proposed plan was rejected")
+        }),
+        "validator feedback must schedule the bounded repair"
+    );
+
+    let plans_dir = backing.workspace_path().join(".vtcode").join("plans");
+    assert!(
+        !plans_dir.exists() || fs::read_dir(&plans_dir).expect("read plans directory").next().is_none(),
+        "invalid streamed plans must not create approval artifacts"
+    );
+
+    let harness = fs::read_to_string(harness_path).expect("read harness events");
+    let events = harness
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<VersionedThreadEvent>(line)
+                .expect("harness output should use the versioned event contract")
+                .into_event()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, ThreadEvent::PlanApprovalRequested(_))),
+        "rejected streamed plans must not publish approval requests"
+    );
+}
+
+#[tokio::test]
+async fn streamed_valid_plan_is_persisted_and_publishes_approval_ready_events() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut backing = TestTurnProcessingBacking::new(4).await;
+    backing.activate_planning_for_test();
+    let harness_path = backing.enable_harness_emitter();
+    backing.set_provider(Box::new(StreamedPlanProvider {
+        script: StreamedPlanScript::Valid,
+        calls: calls.clone(),
+    }));
+
+    let mut history = vec![uni::Message::user("make a plan for the streamed handoff".to_string())];
+    let outcome = run_turn_loop(&mut history, backing.turn_loop_context())
+        .await
+        .expect("valid streamed plan should reach the approval handoff");
+
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "a valid streamed plan must not re-enter synthesis");
+    assert!(outcome.plan_approved_execution_pending, "the existing automatic approval route should be selected");
+
+    let plans_dir = backing.workspace_path().join(".vtcode").join("plans");
+    let plan_text = fs::read_dir(&plans_dir)
+        .expect("valid streamed plan should create the plans directory")
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .find(|path| {
+            path.extension().is_some_and(|extension| extension == "md")
+                && !path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with(".tasks.md"))
+        })
+        .map(|path| fs::read_to_string(path).expect("read persisted streamed plan"))
+        .expect("valid streamed plan should be persisted");
+    assert!(plan_text.contains("Preserve the streamed planning handoff."));
+    assert!(plan_text.contains("src/agent/runloop/unified/ui_interaction_stream.rs"));
+
+    let harness = fs::read_to_string(harness_path).expect("read harness events");
+    let events = harness
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<VersionedThreadEvent>(line)
+                .expect("harness output should use the versioned event contract")
+                .into_event()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        events.iter().any(|event| matches!(event, ThreadEvent::PlanDelta(delta) if delta.delta.contains("Preserve the streamed planning handoff."))),
+        "the persisted plan must flow through the canonical plan delta event"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, ThreadEvent::PlanApprovalRequested(_))),
+        "the existing approval-ready event path must be published"
     );
 }
 

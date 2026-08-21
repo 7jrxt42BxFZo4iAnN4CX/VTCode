@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -8,7 +9,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use tokio::sync::{Notify, mpsc};
 
-use crate::agent::runloop::unified::plan_blocks::{ProposedPlanStreamParser, extract_proposed_plan};
+use crate::agent::runloop::unified::plan_blocks::{ProposedPlanStreamParser, extract_any_plan, extract_proposed_plan};
 use crate::agent::runloop::unified::stream_sanitization::StreamSanitizer;
 use vtcode_commons::formatting::compact_reasoning_text;
 use vtcode_core::copilot::CopilotRuntimeRequest;
@@ -450,6 +451,41 @@ fn is_output_suppressed(options: &StreamSpinnerOptions) -> bool {
             .is_some_and(|signal| signal.load(Ordering::Acquire))
 }
 
+/// Forward a plan collected from the stream into the completed response so
+/// response processing can validate and persist it through the normal planning
+/// workflow. Streaming removes plan markup before rendering, while providers
+/// may omit the same text from their completion payload; the semantic handoff
+/// must therefore happen before any rendering-suppressed return.
+fn merge_streamed_plan_into_response(
+    response: &mut uni::LLMResponse,
+    streamed_plan_text: Option<String>,
+    streamed_visible_content: &str,
+) {
+    let Some(plan_text) = streamed_plan_text.filter(|text| !text.trim().is_empty()) else {
+        return;
+    };
+
+    let mut content = response
+        .content
+        .take()
+        .filter(|text| !text.trim().is_empty())
+        .or_else(|| (!streamed_visible_content.trim().is_empty()).then(|| streamed_visible_content.to_string()))
+        .unwrap_or_default();
+
+    if extract_any_plan(&content).plan_text.is_some() {
+        response.content = Some(content);
+        return;
+    }
+
+    if !content.trim().is_empty() {
+        content.push_str("\n\n");
+    }
+    content.push_str("<proposed_plan>\n");
+    content.push_str(plan_text.trim());
+    content.push_str("\n</proposed_plan>");
+    response.content = Some(content);
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "Intentional compatibility, platform, test, or API-shape suppression."
@@ -513,6 +549,7 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
 
     let mut suppress_reasoning_due_to_duplication = false;
     let mut plan_parser = options.strip_proposed_plan_blocks.then(ProposedPlanStreamParser::new);
+    let mut streamed_plan_text = None;
 
     let mut token_count = 0;
     let mut reasoning_token_count = 0;
@@ -816,6 +853,7 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
 
     if let Some(parser) = plan_parser.as_mut() {
         let trailing_plan_parse = parser.finish();
+        streamed_plan_text = trailing_plan_parse.plan_text;
         if !is_output_suppressed(&options) && !trailing_plan_parse.stripped_text.is_empty() {
             if let Some(callback) = on_progress {
                 callback(StreamProgressEvent::OutputDelta(trailing_plan_parse.stripped_text.clone()));
@@ -843,7 +881,7 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
         emitted_tokens = true;
     }
 
-    let response = match final_response {
+    let mut response = match final_response {
         Some(response) => response,
         None => {
             reasoning_state
@@ -855,6 +893,16 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
             return Err(uni::LLMError::Provider { message: formatted_error, metadata: None });
         }
     };
+
+    let streamed_visible_content = if pending_content.is_empty() {
+        Cow::Borrowed(aggregated.as_str())
+    } else {
+        let mut visible_content = String::with_capacity(aggregated.len() + pending_content.len());
+        visible_content.push_str(&aggregated);
+        visible_content.push_str(&pending_content);
+        Cow::Owned(visible_content)
+    };
+    merge_streamed_plan_into_response(&mut response, streamed_plan_text, streamed_visible_content.as_ref());
 
     if is_output_suppressed(&options) {
         return Ok((response, false));
@@ -995,7 +1043,8 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
 #[cfg(test)]
 mod tests {
     use super::{
-        CopilotRuntimeRequestHandler, FirstProgressTimeout, render_stream_with_options_and_copilot_runtime_impl,
+        CopilotRuntimeRequestHandler, FirstProgressTimeout, merge_streamed_plan_into_response,
+        render_stream_with_options_and_copilot_runtime_impl,
     };
     use crate::agent::runloop::unified::state::CtrlCState;
     use crate::agent::runloop::unified::ui_interaction::{
@@ -1066,9 +1115,9 @@ mod tests {
         PlaceholderSpinner::new(&handle, None, None, "")
     }
 
-    fn completed_response(content: &str) -> LLMResponse {
+    fn completed_response_with_content(content: Option<&str>) -> LLMResponse {
         LLMResponse {
-            content: Some(content.to_string()),
+            content: content.map(str::to_string),
             model: "mock-model".to_string(),
             tool_calls: None,
             usage: None,
@@ -1080,6 +1129,200 @@ mod tests {
             tool_references: vec![],
             compaction: None,
         }
+    }
+
+    fn completed_response(content: &str) -> LLMResponse {
+        completed_response_with_content(Some(content))
+    }
+
+    const STREAMED_PLAN: &str = "- Step 1";
+
+    fn count_plan_blocks(text: &str) -> usize {
+        text.matches("<proposed_plan>").count()
+    }
+
+    fn collect_rendered_inline_text(command_rx: &mut mpsc::UnboundedReceiver<InlineCommand>) -> String {
+        std::iter::from_fn(|| command_rx.try_recv().ok())
+            .filter_map(|command| match command {
+                InlineCommand::AppendLine { segments, .. } => {
+                    Some(segments.into_iter().map(|segment| segment.text).collect::<String>())
+                }
+                InlineCommand::Inline { segment, .. } => Some(segment.text),
+                InlineCommand::ReplaceLast { lines, .. } => Some(
+                    lines
+                        .into_iter()
+                        .flat_map(|line| line.into_iter().map(|segment| segment.text))
+                        .collect::<String>(),
+                ),
+                _ => None,
+            })
+            .collect::<String>()
+    }
+
+    #[tokio::test]
+    async fn split_streamed_plan_is_forwarded_into_completed_response() {
+        let spinner = build_spinner();
+        let mut renderer = AnsiRenderer::stdout();
+        let ctrl_c_state = Arc::new(CtrlCState::new());
+        let ctrl_c_notify = Arc::new(Notify::new());
+        let mut stream: uni::LLMStream = Box::pin(async_stream::stream! {
+            yield Ok(LLMStreamEvent::Token { delta: "Intro\n<propo".to_string() });
+            yield Ok(LLMStreamEvent::Token {
+                delta: "sed_plan>\n- Step 1\n</proposed_plan>\nOutro".to_string(),
+            });
+            yield Ok(LLMStreamEvent::Completed {
+                response: Box::new(completed_response_with_content(None)),
+            });
+        });
+
+        let (response, _) = render_stream_with_options_and_copilot_runtime_impl(
+            "mock",
+            &mut stream,
+            None,
+            None,
+            None,
+            None,
+            &spinner,
+            &mut renderer,
+            &ctrl_c_state,
+            &ctrl_c_notify,
+            StreamSpinnerOptions {
+                strip_proposed_plan_blocks: true,
+                ..StreamSpinnerOptions::default()
+            },
+            None,
+        )
+        .await
+        .expect("stream should return its completed response");
+
+        let response_content = response
+            .content
+            .as_deref()
+            .expect("streamed plan should be merged into content");
+        assert_eq!(count_plan_blocks(response_content), 1);
+        assert!(response_content.contains("Intro"));
+        assert!(response_content.contains(STREAMED_PLAN));
+        assert!(response_content.contains("</proposed_plan>"));
+    }
+
+    #[tokio::test]
+    async fn suppressed_stream_still_forwards_streamed_plan_without_rendering() {
+        let spinner = build_spinner();
+        let mut renderer = AnsiRenderer::stdout();
+        let ctrl_c_state = Arc::new(CtrlCState::new());
+        let ctrl_c_notify = Arc::new(Notify::new());
+        let mut stream: uni::LLMStream = Box::pin(async_stream::stream! {
+            yield Ok(LLMStreamEvent::Token {
+                delta: "<proposed_plan>\n- Step 1\n</proposed_plan>".to_string(),
+            });
+            yield Ok(LLMStreamEvent::Completed {
+                response: Box::new(completed_response_with_content(None)),
+            });
+        });
+
+        let (response, rendered) = render_stream_with_options_and_copilot_runtime_impl(
+            "mock",
+            &mut stream,
+            None,
+            None,
+            None,
+            None,
+            &spinner,
+            &mut renderer,
+            &ctrl_c_state,
+            &ctrl_c_notify,
+            StreamSpinnerOptions {
+                strip_proposed_plan_blocks: true,
+                suppress_output: true,
+                ..StreamSpinnerOptions::default()
+            },
+            None,
+        )
+        .await
+        .expect("suppressed stream should return its completed response");
+
+        assert!(!rendered, "suppression must still prevent rendering");
+        let response_content = response.content.as_deref().expect("suppressed plan should be forwarded");
+        assert_eq!(count_plan_blocks(response_content), 1);
+        assert!(response_content.contains(STREAMED_PLAN));
+    }
+
+    #[tokio::test]
+    async fn streamed_prose_remains_visible_without_plan_markup() {
+        let (command_tx, mut command_rx) = mpsc::unbounded_channel();
+        let handle = InlineHandle::new_for_tests(command_tx);
+        let spinner = PlaceholderSpinner::new(&handle, None, None, "");
+        let mut renderer = AnsiRenderer::with_inline_ui(handle, Default::default());
+        let ctrl_c_state = Arc::new(CtrlCState::new());
+        let ctrl_c_notify = Arc::new(Notify::new());
+        let mut stream: uni::LLMStream = Box::pin(async_stream::stream! {
+            yield Ok(LLMStreamEvent::Token {
+                delta: "Intro\n<proposed_plan>\n- Step 1\n</proposed_plan>\nOutro".to_string(),
+            });
+            yield Ok(LLMStreamEvent::Completed {
+                response: Box::new(completed_response_with_content(Some("Intro\n\nOutro"))),
+            });
+        });
+
+        let (response, rendered) = render_stream_with_options_and_copilot_runtime_impl(
+            "mock",
+            &mut stream,
+            None,
+            None,
+            None,
+            None,
+            &spinner,
+            &mut renderer,
+            &ctrl_c_state,
+            &ctrl_c_notify,
+            StreamSpinnerOptions {
+                strip_proposed_plan_blocks: true,
+                ..StreamSpinnerOptions::default()
+            },
+            None,
+        )
+        .await
+        .expect("stream should render its completed response");
+
+        assert!(rendered);
+        let response_content = response.content.as_deref().expect("response content should be present");
+        assert_eq!(count_plan_blocks(response_content), 1);
+        let rendered_text = collect_rendered_inline_text(&mut command_rx);
+        assert!(rendered_text.contains("Intro"), "rendered text: {rendered_text:?}");
+        assert!(rendered_text.contains("Outro"), "rendered text: {rendered_text:?}");
+        assert!(!rendered_text.contains("<proposed_plan>"));
+        assert!(!rendered_text.contains(STREAMED_PLAN));
+    }
+
+    #[test]
+    fn completed_plan_block_is_not_duplicated_during_stream_handoff() {
+        let mut response =
+            completed_response_with_content(Some("Intro\n<proposed_plan>\n- Completed step\n</proposed_plan>\nOutro"));
+
+        merge_streamed_plan_into_response(&mut response, Some(STREAMED_PLAN.to_string()), "Intro\n\nOutro");
+
+        let content = response.content.expect("completed response content should be preserved");
+        assert_eq!(count_plan_blocks(&content), 1);
+        assert!(content.contains("- Completed step"));
+        assert!(!content.contains(STREAMED_PLAN));
+    }
+
+    #[test]
+    fn completed_content_takes_precedence_and_alternate_plan_is_not_duplicated() {
+        let mut response = completed_response_with_content(Some("completed prose"));
+        merge_streamed_plan_into_response(&mut response, Some(STREAMED_PLAN.to_string()), "streamed prose");
+        let content = response.content.expect("completed content should be preserved");
+        assert!(content.starts_with("completed prose"));
+        assert!(!content.contains("streamed prose"));
+        assert_eq!(count_plan_blocks(&content), 1);
+
+        let mut response = completed_response_with_content(Some("Intro\n<plan>\n- Existing step\n</plan>\nOutro"));
+        merge_streamed_plan_into_response(&mut response, Some(STREAMED_PLAN.to_string()), "visible prose");
+        let content = response.content.expect("alternate plan content should be preserved");
+        assert_eq!(content.matches("<plan>").count(), 1);
+        assert_eq!(count_plan_blocks(&content), 0);
+        assert!(content.contains("- Existing step"));
+        assert!(!content.contains(STREAMED_PLAN));
     }
 
     #[tokio::test]
