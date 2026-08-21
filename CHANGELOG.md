@@ -2,6 +2,13 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.146.10 - 2026-08-21
+
+### Highlights
+#### Features
+
+- Sync catalog to upstream OpenCode Go 20-model list  (49aa6c14) (@xcrong)
+### Other Changes
 ## 0.146.9 - 2026-08-19
 
 ### Highlights
