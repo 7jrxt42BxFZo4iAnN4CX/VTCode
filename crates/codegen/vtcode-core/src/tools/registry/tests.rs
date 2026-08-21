@@ -4,8 +4,11 @@ use crate::config::ToolDocumentationMode as ConfigToolDocumentationMode;
 use crate::config::ToolsConfig;
 use crate::constants::tools;
 use crate::tool_policy::{ToolConstraints, ToolPolicy, ToolPolicyConfig};
-use crate::tools::handlers::{SessionSurface, SessionToolsConfig, ToolModelCapabilities, ToolProfile};
+use crate::tools::handlers::{
+    PlanningWorkflowState, SessionSurface, SessionToolsConfig, TaskTrackerTool, ToolModelCapabilities, ToolProfile,
+};
 use crate::tools::registry::mcp_helpers::normalize_mcp_tool_identifier;
+use crate::tools::traits::Tool;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
@@ -279,6 +282,37 @@ async fn advanced_profile_exposes_code_search_without_removed_public_names() -> 
     assert!(model_tool_names.contains(&tools::CODE_SEARCH.to_string()));
     assert!(!model_tool_names.contains(&tools::UNIFIED_SEARCH.to_string()));
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn registered_planning_task_tracker_exposes_planning_index_contract() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
+
+    let planning_config = SessionToolsConfig::full_public(
+        SessionSurface::Interactive,
+        CapabilityLevel::CodeSearch,
+        ConfigToolDocumentationMode::Full,
+        ToolModelCapabilities::default(),
+    )
+    .with_tool_profile(ToolProfile::AdvancedVtCode)
+    .with_planning_active(true);
+    let planning_entry = registry
+        .schema_entries(planning_config)
+        .await
+        .into_iter()
+        .find(|entry| entry.name == tools::TASK_TRACKER)
+        .expect("planning task tracker schema");
+
+    assert_eq!(planning_entry.parameters["properties"]["index"]["minimum"], 1);
+    assert_eq!(planning_entry.parameters["properties"]["index_path"]["pattern"], "^[1-9][0-9]*(\\.[1-9][0-9]*)*$");
+
+    let standard_state = PlanningWorkflowState::new(temp_dir.path().to_path_buf());
+    let standard_tool = TaskTrackerTool::new(temp_dir.path().to_path_buf(), standard_state);
+    let standard_parameters = standard_tool.parameter_schema().expect("standard task tracker schema");
+    assert_eq!(standard_parameters["properties"]["index"]["minimum"], 0);
+    assert_eq!(standard_parameters["properties"]["index_path"]["pattern"], "^[1-9][0-9]*$");
     Ok(())
 }
 

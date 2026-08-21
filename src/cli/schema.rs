@@ -144,7 +144,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn task_tracker_schema_exposes_action_aware_index_contract() {
+    async fn task_tracker_schema_exposes_registered_planning_index_contract() {
         let entries = collect_tools_schema(
             SchemaMode::Full,
             &[vtcode_core::config::constants::tools::TASK_TRACKER.to_string()],
@@ -158,8 +158,8 @@ mod tests {
         .expect("task tracker schema");
         let tracker = entries.first().expect("task tracker entry");
 
-        assert_eq!(tracker.parameters["properties"]["index"]["minimum"], 0);
-        assert_eq!(tracker.parameters["properties"]["index_path"]["pattern"], "^[1-9][0-9]*$");
+        assert_eq!(tracker.parameters["properties"]["index"]["minimum"], 1);
+        assert_eq!(tracker.parameters["properties"]["index_path"]["pattern"], "^[1-9][0-9]*(\\.[1-9][0-9]*)*$");
     }
 
     #[test]
