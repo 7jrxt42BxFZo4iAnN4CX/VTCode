@@ -163,7 +163,7 @@ fn register_task_tracker(plan_state: Option<&PlanningWorkflowState>) -> ToolRegi
         )
     }))
     .with_description(
-        "Track task progress through a single checklist API (action: create | update | list | add). Use task_tracker with action=create at the start of a multi-step plan; use action=update as work progresses; use action=list to review current state. Do NOT call action=create twice — subsequent calls update the existing checklist. Tracker state mirrors between `.vtcode/tasks/current_task.md` and active plan sidecar files when available.",
+        "Track task progress through a single checklist API (action: create | update | list | add). Use task_tracker with action=create at the start of a multi-step plan; use action=update as work progresses; use action=list to review current state. For action=update, item indices are 1-based; standard checklist-level completion alone may use index: 0 with status: completed. Planning workflow accepts only positive flat or hierarchical index paths. Use items for bulk updates. Do NOT call action=create twice — subsequent calls update the existing checklist. Tracker state mirrors between `.vtcode/tasks/current_task.md` and active plan sidecar files when available.",
     )
     .with_aliases(["plan_manager", "track_tasks", "checklist"])
 }

@@ -143,6 +143,25 @@ mod tests {
         assert_eq!(advanced[0].name, names[0]);
     }
 
+    #[tokio::test]
+    async fn task_tracker_schema_exposes_action_aware_index_contract() {
+        let entries = collect_tools_schema(
+            SchemaMode::Full,
+            &[vtcode_core::config::constants::tools::TASK_TRACKER.to_string()],
+            &{
+                let mut config = VTCodeConfig::default();
+                config.tools.profile = ToolProfile::AdvancedVtCode;
+                config
+            },
+        )
+        .await
+        .expect("task tracker schema");
+        let tracker = entries.first().expect("task tracker entry");
+
+        assert_eq!(tracker.parameters["properties"]["index"]["minimum"], 0);
+        assert_eq!(tracker.parameters["properties"]["index_path"]["pattern"], "^[1-9][0-9]*$");
+    }
+
     #[test]
     fn schema_mode_maps_to_tool_documentation_mode() {
         assert_eq!(to_tool_documentation_mode(SchemaMode::Minimal), ToolDocumentationMode::Minimal);

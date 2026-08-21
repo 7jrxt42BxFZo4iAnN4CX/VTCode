@@ -789,7 +789,7 @@ impl Tool for PlanningTaskTrackerTool {
     }
 
     fn description(&self) -> &str {
-        "Adaptive task tracking for planning. Persists hierarchical plan progress under .vtcode/plans/<plan>.tasks.md and mirrors updates to .vtcode/tasks/current_task.md. Actions: create, update, list, add."
+        "Adaptive task tracking for planning. Persists hierarchical plan progress under .vtcode/plans/<plan>.tasks.md and mirrors updates to .vtcode/tasks/current_task.md. Actions: create, update, list, add. For action=update, planning item indices are positive 1-based flat or hierarchical index_path values; index: 0 is invalid. Use items for bulk updates."
     }
 
     fn parameter_schema(&self) -> Option<Value> {
@@ -841,11 +841,13 @@ impl Tool for PlanningTaskTrackerTool {
                 },
                 "index_path": {
                     "type": "string",
-                    "description": "Hierarchical index path for update (example: '2.1')."
+                    "pattern": "^[1-9][0-9]*(\\.[1-9][0-9]*)*$",
+                    "description": "Action=update only: positive flat or hierarchical item path (examples: '2' or '2.1'). Zero is not a valid planning index."
                 },
                 "index": {
                     "type": "integer",
-                    "description": "Top-level index compatibility fallback for update."
+                    "minimum": 1,
+                    "description": "Action=update only: positive top-level item index compatibility fallback. Planning index 0 is invalid; use items for bulk updates."
                 },
                 "status": {
                     "type": "string",
@@ -1119,6 +1121,44 @@ mod tests {
 
         assert_eq!(updated["status"], "updated");
         assert_eq!(updated["checklist"]["completed"], 1);
+    }
+
+    #[tokio::test]
+    async fn update_rejects_zero_flat_index_even_for_checklist_completion() {
+        let (_temp_dir, _state, tool) = setup_planning_workflow().await;
+
+        tool.execute(json!({
+            "action": "create",
+            "items": ["Parent task"]
+        }))
+        .await
+        .expect("create tracker");
+
+        let error = tool
+            .execute(json!({
+                "action": "update",
+                "index": 0,
+                "status": "completed"
+            }))
+            .await
+            .expect_err("planning index zero must be rejected");
+
+        assert!(error.to_string().contains("index_path components must be >= 1"));
+    }
+
+    #[tokio::test]
+    async fn planning_task_tracker_schema_requires_positive_indices() {
+        let (_temp_dir, _state, tool) = setup_planning_workflow().await;
+        let schema = tool.parameter_schema().expect("planning task tracker schema");
+
+        assert_eq!(schema["properties"]["index"]["minimum"], 1);
+        assert_eq!(schema["properties"]["index_path"]["pattern"], "^[1-9][0-9]*(\\.[1-9][0-9]*)*$");
+        assert!(
+            schema["properties"]["index_path"]["description"]
+                .as_str()
+                .expect("index path description")
+                .contains("positive")
+        );
     }
 
     #[tokio::test]

@@ -957,7 +957,7 @@ impl Tool for TaskTrackerTool {
     }
 
     fn description(&self) -> &str {
-        "Track task progress through a single checklist API (action: create | update | list | add). Use with action=create at the start of a multi-step plan; action=update as work progresses; action=list to review current state. Do NOT call action=create twice — subsequent calls update the existing checklist. Tracker state mirrors between .vtcode/tasks/current_task.md and active plan sidecar files when available."
+        "Track task progress through a single checklist API (action: create | update | list | add). Use with action=create at the start of a multi-step plan; action=update as work progresses; action=list to review current state. For action=update, item indices are 1-based; standard checklist-level completion alone may use index: 0 with status: completed. Planning workflow accepts only positive flat or hierarchical index paths. Use items for bulk updates. Do NOT call action=create twice — subsequent calls update the existing checklist. Tracker state mirrors between .vtcode/tasks/current_task.md and active plan sidecar files when available."
     }
 
     fn parameter_schema(&self) -> Option<Value> {
@@ -1009,11 +1009,13 @@ impl Tool for TaskTrackerTool {
                 },
                 "index": {
                     "type": "integer",
-                    "description": "1-indexed item number to update in the standard flat checklist."
+                    "minimum": 0,
+                    "description": "Action=update only: use a 1-based item index. index: 0 is reserved for standard checklist-level completion and is valid only with status: completed."
                 },
                 "index_path": {
                     "type": "string",
-                    "description": "Hierarchical index path for update in Planning workflow (example: '2.1'). A single value such as '2' is equivalent to the flat index."
+                    "pattern": "^[1-9][0-9]*$",
+                    "description": "Action=update only: positive flat index path for compatibility (example: '2'). Hierarchical paths are accepted only by Planning workflow."
                 },
                 "status": {
                     "type": "string",
@@ -1074,6 +1076,21 @@ impl Tool for TaskTrackerTool {
                             { "required": ["index_path", "status"] },
                             { "required": ["items"] }
                         ]
+                    }
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "action": { "const": "update" },
+                            "index": { "const": 0 }
+                        },
+                        "required": ["action", "index"]
+                    },
+                    "then": {
+                        "properties": {
+                            "status": { "const": "completed" }
+                        },
+                        "required": ["status"]
                     }
                 },
                 {
@@ -1221,6 +1238,21 @@ mod tests {
         assert_eq!(result["status"], "updated");
         assert_eq!(result["checklist"]["completed"], 0);
         assert_eq!(result["checklist"]["notes"], "Checklist outcome: Reported summary to user");
+    }
+
+    #[test]
+    fn task_tracker_schema_describes_action_aware_indices() {
+        let (_state, tool) = setup_tool(&TempDir::new().unwrap());
+        let schema = tool.parameter_schema().expect("task tracker schema");
+
+        assert_eq!(schema["properties"]["index"]["minimum"], 0);
+        assert_eq!(schema["properties"]["index_path"]["pattern"], "^[1-9][0-9]*$");
+        let description = schema["properties"]["index"]["description"]
+            .as_str()
+            .expect("index description");
+        assert!(description.contains("index: 0"));
+        assert!(description.contains("completed"));
+        assert_eq!(schema["allOf"][2]["then"]["properties"]["status"]["const"], "completed");
     }
 
     #[tokio::test]

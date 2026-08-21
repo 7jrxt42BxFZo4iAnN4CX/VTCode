@@ -221,6 +221,7 @@ fn generate_runtime_tool_guidelines_for_profile(
     if has_task_tracker {
         lines.push("- Keep `task_tracker` updated as you refine the plan.".to_string());
         lines.push("- Keep blockers and verification open in `task_tracker` until resolved.".to_string());
+        lines.push("- Use `task_tracker` action=update with positive flat indices or positive hierarchical index_path values; index: 0 is only for standard checklist-level completion with status=completed, and bulk updates use items.".to_string());
     }
     if has_request_user_input {
         lines.push(
@@ -417,6 +418,19 @@ mod tests {
         assert!(!guidelines.contains("task_tracker"));
         assert!(!guidelines.contains("list_files"));
         assert!(!guidelines.contains("read_file"));
+    }
+
+    #[test]
+    fn task_tracker_guidance_explains_action_aware_indices() {
+        let guidelines = generate_runtime_tool_guidelines_for_profile(
+            &[TOOL_TASK_TRACKER.to_string()],
+            true,
+            ResolvedShellPromptProfile::UnixLike,
+        );
+
+        assert!(guidelines.contains("positive flat indices"));
+        assert!(guidelines.contains("index: 0"));
+        assert!(guidelines.contains("items"));
     }
 
     #[test]
