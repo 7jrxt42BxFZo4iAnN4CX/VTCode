@@ -26,6 +26,22 @@ The closest concept mapping is:
 `turn.started`, `turn.completed`, and `turn.failed` remain VT Code turn
 wrappers around the inner item lifecycle.
 
+### Turn reliability and diagnostics
+
+The runtime records the canonical `turn.*` lifecycle events exactly once for a
+turn. Model latency, output/reasoning byte counts, tool-call count, finish
+reason, and reported input/output token counts are emitted as structured
+diagnostic fields in runtime tracing; these diagnostics do not introduce a
+second event contract. Provider errors and timeouts emit `turn.failed` through
+the owning run loop and never produce a successful completion.
+
+Cancellation is fail-closed: an interrupted stream returns a cancelled finish
+reason, partial assistant text is not treated as a successful final answer, and
+tool calls that were opened but did not reach a terminal provider response are
+completed as failed. A timeout applies to the provider stream acquisition and
+is reported as a failure; it does not silently convert an empty or partial
+stream into success. Steering follow-ups remain queued for the next turn.
+
 ## Terminal Thread Result
 
 VT Code now emits `thread.completed` at the end of a session or exec run.

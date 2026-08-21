@@ -51,7 +51,9 @@ impl FromStr for ModelId {
                 m if m == models::opencode_go::MIMO_V2_5_PRO => Ok(ModelId::OpenCodeGoMimoV25Pro),
                 m if m == models::opencode_go::MINIMAX_M3 => Ok(ModelId::OpenCodeGoMinimaxM3),
                 m if m == models::opencode_go::MINIMAX_M2_7 => Ok(ModelId::OpenCodeGoMinimaxM27),
-                m if m == models::opencode_go::MUSE_SPARK_1_2_CONTRIBUTOR => Ok(ModelId::OpenCodeGoMuseSpark12Contributor),
+                m if m == models::opencode_go::MUSE_SPARK_1_2_CONTRIBUTOR => {
+                    Ok(ModelId::OpenCodeGoMuseSpark12Contributor)
+                }
                 m if m == models::opencode_go::QWEN_3_8_MAX => Ok(ModelId::OpenCodeGoQwen38Max),
                 m if m == models::opencode_go::QWEN_3_7_MAX => Ok(ModelId::OpenCodeGoQwen37Max),
                 m if m == models::opencode_go::QWEN_3_7_PLUS => Ok(ModelId::OpenCodeGoQwen37Plus),

@@ -15,6 +15,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use std::collections::HashSet;
 use std::collections::VecDeque;
+use std::time::Instant;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::error::TryRecvError;
 
@@ -111,11 +112,13 @@ impl RuntimeModelAdapter for ProviderRuntimeModelAdapter<'_> {
         timeout: Option<std::time::Duration>,
         on_progress: &mut (dyn FnMut(RuntimeModelProgress) + Send),
     ) -> Result<RuntimeModelOutput> {
+        let started_at = Instant::now();
         let request_model = request.model.clone();
         let mut stream = if let Some(duration) = timeout {
             match tokio::time::timeout(duration, self.provider.stream_normalized(request)).await {
                 Ok(result) => result?,
                 Err(_) => {
+                    tracing::warn!(model = %request_model, elapsed_ms = started_at.elapsed().as_millis() as u64, "model stream timed out");
                     return Err(anyhow::anyhow!("Stream request timed out after {duration:?}"));
                 }
             }
@@ -127,6 +130,7 @@ impl RuntimeModelAdapter for ProviderRuntimeModelAdapter<'_> {
         let mut completed_response: Option<LLMResponse> = None;
         while let Some(event_result) = stream.next().await {
             if matches!(self.steering.poll_turn_control().await, RuntimeControl::StopRequested) {
+                tracing::info!(model = %request_model, elapsed_ms = started_at.elapsed().as_millis() as u64, "model stream cancelled");
                 let mut response = LLMResponse {
                     model: request_model.clone(),
                     finish_reason: FinishReason::Error("Cancelled".to_string()),
@@ -182,6 +186,14 @@ impl RuntimeModelAdapter for ProviderRuntimeModelAdapter<'_> {
             response.usage = Some(final_usage);
         }
 
+        tracing::debug!(
+            model = %response.model,
+            elapsed_ms = started_at.elapsed().as_millis() as u64,
+            input_tokens = response.usage.as_ref().map_or(0, |usage| usage.prompt_tokens),
+            output_tokens = response.usage.as_ref().map_or(0, |usage| usage.completion_tokens),
+            finish_reason = ?response.finish_reason,
+            "model stream completed"
+        );
         Ok(RuntimeModelOutput { response })
     }
 }
@@ -892,13 +904,20 @@ impl AgentRuntime {
         timeout: Option<std::time::Duration>,
     ) -> Result<TurnExecution> {
         let request_model = request.model.clone();
-        let start_time = std::time::Instant::now();
+        let start_time = Instant::now();
         self.output.reset();
         self.reasoning.reset();
         let mut full_text = String::new();
         let mut full_reasoning = String::new();
         let mut on_progress = |event| self.record_model_progress(event, &mut full_text, &mut full_reasoning);
-        let RuntimeModelOutput { mut response } = adapter.execute(request, timeout, &mut on_progress).await?;
+        let RuntimeModelOutput { mut response } = match adapter.execute(request, timeout, &mut on_progress).await {
+            Ok(output) => output,
+            Err(error) => {
+                self.complete_open_tool_calls(ToolCallStatus::Failed);
+                tracing::warn!(elapsed_ms = start_time.elapsed().as_millis() as u64, error = %error, "agent turn failed during model execution");
+                return Err(error);
+            }
+        };
 
         merge_stream_and_completed_text(&mut full_text, response.content.as_deref());
         merge_stream_and_completed_text(&mut full_reasoning, response.reasoning.as_deref());
@@ -974,6 +993,17 @@ impl AgentRuntime {
         } else {
             response.finish_reason
         };
+
+        tracing::debug!(
+            elapsed_ms = start_time.elapsed().as_millis() as u64,
+            output_bytes = full_text.len(),
+            reasoning_bytes = full_reasoning.len(),
+            tool_calls = response.tool_calls.as_ref().map_or(0, Vec::len),
+            input_tokens = response.usage.as_ref().map_or(0, |usage| usage.prompt_tokens),
+            output_tokens = response.usage.as_ref().map_or(0, |usage| usage.completion_tokens),
+            finish_reason = %finish_reason,
+            "agent turn completed"
+        );
 
         Ok(TurnExecution {
             response,

@@ -15,6 +15,18 @@ policy, schemas, tests, or lints.
 
 ## Continuity and long-running work
 
+### Runtime observability and cancellation
+
+`AgentRuntime` keeps `ThreadEvent` authoritative while tracing bounded
+diagnostics for model latency, turn latency, input/output token usage, output
+and reasoning byte counts, tool-call count, finish reason, cancellation, and
+timeouts. These fields are diagnostic only and must not be persisted as a
+parallel lifecycle schema. A provider error or timeout fails the turn; an
+interrupted stream is never reported as successful completion. Open tool calls
+are closed with a terminal failed status, while partial streamed text remains
+partial and is not promoted to a successful final answer. Follow-up steering
+received during streaming is retained for the next turn.
+
 The runtime keeps prompt additions small and cache-stable while preserving the
 newest working context. Automatic compaction uses a non-configurable continuity
 tail target of approximately 20,000 estimated tokens. It retains complete

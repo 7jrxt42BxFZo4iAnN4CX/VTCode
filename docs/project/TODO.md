@@ -40,3 +40,22 @@ check plan mode still not working,
 /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/checkpoints/turn_956.json /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/checkpoints/turn_955.json /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/checkpoints/turn_954.json
 
 /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/sessions/session-vtcode-20260819T135506Z_867199-97319 /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/sessions/session-vtcode-20260819T135406Z_526058-97319 /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/sessions/session-vtcode-20260819T135348Z_965540-97319
+
+---
+
+for
+
+------------------------------------------------------- Info -------------------------------------------------------
+Execution summary: completed; changed files:
+/Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/crates/codegen/vtcode-core/src/core/agent/runtime/mod.rs,
+/Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/docs/development/runtime-guidance.md,
+/Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/docs/guides/agent-loop-contract.md; verification: see the
+final response and task tracker; blockers: none.
+
+---
+
+--> improve to only show the relative path of the changed files in the execution summary, instead of the full path, to make it more readable and concise.
+
+---
+
+https://blog.rust-lang.org/2026/08/20/supply-chain-attack-on-arrayref/

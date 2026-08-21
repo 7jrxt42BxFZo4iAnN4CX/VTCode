@@ -862,3 +862,5 @@ plans/
 
 .node-version
 .worktrees/
+
+.codegraph
