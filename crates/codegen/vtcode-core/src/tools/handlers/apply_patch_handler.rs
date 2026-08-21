@@ -338,7 +338,7 @@ pub(crate) fn parse_apply_patch_command(command: &[String]) -> (bool, Option<Str
 
 // Constants for tool descriptions
 const APPLY_PATCH_DESCRIPTION: &str = r#"Use the `apply_patch` tool to edit files.
-Your patch language is a stripped-down, file-oriented diff format designed to be easy to parse and safe to apply.
+Your patch language is a stripped-down, file-oriented diff format designed to be easy to parse and safe to apply. Every patch path must be workspace-relative; never use absolute paths, `..`, or traversal-like forms.
 
 You can think of it as a high-level envelope:
 
@@ -365,7 +365,7 @@ Within a hunk each line starts with:
 Important rules:
 - You must include a header with your intended action (Add/Delete/Update)
 - You must prefix new lines with `+` even when creating a new file
-- File references can only be relative, NEVER ABSOLUTE
+- File references must be workspace-relative; never use absolute paths, `..`, or traversal-like forms
 - Prefer small hunks with stable semantic @@ anchors like function, class, method, or impl names"#;
 
 const APPLY_PATCH_LARK_GRAMMAR: &str = r#"

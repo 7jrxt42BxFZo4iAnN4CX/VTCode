@@ -81,6 +81,11 @@ available `additions`/`deletions`); no-op entries are marked `is_empty`. The
 legacy single-file `diff_preview` response is normalized to this same shape by
 the terminal and session renderers.
 
+Every `apply_patch` path, including move sources and destinations, must be
+workspace-relative. Absolute paths, `..`, and traversal-like path forms are
+rejected; resolution also rejects an in-workspace symlink that leads outside the
+workspace before any patch mutation begins.
+
 After several effective mutations, anti-blind-editing temporarily allows reads,
 inspection, task tracking, and verification while blocking further workspace
 mutations until a verification command completes.

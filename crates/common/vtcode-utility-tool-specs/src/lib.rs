@@ -37,9 +37,8 @@ pub const SEMANTIC_ANCHOR_GUIDANCE: &str =
 /// rejects. This mirrors the `input` description so both alias fields carry
 /// identical, complete format guidance (see checkpoint turn_615 for the
 /// failure this prevents).
-pub const APPLY_PATCH_ALIAS_DESCRIPTION: &str = "Patch in VT Code format (*** Begin Patch, *** Update File: path, @@ hunk, -/+ lines, *** End Patch). Same envelope as 'input'; do NOT use unified diff (--- /+++ format).";
-pub const DEFAULT_APPLY_PATCH_INPUT_DESCRIPTION: &str =
-    "Patch in VT Code format: *** Begin Patch, *** Update File: path, @@ hunk, -/+ lines, *** End Patch";
+pub const APPLY_PATCH_ALIAS_DESCRIPTION: &str = "Patch in VT Code format (*** Begin Patch, *** Update File: path, @@ hunk, -/+ lines, *** End Patch). Same envelope as 'input'; do NOT use unified diff (--- /+++ format). Every patch path must be workspace-relative; never use absolute paths, `..`, or traversal-like forms.";
+pub const DEFAULT_APPLY_PATCH_INPUT_DESCRIPTION: &str = "Patch in VT Code format: *** Begin Patch, *** Update File: path, @@ hunk, -/+ lines, *** End Patch. Every patch path must be workspace-relative; never use absolute paths, `..`, or traversal-like forms.";
 
 /// Default model-visible preview budget for function-tool results.
 pub const DEFAULT_MAX_OUTPUT_TOKENS: usize = 10_000;

@@ -27,6 +27,9 @@ pub enum PatchError {
         reason: String,
     },
 
+    #[error("patch target '{path}' is outside the workspace: {reason}")]
+    WorkspaceContainment { path: PathBuf, reason: String },
+
     #[error("file '{path}' not found for update")]
     MissingFile { path: String },
 
