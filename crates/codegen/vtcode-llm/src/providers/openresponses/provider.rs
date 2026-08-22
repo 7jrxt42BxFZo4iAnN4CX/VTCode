@@ -481,7 +481,7 @@ impl OpenResponsesProvider {
         }
 
         if let Some(temp) = request.temperature {
-            payload["temperature"] = json!(temp);
+            payload["temperature"] = json!(crate::providers::common::sampling_param_f64(temp));
         }
 
         if let Some(tools) = &request.tools {
