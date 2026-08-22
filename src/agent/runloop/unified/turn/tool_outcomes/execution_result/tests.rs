@@ -236,7 +236,7 @@ fn maybe_inline_spooled_removes_redundant_fields() {
 
     let parsed: serde_json::Value = serde_json::from_str(&serialized).expect("serialized JSON payload");
     assert!(parsed.get("spool_hint").is_none());
-    assert!(parsed.get("spooled_bytes").is_none());
+    assert_eq!(parsed["spooled_bytes"], 12345);
     assert!(parsed.get("spooled_to_file").is_none());
     assert!(parsed.get("success").is_none());
     assert!(parsed.get("status").is_none());
