@@ -170,6 +170,10 @@ fn apply_spool_reference_only(compacted: &mut serde_json::Value, original: &serd
             .or_insert_with(|| serde_json::Value::String(spool_path.to_string()));
     }
 
+    if let Some(spooled_bytes) = original.get("spooled_bytes") {
+        obj.entry("spooled_bytes".to_string()).or_insert_with(|| spooled_bytes.clone());
+    }
+
     obj.insert("result_ref_only".to_string(), serde_json::Value::Bool(true));
 }
 
@@ -705,6 +709,23 @@ mod tests {
         assert_eq!(diagnostics.spooled_results, 1);
         assert_eq!(diagnostics.raw_spooled_bytes, 12_345);
         assert_eq!(diagnostics.model_visible_output_bytes, 0);
+    }
+
+    #[test]
+    fn generic_reference_only_spooled_response_preserves_spool_metadata_and_preview() {
+        let output = json!({
+            "spool_path": ".vtcode/context/tool_outputs/command.log",
+            "spooled_bytes": 38_912,
+            "preview": "bounded command preview",
+            "output": "large output that was written to the spool"
+        });
+
+        let content = maybe_inline_spooled_with_preview(tool_names::UNIFIED_EXEC, &output);
+        let shaped: serde_json::Value = serde_json::from_str(&content).expect("shaped response should be JSON");
+        assert_eq!(shaped["spool_path"], output["spool_path"]);
+        assert_eq!(shaped["spooled_bytes"], 38_912);
+        assert_eq!(shaped["preview"], "bounded command preview");
+        assert!(shaped.get("output").is_none());
     }
 
     #[tokio::test]

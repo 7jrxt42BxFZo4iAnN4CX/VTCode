@@ -587,6 +587,20 @@ fn standard_task_tracker_parameter_schema() -> Value {
             },
             {
                 "if": {
+                    "properties": { "action": { "enum": ["create", "list", "add"] } },
+                    "required": ["action"]
+                },
+                "then": {
+                    "not": {
+                        "anyOf": [
+                            { "required": ["index"] },
+                            { "required": ["index_path"] }
+                        ]
+                    }
+                }
+            },
+            {
+                "if": {
                     "properties": { "action": { "const": "add" } },
                     "required": ["action"]
                 },
@@ -1302,7 +1316,11 @@ mod tests {
         ];
         let invalid_cases = [
             json!({"action": "list", "index": 0}),
+            json!({"action": "list", "index": 1}),
+            json!({"action": "list", "index_path": "1"}),
             json!({"action": "add", "index": 0, "description": "New item"}),
+            json!({"action": "add", "index": 1, "description": "New item"}),
+            json!({"action": "create", "index": 1, "items": ["New item"]}),
             json!({"action": "update", "index": 0, "status": "pending"}),
         ];
 

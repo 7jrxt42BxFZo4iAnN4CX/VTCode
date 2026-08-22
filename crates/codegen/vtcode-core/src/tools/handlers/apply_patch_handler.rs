@@ -118,8 +118,18 @@ impl ToolRuntime<ApplyPatchRequest, ExecToolCallOutput> for ApplyPatchRuntime {
         &mut self,
         req: &ApplyPatchRequest,
         _attempt: &SandboxAttempt<'_>,
-        _ctx: &ToolCtx,
+        ctx: &ToolCtx,
     ) -> Result<ExecToolCallOutput, ToolError> {
+        vtcode_commons::paths::ensure_path_within_workspace_resolved(&req.cwd, ctx.session.workspace_root())
+            .await
+            .map_err(|error| {
+                ToolError::Rejected(format!(
+                    "apply_patch rejected cwd '{}' outside session workspace '{}': {error}",
+                    req.cwd.display(),
+                    ctx.session.workspace_root().display()
+                ))
+            })?;
+
         // Parse and apply the patch
         let patch = Patch::parse(&req.patch).map_err(|e| ToolError::Rejected(format!("Failed to parse patch: {e}")))?;
 
@@ -396,6 +406,11 @@ const APPLY_PATCH_UPDATE_EXAMPLE: &str = r#"*** Begin Patch
 mod tests {
     use super::*;
     use crate::exec_policy::RejectConfig;
+    use crate::tools::handlers::adapter::DefaultToolSession;
+    use crate::tools::handlers::sandboxing::{SandboxConfig, SandboxType};
+    use crate::tools::handlers::tool_handler::{Constrained, ShellEnvironmentPolicy, TurnContext};
+    use std::sync::Arc;
+    use tempfile::TempDir;
 
     #[test]
     fn test_parse_apply_patch_command_direct() {
@@ -450,5 +465,56 @@ mod tests {
             request_permissions: false,
             mcp_elicitations: false,
         })));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn direct_runtime_rejects_symlink_escaped_cwd_before_mutation() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = TempDir::new().expect("workspace should be created");
+        let outside = TempDir::new().expect("outside directory should be created");
+        let escaped_cwd = workspace.path().join("escaped");
+        symlink(outside.path(), &escaped_cwd).expect("cwd symlink should be created");
+
+        let session = Arc::new(DefaultToolSession::with_workspace(
+            workspace.path().to_path_buf(),
+            workspace.path().to_path_buf(),
+        ));
+        let turn = Arc::new(TurnContext {
+            cwd: escaped_cwd.clone(),
+            turn_id: "direct-apply-patch-test".to_string(),
+            sub_id: None,
+            shell_environment_policy: ShellEnvironmentPolicy::default(),
+            approval_policy: Constrained::default(),
+            codex_linux_sandbox_exe: None,
+            sandbox_policy: Constrained::default(),
+        });
+        let tool_ctx = ToolCtx {
+            session,
+            turn,
+            call_id: "call-1".to_string(),
+            tool_name: "apply_patch".to_string(),
+        };
+        let policy = SandboxConfig::default();
+        let attempt = SandboxAttempt {
+            sandbox: SandboxType::None,
+            policy: &policy,
+            sandbox_cwd: workspace.path(),
+            codex_linux_sandbox_exe: None,
+        };
+        let request = ApplyPatchRequest {
+            patch: "*** Begin Patch\n*** Add File: created.txt\n+must not exist\n*** End Patch\n".to_string(),
+            cwd: escaped_cwd,
+            timeout_ms: None,
+            user_explicitly_approved: true,
+        };
+
+        let error = ApplyPatchRuntime::new()
+            .run(&request, &attempt, &tool_ctx)
+            .await
+            .expect_err("direct apply_patch must reject an escaped cwd");
+        assert!(error.to_string().contains("outside session workspace"));
+        assert!(!outside.path().join("created.txt").exists());
     }
 }

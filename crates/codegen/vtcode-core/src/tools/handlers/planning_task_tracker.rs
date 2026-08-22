@@ -655,6 +655,20 @@ pub(crate) fn planning_task_tracker_parameter_schema() -> Value {
             },
             {
                 "if": {
+                    "properties": { "action": { "enum": ["create", "list", "add"] } },
+                    "required": ["action"]
+                },
+                "then": {
+                    "not": {
+                        "anyOf": [
+                            { "required": ["index"] },
+                            { "required": ["index_path"] }
+                        ]
+                    }
+                }
+            },
+            {
+                "if": {
                     "properties": { "action": { "const": "add" } },
                     "required": ["action"]
                 },
@@ -1188,6 +1202,10 @@ mod tests {
         let (_temp_dir, _state, tool) = setup_planning_workflow().await;
         let schema = tool.parameter_schema().expect("planning task tracker schema");
         let invalid_cases = [
+            json!({"action": "list", "index": 1}),
+            json!({"action": "list", "index_path": "1"}),
+            json!({"action": "create", "index": 1, "items": ["New item"]}),
+            json!({"action": "add", "index_path": "1", "description": "New item"}),
             json!({"action": "update", "items": ["Done"], "index": 1, "status": "completed"}),
             json!({"action": "update", "items": ["Done"], "index_path": "1.1", "status": "completed"}),
             json!({"action": "update", "items": ["Done"], "status": "completed"}),
