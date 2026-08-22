@@ -66,7 +66,7 @@ These changes preserve public tool names, sandbox permission enum values, duplic
 
 ### Scope
 
-Reviewed session logs under `~/.vtcode/sessions/`:
+Reviewed legacy session logs under the historical `VTCODE_HOME/sessions/` path:
 - `debug-session-vtcode-20260811t063743z_863637-66412.log` (startup debug log)
 - `harness-session-vtcode-20260808T223648Z_961150-70620-*.jsonl` (2.6 MB, 3 turns, 3253 events)
 - `harness-session-vtcode-20260731T234131Z_673442-70655-*.jsonl` (1.1 MB, comparison baseline)
@@ -175,7 +175,7 @@ All passed: 5573 tests across `vtcode-core` + `vtcode`, clippy clean with `-D wa
 
 ### Scope
 
-Continuation of the harness core audit. Reviewed remaining session-log waste patterns across 100 session files in `~/.vtcode/sessions/`, verified the abort/cancel streaming-termination path, and confirmed the `AgentRuntime` vs `StreamingLifecycleBridge` divergence is intentional.
+Continuation of the harness core audit. Reviewed remaining session-log waste patterns across 100 legacy session files under `VTCODE_HOME/sessions/`, verified the abort/cancel streaming-termination path, and confirmed the `AgentRuntime` vs `StreamingLifecycleBridge` divergence is intentional.
 
 ### Findings and disposition
 

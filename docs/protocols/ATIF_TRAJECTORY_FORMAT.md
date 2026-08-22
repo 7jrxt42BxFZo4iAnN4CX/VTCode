@@ -26,7 +26,7 @@ Output location: `<workspace>/.vtcode/sessions/<session_id>/derived/atif-traject
 
 The canonical source stream is
 `<workspace>/.vtcode/sessions/<session_id>/events.jsonl`. Historical global
-artifacts under `~/.vtcode/sessions/` are left untouched and are not imported
+artifacts under the legacy `VTCODE_HOME/sessions/` path are left untouched and are not imported
 or deleted automatically.
 
 ## Schema

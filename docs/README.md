@@ -105,6 +105,7 @@ New to VT Code? Start with installation and basic usage:
 - **[Scheduled Tasks](./user-guide/scheduled-tasks.md)** - Reminders and durable `vtcode schedule` automations
 - [Decision Ledger](./context/context_engineering.md#4-decision-ledger-structured-note-taking) - How decisions are tracked and injected
 - **[Configuration Guide](./config/config.md)** - Comprehensive configuration options
+- **[User Data Directories](./guides/user-data-directories.md)** - XDG/native storage paths, migration, permissions, and troubleshooting
 - **[Status Line Configuration](./guides/status-line.md)** - Customize the inline prompt footer
 - **[Responses API & Reasoning Models](./guides/responses-api-reasoning.md)** - Align reasoning-centric prompts with the OpenAI Responses API
 - **[External Editor Configuration](./tools/EDITOR_CONFIG.md)** - Setup and usage of the `/edit` command with your preferred editor

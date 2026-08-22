@@ -4,6 +4,7 @@ use vtcode_config::{DiscoveredSubagents, SubagentDiscoveryInput, discover_subage
 
 use crate::plugins::components::AgentsHandler;
 use crate::plugins::manifest::PluginManifest;
+use vtcode_commons::VtCodePaths;
 
 // ─── Subagent Discovery ────────────────────────────────────────────────────
 
@@ -52,8 +53,9 @@ fn trusted_plugin_roots(workspace_root: &Path) -> Vec<PathBuf> {
     let mut roots = Vec::with_capacity(4);
     if let Some(codex_home) = std::env::var_os("CODEX_HOME").map(PathBuf::from) {
         roots.push(codex_home.join("plugins"));
-    } else if let Some(home) = dirs::home_dir() {
-        roots.push(home.join(".vtcode/plugins"));
+    } else if let Ok(paths) = VtCodePaths::resolve() {
+        roots.push(paths.plugins_dir());
+        roots.push(paths.legacy_dir().join("plugins"));
     }
     roots.push(workspace_root.join(".vtcode/plugins"));
     roots.push(workspace_root.join(".agents/plugins"));

@@ -6,6 +6,7 @@
 use crate::env_helpers::default_true;
 use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
+use vtcode_commons::VtCodePaths;
 
 /// Dotfile protection configuration.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -247,12 +248,18 @@ fn default_blocked_operations() -> Vec<String> {
 
 #[inline]
 fn default_audit_log_path() -> String {
-    "~/.vtcode/dotfile_audit.log".into()
+    VtCodePaths::resolve()
+        .and_then(|paths| paths.state_path("audit/dotfiles.log"))
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|_| String::from("state/vtcode/audit/dotfiles.log"))
 }
 
 #[inline]
 fn default_backup_dir() -> String {
-    "~/.vtcode/dotfile_backups".into()
+    VtCodePaths::resolve()
+        .and_then(|paths| paths.state_path("backups/dotfiles"))
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|_| String::from("state/vtcode/backups/dotfiles"))
 }
 
 #[inline]

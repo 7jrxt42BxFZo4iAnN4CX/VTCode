@@ -10,12 +10,13 @@ use tokio::time::{Duration, sleep};
 
 use crate::config::loader::VTCodeConfig;
 use crate::config::types::AgentConfig as RuntimeAgentConfig;
-use crate::config::{ConfigManager, PersistentMemoryConfig, get_config_dir};
+use crate::config::{ConfigManager, PersistentMemoryConfig};
 use crate::llm::factory::infer_provider_from_model;
 use crate::llm::provider::{LLMProvider, LLMRequest, Message, MessageRole};
 use crate::llm::{
     LightweightFeature, collect_single_response, create_provider_for_model_route, resolve_lightweight_route,
 };
+use vtcode_commons::VtCodePaths;
 
 mod fact_extraction;
 mod legacy_migration;
@@ -259,6 +260,7 @@ impl MemoryTopic {
 #[derive(Debug, Clone)]
 struct PersistentMemoryFiles {
     directory: PathBuf,
+    private_global: bool,
     summary_file: PathBuf,
     memory_file: PathBuf,
     preferences_file: PathBuf,
@@ -269,7 +271,7 @@ struct PersistentMemoryFiles {
 }
 
 impl PersistentMemoryFiles {
-    fn new(directory: PathBuf) -> Self {
+    fn new(directory: PathBuf, private_global: bool) -> Self {
         Self {
             summary_file: directory.join(MEMORY_SUMMARY_FILENAME),
             memory_file: directory.join(MEMORY_FILENAME),
@@ -279,6 +281,7 @@ impl PersistentMemoryFiles {
             rollout_summaries_dir: directory.join(ROLLOUT_SUMMARIES_DIRNAME),
             lock_file: directory.join(MEMORY_LOCK_FILENAME),
             directory,
+            private_global,
         }
     }
 }
@@ -321,23 +324,17 @@ pub fn persistent_memory_status(
     config: &PersistentMemoryConfig,
     workspace_root: &Path,
 ) -> Result<PersistentMemoryStatus> {
-    let directory = resolve_persistent_memory_dir(config, workspace_root)?.unwrap_or_else(|| {
-        dirs::home_dir()
-            .map(|home| home.join(".vtcode"))
-            .unwrap_or_else(|| PathBuf::from(".vtcode"))
-            .join("projects")
-            .join("workspace")
-            .join("memory")
-    });
-    let files = PersistentMemoryFiles::new(directory);
+    let directory = resolve_persistent_memory_dir(config, workspace_root)?
+        .ok_or_else(|| anyhow!("persistent memory path policy returned no storage directory"))?;
+    let files = PersistentMemoryFiles::new(directory, config.directory_override.is_none());
     let pending_rollout_summaries = count_pending_rollout_summaries(&files.rollout_summaries_dir)?;
     let cleanup_status = detect_memory_cleanup_status(&files)?;
 
     Ok(PersistentMemoryStatus {
         enabled: config.enabled,
         auto_write: config.auto_write,
-        summary_exists: files.summary_file.exists(),
-        registry_exists: files.memory_file.exists(),
+        summary_exists: is_regular_file(&files.summary_file),
+        registry_exists: is_regular_file(&files.memory_file),
         pending_rollout_summaries,
         cleanup_status,
         directory: files.directory,
@@ -367,9 +364,8 @@ pub async fn read_persistent_memory_excerpt(
         return Ok(None);
     }
 
-    let raw = tokio::fs::read_to_string(&status.summary_file)
-        .await
-        .with_context(|| format!("Failed to read persistent memory summary {}", status.summary_file.display()))?;
+    let raw = String::from_utf8(vtcode_commons::fs::read_private_file_no_follow(&status.summary_file).await?)
+        .with_context(|| format!("Failed to decode persistent memory summary {}", status.summary_file.display()))?;
 
     let (contents, truncated, bytes_read, lines_read) =
         truncate_memory_excerpt(&raw, config.startup_line_limit, config.startup_byte_limit);
@@ -462,7 +458,7 @@ pub async fn rebuild_generated_memory_files(config: &PersistentMemoryConfig, wor
         .await
         .context("Persistent memory directory resolution task panicked")??
         .context("persistent memory directory should resolve")?;
-    let files = PersistentMemoryFiles::new(directory);
+    let files = PersistentMemoryFiles::new(directory, config.directory_override.is_none());
     let mut created_files = Vec::new();
     ensure_memory_layout(&files, &mut created_files).await?;
     let _lock = MemoryLock::acquire(&files.lock_file).await?;
@@ -482,7 +478,7 @@ pub async fn scaffold_persistent_memory(
     let status = tokio::task::spawn_blocking(move || persistent_memory_status(&cfg, &ws))
         .await
         .context("Persistent memory status task panicked")??;
-    let files = PersistentMemoryFiles::new(status.directory.clone());
+    let files = PersistentMemoryFiles::new(status.directory.clone(), config.directory_override.is_none());
     let mut created_files = Vec::new();
     ensure_memory_layout(&files, &mut created_files).await?;
     let cfg2 = config.clone();
@@ -503,30 +499,44 @@ async fn write_classified_memory(
     workspace_root: &Path,
 ) -> Result<Vec<PathBuf>> {
     let mut created_files = Vec::new();
-    async fn write_if_missing(path: &Path, contents: String, created_files: &mut Vec<PathBuf>) -> Result<()> {
+    async fn write_memory_file(
+        path: &Path,
+        contents: String,
+        created_files: &mut Vec<PathBuf>,
+        private_global: bool,
+    ) -> Result<()> {
         if !tokio::fs::try_exists(path).await.unwrap_or(false) {
             created_files.push(path.to_path_buf());
         }
-        tokio::fs::write(path, contents)
-            .await
-            .with_context(|| format!("Failed to write {}", path.display()))
+        if private_global {
+            vtcode_commons::fs::write_private_file_atomic(path, contents.as_bytes())
+                .await
+                .with_context(|| format!("Failed to write private memory file {}", path.display()))
+        } else {
+            tokio::fs::write(path, contents)
+                .await
+                .with_context(|| format!("Failed to write {}", path.display()))
+        }
     }
-    write_if_missing(
+    write_memory_file(
         &files.preferences_file,
         render_topic_file(MemoryTopic::Preferences, &classified.preferences),
         &mut created_files,
+        files.private_global,
     )
     .await?;
-    write_if_missing(
+    write_memory_file(
         &files.repository_facts_file,
         render_topic_file(MemoryTopic::RepositoryFacts, &classified.repository_facts),
         &mut created_files,
+        files.private_global,
     )
     .await?;
-    write_if_missing(
+    write_memory_file(
         &files.memory_file,
         render_memory_index(&classified.preferences, &classified.repository_facts, notes, 0),
         &mut created_files,
+        files.private_global,
     )
     .await?;
     let summary = summarize_memory(
@@ -539,7 +549,7 @@ async fn write_classified_memory(
     )
     .await
     .unwrap_or_else(|| render_memory_summary(&classified.preferences, &classified.repository_facts, notes));
-    write_if_missing(&files.summary_file, summary, &mut created_files).await?;
+    write_memory_file(&files.summary_file, summary, &mut created_files, files.private_global).await?;
     Ok(created_files)
 }
 
@@ -559,7 +569,7 @@ pub async fn cleanup_persistent_memory(
         .await
         .context("Persistent memory directory resolution task panicked")??
         .context("persistent memory directory should resolve when enabled")?;
-    let files = PersistentMemoryFiles::new(directory);
+    let files = PersistentMemoryFiles::new(directory, config.directory_override.is_none());
     let mut created_files = Vec::new();
     ensure_memory_layout(&files, &mut created_files).await?;
 
@@ -625,7 +635,7 @@ pub async fn list_persistent_memory_candidates(
         return Ok(Some(Vec::new()));
     }
 
-    let files = PersistentMemoryFiles::new(directory);
+    let files = PersistentMemoryFiles::new(directory, config.directory_override.is_none());
     collect_all_memory_matches(&files).await.map(Some)
 }
 
@@ -650,7 +660,7 @@ pub async fn find_persistent_memory_matches(
         return Ok(Some(Vec::new()));
     }
 
-    let files = PersistentMemoryFiles::new(directory);
+    let files = PersistentMemoryFiles::new(directory, config.directory_override.is_none());
     collect_memory_matches(&files, &normalized_query).await.map(Some)
 }
 
@@ -743,7 +753,7 @@ pub async fn forget_planned_persistent_memory_matches(
         .await
         .context("Persistent memory directory resolution task panicked")??
         .context("persistent memory directory should resolve when enabled")?;
-    let files = PersistentMemoryFiles::new(directory);
+    let files = PersistentMemoryFiles::new(directory, config.directory_override.is_none());
     if !tokio::fs::try_exists(&files.directory).await.unwrap_or(false) {
         return Ok(Some(PersistentMemoryForgetReport {
             directory: files.directory,
@@ -756,14 +766,24 @@ pub async fn forget_planned_persistent_memory_matches(
 
     let _lock = MemoryLock::acquire(&files.lock_file).await?;
     let mut removed_facts = 0usize;
-    removed_facts +=
-        rewrite_topic_without_selected(&files.preferences_file, MemoryTopic::Preferences, &selected).await?;
-    removed_facts +=
-        rewrite_topic_without_selected(&files.repository_facts_file, MemoryTopic::RepositoryFacts, &selected).await?;
+    removed_facts += rewrite_topic_without_selected(
+        &files.preferences_file,
+        MemoryTopic::Preferences,
+        &selected,
+        files.private_global,
+    )
+    .await?;
+    removed_facts += rewrite_topic_without_selected(
+        &files.repository_facts_file,
+        MemoryTopic::RepositoryFacts,
+        &selected,
+        files.private_global,
+    )
+    .await?;
 
     let rollout_files = list_rollout_markdown_files_async(&files.rollout_summaries_dir).await?;
     for path in rollout_files {
-        removed_facts += scrub_rollout_file_by_selection(&path, &selected).await?;
+        removed_facts += scrub_rollout_file_by_selection(&path, &selected, files.private_global).await?;
     }
 
     if removed_facts > 0 {
@@ -816,7 +836,7 @@ async fn persist_memory_internal(
         .await
         .context("Persistent memory directory resolution task panicked")??
         .context("persistent memory directory should resolve when enabled")?;
-    let files = PersistentMemoryFiles::new(directory);
+    let files = PersistentMemoryFiles::new(directory, config.directory_override.is_none());
     let mut created_files = Vec::new();
     ensure_memory_layout(&files, &mut created_files).await?;
 
@@ -846,7 +866,7 @@ async fn persist_memory_internal(
 
     let staged_rollout = if write_rollout && classified.total() > 0 {
         Some(
-            write_rollout_summary_pending(&files.rollout_summaries_dir, &classified)
+            write_rollout_summary_pending(&files.rollout_summaries_dir, &classified, files.private_global)
                 .await
                 .with_context(|| {
                     format!("Failed to write rollout summary under {}", files.rollout_summaries_dir.display())
@@ -898,13 +918,38 @@ fn classified_facts_from_records(records: &[GroundedFactRecord]) -> ClassifiedFa
 }
 
 async fn ensure_memory_layout(files: &PersistentMemoryFiles, created_files: &mut Vec<PathBuf>) -> Result<()> {
-    async fn ensure_file(path: &Path, contents: String, created_files: &mut Vec<PathBuf>) -> Result<()> {
-        if tokio::fs::try_exists(path).await.unwrap_or(false) {
+    async fn ensure_file(
+        path: &Path,
+        contents: String,
+        created_files: &mut Vec<PathBuf>,
+        private_global: bool,
+    ) -> Result<()> {
+        if private_global {
+            match tokio::fs::symlink_metadata(path).await {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    bail!("Refusing symlinked persistent memory file {}", path.display());
+                }
+                Ok(metadata) if !metadata.is_file() => {
+                    bail!("Persistent memory path is not a regular file: {}", path.display());
+                }
+                Ok(_) => return Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(error).with_context(|| format!("Failed to inspect {}", path.display()));
+                }
+            }
+        } else if tokio::fs::try_exists(path).await.unwrap_or(false) {
             return Ok(());
         }
-        tokio::fs::write(path, contents)
-            .await
-            .with_context(|| format!("Failed to write {}", path.display()))?;
+        if private_global {
+            vtcode_commons::fs::write_private_file_atomic(path, contents.as_bytes())
+                .await
+                .with_context(|| format!("Failed to write private memory file {}", path.display()))?;
+        } else {
+            tokio::fs::write(path, contents)
+                .await
+                .with_context(|| format!("Failed to write {}", path.display()))?;
+        }
         created_files.push(path.to_path_buf());
         Ok(())
     }
@@ -913,16 +958,35 @@ async fn ensure_memory_layout(files: &PersistentMemoryFiles, created_files: &mut
         (&files.rollout_summaries_dir, "rollout summaries"),
         (&files.notes_dir, "notes"),
     ] {
-        tokio::fs::create_dir_all(dir)
-            .await
-            .with_context(|| format!("Failed to create {desc} {}", dir.display()))?;
+        if files.private_global {
+            VtCodePaths::ensure_user_dir(dir).with_context(|| format!("Failed to create {desc} {}", dir.display()))?;
+        } else {
+            tokio::fs::create_dir_all(dir)
+                .await
+                .with_context(|| format!("Failed to create {desc} {}", dir.display()))?;
+        }
     }
-    ensure_file(&files.preferences_file, render_topic_file(MemoryTopic::Preferences, &[]), created_files).await?;
-    ensure_file(&files.repository_facts_file, render_topic_file(MemoryTopic::RepositoryFacts, &[]), created_files)
-        .await?;
-    ensure_file(&files.memory_file, render_memory_index(&[], &[], &[], 0), created_files).await?;
-    ensure_file(&files.summary_file, render_memory_summary(&[], &[], &[]), created_files).await?;
+    ensure_file(
+        &files.preferences_file,
+        render_topic_file(MemoryTopic::Preferences, &[]),
+        created_files,
+        files.private_global,
+    )
+    .await?;
+    ensure_file(
+        &files.repository_facts_file,
+        render_topic_file(MemoryTopic::RepositoryFacts, &[]),
+        created_files,
+        files.private_global,
+    )
+    .await?;
+    ensure_file(&files.memory_file, render_memory_index(&[], &[], &[], 0), created_files, files.private_global).await?;
+    ensure_file(&files.summary_file, render_memory_summary(&[], &[], &[]), created_files, files.private_global).await?;
     Ok(())
+}
+
+fn is_regular_file(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
 }
 
 fn truncate_memory_excerpt(contents: &str, line_limit: usize, byte_limit: usize) -> (String, bool, usize, usize) {
@@ -972,9 +1036,8 @@ async fn read_existing_memory_lines(directory: &Path) -> Result<BTreeSet<String>
             if path.extension().and_then(|v| v.to_str()) != Some("md") {
                 continue;
             }
-            let content = tokio::fs::read_to_string(&path)
-                .await
-                .with_context(|| format!("failed to read note file at {}", path.display()))?;
+            let content = String::from_utf8(vtcode_commons::fs::read_private_file_no_follow(&path).await?)
+                .with_context(|| format!("failed to decode note file at {}", path.display()))?;
             for line in content.lines() {
                 if let Some((_, fact)) = parse_fact_line(line) {
                     lines.insert(normalize_whitespace(&fact).to_ascii_lowercase());
@@ -1048,7 +1111,8 @@ fn count_suspicious_facts_in_file(path: &Path) -> Result<usize> {
     if !path.exists() {
         return Ok(0);
     }
-    let content = std::fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
+    let content = String::from_utf8(VtCodePaths::read_file_no_follow(path)?)
+        .with_context(|| format!("Failed to decode {} as UTF-8", path.display()))?;
     Ok(parse_topic_file(&content).into_iter().filter(is_legacy_polluted_fact).count())
 }
 
@@ -1070,7 +1134,8 @@ fn count_suspicious_summary_lines(path: &Path) -> Result<usize> {
     if !path.exists() {
         return Ok(0);
     }
-    let content = std::fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
+    let content = String::from_utf8(VtCodePaths::read_file_no_follow(path)?)
+        .with_context(|| format!("Failed to decode {} as UTF-8", path.display()))?;
     Ok(content
         .lines()
         .map(str::trim)
@@ -1110,14 +1175,30 @@ fn looks_like_serialized_payload(text: &str) -> bool {
         || t.contains("<</invoke>")
 }
 
-async fn write_rollout_summary_pending(rollout_dir: &Path, classified: &ClassifiedFacts) -> Result<PathBuf> {
-    tokio::fs::create_dir_all(rollout_dir)
-        .await
-        .with_context(|| format!("Failed to create {}", rollout_dir.display()))?;
+async fn write_rollout_summary_pending(
+    rollout_dir: &Path,
+    classified: &ClassifiedFacts,
+    private_global: bool,
+) -> Result<PathBuf> {
+    if private_global {
+        VtCodePaths::ensure_user_dir(rollout_dir)
+            .with_context(|| format!("Failed to create {}", rollout_dir.display()))?;
+    } else {
+        tokio::fs::create_dir_all(rollout_dir)
+            .await
+            .with_context(|| format!("Failed to create {}", rollout_dir.display()))?;
+    }
     let path = rollout_dir.join(format!("{}.pending.md", unique_rollout_id()));
-    tokio::fs::write(&path, render_rollout_summary(classified))
-        .await
-        .with_context(|| format!("Failed to write {}", path.display()))?;
+    let contents = render_rollout_summary(classified);
+    if private_global {
+        vtcode_commons::fs::write_private_file_atomic(&path, contents.as_bytes())
+            .await
+            .with_context(|| format!("Failed to write private memory rollout summary {}", path.display()))?;
+    } else {
+        tokio::fs::write(&path, contents)
+            .await
+            .with_context(|| format!("Failed to write {}", path.display()))?;
+    }
     Ok(path)
 }
 
@@ -1154,7 +1235,7 @@ async fn consolidate_memory_files(
         write_classified_memory(files, &classified, &notes, runtime_config, vt_cfg, workspace_root).await?;
     let mut added_facts = 0usize;
     for p in &pending_files {
-        if let Ok(c) = tokio::fs::read_to_string(p).await {
+        if let Ok(c) = String::from_utf8(vtcode_commons::fs::read_private_file_no_follow(p).await?) {
             added_facts += c.lines().filter_map(parse_fact_line).count();
         }
     }
@@ -1210,6 +1291,7 @@ async fn rewrite_topic_without_selected(
     path: &Path,
     topic: MemoryTopic,
     selected: &[MemoryOpCandidate],
+    private_global: bool,
 ) -> Result<usize> {
     if !tokio::fs::try_exists(path).await.unwrap_or(false) {
         return Ok(0);
@@ -1224,16 +1306,26 @@ async fn rewrite_topic_without_selected(
         .into_iter()
         .filter(|f| !keys.contains(&selection_key_for_record(f)))
         .collect();
-    tokio::fs::write(path, render_topic_file(topic, &kept))
-        .await
-        .with_context(|| format!("Failed to write {}", path.display()))?;
+    let contents = render_topic_file(topic, &kept);
+    if private_global {
+        vtcode_commons::fs::write_private_file_atomic(path, contents.as_bytes())
+            .await
+            .with_context(|| format!("Failed to write private memory file {}", path.display()))?;
+    } else {
+        tokio::fs::write(path, contents)
+            .await
+            .with_context(|| format!("Failed to write {}", path.display()))?;
+    }
     Ok(removed)
 }
 
-async fn scrub_rollout_file_by_selection(path: &Path, selected: &[MemoryOpCandidate]) -> Result<usize> {
-    let contents = tokio::fs::read_to_string(path)
-        .await
-        .with_context(|| format!("Failed to read {}", path.display()))?;
+async fn scrub_rollout_file_by_selection(
+    path: &Path,
+    selected: &[MemoryOpCandidate],
+    private_global: bool,
+) -> Result<usize> {
+    let contents = String::from_utf8(vtcode_commons::fs::read_private_file_no_follow(path).await?)
+        .with_context(|| format!("Failed to decode {} as UTF-8", path.display()))?;
     let keys = selection_keys(selected);
     let mut removed = 0usize;
     let mut filtered = Vec::new();
@@ -1256,9 +1348,15 @@ async fn scrub_rollout_file_by_selection(path: &Path, selected: &[MemoryOpCandid
     if contents.ends_with('\n') {
         rewritten.push('\n');
     }
-    tokio::fs::write(path, rewritten)
-        .await
-        .with_context(|| format!("Failed to write {}", path.display()))?;
+    if private_global {
+        vtcode_commons::fs::write_private_file_atomic(path, rewritten.as_bytes())
+            .await
+            .with_context(|| format!("Failed to write private memory rollout summary {}", path.display()))?;
+    } else {
+        tokio::fs::write(path, rewritten)
+            .await
+            .with_context(|| format!("Failed to write {}", path.display()))?;
+    }
     Ok(removed)
 }
 

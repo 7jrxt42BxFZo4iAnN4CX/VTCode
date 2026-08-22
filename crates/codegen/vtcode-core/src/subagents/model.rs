@@ -13,6 +13,7 @@ use crate::core::agent::types::AgentType;
 use crate::llm::auto_lightweight_model;
 use crate::llm::factory::{infer_provider, infer_provider_from_model};
 use crate::prompts::resource_cache::{ResourceCache, canonical_cache_path, fingerprint_files};
+use vtcode_commons::VtCodePaths;
 
 // ─── Model Resolution ───────────────────────────────────────────────────────
 
@@ -320,8 +321,8 @@ pub fn load_memory_appendix(
         return Ok(None);
     };
 
-    let memory_dir = agent_memory_dir(workspace_root, agent_name, scope);
-    std::fs::create_dir_all(&memory_dir)
+    let memory_dir = agent_memory_dir(workspace_root, agent_name, scope)?;
+    VtCodePaths::ensure_user_dir(&memory_dir)
         .with_context(|| format!("Failed to create subagent memory directory {}", memory_dir.display()))?;
     let memory_file = memory_dir.join("MEMORY.md");
     if !memory_file.exists() {
@@ -349,9 +350,8 @@ pub async fn load_memory_appendix_async(
         return Ok(None);
     };
 
-    let memory_dir = agent_memory_dir(workspace_root, agent_name, scope);
-    tokio::fs::create_dir_all(&memory_dir)
-        .await
+    let memory_dir = agent_memory_dir(workspace_root, agent_name, scope)?;
+    VtCodePaths::ensure_user_dir(&memory_dir)
         .with_context(|| format!("Failed to create subagent memory directory {}", memory_dir.display()))?;
     let memory_file = memory_dir.join("MEMORY.md");
     if !tokio::fs::try_exists(&memory_file).await.unwrap_or(false) {
@@ -405,7 +405,7 @@ pub fn load_primary_memory_appendix(
         return Ok(None);
     };
 
-    load_primary_memory_appendix_cached(agent_memory_dir(workspace_root, agent_name, scope).join("MEMORY.md"))
+    load_primary_memory_appendix_cached(agent_memory_dir(workspace_root, agent_name, scope)?.join("MEMORY.md"))
 }
 
 /// Async variant of [`load_primary_memory_appendix`] for prompt assembly.
@@ -421,7 +421,7 @@ pub async fn load_primary_memory_appendix_async(
         return Ok(None);
     };
 
-    let memory_file = agent_memory_dir(workspace_root, agent_name, scope).join("MEMORY.md");
+    let memory_file = agent_memory_dir(workspace_root, agent_name, scope)?.join("MEMORY.md");
     tokio::task::spawn_blocking(move || load_primary_memory_appendix_cached(memory_file))
         .await
         .context("primary-agent memory cache task failed")?
@@ -487,14 +487,14 @@ fn primary_memory_cache() -> &'static ResourceCache<PathBuf, Option<String>> {
     PRIMARY_MEMORY_APPENDIX_CACHE.get_or_init(ResourceCache::default)
 }
 
-fn agent_memory_dir(workspace_root: &Path, agent_name: &str, scope: SubagentMemoryScope) -> PathBuf {
+fn agent_memory_dir(workspace_root: &Path, agent_name: &str, scope: SubagentMemoryScope) -> Result<PathBuf> {
     match scope {
-        SubagentMemoryScope::Project => workspace_root.join(".vtcode/agent-memory").join(agent_name),
-        SubagentMemoryScope::Local => workspace_root.join(".vtcode/agent-memory-local").join(agent_name),
-        SubagentMemoryScope::User => dirs::home_dir()
-            .unwrap_or_default()
-            .join(".vtcode/agent-memory")
-            .join(agent_name),
+        SubagentMemoryScope::Project => Ok(workspace_root.join(".vtcode/agent-memory").join(agent_name)),
+        SubagentMemoryScope::Local => Ok(workspace_root.join(".vtcode/agent-memory-local").join(agent_name)),
+        SubagentMemoryScope::User => VtCodePaths::resolve()
+            .and_then(|paths| paths.state_path("agent-memory"))
+            .map(|path| path.join(agent_name))
+            .context("could not resolve VT Code state directory for user subagent memory"),
     }
 }
 

@@ -31,8 +31,8 @@ pub enum CircuitState {
     HalfOpen = 2,
 }
 
-use std::fs;
 use std::path::PathBuf;
+use vtcode_commons::VtCodePaths;
 
 /// Internal state protected by mutex
 #[derive(Debug, Clone)]
@@ -139,7 +139,8 @@ impl McpCircuitBreaker {
         let breaker = Self::build(CircuitBreakerConfig::default(), Some(path.clone()), None);
 
         // Try to load state
-        if let Ok(data) = fs::read_to_string(&path)
+        if let Ok(bytes) = VtCodePaths::read_file_no_follow(&path)
+            && let Ok(data) = String::from_utf8(bytes)
             && let Ok(persisted) = serde_json::from_str::<PersistedState>(&data)
         {
             let mut state = breaker.state.lock();
@@ -207,11 +208,11 @@ impl McpCircuitBreaker {
                 match tokio::runtime::Handle::try_current() {
                     Ok(handle) => {
                         let _persist_task = handle.spawn_blocking(move || {
-                            let _ = fs::write(&path, data);
+                            let _ = VtCodePaths::write_private_file_atomic(&path, data.as_bytes());
                         });
                     }
                     Err(_) => {
-                        let _ = fs::write(&path, data);
+                        let _ = VtCodePaths::write_private_file_atomic(&path, data.as_bytes());
                     }
                 }
             }

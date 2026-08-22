@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use tokio::fs;
+use vtcode_commons::VtCodePaths;
 use vtcode_commons::utils::current_timestamp;
 
 use crate::utils::tokens::estimate_tokens;
@@ -52,9 +53,10 @@ pub struct PromptCacheConfig {
 
 impl Default for PromptCacheConfig {
     fn default() -> Self {
+        let cache_dir = default_cache_dir();
         Self {
-            enabled: prompt_cache::DEFAULT_ENABLED,
-            cache_dir: default_cache_dir(),
+            enabled: prompt_cache::DEFAULT_ENABLED && !cache_dir.as_os_str().is_empty(),
+            cache_dir,
             max_cache_size: prompt_cache::DEFAULT_MAX_ENTRIES,
             max_age_days: prompt_cache::DEFAULT_MAX_AGE_DAYS,
             enable_auto_cleanup: prompt_cache::DEFAULT_AUTO_CLEANUP,
@@ -66,9 +68,10 @@ impl Default for PromptCacheConfig {
 impl PromptCacheConfig {
     /// Build runtime configuration from high-level TOML settings
     pub fn from_settings(settings: &PromptCachingConfig, workspace_root: Option<&Path>) -> Self {
+        let cache_dir = settings.resolve_cache_dir(workspace_root);
         Self {
-            enabled: settings.enabled,
-            cache_dir: settings.resolve_cache_dir(workspace_root),
+            enabled: settings.enabled && !cache_dir.as_os_str().is_empty(),
+            cache_dir,
             max_cache_size: settings.max_entries,
             max_age_days: settings.max_age_days,
             enable_auto_cleanup: settings.enable_auto_cleanup,
@@ -83,10 +86,9 @@ impl PromptCacheConfig {
 }
 
 fn default_cache_dir() -> PathBuf {
-    if let Some(home) = dirs::home_dir() {
-        return home.join(prompt_cache::DEFAULT_CACHE_DIR);
-    }
-    PathBuf::from(prompt_cache::DEFAULT_CACHE_DIR)
+    VtCodePaths::resolve()
+        .map(|paths| paths.cache_dir().join("prompts"))
+        .unwrap_or_default()
 }
 
 /// Prompt caching system
@@ -104,6 +106,10 @@ impl PromptCache {
 
     /// Create a new prompt cache with the given configuration.
     pub async fn with_config(config: PromptCacheConfig) -> Self {
+        let mut config = config;
+        if config.cache_dir.as_os_str().is_empty() {
+            config.enabled = false;
+        }
         let mut cache = Self { config, cache: HashMap::new(), dirty: false };
 
         // Load existing cache
@@ -200,24 +206,40 @@ impl PromptCache {
 
     /// Save cache to disk
     pub async fn save_cache(&self) -> Result<(), PromptCacheError> {
-        if !self.config.enabled || !self.dirty {
+        if !self.config.enabled || self.config.cache_dir.as_os_str().is_empty() || !self.dirty {
             return Ok(());
         }
 
-        // Ensure cache directory exists
-        fs::create_dir_all(&self.config.cache_dir).await.map_err(PromptCacheError::Io)?;
+        // Canonical VT Code cache roots are private and symlink-safe. A
+        // project/user override retains the existing create_dir_all behavior
+        // so workspace-local cache paths remain compatible.
+        let is_global_cache = VtCodePaths::resolve()
+            .ok()
+            .is_some_and(|paths| self.config.cache_dir.starts_with(paths.cache_dir()));
+        if is_global_cache {
+            VtCodePaths::ensure_user_dir(&self.config.cache_dir)
+                .map_err(|error| PromptCacheError::Io(std::io::Error::other(error)))?;
+        } else {
+            fs::create_dir_all(&self.config.cache_dir).await.map_err(PromptCacheError::Io)?;
+        }
 
         let cache_path = self.config.cache_dir.join("prompt_cache.json");
         let data = serde_json::to_string_pretty(&self.cache).map_err(PromptCacheError::Serialization)?;
 
-        fs::write(cache_path, data).await.map_err(PromptCacheError::Io)?;
+        if is_global_cache {
+            vtcode_commons::fs::write_private_file_atomic(&cache_path, data.as_bytes())
+                .await
+                .map_err(|error| PromptCacheError::Io(std::io::Error::other(error)))?;
+        } else {
+            fs::write(cache_path, data).await.map_err(PromptCacheError::Io)?;
+        }
 
         Ok(())
     }
 
     /// Load cache from disk
     async fn load_cache(&mut self) -> Result<(), PromptCacheError> {
-        if !self.config.enabled {
+        if !self.config.enabled || self.config.cache_dir.as_os_str().is_empty() {
             return Ok(());
         }
         let cache_path = self.config.cache_dir.join("prompt_cache.json");
@@ -226,7 +248,19 @@ impl PromptCache {
             return Ok(());
         }
 
-        let data = fs::read_to_string(cache_path).await.map_err(PromptCacheError::Io)?;
+        let data = if VtCodePaths::resolve()
+            .ok()
+            .is_some_and(|paths| self.config.cache_dir.starts_with(paths.cache_dir()))
+        {
+            String::from_utf8(
+                vtcode_commons::fs::read_private_file_no_follow(&cache_path)
+                    .await
+                    .map_err(|error| PromptCacheError::Io(std::io::Error::other(error.to_string())))?,
+            )
+            .map_err(|error| PromptCacheError::Io(std::io::Error::other(error)))?
+        } else {
+            fs::read_to_string(cache_path).await.map_err(PromptCacheError::Io)?
+        };
 
         self.cache = serde_json::from_str(&data).map_err(PromptCacheError::Serialization)?;
 

@@ -27,9 +27,6 @@ pub(crate) use super::tool_limits::DEFAULT_MAX_TOOL_CALLS_PER_TURN;
 pub(crate) const DEFAULT_MAX_TOOL_WALL_CLOCK_SECS: u64 = 600;
 pub const DEFAULT_MAX_TOOL_RETRIES: u32 = 2;
 
-/// Default macOS Gatekeeper auto-clear paths (relative or home-expanded)
-pub(crate) const DEFAULT_GATEKEEPER_AUTO_CLEAR_PATHS: &[&str] = &[".vtcode/bin", "~/.vtcode/bin"];
-
 /// Minimum interval between session progress snapshots (milliseconds)
 pub const DEFAULT_SESSION_PROGRESS_MIN_INTERVAL_MS: u64 = 1000;
 

@@ -18,7 +18,7 @@ returned. A run may be reported as successful only after its terminal
 `agent.harness.event_log_path` and exec `--events` are explicit compatibility
 exports. They are optional, independently bounded, and may report drops or
 write failures without changing the canonical event contract. No global
-`~/.vtcode/sessions` harness file is created by default. ATIF and Open Responses
+the user state directory's `sessions` harness file is created by default. ATIF and Open Responses
 exports configured by the interactive harness are derived under
 `<session>/derived/`.
 

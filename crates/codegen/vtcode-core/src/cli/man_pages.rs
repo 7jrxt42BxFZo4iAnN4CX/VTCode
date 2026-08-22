@@ -197,7 +197,7 @@ impl ManPageGenerator {
             .control("SH", ["FILES"])
             .control("TP", [])
             .text([bold("vtcode.toml")])
-            .text([roman("Configuration file (current directory or ~/.vtcode/)")])
+            .text([roman("Configuration file (current directory or the canonical user config directory)")])
             .control("TP", [])
             .text([bold(".vtcode/")])
             .text([roman("Project cache and context directory")])

@@ -1,15 +1,14 @@
 //! Update configuration for VT Code auto-updater
 //!
 //! Manages release channel preferences, version pinning, and download mirrors.
-//! Configuration stored in `~/.vtcode/update.toml`.
+//! Configuration stored in the canonical user config directory's `update.toml`.
 
-use crate::defaults::get_config_dir;
 use anyhow::{Context, Result, anyhow};
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
+use vtcode_commons::VtCodePaths;
 
 static UPDATE_CONFIG_CACHE: OnceLock<RwLock<Option<UpdateConfig>>> = OnceLock::new();
 
@@ -114,12 +113,22 @@ impl UpdateConfig {
     fn load_inner() -> Result<Self> {
         let config_path = Self::config_path().context("Failed to determine update config path")?;
 
-        if !config_path.exists() {
-            // Return defaults if config doesn't exist
-            return Ok(Self::default());
+        match std::fs::symlink_metadata(&config_path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(anyhow!("Refusing to read symlinked update config: {}", config_path.display()));
+            }
+            Ok(metadata) if !metadata.is_file() => {
+                return Err(anyhow!("Update config is not a regular file: {}", config_path.display()));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("Failed to inspect update config: {}", config_path.display()));
+            }
         }
 
-        let content = fs::read_to_string(&config_path)
+        let content = String::from_utf8(VtCodePaths::read_file_no_follow(&config_path)?)
             .with_context(|| format!("Failed to read update config: {}", config_path.display()))?;
 
         let config: UpdateConfig = toml::from_str(&content)
@@ -134,13 +143,13 @@ impl UpdateConfig {
 
         // Ensure directory exists
         if let Some(parent) = config_path.parent() {
-            fs::create_dir_all(parent)
+            VtCodePaths::ensure_user_dir(parent)
                 .with_context(|| format!("Failed to create config directory: {}", parent.display()))?;
         }
 
         let content = toml::to_string_pretty(self).context("Failed to serialize update config")?;
 
-        fs::write(&config_path, content)
+        VtCodePaths::write_private_file_atomic(&config_path, content.as_bytes())
             .with_context(|| format!("Failed to write update config: {}", config_path.display()))?;
 
         // Invalidate the in-process cache so the next load() observes the new file.
@@ -155,8 +164,9 @@ impl UpdateConfig {
 
     /// Get the configuration file path
     pub fn config_path() -> Result<PathBuf> {
-        let config_dir = get_config_dir().context("Failed to get config directory")?;
-        Ok(config_dir.join("update.toml"))
+        VtCodePaths::resolve()?
+            .config_path("update.toml")
+            .context("Failed to get update config path")
     }
 
     /// Check if version is pinned
@@ -205,7 +215,7 @@ impl UpdateConfig {
 /// Create example update configuration
 pub fn create_example_config() -> String {
     r#"# VT Code Update Configuration
-# Location: ~/.vtcode/update.toml
+# Location: the canonical user config directory/update.toml
 
 # Release channel to follow
 # Options: stable (default), beta, nightly

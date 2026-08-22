@@ -67,7 +67,7 @@ immutable `system_prompt` in this order:
 Examples live as Markdown files under:
 
 - `<workspace>/.vtcode/prompts/examples/*.md`
-- `<home>/.vtcode/prompts/examples/*.md`
+- `<canonical user config directory>/prompts/examples/*.md` (legacy user prompt files are migrated there)
 
 The filename stem is the example id. The file body uses YAML frontmatter
 for metadata:

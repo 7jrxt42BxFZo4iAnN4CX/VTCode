@@ -8,6 +8,7 @@ use std::time::{Duration, SystemTime};
 use serde::Deserialize;
 use tokio::fs;
 use tracing::warn;
+use vtcode_commons::VtCodePaths;
 
 const PROMPTS_DIR: &str = ".vtcode/prompts";
 const TEMPLATES_DIR: &str = "templates";
@@ -126,6 +127,16 @@ fn normalize_cache_path(path: &Path) -> PathBuf {
     dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+fn user_prompts_dir(home: &Path) -> PathBuf {
+    if dirs::home_dir().as_deref() == Some(home)
+        && let Ok(paths) = VtCodePaths::resolve()
+        && let Ok(prompt_dir) = paths.config_path("prompts")
+    {
+        return prompt_dir;
+    }
+    home.join(PROMPTS_DIR)
+}
+
 fn newest_source_mtime(paths: &[PathBuf]) -> SystemTime {
     let mut newest = SystemTime::UNIX_EPOCH;
     for path in paths {
@@ -185,8 +196,9 @@ fn cache_system_prompt_layers(key: PromptResourceCacheKey, layers: &SystemPrompt
                 key.workspace_root.join(PROMPTS_DIR).join(APPEND_SYSTEM_PROMPT_FILENAME),
             ];
             if let Some(ref home) = key.home_dir {
-                source_paths.push(home.join(PROMPTS_DIR).join(SYSTEM_PROMPT_FILENAME));
-                source_paths.push(home.join(PROMPTS_DIR).join(APPEND_SYSTEM_PROMPT_FILENAME));
+                let prompt_dir = user_prompts_dir(home);
+                source_paths.push(prompt_dir.join(SYSTEM_PROMPT_FILENAME));
+                source_paths.push(prompt_dir.join(APPEND_SYSTEM_PROMPT_FILENAME));
             }
             let source_mtime = newest_source_mtime(&source_paths);
 
@@ -239,7 +251,7 @@ fn cache_prompt_templates(key: PromptResourceCacheKey, templates: &[PromptTempla
 
             let source_paths = (
                 key.workspace_root.join(PROMPTS_DIR).join(TEMPLATES_DIR),
-                key.home_dir.as_ref().map(|h| h.join(PROMPTS_DIR).join(TEMPLATES_DIR)),
+                key.home_dir.as_ref().map(|h| user_prompts_dir(h).join(TEMPLATES_DIR)),
             );
             let mut mtime_paths = vec![source_paths.0.clone()];
             if let Some(ref p) = source_paths.1 {
@@ -394,13 +406,13 @@ async fn resolve_system_prompt_layers_with_options(options: PromptResourceOption
             options
                 .home_dir
                 .as_ref()
-                .map(|h| h.join(PROMPTS_DIR).join(SYSTEM_PROMPT_FILENAME))
+                .map(|h| user_prompts_dir(h).join(SYSTEM_PROMPT_FILENAME))
                 .unwrap_or_default(),
             options.workspace_root.join(PROMPTS_DIR).join(APPEND_SYSTEM_PROMPT_FILENAME),
             options
                 .home_dir
                 .as_ref()
-                .map(|h| h.join(PROMPTS_DIR).join(APPEND_SYSTEM_PROMPT_FILENAME))
+                .map(|h| user_prompts_dir(h).join(APPEND_SYSTEM_PROMPT_FILENAME))
                 .unwrap_or_default(),
         ];
         let check_refs: Vec<_> = check_paths.iter().map(|p| p.as_path()).collect();
@@ -420,7 +432,7 @@ async fn resolve_system_prompt_layers_uncached(options: &PromptResourceOptions<'
     let user_system_path = options
         .home_dir
         .as_ref()
-        .map(|home| home.join(PROMPTS_DIR).join(SYSTEM_PROMPT_FILENAME));
+        .map(|home| user_prompts_dir(home).join(SYSTEM_PROMPT_FILENAME));
     let workspace_system_path = options.workspace_root.join(PROMPTS_DIR).join(SYSTEM_PROMPT_FILENAME);
 
     if let Some(path) = user_system_path.as_ref() {
@@ -434,7 +446,7 @@ async fn resolve_system_prompt_layers_uncached(options: &PromptResourceOptions<'
     if let Some(path) = options
         .home_dir
         .as_ref()
-        .map(|home| home.join(PROMPTS_DIR).join(APPEND_SYSTEM_PROMPT_FILENAME))
+        .map(|home| user_prompts_dir(home).join(APPEND_SYSTEM_PROMPT_FILENAME))
         && let Some(contents) = read_optional_markdown(&path).await
     {
         layers.append_bodies.push(contents);
@@ -465,7 +477,7 @@ async fn discover_prompt_templates_uncached(options: &PromptResourceOptions<'_>)
     let mut discovered = BTreeMap::new();
 
     if let Some(home) = options.home_dir.as_deref() {
-        let user_templates = home.join(PROMPTS_DIR).join(TEMPLATES_DIR);
+        let user_templates = user_prompts_dir(home).join(TEMPLATES_DIR);
         merge_prompt_templates(&mut discovered, &user_templates, PromptResourceScope::User).await;
     }
 

@@ -4,12 +4,10 @@ use std::path::PathBuf;
 use crate::tools::ast_grep_binary::{alias_ast_grep_binary_name, canonical_ast_grep_binary_name};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use vtcode_commons::VtCodePaths;
 
-#[cfg(test)]
-use super::super::install_support::vtcode_state_dir_from_home;
 use super::super::install_support::{
     acquire_lock_file, cache_is_stale, load_json_cache, lock_is_active, save_json_cache, unix_timestamp_now,
-    vtcode_state_dir,
 };
 #[cfg(test)]
 use std::path::Path;
@@ -80,24 +78,33 @@ impl InstallationCache {
 
 impl InstallPaths {
     pub(super) fn discover() -> Result<Self> {
-        let state_dir =
-            vtcode_state_dir().context("Cannot determine home directory for VT Code-managed ast-grep install")?;
-        Ok(Self::from_state_dir(state_dir))
+        let paths = VtCodePaths::resolve().context("Cannot resolve VT Code paths for ast-grep install")?;
+        let cache_dir = paths.ensure_cache_child_dir("ast-grep")?;
+        let runtime_dir = paths.ensure_runtime_child_dir("ast-grep")?;
+        let executable_dir = paths.ensure_executable_dir()?.to_path_buf();
+        Ok(Self::from_roots(cache_dir, runtime_dir, executable_dir))
     }
 
     #[cfg(test)]
     fn from_home(home: &Path) -> Self {
-        Self::from_state_dir(vtcode_state_dir_from_home(home))
+        // Keep test roots isolated even on native platforms where the real
+        // resolver intentionally ignores HOME and uses the OS application
+        // support directories. Production discovery remains centralized in
+        // `VtCodePaths::resolve` above.
+        Self::from_roots(
+            home.join(".cache/vtcode/ast-grep"),
+            home.join(".local/state/vtcode/runtime/ast-grep"),
+            home.join(".local/bin"),
+        )
     }
 
-    fn from_state_dir(state_dir: PathBuf) -> Self {
-        let bin_dir = state_dir.join("bin");
+    fn from_roots(cache_dir: PathBuf, runtime_dir: PathBuf, bin_dir: PathBuf) -> Self {
         Self {
-            cache_path: state_dir.join("ast_grep_install_cache.json"),
-            lock_path: state_dir.join("ast_grep.lock"),
+            cache_path: cache_dir.join("install.json"),
+            lock_path: runtime_dir.join("install.lock"),
             binary_path: bin_dir.join(canonical_ast_grep_binary_name()),
             alias_path: alias_ast_grep_binary_name().map(|name| bin_dir.join(name)),
-            state_dir,
+            state_dir: cache_dir,
             bin_dir,
         }
     }
@@ -139,15 +146,16 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn install_paths_live_under_vtcode_home() {
+    fn install_paths_use_xdg_categories() {
         let temp_dir = TempDir::new().expect("temp dir");
         let paths = InstallPaths::from_home(temp_dir.path());
-        let expected_state_dir = temp_dir.path().join(".vtcode");
-        let expected_bin_dir = expected_state_dir.join("bin");
-        assert_eq!(paths.state_dir, expected_state_dir);
+        let expected_cache_dir = temp_dir.path().join(".cache/vtcode/ast-grep");
+        let expected_runtime_dir = temp_dir.path().join(".local/state/vtcode/runtime/ast-grep");
+        let expected_bin_dir = temp_dir.path().join(".local/bin");
+        assert_eq!(paths.state_dir, expected_cache_dir);
         assert_eq!(paths.bin_dir, expected_bin_dir);
-        assert_eq!(paths.cache_path, temp_dir.path().join(".vtcode/ast_grep_install_cache.json"));
-        assert_eq!(paths.lock_path, temp_dir.path().join(".vtcode/ast_grep.lock"));
+        assert_eq!(paths.cache_path, expected_cache_dir.join("install.json"));
+        assert_eq!(paths.lock_path, expected_runtime_dir.join("install.lock"));
     }
 
     #[test]
@@ -155,6 +163,7 @@ mod tests {
         let temp_dir = TempDir::new().expect("temp dir");
         let paths = InstallPaths::from_home(temp_dir.path());
         std::fs::create_dir_all(&paths.state_dir).expect("state dir");
+        std::fs::create_dir_all(paths.lock_path.parent().expect("lock parent")).expect("runtime dir");
         std::fs::write(&paths.lock_path, "lock").expect("lock file");
 
         assert!(InstallLockGuard::is_install_in_progress(&paths));

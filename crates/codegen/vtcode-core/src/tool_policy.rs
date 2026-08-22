@@ -1,7 +1,7 @@
 //! Tool policy management system
 //!
 //! This module manages user preferences for tool usage, storing choices in
-//! ~/.vtcode/tool-policy.json to minimize repeated prompts while maintaining
+//! the canonical user config directory's `tool-policy.json` to minimize repeated prompts while maintaining
 //! user control overwhich tools the agent can use.
 
 use crate::utils::error_messages::ERR_CREATE_POLICY_DIR;
@@ -23,6 +23,8 @@ use crate::config::loader::{ConfigManager, VTCodeConfig};
 use crate::config::mcp::{McpAllowListConfig, McpAllowListRules};
 use crate::utils::file_utils::{ensure_dir_exists, read_file_with_context, write_file_atomic_with_context};
 use crate::utils::tool_name_parsing::{canonical_tool_name, parse_canonical_mcp_tool_name};
+use vtcode_commons::VtCodePaths;
+use vtcode_commons::fs::{read_private_file_no_follow, write_private_file_atomic};
 
 /// Memoized compiled approval regexes, keyed by the exact pattern list, so we
 /// don't recompile `Regex::new` on every approval-policy check.
@@ -88,7 +90,7 @@ impl ToolExecutionDecision {
     }
 }
 
-/// Tool policy configuration stored in ~/.vtcode/tool-policy.json
+/// Tool policy configuration stored in the canonical user config directory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolPolicyConfig {
     /// Configuration version for future compatibility
@@ -364,6 +366,7 @@ pub struct ToolPolicyManager {
     config: ToolPolicyConfig,
     permission_handler: Option<Box<dyn PermissionPromptHandler>>,
     workspace_root: Option<PathBuf>,
+    private_storage: bool,
 }
 
 impl Clone for ToolPolicyManager {
@@ -375,6 +378,7 @@ impl Clone for ToolPolicyManager {
             config: self.config.clone(),
             permission_handler: None, // Handler is not cloned
             workspace_root: self.workspace_root.clone(),
+            private_storage: self.private_storage,
         }
     }
 }
@@ -383,26 +387,28 @@ impl ToolPolicyManager {
     /// Create a new tool policy manager
     pub async fn new() -> Result<Self> {
         let config_path = Self::get_config_path().await?;
-        let config = Self::load_or_create_config(&config_path).await?;
+        let config = Self::load_or_create_config_with_policy(&config_path, true).await?;
 
         Ok(Self {
             config_path,
             config,
             permission_handler: None,
             workspace_root: None,
+            private_storage: true,
         })
     }
 
     /// Create a new tool policy manager with workspace-specific config
     pub async fn new_with_workspace(workspace_root: &Path) -> Result<Self> {
         let config_path = Self::get_workspace_config_path(workspace_root).await?;
-        let config = Self::load_or_create_config(&config_path).await?;
+        let config = Self::load_or_create_config_with_policy(&config_path, false).await?;
 
         Ok(Self {
             config_path,
             config,
             permission_handler: None,
             workspace_root: Some(workspace_root.to_path_buf()),
+            private_storage: false,
         })
     }
 
@@ -422,13 +428,14 @@ impl ToolPolicyManager {
                 .with_context(|| format!("{} at {}", ERR_CREATE_POLICY_DIR, parent.display()))?;
         }
 
-        let config = Self::load_or_create_config(&config_path).await?;
+        let config = Self::load_or_create_config_with_policy(&config_path, false).await?;
 
         Ok(Self {
             config_path,
             config,
             permission_handler: None,
             workspace_root: None,
+            private_storage: false,
         })
     }
 
@@ -439,16 +446,9 @@ impl ToolPolicyManager {
 
     /// Get the path to the tool policy configuration file
     async fn get_config_path() -> Result<PathBuf> {
-        let home_dir = dirs::home_dir().context("Could not determine home directory")?;
-
-        let vtcode_dir = home_dir.join(".vtcode");
-        if !tokio::fs::try_exists(&vtcode_dir).await.unwrap_or(false) {
-            ensure_dir_exists(&vtcode_dir)
-                .await
-                .context("Failed to create ~/.vtcode directory")?;
-        }
-
-        Ok(vtcode_dir.join("tool-policy.json"))
+        let paths = VtCodePaths::resolve().context("Could not resolve VT Code paths")?;
+        paths.ensure_config_dir().context("Failed to create VT Code config directory")?;
+        paths.config_path("tool-policy.json")
     }
 
     /// Get the path to the workspace-specific tool policy configuration file
@@ -464,13 +464,38 @@ impl ToolPolicyManager {
         Ok(workspace_vtcode_dir.join("tool-policy.json"))
     }
 
-    /// Load existing config or create new one with all tools as "prompt"
-    async fn load_or_create_config(config_path: &PathBuf) -> Result<ToolPolicyConfig> {
-        if tokio::fs::try_exists(config_path).await.unwrap_or(false) {
-            let content = read_file_with_context(config_path, "tool policy config")
-                .await
-                .context("Failed to read tool policy config")?;
+    async fn load_or_create_config_with_policy(config_path: &Path, private_storage: bool) -> Result<ToolPolicyConfig> {
+        let content = if private_storage {
+            match tokio::fs::symlink_metadata(config_path).await {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err(anyhow::anyhow!(
+                        "Refusing to read symlinked tool policy config: {}",
+                        config_path.display()
+                    ));
+                }
+                Ok(metadata) if !metadata.is_file() => {
+                    return Err(anyhow::anyhow!("Tool policy config is not a regular file: {}", config_path.display()));
+                }
+                Ok(_) => Some(
+                    String::from_utf8(read_private_file_no_follow(config_path).await?)
+                        .context("Tool policy config is not valid UTF-8")?,
+                ),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => {
+                    return Err(error).with_context(|| format!("Failed to inspect {}", config_path.display()));
+                }
+            }
+        } else if tokio::fs::try_exists(config_path).await.unwrap_or(false) {
+            Some(
+                read_file_with_context(config_path, "tool policy config")
+                    .await
+                    .context("Failed to read tool policy config")?,
+            )
+        } else {
+            None
+        };
 
+        if let Some(content) = content {
             // Try to parse as alternative format first
             if let Ok(alt_config) = serde_json::from_str::<AlternativeToolPolicyConfig>(&content) {
                 // Convert alternative format to standard format
@@ -490,7 +515,7 @@ impl ToolPolicyManager {
                         config_path.display(),
                         parse_err
                     );
-                    Self::reset_to_default(config_path).await
+                    Self::reset_to_default(config_path, private_storage).await
                 }
             }
         } else {
@@ -518,7 +543,7 @@ impl ToolPolicyManager {
         // Network constraints removed with curl tool removal
     }
 
-    async fn reset_to_default(config_path: &PathBuf) -> Result<ToolPolicyConfig> {
+    async fn reset_to_default(config_path: &Path, private_storage: bool) -> Result<ToolPolicyConfig> {
         let backup_path = config_path.with_extension("json.bak");
 
         if let Err(err) = tokio::fs::rename(config_path, &backup_path).await {
@@ -528,24 +553,35 @@ impl ToolPolicyManager {
         }
 
         let default_config = ToolPolicyConfig::default();
-        Self::write_config(config_path.as_path(), &default_config).await?;
+        Self::write_config_with_policy(config_path, &default_config, private_storage).await?;
         Ok(default_config)
     }
 
-    async fn write_config(path: &Path, config: &ToolPolicyConfig) -> Result<()> {
+    async fn write_config_with_policy(path: &Path, config: &ToolPolicyConfig, private_storage: bool) -> Result<()> {
         if let Some(parent) = path.parent()
             && !tokio::fs::try_exists(parent).await.unwrap_or(false)
         {
-            ensure_dir_exists(parent)
-                .await
-                .with_context(|| format!("{} at {}", ERR_CREATE_POLICY_DIR, parent.display()))?;
+            if private_storage {
+                VtCodePaths::ensure_user_dir(parent)
+                    .with_context(|| format!("{} at {}", ERR_CREATE_POLICY_DIR, parent.display()))?;
+            } else {
+                ensure_dir_exists(parent)
+                    .await
+                    .with_context(|| format!("{} at {}", ERR_CREATE_POLICY_DIR, parent.display()))?;
+            }
         }
 
         let serialized = serde_json::to_string_pretty(config).context("Failed to serialize tool policy config")?;
 
-        write_file_atomic_with_context(path, &serialized, "tool policy config")
-            .await
-            .with_context(|| format!("Failed to write tool policy config: {}", path.display()))
+        if private_storage {
+            write_private_file_atomic(path, serialized.as_bytes())
+                .await
+                .with_context(|| format!("Failed to write tool policy config: {}", path.display()))
+        } else {
+            write_file_atomic_with_context(path, &serialized, "tool policy config")
+                .await
+                .with_context(|| format!("Failed to write tool policy config: {}", path.display()))
+        }
     }
 
     /// Convert alternative format to standard format
@@ -1098,7 +1134,7 @@ impl ToolPolicyManager {
 
     /// Save configuration to file
     fn save_config(&self) -> impl Future<Output = Result<()>> + '_ {
-        Self::write_config(&self.config_path, &self.config)
+        Self::write_config_with_policy(&self.config_path, &self.config, self.private_storage)
     }
 
     fn persist_policy_to_workspace_config(&self, tool_name: &str, policy: ToolPolicy) -> Result<()> {
@@ -1391,7 +1427,9 @@ mod tests {
         std::fs::write(&config_path, content).unwrap();
 
         // Load and update
-        let mut loaded_config = ToolPolicyManager::load_or_create_config(&config_path).await.unwrap();
+        let mut loaded_config = ToolPolicyManager::load_or_create_config_with_policy(&config_path, false)
+            .await
+            .unwrap();
 
         // Add new tool
         let new_tools = vec!["tool1".to_owned(), "tool2".to_owned()];

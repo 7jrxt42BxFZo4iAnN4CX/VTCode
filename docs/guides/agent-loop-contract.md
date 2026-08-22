@@ -77,7 +77,7 @@ Interactive and exec runs share one authoritative persistence contract:
 
 `agent.harness.event_log_path` and exec `--events` are explicit compatibility
 exports. They do not replace the canonical store, and no global
-`~/.vtcode/sessions` harness artifact is created by default. ATIF and Open
+The user state directory's `sessions` harness artifact is created by default. ATIF and Open
 Responses files, when enabled by the interactive harness, are derived under
 the canonical session's `derived/` directory. Historical global artifacts are
 left untouched.

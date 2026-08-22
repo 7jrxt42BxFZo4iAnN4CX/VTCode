@@ -124,10 +124,6 @@ impl CustomApiKeyStorage {
             bail!("API key cannot be empty");
         }
         self.store_value(api_key, mode)?;
-        if self.identity.is_none() {
-            legacy::clear_for_provider(&self.provider)
-                .context("failed to remove legacy plaintext credential after secure save")?;
-        }
         Ok(())
     }
 
@@ -166,8 +162,12 @@ impl CustomApiKeyStorage {
 
         self.store_value(&key, mode)
             .context("failed to migrate provider-only credential to key-scoped storage")?;
+        // This is the obsolete provider-only secure-storage entry, not the
+        // rollback-safe plaintext file under the legacy directory. Remove the
+        // former after the key-scoped copy succeeds, but preserve the latter.
         legacy_storage
-            .clear(mode)
+            .storage
+            .clear_with_mode(mode)
             .context("failed to remove provider-only credential after migration")?;
         self.load(mode)
     }
@@ -208,7 +208,7 @@ impl CustomApiKeyStorage {
             return Ok(None);
         };
 
-        if let Err(err) = self.store(&legacy_entry.api_key, mode) {
+        if let Err(err) = self.store(&legacy_entry.credentials.api_key, mode) {
             tracing::warn!(
                 "Failed to migrate legacy plaintext auth.json entry for provider '{}' into secure storage: {}",
                 self.provider,
@@ -217,15 +217,7 @@ impl CustomApiKeyStorage {
             return Err(err).context("failed to migrate legacy API key into secure storage");
         }
 
-        let path = crate::storage_paths::legacy_auth_storage_path().ok();
-        if let Some(p) = path {
-            legacy::delete_file(&p).context("failed to remove migrated plaintext auth file")?;
-        }
-
-        tracing::warn!(
-            "Migrated legacy plaintext auth.json entry for provider '{}' into secure storage",
-            self.provider
-        );
+        tracing::warn!(self.provider);
         self.load(mode)
     }
 }

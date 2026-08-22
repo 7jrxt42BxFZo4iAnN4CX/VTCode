@@ -100,7 +100,7 @@ async fn install_ast_grep() -> Result<()> {
             println!(
                 "{} Installing ast-grep into {}",
                 "→".cyan(),
-                vtcode_core::tools::ast_grep_binary::managed_ast_grep_bin_dir().display()
+                vtcode_core::tools::ast_grep_binary::managed_ast_grep_bin_dir()?.display()
             );
 
             let outcome = AstGrepStatus::install().await?;

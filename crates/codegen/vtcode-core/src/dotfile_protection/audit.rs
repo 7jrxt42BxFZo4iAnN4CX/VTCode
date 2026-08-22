@@ -13,9 +13,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
+use vtcode_commons::VtCodePaths;
 use vtcode_commons::utils::calculate_sha256;
-
-use crate::utils::file_utils::ensure_dir_exists;
 
 /// Outcome of a dotfile access attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -218,8 +217,7 @@ impl AuditLog {
 
         // Create parent directories if needed
         if let Some(parent) = log_path.parent() {
-            ensure_dir_exists(parent)
-                .await
+            VtCodePaths::ensure_user_dir(parent)
                 .with_context(|| format!("Failed to create audit log directory: {parent:?}"))?;
         }
 

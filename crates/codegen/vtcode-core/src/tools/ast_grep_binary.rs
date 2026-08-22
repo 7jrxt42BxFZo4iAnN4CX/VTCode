@@ -1,7 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Mutex;
 
+use anyhow::Context;
 use once_cell::sync::Lazy;
+use vtcode_commons::VtCodePaths;
 
 pub const AST_GREP_BIN_ENV: &str = "VTCODE_AST_GREP_BIN";
 pub const AST_GREP_INSTALL_COMMAND: &str = "vtcode dependencies install ast-grep";
@@ -42,26 +44,28 @@ pub fn set_ast_grep_binary_override_for_tests(path: Option<PathBuf>) -> AstGrepB
     AstGrepBinaryOverrideGuard { previous }
 }
 
-pub fn managed_ast_grep_bin_dir() -> PathBuf {
-    dirs::home_dir()
-        .map(|home| managed_ast_grep_bin_dir_from_home(&home))
-        .unwrap_or_else(|| PathBuf::from(".vtcode/bin"))
+pub fn managed_ast_grep_bin_dir() -> anyhow::Result<PathBuf> {
+    VtCodePaths::resolve()
+        .map(|paths| paths.executable_dir().to_path_buf())
+        .context("could not resolve VT Code executable directory")
 }
 
-pub fn managed_ast_grep_binary_path() -> PathBuf {
-    managed_ast_grep_bin_dir().join(canonical_ast_grep_binary_name())
+pub fn managed_ast_grep_binary_path() -> anyhow::Result<PathBuf> {
+    Ok(managed_ast_grep_bin_dir()?.join(canonical_ast_grep_binary_name()))
 }
 
-pub fn managed_ast_grep_alias_path() -> Option<PathBuf> {
-    alias_ast_grep_binary_name().map(|name| managed_ast_grep_bin_dir().join(name))
+pub fn managed_ast_grep_alias_path() -> anyhow::Result<Option<PathBuf>> {
+    alias_ast_grep_binary_name()
+        .map(|name| managed_ast_grep_bin_dir().map(|directory| directory.join(name)))
+        .transpose()
 }
 
-pub fn managed_ast_grep_candidates() -> Vec<PathBuf> {
-    let mut candidates = vec![managed_ast_grep_binary_path()];
-    if let Some(alias) = managed_ast_grep_alias_path() {
+pub fn managed_ast_grep_candidates() -> anyhow::Result<Vec<PathBuf>> {
+    let mut candidates = vec![managed_ast_grep_binary_path()?];
+    if let Some(alias) = managed_ast_grep_alias_path()? {
         candidates.push(alias);
     }
-    candidates
+    Ok(candidates)
 }
 
 pub fn resolve_ast_grep_binary_from_env_and_fs() -> Option<PathBuf> {
@@ -75,7 +79,11 @@ pub fn resolve_ast_grep_binary_from_env_and_fs() -> Option<PathBuf> {
         .filter(|value| !value.is_empty())
         .map(PathBuf::from);
 
-    resolve_ast_grep_binary_with_sources(env_override, managed_ast_grep_candidates(), resolve_ast_grep_binary_on_path())
+    resolve_ast_grep_binary_with_sources(
+        env_override,
+        managed_ast_grep_candidates().unwrap_or_default(),
+        resolve_ast_grep_binary_on_path(),
+    )
 }
 
 pub fn resolve_ast_grep_binary_on_path() -> Option<PathBuf> {
@@ -123,10 +131,6 @@ pub(crate) fn is_binary_override_missing() -> bool {
 /// errors surface immediately without attempting a download.
 pub const AST_GREP_NO_INSTALL_ENV: &str = "VTCODE_AST_GREP_NO_INSTALL";
 
-fn managed_ast_grep_bin_dir_from_home(home: &Path) -> PathBuf {
-    home.join(".vtcode").join("bin")
-}
-
 fn resolve_ast_grep_binary_with_sources(
     env_override: Option<PathBuf>,
     managed_candidates: Vec<PathBuf>,
@@ -141,18 +145,11 @@ fn resolve_ast_grep_binary_with_sources(
 #[cfg(test)]
 mod tests {
     use super::{
-        alias_ast_grep_binary_name, canonical_ast_grep_binary_name, managed_ast_grep_bin_dir_from_home,
-        resolve_ast_grep_binary_from_env_and_fs, resolve_ast_grep_binary_with_sources,
-        set_ast_grep_binary_override_for_tests,
+        alias_ast_grep_binary_name, canonical_ast_grep_binary_name, resolve_ast_grep_binary_from_env_and_fs,
+        resolve_ast_grep_binary_with_sources, set_ast_grep_binary_override_for_tests,
     };
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use tempfile::TempDir;
-
-    #[test]
-    fn managed_bin_dir_uses_vtcode_home_bin() {
-        let path = managed_ast_grep_bin_dir_from_home(Path::new("/tmp/example-home"));
-        assert_eq!(path, Path::new("/tmp/example-home/.vtcode/bin"));
-    }
 
     #[test]
     fn canonical_binary_name_matches_platform() {

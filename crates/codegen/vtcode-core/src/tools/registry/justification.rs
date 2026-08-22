@@ -3,11 +3,11 @@
 /// Captures agent reasoning before high-risk tool execution to improve approval UX
 /// and enable learning of approval patterns.
 use crate::tools::registry::risk_scorer::RiskLevel;
-use crate::utils::file_utils::{ensure_dir_exists_sync, read_file_with_context_sync, write_file_with_context_sync};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use hashbrown::HashMap;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use vtcode_commons::VtCodePaths;
 
 /// Justification provided by the agent for executing a high-risk tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,7 +164,8 @@ impl JustificationManager {
             return Ok(());
         }
 
-        let content = read_file_with_context_sync(&patterns_file, "approval patterns cache")?;
+        let content = String::from_utf8(VtCodePaths::read_file_no_follow(&patterns_file)?)
+            .context("failed to read approval patterns cache")?;
         let loaded_patterns: HashMap<String, ApprovalPattern> = serde_json::from_str(&content)?;
 
         let mut patterns = self
@@ -242,7 +243,7 @@ impl JustificationManager {
     /// This method clones the patterns under the lock, then writes to disk
     /// outside the lock to minimize critical section duration.
     fn persist_patterns(&self) -> Result<()> {
-        ensure_dir_exists_sync(&self.cache_dir)?;
+        VtCodePaths::ensure_user_dir(&self.cache_dir)?;
         let patterns_file = self.cache_dir.join("approval_patterns.json");
 
         // Clone patterns under the lock to minimize lock hold time
@@ -256,7 +257,8 @@ impl JustificationManager {
 
         // Write to disk outside the lock
         let content = serde_json::to_string_pretty(&patterns_snapshot)?;
-        write_file_with_context_sync(&patterns_file, &content, "approval patterns cache")?;
+        VtCodePaths::write_private_file_atomic(&patterns_file, content.as_bytes())
+            .context("failed to write approval patterns cache")?;
         Ok(())
     }
 

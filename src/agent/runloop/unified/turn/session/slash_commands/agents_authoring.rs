@@ -4,6 +4,8 @@ type YamlMapping = serde_json::Map<String, YamlValue>;
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use vtcode_commons::VtCodePaths;
+use vtcode_commons::fs::write_private_file_atomic;
 use vtcode_config::core::permissions::{AgentPermissionsConfig, PermissionDefault};
 #[cfg(test)]
 use vtcode_config::load_subagent_from_file;
@@ -553,15 +555,30 @@ async fn save_native_agent(
     }
 
     let path = draft.current_path()?;
-    if creating && path.exists() {
-        bail!("Agent file already exists at {}", path.display());
+    if creating {
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                bail!("Refusing to use symlinked agent file {}", path.display());
+            }
+            Ok(metadata) if !metadata.is_file() => {
+                bail!("Agent path is not a regular file: {}", path.display());
+            }
+            Ok(_) => bail!("Agent file already exists at {}", path.display()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
     }
 
-    fs::create_dir_all(
+    VtCodePaths::ensure_user_dir(
         path.parent()
             .ok_or_else(|| anyhow!("Invalid agent destination {}", path.display()))?,
     )?;
-    fs::write(&path, draft.render_markdown()?)?;
+    let contents = draft.render_markdown()?;
+    if draft.scope == AgentDefinitionScope::User {
+        write_private_file_atomic(&path, contents.as_bytes()).await?;
+    } else {
+        fs::write(&path, contents)?;
+    }
     draft.file_path = Some(path.clone());
 
     if let Some(controller) = ctx.tool_registry.subagent_controller() {
@@ -597,7 +614,7 @@ async fn prompt_scope(
         },
         InlineListItem {
             title: "User scope".to_string(),
-            subtitle: Some("Write to `~/.vtcode/agents/<name>.md` for all workspaces.".to_string()),
+            subtitle: Some("Write to the canonical user config directory for all workspaces.".to_string()),
             badge: Some("User".to_string()),
             indent: 0,
             selection: Some(InlineListSelection::ConfigAction("agents:author:scope:user".to_string())),
@@ -680,7 +697,11 @@ async fn prompt_memory_scope(
             "Use `.vtcode/agent-memory-local/<agent-name>/`.",
             Some(SubagentMemoryScope::Local),
         ),
-        memory_item("User memory", "Use `~/.vtcode/agent-memory/<agent-name>/`.", Some(SubagentMemoryScope::User)),
+        memory_item(
+            "User memory",
+            "Use the user state directory's `agent-memory/<agent-name>/` path.",
+            Some(SubagentMemoryScope::User),
+        ),
     ];
     let selected = Some(InlineListSelection::ConfigAction(memory_action_key(current)));
     ctx.handle.show_list_modal(
@@ -1090,10 +1111,9 @@ fn workspace_agent_path(workspace_root: &Path, name: &str) -> PathBuf {
 }
 
 fn user_agent_path(name: &str) -> Result<PathBuf> {
-    Ok(dirs::home_dir()
-        .ok_or_else(|| anyhow!("Cannot resolve home directory for user-scope agent"))?
-        .join(".vtcode/agents")
-        .join(format!("{name}.md")))
+    VtCodePaths::resolve()
+        .and_then(|paths| paths.config_path(format!("agents/{name}.md")))
+        .map_err(|error| anyhow!("Cannot resolve user-scope agent path: {error}"))
 }
 
 fn insert_yaml_string(mapping: &mut YamlMapping, key: &str, value: &str) {
@@ -1134,7 +1154,7 @@ fn insert_yaml_string_list_if_non_empty(mapping: &mut YamlMapping, key: &str, va
 fn scope_label(scope: AgentDefinitionScope) -> &'static str {
     match scope {
         AgentDefinitionScope::Project => ".vtcode/agents/<name>.md",
-        AgentDefinitionScope::User => "~/.vtcode/agents/<name>.md",
+        AgentDefinitionScope::User => "the canonical user config directory/agents/<name>.md",
     }
 }
 

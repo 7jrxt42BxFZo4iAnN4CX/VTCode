@@ -1,13 +1,12 @@
 //! Audit logging for externally modified file conflicts.
 
 use crate::utils::error_messages::ERR_CREATE_AUDIT_DIR;
-use crate::utils::file_utils::ensure_dir_exists_sync;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
-use std::fs::OpenOptions;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
+use vtcode_commons::VtCodePaths;
 
 /// Audit event emitted when a tracked file changes outside VT Code control.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,7 +28,7 @@ pub struct FileConflictAuditLog {
 impl FileConflictAuditLog {
     /// Create or open today's file-conflict audit log in the given directory.
     pub fn new(audit_dir: PathBuf) -> Result<Self> {
-        ensure_dir_exists_sync(&audit_dir).context(ERR_CREATE_AUDIT_DIR)?;
+        VtCodePaths::ensure_user_dir(&audit_dir).context(ERR_CREATE_AUDIT_DIR)?;
 
         let date = Local::now().format("%Y-%m-%d");
         let log_path = audit_dir.join(format!("file-conflicts-{date}.log"));
@@ -52,10 +51,7 @@ impl FileConflictAuditLog {
 
     fn writer_mut(&mut self) -> Result<&mut BufWriter<std::fs::File>> {
         if self.writer.is_none() {
-            let file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&self.log_path)
+            let file = VtCodePaths::open_private_append_file(&self.log_path)
                 .with_context(|| format!("Failed to open file conflict audit log at {:?}", self.log_path))?;
             self.writer = Some(BufWriter::new(file));
         }

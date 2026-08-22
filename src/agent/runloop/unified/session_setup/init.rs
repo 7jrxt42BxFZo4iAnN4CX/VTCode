@@ -15,7 +15,7 @@ use crate::agent::runloop::unified::tool_catalog::ToolCatalogState;
 use crate::agent::runloop::welcome::prepare_session_bootstrap;
 use anyhow::{Context, Result};
 use hashbrown::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -31,6 +31,7 @@ use vtcode_core::llm::factory::{ProviderConfig, create_provider_with_config, inf
 use vtcode_core::llm::provider as uni;
 use vtcode_core::mcp::plugin_providers::discover_plugin_mcp_providers;
 
+use vtcode_commons::VtCodePaths;
 use vtcode_core::models::ModelId;
 use vtcode_core::subagents::{SubagentController, SubagentControllerConfig};
 use vtcode_core::tools::handlers::{
@@ -338,10 +339,9 @@ pub(crate) async fn initialize_session(
 
     let tool_result_cache = Arc::new(RwLock::new(ToolResultCache::new(128)));
     let tool_permission_cache = Arc::new(RwLock::new(ToolPermissionCache::new()));
-    let cache_dir = std::env::var("HOME")
-        .ok()
-        .map(|home| PathBuf::from(home).join(".vtcode").join("cache"))
-        .unwrap_or_else(|| PathBuf::from(".vtcode/cache"));
+    let cache_dir = VtCodePaths::resolve()
+        .and_then(|paths| paths.ensure_cache_child_dir("approval"))
+        .context("failed to resolve private VT Code approval cache")?;
     let approval_recorder = Arc::new(ApprovalRecorder::new(cache_dir));
     let permissions_state = Arc::new(RwLock::new(vt_cfg.map(|cfg| cfg.permissions.clone()).unwrap_or_default()));
     if let Some(cfg) = vt_cfg

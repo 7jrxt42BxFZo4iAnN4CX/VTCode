@@ -93,9 +93,20 @@ pub const PRESERVED_ENV_VARS: &[&str] = &[
     "TZ",
     // XDG directories
     "XDG_CONFIG_HOME",
+    "XDG_CONFIG_DIRS",
     "XDG_DATA_HOME",
+    "XDG_DATA_DIRS",
+    "XDG_BIN_HOME",
+    "XDG_STATE_HOME",
     "XDG_CACHE_HOME",
     "XDG_RUNTIME_DIR",
+    // VT Code path overrides
+    "VTCODE_CONFIG",
+    "VTCODE_CONFIG_PATH",
+    "VTCODE_DATA",
+    "VTCODE_HOME",
+    // External Codex compatibility root
+    "CODEX_HOME",
     // Editor preferences (not sensitive)
     "EDITOR",
     "VISUAL",
@@ -299,6 +310,44 @@ mod tests {
         assert_eq!(sanitized.get(VTCODE_SANDBOX_ACTIVE), Some(&"1".to_string()));
         assert_eq!(sanitized.get(VTCODE_SANDBOX_NETWORK_DISABLED), Some(&"1".to_string()));
         assert_eq!(sanitized.get(VTCODE_SANDBOX_TYPE), Some(&"MacosSeatbelt".to_string()));
+    }
+
+    #[test]
+    fn preserves_full_xdg_and_vtcode_path_environment_without_secrets() {
+        let mut current = HashMap::new();
+        for (key, value) in [
+            ("XDG_STATE_HOME", "/state"),
+            ("XDG_CONFIG_DIRS", "/etc/xdg:/opt/xdg"),
+            ("XDG_DATA_DIRS", "/usr/local/share:/usr/share"),
+            ("XDG_BIN_HOME", "/home/user/bin"),
+            ("VTCODE_CONFIG", "/config"),
+            ("VTCODE_CONFIG_PATH", "/config/explicit.toml"),
+            ("VTCODE_DATA", "/data"),
+            ("VTCODE_HOME", "/legacy"),
+            ("CODEX_HOME", "/codex"),
+            ("OPENAI_API_KEY", TEST_API_KEY_VALUE),
+            ("DATABASE_PASSWORD", "do-not-copy"),
+        ] {
+            drop(current.insert(key.to_string(), value.to_string()));
+        }
+
+        let sanitized = build_sanitized_env(&current, false, false, "test", &[]);
+
+        for (key, value) in [
+            ("XDG_STATE_HOME", "/state"),
+            ("XDG_CONFIG_DIRS", "/etc/xdg:/opt/xdg"),
+            ("XDG_DATA_DIRS", "/usr/local/share:/usr/share"),
+            ("XDG_BIN_HOME", "/home/user/bin"),
+            ("VTCODE_CONFIG", "/config"),
+            ("VTCODE_CONFIG_PATH", "/config/explicit.toml"),
+            ("VTCODE_DATA", "/data"),
+            ("VTCODE_HOME", "/legacy"),
+            ("CODEX_HOME", "/codex"),
+        ] {
+            assert_eq!(sanitized.get(key), Some(&value.to_string()), "missing {key}");
+        }
+        assert!(!sanitized.contains_key("OPENAI_API_KEY"));
+        assert!(!sanitized.contains_key("DATABASE_PASSWORD"));
     }
 
     #[test]

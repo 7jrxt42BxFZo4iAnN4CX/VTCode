@@ -178,6 +178,11 @@ impl SimpleConfigWatcher {
             for path in defaults.home_config_paths(defaults.config_file_name()) {
                 watcher.add_watch_path(path);
             }
+            if let Ok(paths) = defaults.system_config_paths(defaults.config_file_name()) {
+                for path in paths {
+                    watcher.add_watch_path(path);
+                }
+            }
         }
         watcher.seed_current_mtimes();
         watcher

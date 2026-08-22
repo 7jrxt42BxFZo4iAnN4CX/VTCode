@@ -201,7 +201,7 @@ async fn finalize_persistent_memory_skips_existing_authored_note_duplicates() {
     let memory_dir = resolve_persistent_memory_dir(&vt_cfg.agent.persistent_memory, workspace.path())
         .expect("memory dir")
         .expect("resolved dir");
-    let files = PersistentMemoryFiles::new(memory_dir);
+    let files = PersistentMemoryFiles::new(memory_dir, false);
     std::fs::create_dir_all(&files.directory).expect("dir");
     std::fs::write(
         &files.preferences_file,
@@ -503,7 +503,7 @@ async fn rebuild_summary_uses_summary_file_not_registry() {
     let memory_dir = resolve_persistent_memory_dir(&memory_config, workspace.path())
         .expect("memory dir")
         .expect("resolved dir");
-    let files = PersistentMemoryFiles::new(memory_dir.clone());
+    let files = PersistentMemoryFiles::new(memory_dir.clone(), false);
     let mut created_files = Vec::new();
     ensure_memory_layout(&files, &mut created_files).await.expect("layout");
     tokio::fs::write(
@@ -576,7 +576,7 @@ async fn rebuild_generated_files_include_notes_as_canonical_inputs() {
     let memory_dir = resolve_persistent_memory_dir(&config, workspace.path())
         .expect("memory dir")
         .expect("resolved dir");
-    let files = PersistentMemoryFiles::new(memory_dir);
+    let files = PersistentMemoryFiles::new(memory_dir, false);
     tokio::fs::write(
         files.notes_dir.join("project.md"),
         "# Project Notes\n\n- Keep Anthropic memory backed by shared storage.\n",
@@ -607,7 +607,7 @@ async fn persistent_memory_parallel_reads_preserve_source_order() {
     let memory_dir = resolve_persistent_memory_dir(&config, workspace.path())
         .expect("memory dir")
         .expect("resolved dir");
-    let files = PersistentMemoryFiles::new(memory_dir);
+    let files = PersistentMemoryFiles::new(memory_dir, false);
 
     tokio::fs::write(
         &files.preferences_file,
@@ -686,7 +686,7 @@ async fn collect_all_memory_matches_dedup_keeps_last_occurrence_and_order() {
     let memory_dir = resolve_persistent_memory_dir(&config, workspace.path())
         .expect("memory dir")
         .expect("resolved dir");
-    let files = PersistentMemoryFiles::new(memory_dir);
+    let files = PersistentMemoryFiles::new(memory_dir, false);
 
     // Two preferences: A (with extra spacing, will be overwritten) and B.
     tokio::fs::write(
@@ -762,7 +762,7 @@ async fn persistent_memory_parallel_reads_preserve_error_context() {
     let memory_dir = resolve_persistent_memory_dir(&config, workspace.path())
         .expect("memory dir")
         .expect("resolved dir");
-    let files = PersistentMemoryFiles::new(memory_dir);
+    let files = PersistentMemoryFiles::new(memory_dir, false);
     tokio::fs::remove_file(&files.preferences_file)
         .await
         .expect("remove preferences");
@@ -879,7 +879,7 @@ fn cleanup_status_flags_legacy_prompt_lines() {
     let memory_dir = resolve_persistent_memory_dir(&memory_config, workspace.path())
         .expect("memory dir")
         .expect("resolved dir");
-    let files = PersistentMemoryFiles::new(memory_dir);
+    let files = PersistentMemoryFiles::new(memory_dir, false);
     std::fs::create_dir_all(&files.directory).expect("dir");
     std::fs::create_dir_all(&files.rollout_summaries_dir).expect("rollout dir");
     std::fs::write(
@@ -902,7 +902,7 @@ fn cleanup_status_ignores_normalized_user_assertion_fact() {
     let memory_dir = resolve_persistent_memory_dir(&memory_config, workspace.path())
         .expect("memory dir")
         .expect("resolved dir");
-    let files = PersistentMemoryFiles::new(memory_dir);
+    let files = PersistentMemoryFiles::new(memory_dir, false);
     std::fs::create_dir_all(&files.directory).expect("dir");
     std::fs::write(&files.preferences_file, "# Preferences\n\n- [user_assertion] My name is Vinh Nguyen\n")
         .expect("prefs");
@@ -920,7 +920,7 @@ fn cleanup_status_ignores_embedded_remember_word_in_fact() {
     let memory_dir = resolve_persistent_memory_dir(&memory_config, workspace.path())
         .expect("memory dir")
         .expect("resolved dir");
-    let files = PersistentMemoryFiles::new(memory_dir);
+    let files = PersistentMemoryFiles::new(memory_dir, false);
     std::fs::create_dir_all(&files.directory).expect("dir");
     std::fs::write(
         &files.repository_facts_file,
@@ -977,7 +977,7 @@ fn resolves_project_scoped_memory_directory() {
     let directory = resolve_persistent_memory_dir(&config, workspace.path())
         .expect("memory dir")
         .expect("memory dir should resolve");
-    assert!(directory.to_string_lossy().contains(".vtcode/projects/renamed-project/memory"));
+    assert!(directory.to_string_lossy().contains("state/projects/renamed-project/memory"));
 }
 
 #[test]
@@ -1000,7 +1000,7 @@ fn migrates_legacy_memory_into_empty_target_directory() {
 
     migrate_legacy_memory_dir(&legacy_dir, &target_dir).expect("migrate");
 
-    assert!(!legacy_dir.exists());
+    assert!(legacy_dir.exists());
     let migrated = std::fs::read_to_string(target_dir.join(PREFERENCES_FILENAME)).expect("target prefs");
     assert!(migrated.contains("Prefer cargo nextest"));
 }
@@ -1034,9 +1034,52 @@ fn migrates_legacy_memory_over_scaffold_only_target() {
 
     migrate_legacy_memory_dir(&legacy_dir, &target_dir).expect("migrate");
 
-    assert!(!legacy_dir.exists());
+    assert!(legacy_dir.exists());
     let migrated = std::fs::read_to_string(target_dir.join(REPOSITORY_FACTS_FILENAME)).expect("target facts");
     assert!(migrated.contains("Tests live under vtcode-core/tests"));
+}
+
+#[cfg(unix)]
+#[test]
+fn legacy_memory_migration_rejects_symlinked_source_ancestors() {
+    use std::os::unix::fs::symlink;
+
+    let root = tempdir().expect("root");
+    let outside_projects = root.path().join("outside/projects/repo/memory");
+    std::fs::create_dir_all(&outside_projects).expect("outside memory");
+    std::fs::write(outside_projects.join(PREFERENCES_FILENAME), "outside").expect("outside memory file");
+
+    let legacy_root = root.path().join("legacy");
+    std::fs::create_dir_all(&legacy_root).expect("legacy root");
+    symlink(root.path().join("outside/projects"), legacy_root.join("projects")).expect("legacy ancestor symlink");
+
+    let target_dir = root.path().join("target/memory");
+    let result = migrate_legacy_memory_dir(&legacy_root.join("projects/repo/memory"), &target_dir);
+
+    assert!(result.is_err());
+    assert!(!target_dir.join(PREFERENCES_FILENAME).exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn legacy_memory_migration_rejects_symlinked_target_content() {
+    use std::os::unix::fs::symlink;
+
+    let root = tempdir().expect("root");
+    let legacy_dir = root.path().join("legacy/projects/repo/memory");
+    std::fs::create_dir_all(&legacy_dir).expect("legacy memory");
+    std::fs::write(legacy_dir.join(PREFERENCES_FILENAME), "legacy").expect("legacy preferences");
+
+    let outside = root.path().join("outside");
+    std::fs::write(&outside, "outside").expect("outside memory");
+    let target_dir = root.path().join("target/memory");
+    std::fs::create_dir_all(&target_dir).expect("target memory");
+    symlink(&outside, target_dir.join(PREFERENCES_FILENAME)).expect("target symlink");
+
+    let result = migrate_legacy_memory_dir(&legacy_dir, &target_dir);
+
+    assert!(result.is_err());
+    assert_eq!(std::fs::read_to_string(&outside).expect("outside file remains"), "outside");
 }
 
 #[tokio::test]

@@ -10,7 +10,7 @@ use hashbrown::HashMap;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
-use tokio::fs;
+use vtcode_commons::VtCodePaths;
 use vtcode_config::auth::{
     AuthCallbackOutcome, McpOAuthConfig, McpOAuthService, OAuthCallbackPage, start_auth_code_callback_server,
 };
@@ -557,25 +557,19 @@ fn format_env_map(map: &HashMap<String, String>) -> String {
 
 fn load_global_config() -> Result<(VTCodeConfig, PathBuf)> {
     let path = global_config_path()?;
-    if path.exists() {
-        let manager = ConfigManager::load_from_file(&path)
-            .with_context(|| format!("failed to load configuration from {}", path.display()))?;
-        Ok((manager.config().clone(), path))
-    } else {
-        Ok((VTCodeConfig::default(), path))
-    }
+    let manager = ConfigManager::load_global()
+        .with_context(|| format!("failed to load global configuration before writing {}", path.display()))?;
+    Ok((manager.config().clone(), path))
 }
 
 async fn write_global_config(path: &Path, config: &VTCodeConfig) -> Result<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .await
+        VtCodePaths::ensure_user_dir(parent)
             .with_context(|| format!("failed to create directory {}", parent.display()))?;
     }
 
     let contents = toml::to_string_pretty(config).context("failed to serialize configuration")?;
-    fs::write(path, contents)
-        .await
+    VtCodePaths::write_private_file_atomic(path, contents.as_bytes())
         .with_context(|| format!("failed to write configuration to {}", path.display()))?;
     Ok(())
 }
@@ -589,8 +583,9 @@ fn global_config_path() -> Result<PathBuf> {
         return Ok(path);
     }
 
-    let home_dir = dirs::home_dir().ok_or_else(|| anyhow!("failed to determine home directory"))?;
-    Ok(home_dir.join(".vtcode").join("vtcode.toml"))
+    VtCodePaths::resolve()
+        .map(|paths| paths.config_file())
+        .context("failed to resolve canonical VT Code configuration path")
 }
 
 #[doc(hidden)]

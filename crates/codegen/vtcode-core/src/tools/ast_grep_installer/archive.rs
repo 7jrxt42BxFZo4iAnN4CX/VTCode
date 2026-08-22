@@ -8,13 +8,15 @@ use anyhow::{Context, Result, anyhow, bail};
 use flate2::read::GzDecoder;
 use tar::Archive;
 use tempfile::{NamedTempFile, TempDir};
+use vtcode_commons::VtCodePaths;
 use vtcode_commons::walk::build_walker_single_threaded;
 use zip::ZipArchive;
 
 use super::state::InstallPaths;
 
 pub(super) fn install_archive(paths: &InstallPaths, archive_name: &str, archive_bytes: &[u8]) -> Result<()> {
-    fs::create_dir_all(&paths.bin_dir).with_context(|| format!("Failed to create {}", paths.bin_dir.display()))?;
+    VtCodePaths::ensure_user_dir(&paths.bin_dir)
+        .with_context(|| format!("Failed to create {}", paths.bin_dir.display()))?;
 
     let temp_dir = TempDir::new().context("Failed to create temp directory for ast-grep install")?;
     let extract_dir = temp_dir.path().join("extract");
@@ -31,9 +33,8 @@ pub(super) fn install_archive(paths: &InstallPaths, archive_name: &str, archive_
             let _ = fs::remove_file(stale_alias);
         }
     } else if let Some(alias_path) = &paths.alias_path {
-        fs::copy(&paths.binary_path, alias_path)
+        install_binary_atomically(&paths.binary_path, alias_path, &paths.bin_dir)
             .with_context(|| format!("Failed to install ast-grep alias to {}", alias_path.display()))?;
-        set_executable_permissions(alias_path)?;
     }
 
     Ok(())

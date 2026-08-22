@@ -23,7 +23,21 @@ unset MALLOCSTACKTOOLSDIR
 unset MallocErrorAbort
 unset MallocNanoZone
 
-export VT_SESSION_DIR="${VT_SESSION_DIR:-$HOME/.vtcode/sessions}"
+if [[ -z "${VT_SESSION_DIR:-}" ]]; then
+	case "$(uname -s)" in
+		Darwin)
+			VT_STATE_DIR="$HOME/Library/Application Support/com.vinhnx.vtcode/state"
+			;;
+		*)
+			if [[ "${XDG_STATE_HOME:-}" = /* ]]; then
+				VT_STATE_DIR="$XDG_STATE_HOME/vtcode"
+			else
+				VT_STATE_DIR="$HOME/.local/state/vtcode"
+			fi
+			;;
+	esac
+	export VT_SESSION_DIR="$VT_STATE_DIR/sessions"
+fi
 
 # Check if we're in the right directory
 if [[ ! -f "Cargo.toml" ]]; then

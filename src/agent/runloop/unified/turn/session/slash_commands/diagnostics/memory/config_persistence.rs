@@ -4,12 +4,12 @@ use anyhow::{Context, Result, bail};
 use toml::Value as TomlValue;
 use vtcode_core::config::current_config_defaults;
 use vtcode_core::config::loader::ConfigManager;
-use vtcode_core::config::loader::layers::ConfigLayerSource;
 
 use crate::agent::runloop::unified::palettes::refresh_runtime_config_from_manager;
 
 use super::super::super::config_toml::{
-    ensure_child_table, load_toml_value, preferred_workspace_config_path, save_toml_value,
+    ensure_child_table, load_private_toml_value, load_toml_value, preferred_workspace_config_path,
+    save_private_toml_value, save_toml_value,
 };
 use super::SlashCommandContext;
 
@@ -57,7 +57,7 @@ pub(super) async fn persist_user_directory_override(
 }
 
 pub(super) fn write_user_directory_override(path: &Path, value: Option<String>) -> Result<()> {
-    let mut root = load_toml_value(path)?;
+    let mut root = load_private_toml_value(path)?;
 
     let root_table = root.as_table_mut().context("User config root is not a TOML table")?;
     match value {
@@ -86,7 +86,7 @@ pub(super) fn write_user_directory_override(path: &Path, value: Option<String>) 
         }
     }
 
-    save_toml_value(path, &root)
+    save_private_toml_value(path, &root)
 }
 
 pub(super) fn set_workspace_memory_enabled(root_table: &mut toml::map::Map<String, TomlValue>, value: bool) {
@@ -170,20 +170,12 @@ fn usize_to_toml_integer(value: usize, label: &str) -> Result<i64> {
 }
 
 pub(super) fn preferred_user_config_path(manager: &ConfigManager) -> Option<PathBuf> {
-    manager
-        .layer_stack()
-        .layers()
-        .iter()
-        .rev()
-        .find_map(|layer| match &layer.source {
-            ConfigLayerSource::User { file } if layer.is_enabled() => Some(file.clone()),
-            _ => None,
-        })
-        .or_else(|| {
-            let defaults = current_config_defaults();
-            defaults.home_config_paths(manager.config_file_name()).into_iter().next()
-        })
-        .or_else(|| dirs::home_dir().map(|home| home.join(manager.config_file_name())))
+    manager.preferred_user_config_path().or_else(|| {
+        current_config_defaults()
+            .canonical_user_config_path(manager.config_file_name())
+            .ok()
+            .flatten()
+    })
 }
 
 pub(super) fn parse_positive_usize(value: &str, label: &str) -> Result<usize> {

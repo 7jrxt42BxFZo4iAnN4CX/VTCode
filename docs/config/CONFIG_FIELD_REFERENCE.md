@@ -294,9 +294,9 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `default_primary_agent` | `string` | no | `"build"` | Primary agent selected at startup when no session override is active. |
 | `dotfile_protection.additional_protected_patterns` | `array` | no | `[]` | Additional dotfile patterns to protect (beyond defaults). |
 | `dotfile_protection.additional_protected_patterns[]` | `string` | no | `-` | - |
-| `dotfile_protection.audit_log_path` | `string` | no | `"~/.vtcode/dotfile_audit.log"` | Path to the audit log file. |
+| `dotfile_protection.audit_log_path` | `string` | no | `"<state>/audit/dotfiles.log"` | Path to the audit log file. Defaults under the user state directory. |
 | `dotfile_protection.audit_logging_enabled` | `boolean` | no | `true` | Enable immutable audit logging of all dotfile access attempts. |
-| `dotfile_protection.backup_directory` | `string` | no | `"~/.vtcode/dotfile_backups"` | Directory for storing dotfile backups. |
+| `dotfile_protection.backup_directory` | `string` | no | `"<state>/backups/dotfiles"` | Directory for storing dotfile backups. |
 | `dotfile_protection.block_during_automation` | `boolean` | no | `true` | Block modifications during automated operations. |
 | `dotfile_protection.blocked_operations` | `array` | no | `["dependency_installation", "code_formatting", "git_operations", "project_initialization", "build_operations", "test_...` | Operations that trigger extra protection. |
 | `dotfile_protection.blocked_operations[]` | `string` | no | `-` | - |
@@ -350,7 +350,7 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `hooks.lifecycle.session_end[].hooks[].timeout_seconds` | `integer \| null` | no | `null` | Optional execution timeout in seconds |
 | `hooks.lifecycle.session_end[].hooks[].type` | `string` | no | `"command"` | Type of hook command (currently only 'command' is supported) |
 | `hooks.lifecycle.session_end[].matcher` | `null \| string` | no | `null` | Optional regex matcher to filter when this group runs. Matched against context strings (e.g. tool name, project path). |
-| `hooks.lifecycle.session_start` | `array` | no | `[]` | Commands to run immediately when an agent session begins. When any lifecycle hook command originates from workspace-controlled content (workspace-root `vtcode.toml`, workspace `.vtcode/`, project profiles, or workspace agent-spec files), the whole lifecycle engine is gated: no hook runs until the user approves the exact command set for the workspace; user-level (`~/.vtcode/vtcode.toml`) hooks without workspace-controlled content run without approval |
+| `hooks.lifecycle.session_start` | `array` | no | `[]` | Commands to run immediately when an agent session begins. When any lifecycle hook command originates from workspace-controlled content (workspace-root `vtcode.toml`, workspace `.vtcode/`, project profiles, or workspace agent-spec files), the whole lifecycle engine is gated: no hook runs until the user approves the exact command set for the workspace; canonical user-config hooks without workspace-controlled content run without approval |
 | `hooks.lifecycle.session_start[].hooks` | `array` | no | `[]` | List of hook commands to execute sequentially in this group |
 | `hooks.lifecycle.session_start[].hooks[].command` | `string` | no | `""` | The shell command string to execute |
 | `hooks.lifecycle.session_start[].hooks[].timeout_seconds` | `integer \| null` | no | `null` | Optional execution timeout in seconds |
@@ -521,7 +521,7 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `permissions.allow[]` | `string` | no | `-` | - |
 | `permissions.ask` | `array` | no | `[]` | Rules that require an interactive prompt when they match. |
 | `permissions.ask[]` | `string` | no | `-` | - |
-| `permissions.audit_directory` | `string` | no | `"~/.vtcode/audit"` | Directory for audit logs (created if not exists) Defaults to ~/.vtcode/audit |
+| `permissions.audit_directory` | `string` | no | `"<state>/audit"` | Directory for audit logs (created if not exists), under the user state directory by default. |
 | `permissions.audit_enabled` | `boolean` | no | `true` | Enable audit logging of all permission decisions |
 | `permissions.auto.allow_exceptions` | `array` | no | `["Allow read-only tools and read-only browsing/search actions.", "Allow file edits and writes inside the current work...` | Narrow allow exceptions applied after block rules. |
 | `permissions.auto.allow_exceptions[]` | `string` | no | `-` | - |
@@ -551,7 +551,7 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `permissions.log_denied_commands` | `boolean` | no | `true` | Log denied commands to audit trail |
 | `permissions.log_permission_prompts` | `boolean` | no | `true` | Log permission prompts (when user is asked for confirmation) |
 | `permissions.resolve_commands` | `boolean` | no | `true` | Enable command resolution to actual paths (helps identify suspicious commands) |
-| `prompt_cache.cache_dir` | `string` | no | `"~/.vtcode/cache/prompts"` | Base directory for local prompt cache storage (supports `~` expansion) |
+| `prompt_cache.cache_dir` | `string` | no | `"<cache>/prompts"` | Base directory for local prompt cache storage; defaults under the user cache directory. |
 | `prompt_cache.cache_friendly_prompt_shaping` | `boolean` | no | `true` | Enable prompt-shaping optimizations that improve provider-side cache locality. When enabled, VT Code keeps volatile runtime context at the end of prompt text. |
 | `prompt_cache.enable_auto_cleanup` | `boolean` | no | `true` | Automatically evict stale entries on startup/shutdown |
 | `prompt_cache.enabled` | `boolean` | no | `true` | Enable prompt caching features globally |
@@ -684,7 +684,7 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `sandbox.sensitive_paths.use_defaults` | `boolean` | no | `true` | Use default sensitive paths (SSH, AWS, etc.) |
 | `security.auto_apply_detected_patches` | `boolean` | no | `false` | Automatically apply detected patch blocks in assistant replies when no write tool was executed. Defaults to false for safety. |
 | `security.encrypt_payloads` | `boolean` | no | `false` | Encrypt payloads passed across executors. |
-| `security.gatekeeper.auto_clear_paths` | `array` | no | `[".vtcode/bin", "~/.vtcode/bin"]` | Paths eligible for quarantine auto-clear |
+| `security.gatekeeper.auto_clear_paths` | `array` | no | `[".vtcode/bin", "<executable>", "<legacy>/bin"]` | Paths eligible for quarantine auto-clear. The default includes the workspace helper directory, canonical managed executable directory, and legacy compatibility bin directory. |
 | `security.gatekeeper.auto_clear_paths[]` | `string` | no | `-` | - |
 | `security.gatekeeper.auto_clear_quarantine` | `boolean` | no | `false` | Attempt to clear quarantine automatically (opt-in) |
 | `security.gatekeeper.warn_on_quarantine` | `boolean` | no | `true` | Warn when a quarantined executable is detected |

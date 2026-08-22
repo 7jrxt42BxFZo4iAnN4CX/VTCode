@@ -12,9 +12,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use vtcode_commons::VtCodePaths;
+use vtcode_commons::fs::{
+    read_private_file_no_follow, read_private_json_file, write_private_file_atomic, write_private_json_file,
+};
 use vtcode_commons::utils::calculate_sha256;
-
-use crate::utils::file_utils::{ensure_dir_exists, read_json_file, write_json_file};
 
 /// Metadata for a dotfile backup.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,12 +46,15 @@ impl DotfileBackup {
         let backup_path = Path::new(&self.backup_path);
         let original_path = Path::new(&self.original_path);
 
-        if !backup_path.exists() {
+        if !tokio::fs::symlink_metadata(backup_path)
+            .await
+            .is_ok_and(|metadata| metadata.is_file())
+        {
             bail!("Backup file does not exist: {}", self.backup_path);
         }
 
         // Verify backup integrity
-        let content = tokio::fs::read(backup_path)
+        let content = read_private_file_no_follow(backup_path)
             .await
             .with_context(|| format!("Failed to read backup: {}", self.backup_path))?;
 
@@ -59,7 +64,7 @@ impl DotfileBackup {
         }
 
         // Restore content
-        tokio::fs::write(original_path, &content)
+        write_private_file_atomic(original_path, &content)
             .await
             .with_context(|| format!("Failed to restore to: {}", self.original_path))?;
 
@@ -92,8 +97,7 @@ impl BackupManager {
         let backup_dir = backup_dir.as_ref().to_path_buf();
 
         // Create backup directory if it doesn't exist
-        ensure_dir_exists(&backup_dir)
-            .await
+        VtCodePaths::ensure_user_dir(&backup_dir)
             .with_context(|| format!("Failed to create backup directory: {backup_dir:?}"))?;
 
         Ok(Self { backup_dir, max_backups })
@@ -106,19 +110,18 @@ impl BackupManager {
         reason: impl Into<String>,
         session_id: impl Into<String>,
     ) -> Result<DotfileBackup> {
-        if !file_path.exists() {
-            bail!("Cannot backup non-existent file: {file_path:?}");
-        }
-
         // Read original content
-        let content = tokio::fs::read(file_path)
+        let content = read_private_file_no_follow(file_path)
             .await
             .with_context(|| format!("Failed to read file for backup: {file_path:?}"))?;
 
         // Get file metadata
-        let metadata = tokio::fs::metadata(file_path)
+        let metadata = tokio::fs::symlink_metadata(file_path)
             .await
             .with_context(|| format!("Failed to get metadata: {file_path:?}"))?;
+        if !metadata.is_file() {
+            bail!("Cannot backup non-regular file: {file_path:?}");
+        }
 
         // Compute content hash
         let content_hash = calculate_sha256(&content);
@@ -130,18 +133,9 @@ impl BackupManager {
         let backup_path = self.backup_dir.join(&backup_filename);
 
         // Write backup
-        tokio::fs::write(&backup_path, &content)
+        write_private_file_atomic(&backup_path, &content)
             .await
             .with_context(|| format!("Failed to write backup: {backup_path:?}"))?;
-
-        // Preserve permissions on backup
-        #[cfg(unix)]
-        {
-            let perms = metadata.permissions();
-            tokio::fs::set_permissions(&backup_path, perms.clone())
-                .await
-                .with_context(|| format!("Failed to set backup permissions: {backup_path:?}"))?;
-        }
 
         #[cfg(unix)]
         let permissions = metadata.permissions().mode();
@@ -184,7 +178,7 @@ impl BackupManager {
         let mut backups = self.load_backup_index().await.unwrap_or_default();
         backups.push(backup.clone());
 
-        write_json_file(&index_path, &backups)
+        write_private_json_file(&index_path, &backups)
             .await
             .with_context(|| format!("Failed to write backup index: {index_path:?}"))?;
 
@@ -195,11 +189,14 @@ impl BackupManager {
     async fn load_backup_index(&self) -> Result<Vec<DotfileBackup>> {
         let index_path = self.backup_dir.join("backups.json");
 
-        if !index_path.exists() {
+        if !tokio::fs::symlink_metadata(&index_path)
+            .await
+            .is_ok_and(|metadata| metadata.is_file())
+        {
             return Ok(Vec::new());
         }
 
-        let backups: Vec<DotfileBackup> = read_json_file(&index_path)
+        let backups: Vec<DotfileBackup> = read_private_json_file(&index_path)
             .await
             .with_context(|| format!("Failed to parse backup index: {index_path:?}"))?;
 
@@ -219,7 +216,11 @@ impl BackupManager {
         // Delete old backups beyond max_backups
         for backup in file_backups.iter().skip(self.max_backups) {
             let backup_path = Path::new(&backup.backup_path);
-            if backup_path.exists() {
+            if self.is_managed_backup_path(backup_path)
+                && tokio::fs::symlink_metadata(backup_path)
+                    .await
+                    .is_ok_and(|metadata| metadata.is_file())
+            {
                 if let Err(e) = tokio::fs::remove_file(backup_path).await {
                     tracing::warn!("Failed to remove old backup {:?}: {}", backup_path, e);
                 } else {
@@ -233,7 +234,8 @@ impl BackupManager {
             .into_iter()
             .filter(|b| {
                 if b.original_path == file_path_str {
-                    Path::new(&b.backup_path).exists()
+                    self.is_managed_backup_path(Path::new(&b.backup_path))
+                        && std::fs::symlink_metadata(&b.backup_path).is_ok_and(|metadata| metadata.is_file())
                 } else {
                     true
                 }
@@ -241,7 +243,7 @@ impl BackupManager {
             .collect();
 
         let index_path = self.backup_dir.join("backups.json");
-        write_json_file(&index_path, &remaining)
+        write_private_json_file(&index_path, &remaining)
             .await
             .with_context(|| "Failed to update backup index")?;
 
@@ -288,8 +290,12 @@ impl BackupManager {
 
         for backup in backups {
             let backup_path = Path::new(&backup.backup_path);
-            let valid = if backup_path.exists() {
-                match tokio::fs::read(backup_path).await {
+            let valid = if self.is_managed_backup_path(backup_path)
+                && tokio::fs::symlink_metadata(backup_path)
+                    .await
+                    .is_ok_and(|metadata| metadata.is_file())
+            {
+                match read_private_file_no_follow(backup_path).await {
                     Ok(content) => {
                         let hash = calculate_sha256(&content);
                         hash == backup.content_hash
@@ -303,6 +309,10 @@ impl BackupManager {
         }
 
         Ok(results)
+    }
+
+    fn is_managed_backup_path(&self, path: &Path) -> bool {
+        path.parent() == Some(self.backup_dir.as_path()) && path.file_name().is_some_and(|name| name != "backups.json")
     }
 }
 

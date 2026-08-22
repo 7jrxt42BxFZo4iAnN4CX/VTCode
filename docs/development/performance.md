@@ -175,7 +175,8 @@ early startup work is observable without adding work to normal launches.
   is append-only and grows unbounded; read only the tail window so startup cost
   stays `O(window)`, not `O(file size)`.
 - **Defer non-critical background work.** Temp-spool cleanup
-  (`cleanup_old_temp_spools`) runs in `spawn_blocking` so a cold `~/.vtcode/tmp`
+  (`cleanup_old_temp_spools`) runs in `spawn_blocking` so a cold user-cache
+  `large-output/` directory
   never blocks first user I/O.
 
 ### Release artifact assumptions

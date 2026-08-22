@@ -18,6 +18,13 @@ the response does not claim an exact repository-wide total.
 Use `exec_command` or the specialised ast-grep skill for arbitrary structural
 patterns.
 
+## Storage diagnostics
+
+Use `vtcode --version` to print the active config, data, state, cache, runtime,
+executable, and legacy roots, as well as the migration marker and report paths.
+This is the quickest way to diagnose an XDG override, a sandbox environment,
+or a legacy `~/.vtcode` migration without relying on platform-specific guesses.
+
 ### Examples
 
 -   Find TODO/FIXME with 2 lines of context in Rust files only:
@@ -237,7 +244,7 @@ vtcode dependencies status search-tools
 # Install ripgrep using a supported system installer
 vtcode dependencies install ripgrep
 
-# Install the managed ast-grep binary into ~/.vtcode/bin
+# Install the managed ast-grep binary into the canonical executable directory
 vtcode dependencies install ast-grep
 
 # Materialize the bundled ast-grep scaffold in the current workspace
@@ -257,7 +264,7 @@ vtcode dependencies status ast-grep
 - `vtcode dependencies install ripgrep` installs `rg` through a supported system installer and keeps startup non-blocking when you skip it
 - `vtcode init` materializes VT Code's bundled ast-grep starter files into the current workspace: `sgconfig.yml`, `rules/`, and `rule-tests/`
 - `vtcode check ast-grep` is the first-class replacement for the repo-only `./scripts/check.sh ast-grep` flow
-- VT Code does not auto-edit your shell profile; add `export PATH="$HOME/.vtcode/bin:$PATH"` yourself if you want the managed binary outside VT Code
+- VT Code does not auto-edit your shell profile; on Linux/BSD, add `export PATH="${XDG_BIN_HOME:-$HOME/.local/bin}:$PATH"` yourself if you want managed binaries available outside VT Code
 - On Linux, prefer `ast-grep` over `sg`
 - The curl installer includes the search-tools bundle by default; use `--without-search-tools` to skip it
 

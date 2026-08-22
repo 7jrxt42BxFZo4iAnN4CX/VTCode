@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::path::Path;
+use vtcode_commons::VtCodePaths;
 
 use super::time::modified_age_secs;
 
@@ -19,7 +20,7 @@ use super::time::modified_age_secs;
 /// "installation already in progress" rather than an error.
 pub(crate) fn acquire_lock_file(lock_path: &Path, max_age_secs: u64) -> Result<Option<File>> {
     if let Some(parent) = lock_path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("Failed to create {}", parent.display()))?;
+        VtCodePaths::ensure_user_dir(parent).with_context(|| format!("Failed to create {}", parent.display()))?;
     }
 
     if let Some(file) = try_create_new_lock_file(lock_path)? {
@@ -39,9 +40,15 @@ pub(crate) fn acquire_lock_file(lock_path: &Path, max_age_secs: u64) -> Result<O
 }
 
 fn try_create_new_lock_file(lock_path: &Path) -> Result<Option<File>> {
-    match OpenOptions::new().create_new(true).write(true).open(lock_path) {
+    match VtCodePaths::create_private_file(lock_path) {
         Ok(file) => Ok(Some(file)),
-        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
+        Err(err)
+            if err
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists) =>
+        {
+            Ok(None)
+        }
         Err(err) => Err(err).with_context(|| format!("Failed to create lock file {}", lock_path.display())),
     }
 }

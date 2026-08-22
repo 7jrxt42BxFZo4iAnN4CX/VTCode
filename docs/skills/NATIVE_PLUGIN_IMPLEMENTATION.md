@@ -95,7 +95,7 @@ Added plugin scanning to `skill_roots_with_home_dir()`:
 
 **Trusted Directories:**
 
-- `~/.vtcode/plugins/` - User plugins
+- canonical user data directory/`plugins/` - User plugins
 - `<project>/.vtcode/plugins/` - Project plugins
 - `<project>/.agents/plugins/` - Agent plugins
 
@@ -236,8 +236,9 @@ The implementation uses `unsafe` for:
 4. **Install:**
 
     ```bash
-    cp -r target/release/libmy_plugin.* ~/.vtcode/plugins/my-plugin/
-    cp plugin.json ~/.vtcode/plugins/my-plugin/
+    # Replace PLUGIN_DIR with the resolved user data directory's plugins/ path.
+    cp -r target/release/libmy_plugin.* "$PLUGIN_DIR/my-plugin/"
+    cp plugin.json "$PLUGIN_DIR/my-plugin/"
     ```
 
 5. **Use:**

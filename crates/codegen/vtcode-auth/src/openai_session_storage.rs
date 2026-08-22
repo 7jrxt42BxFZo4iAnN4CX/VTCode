@@ -12,7 +12,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::credentials::{AuthCredentialsStoreMode, CredentialStorage};
-use crate::storage_paths::auth_storage_dir;
+use crate::storage_paths::{legacy_auth_file_paths, read_legacy_compatible_file};
 
 use super::openai_chatgpt_oauth::OpenAIChatGptSession;
 
@@ -61,9 +61,6 @@ impl OpenAiSessionStorage {
         };
 
         self.save(&session, mode).context("failed to migrate legacy openai session")?;
-        if let Err(err) = clear_legacy_session_file() {
-            tracing::warn!("failed to remove migrated legacy openai session: {err}");
-        }
         Ok(Some(session))
     }
 
@@ -113,29 +110,34 @@ impl OpenAiSessionStorage {
 }
 
 fn load_legacy_session() -> Result<Option<OpenAIChatGptSession>> {
-    let path = legacy_session_path()?;
-    let data = match fs::read(&path) {
-        Ok(data) => data,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(anyhow!("failed to read legacy openai session file: {err}")),
-    };
+    for path in legacy_auth_file_paths(LEGACY_SESSION_FILE)? {
+        let Some(data) = read_legacy_compatible_file(&path)? else {
+            continue;
+        };
 
-    let encrypted: LegacyEncryptedSession =
-        serde_json::from_slice(&data).context("failed to decode legacy openai session file")?;
-    decrypt_legacy_session(&encrypted).map(Some)
+        let encrypted: LegacyEncryptedSession = serde_json::from_slice(&data)
+            .with_context(|| format!("failed to decode legacy openai session file {}", path.display()))?;
+        return decrypt_legacy_session(&encrypted).map(Some);
+    }
+    Ok(None)
 }
 
 fn clear_legacy_session_file() -> Result<()> {
-    let path = legacy_session_path()?;
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(anyhow!("failed to delete legacy openai session file: {err}")),
+    for path in legacy_auth_file_paths(LEGACY_SESSION_FILE)? {
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(anyhow!("failed to delete legacy openai session file {}: {err}", path.display())),
+        }
     }
+    Ok(())
 }
 
 pub(crate) fn legacy_session_path() -> Result<PathBuf> {
-    Ok(auth_storage_dir()?.join(LEGACY_SESSION_FILE))
+    legacy_auth_file_paths(LEGACY_SESSION_FILE)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("no legacy openai session path available"))
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]

@@ -49,7 +49,7 @@ impl AstGrepStatus {
         match ast_grep_version(&binary) {
             Ok(version) => Self::Available {
                 version,
-                managed: binary.starts_with(managed_ast_grep_bin_dir()),
+                managed: managed_ast_grep_bin_dir().is_ok_and(|directory| binary.starts_with(directory)),
                 binary,
             },
             Err(err) => Self::Error { reason: err.to_string() },

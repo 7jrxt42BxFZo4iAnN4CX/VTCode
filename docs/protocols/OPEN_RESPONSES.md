@@ -332,7 +332,7 @@ the authoritative source remains
 `<workspace>/.vtcode/sessions/<session_id>/events.jsonl`.
 
 There is no default global Open Responses artifact. Existing files under
-`~/.vtcode/sessions/` remain untouched.
+legacy `VTCODE_HOME/sessions/` files remain untouched.
 
 ### Programmatic Integration
 

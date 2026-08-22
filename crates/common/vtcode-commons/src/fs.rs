@@ -9,6 +9,7 @@
 //! File utility functions for common operations
 
 use anyhow::{Context, Result};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::fs;
@@ -99,6 +100,44 @@ pub async fn write_json_file<T: Serialize>(path: &Path, data: &T) -> Result<()> 
         .with_context(|| format!("Failed to serialize data for {}", path.display()))?;
 
     write_file_with_context(path, &json, "JSON data").await
+}
+
+/// Read a category-owned private file without following symlinks.
+pub async fn read_private_file_no_follow(path: &Path) -> Result<Vec<u8>> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || crate::VtCodePaths::read_file_no_follow(&path))
+        .await
+        .context("private file read task panicked")?
+}
+
+/// Create a category-owned private file without following a final symlink.
+pub async fn create_private_file(path: &Path) -> Result<std::fs::File> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || crate::VtCodePaths::create_private_file(&path))
+        .await
+        .context("private file creation task panicked")?
+}
+
+/// Atomically write a category-owned private file without following symlinks.
+pub async fn write_private_file_atomic(path: &Path, contents: impl AsRef<[u8]>) -> Result<()> {
+    let path = path.to_path_buf();
+    let contents = contents.as_ref().to_vec();
+    tokio::task::spawn_blocking(move || crate::VtCodePaths::write_private_file_atomic(&path, &contents))
+        .await
+        .context("private file write task panicked")?
+}
+
+/// Read and deserialize a category-owned private JSON file.
+pub async fn read_private_json_file<T: DeserializeOwned>(path: &Path) -> Result<T> {
+    let contents = read_private_file_no_follow(path).await?;
+    serde_json::from_slice(&contents).with_context(|| format!("Failed to parse private JSON from {}", path.display()))
+}
+
+/// Serialize and atomically write a category-owned private JSON file.
+pub async fn write_private_json_file<T: Serialize>(path: &Path, data: &T) -> Result<()> {
+    let json = serde_json::to_vec_pretty(data)
+        .with_context(|| format!("Failed to serialize private JSON for {}", path.display()))?;
+    write_private_file_atomic(path, json).await
 }
 
 /// Read and parse a JSON file

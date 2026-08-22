@@ -30,7 +30,7 @@ use tracing::{debug, warn};
 #[cfg(test)]
 use crate::tools::CgpRuntimeMode;
 use crate::tools::error_messages::skill_ops;
-use vtcode_commons::canonicalize;
+use vtcode_commons::{VtCodePaths, canonicalize};
 
 type SkillMap = Arc<RwLock<HashMap<String, Skill>>>;
 type ToolDefList = Arc<RwLock<Vec<ToolDefinition>>>;
@@ -245,16 +245,14 @@ fn build_skill_response(skill: &Skill, activation_status: &str) -> Value {
     })
 }
 
-fn default_vtcode_home_dir() -> PathBuf {
-    std::env::var_os("VTCODE_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".vtcode")))
-        .unwrap_or_else(|| PathBuf::from(".vtcode"))
+fn default_vtcode_home_dir() -> anyhow::Result<PathBuf> {
+    VtCodePaths::resolve()
+        .map(|paths| paths.data_dir().to_path_buf())
+        .context("could not resolve VT Code data directory for skill discovery")
 }
 
-fn effective_codex_home(explicit_home: Option<&Path>) -> PathBuf {
-    explicit_home.map(Path::to_path_buf).unwrap_or_else(default_vtcode_home_dir)
+fn effective_codex_home(explicit_home: Option<&Path>) -> anyhow::Result<PathBuf> {
+    explicit_home.map(Path::to_path_buf).map_or_else(default_vtcode_home_dir, Ok)
 }
 
 fn find_project_root(path: &Path) -> Option<PathBuf> {
@@ -307,6 +305,10 @@ async fn discover_session_utilities(workspace_root: &Path, codex_home: &Path) ->
         PathBuf::from("./vendor/tools"),
         codex_home.join("tools"),
     ];
+    if let Ok(paths) = VtCodePaths::resolve() {
+        config.tool_paths.push(paths.data_path("tools")?);
+        config.tool_paths.push(paths.legacy_dir().join("tools"));
+    }
 
     let mut discovery = SkillDiscovery::with_config(config);
     Ok(discovery.discover_all(workspace_root).await?.tools)
@@ -337,8 +339,8 @@ fn discover_skill_catalog(
     workspace_root: &Path,
     explicit_codex_home: Option<&Path>,
     operation: &'static str,
-) -> (PathBuf, SkillLoadOutcome) {
-    let codex_home = effective_codex_home(explicit_codex_home);
+) -> anyhow::Result<(PathBuf, SkillLoadOutcome)> {
+    let codex_home = effective_codex_home(explicit_codex_home)?;
     debug!(
         operation,
         workspace = %workspace_root.display(),
@@ -348,7 +350,7 @@ fn discover_skill_catalog(
 
     let metadata = discover_session_skill_metadata(workspace_root, &codex_home);
     log_discovery_warnings(operation, metadata.errors.as_slice());
-    (codex_home, metadata)
+    Ok((codex_home, metadata))
 }
 
 fn required_string_arg<'a>(args: &'a Value, key: &str) -> anyhow::Result<&'a str> {
@@ -528,7 +530,7 @@ impl Tool for LoadSkillTool {
         }
 
         let (codex_home, metadata) =
-            discover_skill_catalog(&self.workspace_root, self.codex_home.as_deref(), "load_skill");
+            discover_skill_catalog(&self.workspace_root, self.codex_home.as_deref(), "load_skill")?;
 
         let mut loader = EnhancedSkillLoader::with_codex_home(self.workspace_root.clone(), codex_home.clone());
         let skill = match loader.get_skill(name).await {
@@ -627,7 +629,7 @@ impl Tool for ListSkillsTool {
 
         let active_names: HashSet<String> = self.active_skills.read().await.keys().cloned().collect();
         let (codex_home, discovery) =
-            discover_skill_catalog(&self.workspace_root, self.codex_home.as_deref(), "list_skills");
+            discover_skill_catalog(&self.workspace_root, self.codex_home.as_deref(), "list_skills")?;
 
         let mut skill_list = Vec::new();
 

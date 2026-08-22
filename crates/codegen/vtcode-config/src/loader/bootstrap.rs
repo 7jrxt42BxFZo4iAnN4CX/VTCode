@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use vtcode_commons::VtCodePaths;
 
 use anyhow::{Context, Result};
 
@@ -15,10 +16,11 @@ pub(crate) fn determine_bootstrap_targets(
     config_file_name: &str,
     defaults_provider: &dyn ConfigDefaultsProvider,
 ) -> Result<(PathBuf, PathBuf)> {
-    if let (true, Some(home_config_path)) = (use_home_dir, select_home_config_path(defaults_provider, config_file_name))
-    {
-        let gitignore_path = gitignore_path_for(&home_config_path);
-        return Ok((home_config_path, gitignore_path));
+    if use_home_dir {
+        if let Some(home_config_path) = select_home_config_path(defaults_provider, config_file_name)? {
+            let gitignore_path = gitignore_path_for(&home_config_path);
+            return Ok((home_config_path, gitignore_path));
+        }
     }
 
     let config_path = workspace.join(config_file_name);
@@ -38,36 +40,28 @@ fn gitignore_path_for(config_path: &Path) -> PathBuf {
 /// necessary.
 pub(crate) fn ensure_parent_dir(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
-        if parent.exists() {
-            return Ok(());
-        }
-
         fs::create_dir_all(parent).with_context(|| format!("Failed to create directory: {}", parent.display()))?;
     }
 
     Ok(())
 }
 
-/// Selects the home directory configuration path from the defaults provider or
-/// falls back to the system home directory.
-fn select_home_config_path(defaults_provider: &dyn ConfigDefaultsProvider, config_file_name: &str) -> Option<PathBuf> {
-    let home_paths = defaults_provider.home_config_paths(config_file_name);
-    home_paths
-        .into_iter()
-        .next()
-        .or_else(|| default_home_dir().map(|dir| dir.join(config_file_name)))
+/// Ensures a canonical user-level configuration parent exists privately.
+pub(crate) fn ensure_private_parent_dir(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        let _ = VtCodePaths::ensure_user_dir(parent)
+            .with_context(|| format!("Failed to create private directory: {}", parent.display()))?;
+    }
+
+    Ok(())
 }
 
-/// Attempts to resolve the current user's home directory using common
-/// environment variables and the `dirs` crate fallback.
-fn default_home_dir() -> Option<PathBuf> {
-    if let Ok(home) = std::env::var("HOME") {
-        return Some(PathBuf::from(home));
-    }
-
-    if let Ok(userprofile) = std::env::var("USERPROFILE") {
-        return Some(PathBuf::from(userprofile));
-    }
-
-    dirs::home_dir()
+/// Selects the canonical user configuration path from the defaults provider.
+fn select_home_config_path(
+    defaults_provider: &dyn ConfigDefaultsProvider,
+    config_file_name: &str,
+) -> Result<Option<PathBuf>> {
+    defaults_provider
+        .canonical_user_config_path(config_file_name)
+        .context("Failed to resolve canonical user configuration path")
 }

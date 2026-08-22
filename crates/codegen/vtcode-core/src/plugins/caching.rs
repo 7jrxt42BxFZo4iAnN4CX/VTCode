@@ -7,8 +7,8 @@ use hashbrown::HashMap;
 use std::path::{Path, PathBuf};
 
 use tokio::fs;
-
-use crate::utils::path::resolve_workspace_path;
+use vtcode_commons::VtCodePaths;
+use vtcode_commons::fs::write_private_file_atomic;
 
 use super::{PluginError, PluginResult};
 
@@ -28,21 +28,34 @@ impl PluginCache {
 
     /// Cache a plugin from its source path
     pub async fn cache_plugin(&mut self, plugin_id: &str, source_path: &Path) -> PluginResult<PathBuf> {
+        super::validate_plugin_component(plugin_id)?;
+
         // Validate source path exists
-        if !fs::try_exists(source_path).await.unwrap_or(false) {
-            return Err(PluginError::LoadingError(format!("Source path does not exist: {}", source_path.display())));
+        let source_metadata = fs::symlink_metadata(source_path).await.map_err(|error| {
+            PluginError::LoadingError(format!("Failed to inspect source path {}: {error}", source_path.display()))
+        })?;
+        if source_metadata.file_type().is_symlink() || !source_metadata.is_dir() {
+            return Err(PluginError::LoadingError(format!(
+                "Plugin source is not a directory: {}",
+                source_path.display()
+            )));
         }
 
         // Create cache directory if it doesn't exist
-        fs::create_dir_all(&self.cache_dir)
-            .await
+        VtCodePaths::ensure_user_dir(&self.cache_dir)
             .map_err(|e| PluginError::LoadingError(format!("Failed to create cache directory: {e}")))?;
 
         // Create plugin-specific cache directory
         let cache_path = self.cache_dir.join(plugin_id);
 
         // Remove existing cache if it exists
-        if fs::try_exists(&cache_path).await.unwrap_or(false) {
+        if let Ok(metadata) = fs::symlink_metadata(&cache_path).await {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(PluginError::LoadingError(format!(
+                    "Refusing to replace non-directory plugin cache path: {}",
+                    cache_path.display()
+                )));
+            }
             fs::remove_dir_all(&cache_path)
                 .await
                 .map_err(|e| PluginError::LoadingError(format!("Failed to remove existing cache: {e}")))?;
@@ -60,8 +73,7 @@ impl PluginCache {
     /// Copy plugin files to cache directory
     async fn copy_plugin_to_cache(&self, source: &Path, destination: &Path) -> PluginResult<()> {
         Box::pin(async {
-            fs::create_dir_all(destination)
-                .await
+            VtCodePaths::ensure_user_dir(destination)
                 .map_err(|e| PluginError::LoadingError(format!("Failed to create destination directory: {e}")))?;
 
             let mut entries = fs::read_dir(source)
@@ -76,29 +88,47 @@ impl PluginCache {
                 let src_path = entry.path();
                 let dst_path = destination.join(entry.file_name());
 
-                if fs::metadata(&src_path).await.map(|metadata| metadata.is_dir()).unwrap_or(false) {
-                    // Skip directories that are outside the plugin root (for security)
-                    if self.is_valid_plugin_subdirectory(&src_path) {
-                        self.copy_plugin_to_cache(&src_path, &dst_path).await?;
+                let source_metadata = fs::symlink_metadata(&src_path).await.map_err(|error| {
+                    PluginError::LoadingError(format!("Failed to inspect plugin source entry: {error}"))
+                })?;
+                if source_metadata.file_type().is_symlink() {
+                    return Err(PluginError::LoadingError(format!(
+                        "Refusing to copy symlinked plugin entry: {}",
+                        src_path.display()
+                    )));
+                }
+                if source_metadata.is_dir() {
+                    self.copy_plugin_to_cache(&src_path, &dst_path).await?;
+                } else if source_metadata.is_file() {
+                    if let Ok(destination_metadata) = fs::symlink_metadata(&dst_path).await
+                        && destination_metadata.file_type().is_symlink()
+                    {
+                        return Err(PluginError::LoadingError(format!(
+                            "Refusing to replace symlinked plugin cache entry: {}",
+                            dst_path.display()
+                        )));
                     }
-                } else {
-                    // Copy file to cache
-                    fs::copy(&src_path, &dst_path)
+                    let source = src_path.clone();
+                    let contents = tokio::task::spawn_blocking(move || VtCodePaths::read_file_no_follow(&source))
+                        .await
+                        .map_err(|error| {
+                            PluginError::LoadingError(format!("Plugin source read task panicked: {error}"))
+                        })?
+                        .map_err(|error| PluginError::LoadingError(format!("Failed to read plugin file: {error}")))?;
+                    write_private_file_atomic(&dst_path, contents)
                         .await
                         .map_err(|e| PluginError::LoadingError(format!("Failed to copy file: {e}")))?;
+                } else {
+                    return Err(PluginError::LoadingError(format!(
+                        "Refusing to copy special plugin entry: {}",
+                        src_path.display()
+                    )));
                 }
             }
 
             Ok(())
         })
         .await
-    }
-
-    /// Check if a subdirectory is valid for caching (not traversing outside plugin root)
-    fn is_valid_plugin_subdirectory(&self, path: &Path) -> bool {
-        // For security, we only allow subdirectories that are within the plugin directory
-        // This prevents path traversal attacks
-        resolve_workspace_path(&self.cache_dir, path).is_ok()
     }
 
     /// Get cached plugin path

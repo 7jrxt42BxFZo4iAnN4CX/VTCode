@@ -451,6 +451,11 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Overview, Release Channels, Version Pinning, Configuration File, CLI Reference
   - **User Questions**: "What can you tell me about VT Code Update System Guide?", "How does Overview work?", "How does Release Channels work?"
 
+- **File**: `docs/guides/user-data-directories.md`
+  - **Content**: VT Code user data directories
+  - **Topics**: Find the active paths, Directory categories, Environment variables, Configuration precedence, Migration from `~/.vtcode`
+  - **User Questions**: "What can you tell me about VT Code user data directories?", "How does Find the active paths work?", "How does Directory categories work?"
+
 - **File**: `docs/guides/zed-acp.md`
   - **Content**: Zed Agent Client Protocol Integration
   - **Topics**: Setup overview, Build VT Code, Configure VT Code for ACP, Manual smoke test, Register VT Code in Zed
@@ -780,6 +785,11 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Overview, Usage, UI Design, Implementation Details, Benefits
   - **User Questions**: "What can you tell me about File Reference Feature (@-Symbol)?", "How does Overview work?", "How does Usage work?"
 
+- **File**: `docs/superpowers/plans/2026-08-22-xdg-review-refactor.md`
+  - **Content**: Full XDG Review and Refactor Implementation Plan
+  - **Topics**: Global Constraints
+  - **User Questions**: "What can you tell me about Full XDG Review and Refactor Implementation Plan?", "How does Global Constraints work?"
+
 - **File**: `docs/features/GPU_POD_MANAGER.md`
   - **Content**: GPU Pod Manager
   - **Topics**: Overview, Commands, Behavior Notes, Testing
@@ -927,8 +937,8 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/environment/ENVIRONMENT_SETUP_GUIDE.md`
   - **Content**: VT Code Environment Setup and PATH Visibility Guide
-  - **Topics**: Overview, How VT Code Manages Environment Variables, Command Execution Paths, Verifying Your Environment Setup, Configuring Allowed Commands
-  - **User Questions**: "What can you tell me about VT Code Environment Setup and PATH Visibility Guide?", "How does Overview work?", "How does How VT Code Manages Environment Variables work?"
+  - **Topics**: Overview, VT Code storage environment, How VT Code Manages Environment Variables, Command Execution Paths, Verifying Your Environment Setup
+  - **User Questions**: "What can you tell me about VT Code Environment Setup and PATH Visibility Guide?", "How does Overview work?", "How does VT Code storage environment work?"
 
 - **File**: `docs/styling/RATATUI_FAQ_INTEGRATION.md`
   - **Content**: VT Code Integration of Ratatui FAQ Best Practices
@@ -955,15 +965,15 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Quick Navigation, Implementation Status, Document Guide, Quick Reference, Key Crates
   - **User Questions**: "What can you tell me about VT Code Styling System - Complete Documentation Index?", "How does Quick Navigation work?", "How does Implementation Status work?"
 
+- **File**: `docs/protocols/XDG_DIRECTORY_SPECIFICATION.md`
+  - **Content**: VT Code user directories
+  - **Topics**: Directory categories, Platform roots, Legacy migration and rollback, Compatibility boundaries, References
+  - **User Questions**: "What can you tell me about VT Code user directories?", "How does Directory categories work?", "How does Platform roots work?"
+
 - **File**: `docs/styling/README.md`
   - **Content**: Vtcode Styling System Documentation
   - **Topics**: Files, Quick Summary, Architecture Overview, Dependencies, Related Code Locations
   - **User Questions**: "What can you tell me about Vtcode Styling System Documentation?", "How does Files work?", "How does Quick Summary work?"
-
-- **File**: `docs/protocols/XDG_DIRECTORY_SPECIFICATION.md`
-  - **Content**: XDG Base Directory Specification Implementation
-  - **Topics**: Overview, Directory Structure, Migration Guide, Environment Variables, Implementation Details
-  - **User Questions**: "What can you tell me about XDG Base Directory Specification Implementation?", "How does Overview work?", "How does Directory Structure work?"
 
 - **File**: `docs/protocols/ZED_EXTENSION_FILE_SEARCH.md`
   - **Content**: Zed Extension File Search Integration
@@ -1119,8 +1129,8 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/user-guide/commands.md`
   - **Content**: Command Reference
-  - **Topics**: Search, File operations, Session resume and forks, Quick Actions in Chat Input, Scheduled tasks
-  - **User Questions**: "What can you tell me about Command Reference?", "How does Search work?", "How does File operations work?"
+  - **Topics**: Search, Storage diagnostics, File operations, Session resume and forks, Quick Actions in Chat Input
+  - **User Questions**: "What can you tell me about Command Reference?", "How does Search work?", "How does Storage diagnostics work?"
 
 - **File**: `docs/user-guide/interactive-mode.md`
   - **Content**: Interactive Mode Reference

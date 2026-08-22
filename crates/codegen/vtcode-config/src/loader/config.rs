@@ -501,8 +501,14 @@ impl VTCodeConfig {
             .join("__snapshots__")
             .join("no-console-log-snapshot.yml");
 
-        crate::loader::bootstrap::ensure_parent_dir(&config_path)?;
-        crate::loader::bootstrap::ensure_parent_dir(&gitignore_path)?;
+        let home_targets = use_home_dir && config_path != workspace.join(&config_file_name);
+        if home_targets {
+            crate::loader::bootstrap::ensure_private_parent_dir(&config_path)?;
+            crate::loader::bootstrap::ensure_private_parent_dir(&gitignore_path)?;
+        } else {
+            crate::loader::bootstrap::ensure_parent_dir(&config_path)?;
+            crate::loader::bootstrap::ensure_parent_dir(&gitignore_path)?;
+        }
         crate::loader::bootstrap::ensure_parent_dir(&vtcode_readme_path)?;
         crate::loader::bootstrap::ensure_parent_dir(&ast_grep_config_path)?;
         crate::loader::bootstrap::ensure_parent_dir(&ast_grep_rule_path)?;
@@ -1087,9 +1093,6 @@ enabled = false
 [prompt_cache]
 # Enable prompt caching (reduces API calls for repeated prompts)
 enabled = true
-
-# Directory for cache storage
-cache_dir = "~/.vtcode/cache/prompts"
 
 # Maximum number of cache entries to keep
 max_entries = 1000

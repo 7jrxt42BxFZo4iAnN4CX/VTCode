@@ -3,6 +3,7 @@ use serde::Deserializer;
 use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use vtcode_commons::VtCodePaths;
 
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -187,7 +188,7 @@ pub struct PermissionsConfig {
     pub audit_enabled: bool,
 
     /// Directory for audit logs (created if not exists)
-    /// Defaults to ~/.vtcode/audit
+    /// Defaults to the VT Code state directory's `audit` subdirectory.
     #[serde(default = "default_audit_directory")]
     pub audit_directory: String,
 
@@ -319,11 +320,12 @@ const fn default_audit_enabled() -> bool {
     default_enabled()
 }
 
-const DEFAULT_AUDIT_DIR: &str = "~/.vtcode/audit";
-
 #[inline]
 fn default_audit_directory() -> String {
-    DEFAULT_AUDIT_DIR.into()
+    VtCodePaths::resolve()
+        .and_then(|paths| paths.state_path("audit"))
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|_| String::from("state/vtcode/audit"))
 }
 
 #[inline]

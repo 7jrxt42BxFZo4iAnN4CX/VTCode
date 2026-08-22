@@ -111,7 +111,7 @@ Example pivot:
 Policies are defined in:
 - **Core defaults**: `crates/codegen/vtcode-config/src/core/tools.rs` (tool policies)
 - **Command validation**: `crates/codegen/vtcode-core/src/exec_policy/mod.rs` (command whitelisting)
-- **User overrides**: `vtcode.toml` in project root or `~/.vtcode/` directory
+- **User overrides**: `vtcode.toml` in project root or the canonical user config directory
 
 Override examples in `vtcode.toml`:
 ```toml

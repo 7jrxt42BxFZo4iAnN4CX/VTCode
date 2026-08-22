@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use vtcode_commons::VtCodePaths;
 use vtcode_commons::reasoning::ReasoningEffortLevel;
 
 use crate::constants::tools;
@@ -111,7 +112,7 @@ impl SubagentSource {
             Self::ProjectVtcode => "project:.vtcode".to_string(),
             Self::ProjectClaude => "project:.claude".to_string(),
             Self::ProjectCodex => "project:.codex".to_string(),
-            Self::UserVtcode => "user:~/.vtcode".to_string(),
+            Self::UserVtcode => "user:canonical-config".to_string(),
             Self::UserClaude => "user:~/.claude".to_string(),
             Self::UserCodex => "user:~/.codex".to_string(),
             Self::Plugin { plugin } => format!("plugin:{plugin}"),
@@ -439,7 +440,14 @@ pub fn discover_subagents(input: &SubagentDiscoveryInput) -> Result<DiscoveredSu
     {
         discovered.extend(load_subagents_from_dir(&home.join(".codex/agents"), SubagentSource::UserCodex)?);
         discovered.extend(load_subagents_from_dir(&home.join(".claude/agents"), SubagentSource::UserClaude)?);
-        discovered.extend(load_subagents_from_dir(&home.join(".vtcode/agents"), SubagentSource::UserVtcode)?);
+        // Read the legacy root first so a canonical XDG agent with the same
+        // name wins the same-priority compatibility tie below.
+        let user_vtcode_roots = VtCodePaths::resolve()
+            .map(|paths| vec![paths.legacy_dir().join("agents"), paths.config_dir().join("agents")])
+            .unwrap_or_else(|_| vec![home.join(".vtcode/agents")]);
+        for root in user_vtcode_roots {
+            discovered.extend(load_subagents_from_dir(&root, SubagentSource::UserVtcode)?);
+        }
     }
 
     discovered

@@ -2,6 +2,7 @@ use crate::constants::prompt_cache;
 use crate::env_helpers::default_true;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use vtcode_commons::VtCodePaths;
 
 /// Global prompt caching configuration loaded from vtcode.toml
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -53,9 +54,10 @@ pub struct PromptCachingConfig {
 
 impl Default for PromptCachingConfig {
     fn default() -> Self {
+        let cache_dir = default_cache_dir();
         Self {
-            enabled: default_enabled(),
-            cache_dir: default_cache_dir(),
+            enabled: default_enabled() && !cache_dir.is_empty(),
+            cache_dir,
             max_entries: default_max_entries(),
             max_age_days: default_max_age_days(),
             enable_auto_cleanup: default_auto_cleanup(),
@@ -458,7 +460,9 @@ fn default_enabled() -> bool {
 }
 
 fn default_cache_dir() -> String {
-    format!("~/{path}", path = prompt_cache::DEFAULT_CACHE_DIR)
+    VtCodePaths::resolve()
+        .map(|paths| paths.cache_dir().join("prompts").display().to_string())
+        .unwrap_or_default()
 }
 
 fn default_max_entries() -> usize {
@@ -561,10 +565,9 @@ fn resolve_path(input: &str, workspace_root: Option<&Path>) -> PathBuf {
 }
 
 fn resolve_default_cache_dir() -> PathBuf {
-    if let Some(home) = dirs::home_dir() {
-        return home.join(prompt_cache::DEFAULT_CACHE_DIR);
-    }
-    PathBuf::from(prompt_cache::DEFAULT_CACHE_DIR)
+    VtCodePaths::resolve()
+        .map(|paths| paths.cache_dir().join("prompts"))
+        .unwrap_or_default()
 }
 
 impl PromptCachingConfig {

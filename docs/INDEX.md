@@ -2,7 +2,7 @@
 
 Repository-wide entrypoint for VT Code documentation.
 
-Last reviewed: 2026-06-28
+Last reviewed: 2026-08-23
 
 ## Start Here
 
@@ -16,6 +16,7 @@ Last reviewed: 2026-06-28
 ## Core Domains
 
 - [Configuration Precedence](config/CONFIGURATION_PRECEDENCE.md) - Runtime config loading order.
+- [User Data Directories](guides/user-data-directories.md) - XDG/native paths, environment overrides, permissions, and legacy migration.
 - [Config Field Reference](config/CONFIG_FIELD_REFERENCE.md) - Field-level schema reference.
 - [Tool Specifications](tools/TOOL_SPECS.md) - Canonical tool surface reference.
 - [AI Tool Surface Migration](development/ai-tool-surface-migration.md) - Breaking-change notes for the Codex-style default tools.

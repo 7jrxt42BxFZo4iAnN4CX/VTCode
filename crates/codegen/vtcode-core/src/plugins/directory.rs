@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use tokio::fs;
 
-use crate::plugins::{PluginError, PluginManifest, PluginResult};
+use crate::plugins::{PluginError, PluginManifest, PluginResult, validate_plugin_component};
 
 /// Plugin template generator
 pub struct PluginTemplate;
@@ -324,6 +324,7 @@ impl PluginDirectory {
 
     /// Create a plugin from a template
     pub async fn create_from_template(base_dir: &Path, plugin_name: &str, description: &str) -> PluginResult<PathBuf> {
+        validate_plugin_component(plugin_name)?;
         let plugin_dir = base_dir.join(plugin_name);
 
         let manifest = PluginManifest {

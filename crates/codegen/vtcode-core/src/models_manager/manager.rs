@@ -26,6 +26,7 @@ use crate::llm::providers::{
     MergeCatalogAvailability, MergeCatalogFilters, MergeCatalogModel, MergeGatewayCatalogClient,
     llamacpp::fetch_llamacpp_models,
 };
+use vtcode_commons::VtCodePaths;
 use vtcode_config::constants::{env_vars, urls};
 
 /// Legacy cache file name retained for one-time compatible reads.
@@ -147,9 +148,9 @@ impl ModelsManager {
 
     /// Get the default VT Code home directory
     fn default_vtcode_home() -> PathBuf {
-        dirs::home_dir()
-            .map(|h| h.join(".vtcode"))
-            .unwrap_or_else(|| PathBuf::from(".vtcode"))
+        VtCodePaths::resolve()
+            .map(|paths| paths.cache_dir().to_path_buf())
+            .unwrap_or_else(|_| PathBuf::from(".cache/vtcode"))
     }
 
     /// Refresh available models, using cache if fresh
@@ -706,6 +707,11 @@ impl ModelsManager {
     }
 
     fn legacy_cache_path(&self) -> PathBuf {
+        if let Ok(paths) = VtCodePaths::resolve()
+            && self.vtcode_home == paths.cache_dir()
+        {
+            return paths.legacy_dir().join(LEGACY_MODEL_CACHE_FILE);
+        }
         self.vtcode_home.join(LEGACY_MODEL_CACHE_FILE)
     }
 

@@ -4,8 +4,10 @@
 
 use std::path::{Path, PathBuf};
 use tokio::fs;
+use vtcode_commons::VtCodePaths;
+use vtcode_commons::fs::{read_private_file_no_follow, write_private_file_atomic};
 
-use super::{PluginError, PluginManifest, PluginResult, PluginRuntime};
+use super::{PluginError, PluginManifest, PluginResult, PluginRuntime, validate_plugin_component};
 
 /// Plugin source types
 #[derive(Debug, Clone)]
@@ -56,7 +58,11 @@ impl PluginLoader {
 
         // Validate that it contains a plugin manifest
         let manifest_path = source_path.join(".vtcode-plugin/plugin.json");
-        if !fs::try_exists(&manifest_path).await.unwrap_or(false) {
+        let manifest_exists = fs::symlink_metadata(&manifest_path)
+            .await
+            .map(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
+            .unwrap_or(false);
+        if !manifest_exists {
             return Err(PluginError::ManifestValidationError(format!(
                 "Plugin manifest not found in source: {}",
                 manifest_path.display()
@@ -64,18 +70,18 @@ impl PluginLoader {
         }
 
         // Load the manifest to get the plugin name
-        let manifest_content = fs::read_to_string(&manifest_path)
-            .await
-            .map_err(|e| PluginError::LoadingError(format!("Failed to read manifest: {e}")))?;
+        let manifest_content = String::from_utf8(
+            read_private_file_no_follow(&manifest_path)
+                .await
+                .map_err(|e| PluginError::LoadingError(format!("Failed to read manifest: {e}")))?,
+        )
+        .map_err(|e| PluginError::LoadingError(format!("Plugin manifest is not valid UTF-8: {e}")))?;
 
         let manifest: PluginManifest = serde_json::from_str(&manifest_content)
             .map_err(|e| PluginError::ManifestValidationError(format!("Invalid manifest JSON: {e}")))?;
 
         // Create installation directory
-        let install_dir = self.plugins_dir.join(&manifest.name);
-        fs::create_dir_all(&install_dir)
-            .await
-            .map_err(|e| PluginError::LoadingError(format!("Failed to create plugin directory: {e}")))?;
+        let install_dir = self.install_dir_for(&manifest.name)?;
 
         // Copy plugin files to installation directory
         self.copy_directory(&source_path, &install_dir).await?;
@@ -113,17 +119,18 @@ impl PluginLoader {
             .unwrap_or_else(|| self.extract_name_from_git_url(url));
 
         // Create installation directory
-        let install_dir = self.plugins_dir.join(&plugin_name);
-        fs::create_dir_all(&install_dir)
-            .await
-            .map_err(|e| PluginError::LoadingError(format!("Failed to create plugin directory: {e}")))?;
+        let install_dir = self.install_dir_for(&plugin_name)?;
 
         // Copy the cloned repository contents to the installation directory
         self.copy_directory(temp_path, &install_dir).await?;
 
         // Verify that the plugin manifest exists in the installed directory
         let manifest_path = install_dir.join(".vtcode-plugin/plugin.json");
-        if !fs::try_exists(&manifest_path).await.unwrap_or(false) {
+        let manifest_exists = fs::symlink_metadata(&manifest_path)
+            .await
+            .map(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
+            .unwrap_or(false);
+        if !manifest_exists {
             return Err(PluginError::ManifestValidationError(
                 "Plugin manifest not found in cloned repository".to_string(),
             ));
@@ -137,10 +144,7 @@ impl PluginLoader {
         // For now, create a placeholder implementation
         let plugin_name = name.map(|s| s.to_string()).unwrap_or_else(|| self.extract_name_from_url(url));
 
-        let install_dir = self.plugins_dir.join(&plugin_name);
-        fs::create_dir_all(&install_dir)
-            .await
-            .map_err(|e| PluginError::LoadingError(format!("Failed to create plugin directory: {e}")))?;
+        let install_dir = self.install_dir_for(&plugin_name)?;
 
         // Create a placeholder manifest file
         let placeholder_manifest = format!(
@@ -155,8 +159,9 @@ impl PluginLoader {
         let manifest_parent = manifest_path.parent().ok_or_else(|| {
             PluginError::LoadingError("Failed to resolve parent directory for plugin manifest path".to_string())
         })?;
-        fs::create_dir_all(manifest_parent).await?;
-        fs::write(&manifest_path, placeholder_manifest)
+        VtCodePaths::ensure_user_dir(manifest_parent)
+            .map_err(|e| PluginError::LoadingError(format!("Failed to create plugin manifest directory: {e}")))?;
+        write_private_file_atomic(&manifest_path, placeholder_manifest.as_bytes())
             .await
             .map_err(|e| PluginError::LoadingError(format!("Failed to create placeholder manifest: {e}")))?;
 
@@ -170,10 +175,7 @@ impl PluginLoader {
             .map(|s| s.to_string())
             .unwrap_or_else(|| marketplace_id.split('/').next_back().unwrap_or(marketplace_id).to_string());
 
-        let install_dir = self.plugins_dir.join(&plugin_name);
-        fs::create_dir_all(&install_dir)
-            .await
-            .map_err(|e| PluginError::LoadingError(format!("Failed to create plugin directory: {e}")))?;
+        let install_dir = self.install_dir_for(&plugin_name)?;
 
         // Create a placeholder manifest file
         let placeholder_manifest = format!(
@@ -188,8 +190,9 @@ impl PluginLoader {
         let manifest_parent = manifest_path.parent().ok_or_else(|| {
             PluginError::LoadingError("Failed to resolve parent directory for plugin manifest path".to_string())
         })?;
-        fs::create_dir_all(manifest_parent).await?;
-        fs::write(&manifest_path, placeholder_manifest)
+        VtCodePaths::ensure_user_dir(manifest_parent)
+            .map_err(|e| PluginError::LoadingError(format!("Failed to create plugin manifest directory: {e}")))?;
+        write_private_file_atomic(&manifest_path, placeholder_manifest.as_bytes())
             .await
             .map_err(|e| PluginError::LoadingError(format!("Failed to create placeholder manifest: {e}")))?;
 
@@ -198,10 +201,24 @@ impl PluginLoader {
 
     /// Uninstall a plugin
     pub async fn uninstall_plugin(&self, plugin_name: &str) -> PluginResult<()> {
+        validate_plugin_component(plugin_name)?;
+        VtCodePaths::ensure_user_dir(&self.plugins_dir)
+            .map_err(|e| PluginError::LoadingError(format!("Failed to validate plugin directory: {e}")))?;
         let plugin_dir = self.plugins_dir.join(plugin_name);
-
-        if !fs::try_exists(&plugin_dir).await.unwrap_or(false) {
-            return Err(PluginError::NotFound(plugin_name.to_string().into()));
+        let metadata = match fs::symlink_metadata(&plugin_dir).await {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(PluginError::NotFound(plugin_name.to_string().into()));
+            }
+            Err(error) => {
+                return Err(PluginError::LoadingError(format!("Failed to inspect plugin directory: {error}")));
+            }
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(PluginError::LoadingError(format!(
+                "Refusing to remove non-directory plugin path: {}",
+                plugin_dir.display()
+            )));
         }
 
         // Unload the plugin from runtime first
@@ -233,12 +250,18 @@ impl PluginLoader {
             .map_err(|e| PluginError::LoadingError(format!("Failed to read directory entry: {e}")))?
         {
             let path = entry.path();
-            if fs::metadata(&path).await.map(|metadata| metadata.is_dir()).unwrap_or(false) {
+            let is_directory = fs::symlink_metadata(&path)
+                .await
+                .map(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
+                .unwrap_or(false);
+            if is_directory {
                 // Check if it contains a plugin manifest
                 let manifest_path = path.join(".vtcode-plugin/plugin.json");
-                if fs::try_exists(&manifest_path).await.unwrap_or(false)
-                    && let Some(name) = path.file_name()
-                {
+                let has_regular_manifest = fs::symlink_metadata(&manifest_path)
+                    .await
+                    .map(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
+                    .unwrap_or(false);
+                if has_regular_manifest && let Some(name) = path.file_name() {
                     plugins.push(name.to_string_lossy().to_string());
                 }
             }
@@ -250,12 +273,14 @@ impl PluginLoader {
     /// Copy directory recursively
     async fn copy_directory(&self, src: &Path, dst: &Path) -> PluginResult<()> {
         Box::pin(async {
-            if !fs::metadata(src).await.map(|metadata| metadata.is_dir()).unwrap_or(false) {
+            let source_metadata = fs::symlink_metadata(src).await.map_err(|error| {
+                PluginError::LoadingError(format!("Failed to inspect source path {}: {error}", src.display()))
+            })?;
+            if source_metadata.file_type().is_symlink() || !source_metadata.is_dir() {
                 return Err(PluginError::LoadingError(format!("Source is not a directory: {}", src.display())));
             }
 
-            fs::create_dir_all(dst)
-                .await
+            VtCodePaths::ensure_user_dir(dst)
                 .map_err(|e| PluginError::LoadingError(format!("Failed to create destination directory: {e}")))?;
 
             let mut entries = fs::read_dir(src)
@@ -270,9 +295,26 @@ impl PluginLoader {
                 let src_path = entry.path();
                 let dst_path = dst.join(entry.file_name());
 
-                if fs::metadata(&src_path).await.map(|metadata| metadata.is_dir()).unwrap_or(false) {
+                let source_metadata = fs::symlink_metadata(&src_path)
+                    .await
+                    .map_err(|error| PluginError::LoadingError(format!("Failed to inspect source entry: {error}")))?;
+                if source_metadata.file_type().is_symlink() {
+                    return Err(PluginError::LoadingError(format!(
+                        "Refusing to copy symlinked plugin entry: {}",
+                        src_path.display()
+                    )));
+                }
+                if source_metadata.is_dir() {
                     self.copy_directory(&src_path, &dst_path).await?;
-                } else {
+                } else if source_metadata.is_file() {
+                    if let Ok(destination_metadata) = fs::symlink_metadata(&dst_path).await
+                        && destination_metadata.file_type().is_symlink()
+                    {
+                        return Err(PluginError::LoadingError(format!(
+                            "Refusing to replace symlinked plugin entry: {}",
+                            dst_path.display()
+                        )));
+                    }
                     fs::copy(&src_path, &dst_path)
                         .await
                         .map_err(|e| PluginError::LoadingError(format!("Failed to copy file: {e}")))?;
@@ -298,5 +340,15 @@ impl PluginLoader {
     fn extract_name_from_url(&self, url: &str) -> String {
         // Extract name from URL path
         url.split('/').next_back().unwrap_or("unknown-plugin").to_string()
+    }
+
+    fn install_dir_for(&self, plugin_name: &str) -> PluginResult<PathBuf> {
+        validate_plugin_component(plugin_name)?;
+        VtCodePaths::ensure_user_dir(&self.plugins_dir)
+            .map_err(|e| PluginError::LoadingError(format!("Failed to validate plugin directory: {e}")))?;
+        let install_dir = self.plugins_dir.join(plugin_name);
+        VtCodePaths::ensure_user_dir(&install_dir)
+            .map_err(|e| PluginError::LoadingError(format!("Failed to create plugin directory: {e}")))?;
+        Ok(install_dir)
     }
 }

@@ -1,5 +1,6 @@
 pub const DEFAULT_ENABLED: bool = true;
-pub const DEFAULT_CACHE_DIR: &str = ".vtcode/cache/prompts";
+/// Relative fallback used only when the centralized path resolver is unavailable.
+pub const DEFAULT_CACHE_DIR: &str = "cache/vtcode/prompts";
 pub const DEFAULT_MAX_ENTRIES: usize = 1_000;
 pub const DEFAULT_MAX_AGE_DAYS: u64 = 30;
 pub const DEFAULT_AUTO_CLEANUP: bool = true;

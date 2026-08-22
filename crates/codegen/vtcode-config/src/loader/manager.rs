@@ -12,6 +12,7 @@ use crate::loader::config::VTCodeConfig;
 use crate::loader::layers::{
     ConfigLayerEntry, ConfigLayerMetadata, ConfigLayerSource, ConfigLayerStack, LayerDisabledReason,
 };
+use vtcode_commons::VtCodePaths;
 use vtcode_commons::canonicalize;
 
 type CachedManager = Arc<ConfigManager>;
@@ -53,6 +54,46 @@ fn canonicalize_workspace_root(path: &Path) -> PathBuf {
     canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+fn push_unique_layer_source(layer_sources: &mut Vec<ConfigLayerSource>, source: ConfigLayerSource) {
+    let file = match &source {
+        ConfigLayerSource::System { file }
+        | ConfigLayerSource::User { file }
+        | ConfigLayerSource::Project { file }
+        | ConfigLayerSource::Workspace { file } => file,
+        ConfigLayerSource::Runtime => {
+            layer_sources.push(source);
+            return;
+        }
+    };
+    if !layer_sources.iter().any(|existing| {
+        matches!(existing,
+            ConfigLayerSource::System { file: existing_file }
+            | ConfigLayerSource::User { file: existing_file }
+            | ConfigLayerSource::Project { file: existing_file }
+            | ConfigLayerSource::Workspace { file: existing_file }
+            if existing_file == file)
+    }) {
+        layer_sources.push(source);
+    }
+}
+
+fn is_optional_global_layer(source: &ConfigLayerSource) -> bool {
+    matches!(source, ConfigLayerSource::System { .. } | ConfigLayerSource::User { .. })
+}
+
+fn should_skip_optional_global_error(source: &ConfigLayerSource, error: &std::io::Error) -> bool {
+    is_optional_global_layer(source) && error.kind() != std::io::ErrorKind::InvalidData
+}
+
+fn ensure_private_parent_dir(path: &Path) -> Result<()> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    let _ = VtCodePaths::ensure_user_dir(parent)
+        .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+    Ok(())
+}
+
 /// Timing metrics (in microseconds) for configuration loading phases
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ConfigPhaseTiming {
@@ -71,6 +112,9 @@ pub struct ConfigPhaseTiming {
 pub struct ConfigManager {
     pub(crate) config: VTCodeConfig,
     config_path: Option<PathBuf>,
+    canonical_user_config_path: Option<PathBuf>,
+    tracked_user_config_paths: Vec<PathBuf>,
+    write_global_config_to_canonical: bool,
     workspace_root: Option<PathBuf>,
     config_file_name: String,
     pub(crate) layer_stack: ConfigLayerStack,
@@ -83,12 +127,85 @@ impl ConfigManager {
         if let Ok(config_path) = std::env::var("VTCODE_CONFIG_PATH") {
             let trimmed = config_path.trim();
             if !trimmed.is_empty() {
-                return Self::load_from_file(trimmed)
+                return Self::load_from_file_impl(trimmed, true)
                     .with_context(|| format!("Failed to load configuration from VTCODE_CONFIG_PATH={trimmed}"));
             }
         }
 
         Self::load_from_workspace(std::env::current_dir()?)
+    }
+
+    /// Load only the system and user configuration layers.
+    ///
+    /// This is used by global configuration commands that must honor legacy
+    /// and XDG search precedence without accidentally importing the current
+    /// workspace's `vtcode.toml`.
+    pub fn load_global() -> Result<Self> {
+        let defaults_provider = defaults::current_config_defaults();
+        let config_file_name = defaults_provider.config_file_name().to_string();
+        let canonical_user_config_path = defaults_provider.canonical_user_config_path(&config_file_name)?;
+        let mut tracked_user_config_paths = defaults_provider.home_config_paths(&config_file_name);
+        if let Some(path) = &canonical_user_config_path
+            && !tracked_user_config_paths.iter().any(|existing| existing == path)
+        {
+            tracked_user_config_paths.push(path.clone());
+        }
+
+        let mut layer_sources = Vec::new();
+        for system_config_path in defaults_provider.system_config_paths(&config_file_name)? {
+            push_unique_layer_source(&mut layer_sources, ConfigLayerSource::System { file: system_config_path });
+        }
+        for home_config_path in &tracked_user_config_paths {
+            push_unique_layer_source(&mut layer_sources, ConfigLayerSource::User { file: home_config_path.clone() });
+        }
+
+        let mut layer_stack = ConfigLayerStack::default();
+        for source in layer_sources {
+            if let Some(layer) = Self::load_optional_layer(source) {
+                layer_stack.push(layer);
+            }
+        }
+
+        if let Some((layer, error)) = layer_stack.first_layer_error() {
+            bail!("Configuration layer '{}' failed to load: {}", layer.source.label(), error.message);
+        }
+
+        let (config, config_path) = if layer_stack.layers().is_empty() {
+            let config = VTCodeConfig::default();
+            config.validate().context("Default configuration failed validation")?;
+            (config, None)
+        } else {
+            let (effective_toml, origins) = layer_stack.effective_config_with_origins();
+            let mut config: VTCodeConfig = effective_toml
+                .try_into()
+                .context("Failed to deserialize effective global configuration")?;
+            Self::validate_restricted_agent_fields(&layer_stack, &origins)?;
+            config.validate().context("Global configuration failed validation")?;
+            config.workspace_lifecycle_hooks =
+                Some(Self::collect_workspace_lifecycle_hooks(&layer_stack, &config.hooks));
+            let config_path = layer_stack
+                .layers()
+                .iter()
+                .rev()
+                .find(|layer| layer.is_enabled())
+                .and_then(|layer| match &layer.source {
+                    ConfigLayerSource::System { file } | ConfigLayerSource::User { file } => Some(file.clone()),
+                    _ => None,
+                });
+            (config, config_path)
+        };
+
+        Ok(Self {
+            config,
+            config_path,
+            canonical_user_config_path,
+            tracked_user_config_paths,
+            write_global_config_to_canonical: false,
+            workspace_root: None,
+            config_file_name,
+            layer_stack,
+            phase_timing: None,
+        })
     }
 
     /// Invalidate the cached configuration for a specific workspace.
@@ -134,39 +251,49 @@ impl ConfigManager {
         let workspace_root = canonicalize_workspace_root(workspace_paths.workspace_root());
         let config_dir = workspace_paths.config_dir();
         let config_file_name = defaults_provider.config_file_name().to_string();
+        let canonical_user_config_path = defaults_provider.canonical_user_config_path(&config_file_name)?;
+        let mut tracked_user_config_paths = defaults_provider.home_config_paths(&config_file_name);
+        if let Some(path) = &canonical_user_config_path
+            && !tracked_user_config_paths.iter().any(|existing| existing == path)
+        {
+            tracked_user_config_paths.push(path.clone());
+        }
         let path_res_duration = t0.elapsed();
 
         let t1 = std::time::Instant::now();
 
         // Collect layer sources in precedence order so we can load them
         // concurrently and then push results while preserving order.
-        let mut layer_sources: Vec<ConfigLayerSource> = Vec::with_capacity(5);
+        let mut layer_sources: Vec<ConfigLayerSource> = Vec::with_capacity(8);
 
-        // 1. System config (e.g., /etc/vtcode/vtcode.toml)
-        #[cfg(unix)]
-        {
-            layer_sources.push(ConfigLayerSource::System { file: PathBuf::from("/etc/vtcode/vtcode.toml") });
+        // 1. System configuration: /etc compatibility followed by
+        // XDG_CONFIG_DIRS candidates, all low-to-high precedence.
+        for system_config_path in defaults_provider.system_config_paths(&config_file_name)? {
+            push_unique_layer_source(&mut layer_sources, ConfigLayerSource::System { file: system_config_path });
         }
 
-        // 2. User home config (~/.vtcode/vtcode.toml)
-        for home_config_path in defaults_provider.home_config_paths(&config_file_name) {
-            layer_sources.push(ConfigLayerSource::User { file: home_config_path });
+        // 2. Legacy user config followed by the canonical XDG user config.
+        for home_config_path in &tracked_user_config_paths {
+            push_unique_layer_source(&mut layer_sources, ConfigLayerSource::User { file: home_config_path.clone() });
         }
 
         // 3. Project-specific config (.vtcode/projects/<project>/config/vtcode.toml)
         if let Some(project_config_path) = Self::project_config_path(&config_dir, &workspace_root, &config_file_name) {
-            layer_sources.push(ConfigLayerSource::Project { file: project_config_path });
+            push_unique_layer_source(&mut layer_sources, ConfigLayerSource::Project { file: project_config_path });
         }
 
         // 4. Config directory fallback (.vtcode/vtcode.toml)
         let fallback_path = config_dir.join(&config_file_name);
         let workspace_config_path = workspace_root.join(&config_file_name);
         if fallback_path != workspace_config_path {
-            layer_sources.push(ConfigLayerSource::Workspace { file: fallback_path });
+            push_unique_layer_source(&mut layer_sources, ConfigLayerSource::Workspace { file: fallback_path });
         }
 
         // 5. Workspace config (vtcode.toml in workspace root)
-        layer_sources.push(ConfigLayerSource::Workspace { file: workspace_config_path.clone() });
+        push_unique_layer_source(
+            &mut layer_sources,
+            ConfigLayerSource::Workspace { file: workspace_config_path.clone() },
+        );
 
         // Load all layers concurrently. Each load is independent I/O, so
         // spawning threads overlaps the disk reads and canonicalization
@@ -208,6 +335,9 @@ impl ConfigManager {
             return Ok(Self {
                 config,
                 config_path: None,
+                canonical_user_config_path,
+                tracked_user_config_paths,
+                write_global_config_to_canonical: false,
                 workspace_root: Some(workspace_root),
                 config_file_name,
                 layer_stack,
@@ -291,6 +421,9 @@ impl ConfigManager {
         Ok(Self {
             config,
             config_path,
+            canonical_user_config_path,
+            tracked_user_config_paths,
+            write_global_config_to_canonical: false,
             workspace_root: Some(workspace_root),
             config_file_name,
             layer_stack,
@@ -321,6 +454,10 @@ impl ConfigManager {
         let content = match fs::read_to_string(file) {
             Ok(content) => content,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(err) if should_skip_optional_global_error(&source, &err) => {
+                tracing::debug!(path = %file.display(), "skipping inaccessible optional configuration layer");
+                return None;
+            }
             Err(err) => {
                 let resolved_file = canonicalize_workspace_root(file);
                 let resolved_source = source.with_file(resolved_file);
@@ -364,27 +501,35 @@ impl ConfigManager {
 
     /// Load configuration from a specific file
     pub fn load_from_file(path: impl AsRef<Path>) -> Result<Self> {
+        Self::load_from_file_impl(path, false)
+    }
+
+    fn load_from_file_impl(path: impl AsRef<Path>, write_global_config_to_canonical: bool) -> Result<Self> {
         let path = path.as_ref();
         let defaults_provider = defaults::current_config_defaults();
         let config_file_name = path
             .file_name()
             .and_then(|name| name.to_str().map(ToOwned::to_owned))
             .unwrap_or_else(|| defaults_provider.config_file_name().to_string());
-
-        let mut layer_stack = ConfigLayerStack::default();
-
-        // 1. System config
-        #[cfg(unix)]
+        let canonical_user_config_path = defaults_provider.canonical_user_config_path(&config_file_name)?;
+        let mut tracked_user_config_paths = defaults_provider.home_config_paths(&config_file_name);
+        if let Some(path) = &canonical_user_config_path
+            && !tracked_user_config_paths.iter().any(|existing| existing == path)
         {
-            let system_config = PathBuf::from("/etc/vtcode/vtcode.toml");
-            if let Some(layer) = Self::load_optional_layer(ConfigLayerSource::System { file: system_config }) {
-                layer_stack.push(layer);
-            }
+            tracked_user_config_paths.push(path.clone());
         }
 
-        // 2. User home config
-        for home_config_path in defaults_provider.home_config_paths(&config_file_name) {
-            if let Some(layer) = Self::load_optional_layer(ConfigLayerSource::User { file: home_config_path }) {
+        let mut layer_stack = ConfigLayerStack::default();
+        let mut global_sources = Vec::new();
+
+        for system_config in defaults_provider.system_config_paths(&config_file_name)? {
+            push_unique_layer_source(&mut global_sources, ConfigLayerSource::System { file: system_config });
+        }
+        for home_config_path in &tracked_user_config_paths {
+            push_unique_layer_source(&mut global_sources, ConfigLayerSource::User { file: home_config_path.clone() });
+        }
+        for source in global_sources {
+            if let Some(layer) = Self::load_optional_layer(source) {
                 layer_stack.push(layer);
             }
         }
@@ -440,6 +585,9 @@ impl ConfigManager {
         Ok(Self {
             config,
             config_path: Some(canonicalize_workspace_root(path)),
+            canonical_user_config_path,
+            tracked_user_config_paths,
+            write_global_config_to_canonical,
             workspace_root: path.parent().map(canonicalize_workspace_root),
             config_file_name,
             layer_stack,
@@ -477,19 +625,9 @@ impl ConfigManager {
         &self.layer_stack
     }
 
-    /// Resolve the user-level config file VT Code should write to, preferring
-    /// the enabled user layer, then the provider home paths, then `~`.
+    /// Resolve the canonical user-level config file VT Code should write to.
     pub fn preferred_user_config_path(&self) -> Option<PathBuf> {
-        self.layer_stack
-            .layers()
-            .iter()
-            .rev()
-            .find_map(|layer| match &layer.source {
-                ConfigLayerSource::User { file } if layer.is_enabled() => Some(file.clone()),
-                _ => None,
-            })
-            .or_else(|| self.user_config_paths().into_iter().next())
-            .or_else(|| dirs::home_dir().map(|home| home.join(self.config_file_name())))
+        self.canonical_user_config_path.clone()
     }
 
     /// Return every supported user-level config path for the loaded config
@@ -498,10 +636,7 @@ impl ConfigManager {
     /// Callers that monitor configuration must retain the nonexistent paths:
     /// a later `None -> Some(mtime)` transition is a real configuration change.
     pub fn user_config_paths(&self) -> Vec<PathBuf> {
-        let mut paths = defaults::provider::current_config_defaults()
-            .home_config_paths(self.config_file_name())
-            .into_iter()
-            .collect::<Vec<_>>();
+        let mut paths = self.tracked_user_config_paths.clone();
 
         for path in self
             .layer_stack
@@ -533,15 +668,32 @@ impl ConfigManager {
     /// Persist configuration to a specific path, preserving comments
     pub fn save_config_to_path(path: impl AsRef<Path>, config: &VTCodeConfig) -> Result<()> {
         let path = path.as_ref();
+        ensure_private_parent_dir(path)?;
         let sparse_value = Self::sparse_config_value(config).context("Failed to prepare sparse configuration")?;
         let sparse_content =
             toml::to_string_pretty(&sparse_value).context("Failed to serialize sparse configuration")?;
 
-        // If file exists, preserve comments by using toml_edit
-        if path.exists() {
-            let original_content = fs::read_to_string(path)
-                .with_context(|| format!("Failed to read existing config: {}", path.display()))?;
+        // If file exists, preserve comments by using toml_edit. Read and
+        // publish through the shared no-follow/atomic file policy so a
+        // user-controlled symlink cannot redirect configuration writes.
+        let existing_content = match fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                bail!("Refusing to read symlinked config file: {}", path.display())
+            }
+            Ok(metadata) if !metadata.is_file() => {
+                bail!("Config path is not a regular file: {}", path.display())
+            }
+            Ok(_) => Some(
+                String::from_utf8(VtCodePaths::read_file_no_follow(path)?)
+                    .with_context(|| format!("Failed to read existing config: {}", path.display()))?,
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(error).with_context(|| format!("Failed to inspect config: {}", path.display()));
+            }
+        };
 
+        if let Some(original_content) = existing_content {
             let mut doc = original_content
                 .parse::<toml_edit::DocumentMut>()
                 .with_context(|| format!("Failed to parse existing config: {}", path.display()))?;
@@ -560,10 +712,10 @@ impl ConfigManager {
             // Update values while preserving structure and comments
             Self::merge_sparse_toml_documents(&mut doc, &new_doc, &default_doc);
 
-            fs::write(path, doc.to_string())
+            VtCodePaths::write_private_file_atomic(path, doc.to_string().as_bytes())
                 .with_context(|| format!("Failed to write config file: {}", path.display()))?;
         } else {
-            fs::write(path, sparse_content)
+            VtCodePaths::write_private_file_atomic(path, sparse_content.as_bytes())
                 .with_context(|| format!("Failed to write config file: {}", path.display()))?;
         }
 
@@ -791,7 +943,12 @@ impl ConfigManager {
     /// Persist configuration to the manager's associated path or workspace
     pub fn save_config(&mut self, config: &VTCodeConfig) -> Result<()> {
         if let Some(path) = &self.config_path {
-            Self::save_config_to_path(path, config)?;
+            let target = if self.write_global_config_to_canonical || self.is_global_config_path(path) {
+                self.preferred_user_config_path().unwrap_or_else(|| path.clone())
+            } else {
+                path.clone()
+            };
+            Self::save_config_to_path(target, config)?;
         } else if let Some(workspace_root) = &self.workspace_root {
             let path = workspace_root.join(&self.config_file_name);
             Self::save_config_to_path(path, config)?;
@@ -807,6 +964,17 @@ impl ConfigManager {
         }
 
         self.sync_from_config(config)
+    }
+
+    fn is_global_config_path(&self, path: &Path) -> bool {
+        self.layer_stack.layers().iter().any(|layer| {
+            layer.is_enabled()
+                && matches!(layer.source, ConfigLayerSource::System { .. } | ConfigLayerSource::User { .. })
+                && match &layer.source {
+                    ConfigLayerSource::System { file } | ConfigLayerSource::User { file } => file == path,
+                    _ => false,
+                }
+        })
     }
 
     /// Sync internal config from a saved config
@@ -953,6 +1121,25 @@ max_consecutive_denials = 3
         );
 
         ConfigManager::load_from_file(&config_path).expect("reload saved config");
+    }
+
+    #[test]
+    fn inaccessible_optional_global_layers_are_skipped() {
+        let error = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert!(should_skip_optional_global_error(
+            &ConfigLayerSource::System { file: PathBuf::from("/etc/vtcode/vtcode.toml") },
+            &error
+        ));
+        assert!(should_skip_optional_global_error(
+            &ConfigLayerSource::User {
+                file: PathBuf::from("/home/user/.config/vtcode/vtcode.toml")
+            },
+            &error
+        ));
+        assert!(!should_skip_optional_global_error(
+            &ConfigLayerSource::Workspace { file: PathBuf::from("/workspace/vtcode.toml") },
+            &error
+        ));
     }
 }
 

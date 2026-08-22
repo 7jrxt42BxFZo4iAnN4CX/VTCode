@@ -1,7 +1,9 @@
 //! Debug and tracing configuration
 
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use vtcode_commons::VtCodePaths;
 
 /// Trace level for structured logging
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -112,22 +114,19 @@ impl Default for DebugConfig {
 }
 
 impl DebugConfig {
-    /// Get the debug log directory, expanding ~ to home directory
-    pub fn debug_log_path(&self) -> PathBuf {
-        self.debug_log_dir
-            .as_ref()
-            .and_then(|dir| {
-                if dir.starts_with("~") {
-                    dirs::home_dir().map(|home| home.join(dir.trim_start_matches('~').trim_start_matches('/')))
-                } else {
-                    Some(PathBuf::from(dir))
-                }
-            })
-            .unwrap_or_else(|| {
-                dirs::home_dir()
-                    .map(|home| home.join(".vtcode/sessions"))
-                    .unwrap_or_else(|| PathBuf::from(".vtcode/sessions"))
-            })
+    /// Get the debug log directory, expanding ~ to home directory.
+    pub fn debug_log_path(&self) -> Result<PathBuf> {
+        if let Some(dir) = self.debug_log_dir.as_ref() {
+            if dir.starts_with("~") {
+                let home = dirs::home_dir().context("could not resolve home directory for debug logs")?;
+                return Ok(home.join(dir.trim_start_matches('~').trim_start_matches('/')));
+            }
+            return Ok(PathBuf::from(dir));
+        }
+
+        VtCodePaths::resolve()
+            .map(|paths| paths.logs_dir())
+            .context("could not resolve VT Code state directory for debug logs")
     }
 }
 
@@ -156,9 +155,9 @@ mod tests {
     }
 
     #[test]
-    fn test_debug_log_path_defaults_to_sessions_dir() {
+    fn test_debug_log_path_defaults_to_state_logs_dir() {
         let cfg = DebugConfig::default();
-        let path = cfg.debug_log_path().to_string_lossy().replace('\\', "/");
-        assert!(path.ends_with(".vtcode/sessions"));
+        let expected = VtCodePaths::resolve().expect("path resolver").logs_dir();
+        assert_eq!(cfg.debug_log_path().expect("debug log path"), expected);
     }
 }

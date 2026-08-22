@@ -23,7 +23,7 @@ use config::{StatuslineSetupAction, apply_statusline_action, build_statusline_se
 use input::{parse_statusline_millis, prompt_statusline_input};
 use persistence::{
     ScriptScaffoldResult, default_script_command, persist_statusline_config, scaffold_statusline_script,
-    statusline_script_path,
+    statusline_script_exists, statusline_script_path,
 };
 use preview::build_statusline_preview;
 
@@ -60,7 +60,7 @@ pub(crate) async fn handle_start_statusline_setup(
     let mut draft = ctx.vt_cfg.as_ref().map(|cfg| cfg.ui.status_line.clone()).unwrap_or_default();
 
     loop {
-        let script_exists = script_path.exists();
+        let script_exists = statusline_script_exists(&script_path);
         let preview = build_statusline_preview(
             &draft,
             ctx.input_status_state
@@ -195,7 +195,7 @@ pub(crate) async fn handle_start_statusline_setup(
                 draft.command_timeout_ms = parse_statusline_millis(&value, "command timeout")?;
             }
             StatuslineSetupAction::ScaffoldScript { replace_existing } => {
-                match scaffold_statusline_script(&script_path, replace_existing)? {
+                match scaffold_statusline_script(target, &script_path, replace_existing)? {
                     ScriptScaffoldResult::Created => {
                         ctx.renderer.line(
                             MessageStyle::Info,

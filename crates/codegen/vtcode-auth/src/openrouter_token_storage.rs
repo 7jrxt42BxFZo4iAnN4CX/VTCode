@@ -12,7 +12,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::credentials::{AuthCredentialsStoreMode, CredentialStorage};
-use crate::storage_paths::auth_storage_dir;
+use crate::storage_paths::{legacy_auth_file_paths, read_legacy_compatible_file};
 
 use super::openrouter_oauth::OpenRouterToken;
 
@@ -52,9 +52,6 @@ impl OpenRouterTokenStorage {
         };
 
         self.save(&token, mode).context("failed to migrate legacy openrouter token")?;
-        if let Err(err) = clear_legacy_token_file() {
-            tracing::warn!("failed to remove migrated legacy openrouter token: {err}");
-        }
         Ok(Some(token))
     }
 
@@ -104,29 +101,34 @@ impl OpenRouterTokenStorage {
 }
 
 fn load_legacy_token() -> Result<Option<OpenRouterToken>> {
-    let path = legacy_token_path()?;
-    let data = match fs::read(&path) {
-        Ok(data) => data,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(anyhow!("failed to read legacy openrouter token: {err}")),
-    };
+    for path in legacy_auth_file_paths(LEGACY_TOKEN_FILE)? {
+        let Some(data) = read_legacy_compatible_file(&path)? else {
+            continue;
+        };
 
-    let encrypted: LegacyEncryptedToken =
-        serde_json::from_slice(&data).context("failed to decode legacy openrouter token")?;
-    decrypt_legacy_token(&encrypted).map(Some)
+        let encrypted: LegacyEncryptedToken = serde_json::from_slice(&data)
+            .with_context(|| format!("failed to decode legacy openrouter token {}", path.display()))?;
+        return decrypt_legacy_token(&encrypted).map(Some);
+    }
+    Ok(None)
 }
 
 fn clear_legacy_token_file() -> Result<()> {
-    let path = legacy_token_path()?;
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(anyhow!("failed to delete legacy openrouter token: {err}")),
+    for path in legacy_auth_file_paths(LEGACY_TOKEN_FILE)? {
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(anyhow!("failed to delete legacy openrouter token {}: {err}", path.display())),
+        }
     }
+    Ok(())
 }
 
 pub(crate) fn legacy_token_path() -> Result<PathBuf> {
-    Ok(auth_storage_dir()?.join(LEGACY_TOKEN_FILE))
+    legacy_auth_file_paths(LEGACY_TOKEN_FILE)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("no legacy openrouter token path available"))
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]

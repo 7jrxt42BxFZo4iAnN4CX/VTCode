@@ -5,7 +5,8 @@ It is a backend + CLI feature in v1, with no TUI integration and no `vtcode.toml
 
 ## Overview
 
-The pod manager keeps a small amount of state under `~/.vtcode/pods/`:
+The pod manager keeps a small amount of state under the user state directory's
+`pods/` path:
 
 - `state.json` stores the active pod, running model names, ports, PIDs, and GPU assignments.
 - `catalog.json` stores the model/profile catalog used by `pods known-models` and `pods start`.

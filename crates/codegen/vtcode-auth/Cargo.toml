@@ -31,6 +31,7 @@ tempfile = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 urlencoding = "2.1"
+vtcode-commons = { workspace = true }
 schemars = { workspace = true, optional = true, features = ["indexmap2"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
@@ -52,8 +53,6 @@ schema = ["dep:schemars"]
 [dev-dependencies]
 assert_fs = { workspace = true }
 serial_test = { workspace = true }
-vtcode-commons = { path = "../../common/vtcode-commons", version = "0.146.11" }
 
 [lints]
 workspace = true
-

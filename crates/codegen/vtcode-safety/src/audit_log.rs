@@ -22,13 +22,14 @@
 //! See also `crates/codegen/vtcode-core/src/tools/untrusted_data.rs` for the prompt-injection
 //! defense that pairs with this log.
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use vtcode_commons::VtCodePaths;
 
 /// Status of a single tool invocation for audit purposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -207,9 +208,11 @@ impl JsonlFileSink {
     fn open(path: impl Into<PathBuf>, max_size_bytes: u64, max_files: usize) -> std::io::Result<Self> {
         let path = path.into();
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            VtCodePaths::ensure_user_dir(parent)
+                .map_err(std::io::Error::other)
+                .map(|_| ())?;
         }
-        let file = OpenOptions::new().create(true).append(true).open(&path)?;
+        let file = VtCodePaths::open_private_append_file(&path).map_err(std::io::Error::other)?;
         let bytes_written = file.metadata().map(|m| m.len()).unwrap_or(0);
         Ok(Self {
             path,
@@ -249,7 +252,7 @@ impl JsonlFileSink {
         if path.exists() {
             std::fs::rename(path, rotated_path(path, 1))?;
         }
-        let file = OpenOptions::new().create(true).append(true).open(path)?;
+        let file = VtCodePaths::open_private_append_file(path).map_err(std::io::Error::other)?;
         state.writer = Some(BufWriter::new(file));
         state.bytes_written = 0;
         Ok(())

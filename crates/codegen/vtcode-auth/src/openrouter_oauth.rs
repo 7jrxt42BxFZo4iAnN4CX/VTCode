@@ -538,7 +538,7 @@ mod tests {
             .expect("token should be present");
 
         assert_eq!(loaded.api_key, token.api_key);
-        assert!(!legacy_path.exists(), "legacy token should be removed after migration");
+        assert!(legacy_path.exists(), "legacy token should remain as a rollback source after migration");
         assert!(
             OpenRouterTokenStorage::new()
                 .current_file_path()

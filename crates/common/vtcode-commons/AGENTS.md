@@ -6,7 +6,7 @@
 
 - Traits: `paths/`, `errors/`, `telemetry/`.
 - Display: `ansi/`, `colors/`, `styling/`, `diff_preview/`, `color256_theme/`, `color_policy/`; LLM: `llm/`.
-- Filesystem: `fs/`, `diff/`, `diff_paths/`, `vtcodegitignore/`, `workspace_snapshot/`; text: `tokens/`, `unicode/`, `sanitizer/`, `slug/`, `formatting/`.
+- Filesystem: `fs/`, `paths/`, `vtcode_paths/`, `diff/`, `diff_paths/`, `vtcodegitignore/`, `workspace_snapshot/`; text: `tokens/`, `unicode/`, `sanitizer/`, `slug/`, `formatting/`.
 - Async: `async_utils/`, `thread_safety/`; interjection: `interjection/`; UI protocol: `ui_protocol/` (including global activity state); other: `editor/`, `http/`, `project/`, `validation/`, `serde_helpers/`, `env_lock/`.
 
 ## Rules
@@ -19,6 +19,7 @@
 ## Gotchas
 
 - `paths` has two containment tiers: lexical `ensure_path_within_workspace` and async symlink-resolving `ensure_path_within_workspace_resolved`; `workspace_relative_display` resolves existing candidates before lexical fallback so symlink escapes remain external. Downstream crates delegate here — do not fork the logic.
+- `vtcode_paths::VtCodePaths` owns immutable global XDG/native resolution; `vtcode_paths_migration::LegacyMigrator` owns retryable legacy scanning. Keep workspace-local `.vtcode` paths in `paths` consumers; migration copies only regular files, never follows links, and reports per-item conflicts/failures.
 - `retry` owns the canonical `RetryPolicy` (delay math, jitter, `RetryDecision`/`RetryStep`, `simple()` constructor). vtcode-core only layers domain adapters on top.
 - `error_category/` classifies LLM errors for retry — `is_retryable_llm_error_message()` is the key function; `classify_anyhow_error` → `ErrorCategory` is the single classifier for tool errors. `is_context_capacity_error` remains a separate, specific provider-request signal for bounded context recovery.
 - `errors/` provides `MultiErrors<E>` — a reusable error collection type implementing the "error parameter" pattern for continuing work while collecting failures. Use it instead of ad-hoc `Vec<String>` or `Vec<ErrorEnum>` for batch/parallel operations where individual items can fail independently.

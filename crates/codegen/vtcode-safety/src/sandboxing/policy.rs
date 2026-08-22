@@ -9,6 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use vtcode_commons::VtCodePaths;
 
 /// A root directory that may be written to under the sandbox policy.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -217,22 +218,55 @@ fn normalize_windows_path(path: &Path) -> String {
 
 /// Get the default sensitive paths as SensitivePath entries.
 pub fn default_sensitive_paths() -> Vec<SensitivePath> {
-    let paths: Vec<SensitivePath> = DEFAULT_SENSITIVE_PATHS.iter().map(|p| SensitivePath::new(*p)).collect();
+    match vtcode_sensitive_paths(&[]) {
+        Ok(paths) => paths,
+        Err(error) => {
+            tracing::warn!(%error, "VT Code path resolution failed; blocking absolute paths fail-closed");
+            let mut paths: Vec<SensitivePath> =
+                DEFAULT_SENSITIVE_PATHS.iter().map(|p| SensitivePath::new(*p)).collect();
+            paths.push(SensitivePath::new("/"));
+            paths
+        }
+    }
+}
+
+fn vtcode_sensitive_paths(environment: &[(&str, &str)]) -> anyhow::Result<Vec<SensitivePath>> {
+    let resolved = if environment.is_empty() {
+        VtCodePaths::resolve()?
+    } else {
+        VtCodePaths::from_environment(environment)?
+    };
+    let mut paths: Vec<SensitivePath> = DEFAULT_SENSITIVE_PATHS.iter().map(|p| SensitivePath::new(*p)).collect();
+    let resolved_roots = [
+        resolved.config_dir().to_path_buf(),
+        resolved.auth_dir(),
+        resolved.data_dir().to_path_buf(),
+        resolved.state_dir().to_path_buf(),
+        resolved.cache_dir().to_path_buf(),
+        resolved.runtime_dir().to_path_buf(),
+        resolved.executable_dir().to_path_buf(),
+        resolved.legacy_dir().to_path_buf(),
+    ];
+    for root in resolved_roots {
+        let path = root.display().to_string();
+        if !paths.iter().any(|existing| existing.path == path) {
+            paths.push(SensitivePath::new(path));
+        }
+    }
 
     #[cfg(windows)]
     {
-        let mut paths = paths;
         for entry in USERPROFILE_READ_ROOT_EXCLUSIONS {
             let path = format!("~/{}", entry);
             if !paths.iter().any(|existing| existing.path == path) {
                 paths.push(SensitivePath::new(path));
             }
         }
-        paths
+        Ok(paths)
     }
 
     #[cfg(not(windows))]
-    paths
+    Ok(paths)
 }
 
 const PROTECTED_WRITABLE_ROOT_DIR_NAMES: &[&str] = &[".git", ".vtcode", ".codex", ".agents"];
@@ -1169,6 +1203,46 @@ mod tests {
         assert!(path_strings.contains(&"~/.ssh"));
         assert!(path_strings.contains(&"~/.aws"));
         assert!(path_strings.contains(&"~/.kube"));
+    }
+
+    #[test]
+    fn resolved_vtcode_roots_are_sensitive_without_duplicate_entries() {
+        let environment = [
+            ("HOME", "/home/tester"),
+            ("VTCODE_CONFIG", "/vtcode/shared"),
+            ("VTCODE_DATA", "/vtcode/shared"),
+            ("XDG_STATE_HOME", "/xdg/state"),
+            ("XDG_CACHE_HOME", "/xdg/cache"),
+            ("XDG_RUNTIME_DIR", "/xdg/runtime"),
+            ("XDG_BIN_HOME", "/xdg/bin"),
+            ("VTCODE_HOME", "/legacy/vtcode"),
+        ];
+        let resolved =
+            VtCodePaths::from_environment(&environment).expect("explicit absolute VT Code paths should resolve");
+        let paths = vtcode_sensitive_paths(&environment).expect("explicit absolute VT Code paths should resolve");
+        let path_strings: Vec<&str> = paths.iter().map(|path| path.path.as_str()).collect();
+
+        for expected in [
+            resolved.config_dir().to_path_buf(),
+            resolved.auth_dir(),
+            resolved.data_dir().to_path_buf(),
+            resolved.state_dir().to_path_buf(),
+            resolved.cache_dir().to_path_buf(),
+            resolved.runtime_dir().to_path_buf(),
+            resolved.executable_dir().to_path_buf(),
+            resolved.legacy_dir().to_path_buf(),
+        ] {
+            let expected = expected.display().to_string();
+            assert!(path_strings.contains(&expected.as_str()), "missing sensitive root: {expected}");
+        }
+        assert_eq!(path_strings.iter().filter(|path| **path == "/vtcode/shared").count(), 1);
+    }
+
+    #[test]
+    fn invalid_vtcode_path_resolution_is_rejected_before_policy_construction() {
+        let error = vtcode_sensitive_paths(&[("HOME", "/home/tester"), ("VTCODE_CONFIG", "relative/config")])
+            .expect_err("relative VT Code config paths must fail closed");
+        assert!(error.to_string().contains("VTCODE_CONFIG"));
     }
 
     #[cfg(windows)]

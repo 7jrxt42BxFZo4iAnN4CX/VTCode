@@ -82,6 +82,15 @@ Choose one of the supported LLM providers:
 
 For more providers, see the [Provider Guides](../providers/PROVIDER_GUIDES.md).
 
+### User data and configuration paths
+
+VT Code keeps project-local `.vtcode` state in the workspace and stores
+user-global configuration, data, state, caches, runtime files, and managed
+binaries in platform-appropriate directories. Run `vtcode --version` to see
+the paths selected for this installation. The [user data directories guide](../guides/user-data-directories.md)
+documents XDG overrides, Windows/macOS locations, permissions, and migration
+from the historical `~/.vtcode` tree.
+
 ## Installation
 
 ### Option 1: Direct Download (Recommended)
@@ -493,7 +502,7 @@ VT Code is designed with security as a first-class concern:
 
 ### Security Best Practices
 
-1. **Review Tool Approvals** - Check `~/.config/vtcode/tool_policy.toml` regularly
+1. **Review Tool Approvals** - Review the generated `tool-policy.json` in the canonical user config directory regularly
 2. **Use "Approve Once"** - For unfamiliar operations, don't auto-approve
 3. **Enable Sandbox** - For network commands, configure sandbox policy
 4. **Monitor Logs** - Review `.vtcode/logs/` for suspicious activity

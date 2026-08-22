@@ -2,10 +2,10 @@ use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::path::PathBuf;
+use vtcode_commons::VtCodePaths;
 
 use super::super::install_support::{
     acquire_lock_file, cache_is_stale, load_json_cache, lock_is_active, save_json_cache, unix_timestamp_now,
-    vtcode_state_dir_or_default,
 };
 
 const INSTALL_LOCK_MAX_AGE_SECS: u64 = 1_800;
@@ -31,12 +31,14 @@ pub(super) struct InstallLockGuard {
 }
 
 impl InstallationCache {
-    fn state_dir() -> PathBuf {
-        vtcode_state_dir_or_default()
+    fn state_dir() -> Result<PathBuf> {
+        VtCodePaths::resolve()?.ensure_cache_child_dir("ripgrep")
     }
 
-    fn cache_path() -> PathBuf {
-        Self::state_dir().join("ripgrep_install_cache.json")
+    fn cache_path() -> Result<PathBuf> {
+        let paths = VtCodePaths::resolve()?;
+        paths.ensure_cache_child_dir("ripgrep")?;
+        paths.cache_path("ripgrep/ripgrep_install_cache.json")
     }
 
     pub(super) fn is_stale() -> bool {
@@ -47,11 +49,13 @@ impl InstallationCache {
     }
 
     pub(super) fn load() -> Result<Self> {
-        load_json_cache(&Self::cache_path(), "ripgrep installation cache")
+        load_json_cache(&Self::cache_path()?, "ripgrep installation cache")
     }
 
     fn save(&self) -> Result<()> {
-        save_json_cache(&Self::state_dir(), &Self::cache_path(), self, "ripgrep installation cache")
+        let state_dir = Self::state_dir()?;
+        let cache_path = Self::cache_path()?;
+        save_json_cache(&state_dir, &cache_path, self, "ripgrep installation cache")
     }
 
     pub(super) fn mark_failed(method: &str, reason: &str) {
@@ -77,7 +81,7 @@ impl InstallationCache {
 
 impl InstallLockGuard {
     pub(super) fn acquire() -> Result<Self> {
-        let path = lock_path();
+        let path = lock_path()?;
         match acquire_lock_file(&path, INSTALL_LOCK_MAX_AGE_SECS)? {
             Some(file) => Ok(Self { path, _file: file }),
             None => Err(anyhow!("Ripgrep installation already in progress")),
@@ -85,7 +89,7 @@ impl InstallLockGuard {
     }
 
     pub(super) fn is_install_in_progress() -> bool {
-        lock_is_active(&lock_path(), INSTALL_LOCK_MAX_AGE_SECS)
+        lock_path().is_ok_and(|path| lock_is_active(&path, INSTALL_LOCK_MAX_AGE_SECS))
     }
 }
 
@@ -95,6 +99,8 @@ impl Drop for InstallLockGuard {
     }
 }
 
-fn lock_path() -> PathBuf {
-    vtcode_state_dir_or_default().join("ripgrep.lock")
+fn lock_path() -> Result<PathBuf> {
+    VtCodePaths::resolve()?
+        .ensure_runtime_child_dir("ripgrep")
+        .map(|path| path.join("install.lock"))
 }

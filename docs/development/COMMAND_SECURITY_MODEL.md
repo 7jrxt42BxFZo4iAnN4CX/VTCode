@@ -351,7 +351,7 @@ The permission system logs all decisions for security and debugging:
 [permissions]
 enabled = true
 audit_enabled = true
-audit_directory = "~/.vtcode/audit"
+audit_directory = "<state>/audit"
 log_allowed_commands = true
 log_denied_commands = true
 cache_ttl_seconds = 300
@@ -494,7 +494,7 @@ Side effects of running safe commands in a bad state
 
 1. **Keep deny_list comprehensive** - Always block system-altering commands
 2. **Use allow_glob sparingly** - More specific allow_list entries are safer
-3. **Monitor audit logs** - Review `~/.vtcode/audit/` regularly for suspicious patterns
+3. **Monitor audit logs** - Review the user state directory's `audit/` path regularly for suspicious patterns
 4. **Test configurations** - Validate with `cargo test` before deploying
 5. **Avoid eval-like patterns** - Never allow `eval`, `source`, dynamic command construction
 6. **Isolate workspaces** - Consider separate configurations for different project types

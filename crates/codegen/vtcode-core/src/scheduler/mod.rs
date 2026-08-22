@@ -8,7 +8,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -17,9 +17,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::process::Command;
 
-use crate::config::defaults::{get_config_dir, get_data_dir};
 use crate::notifications::{NotificationEvent, send_global_notification};
 use crate::utils::path::normalize_path;
+use vtcode_commons::VtCodePaths;
 
 pub const MAX_SCHEDULED_TASKS: usize = 50;
 pub const SESSION_TASK_EXPIRY_HOURS: i64 = 72;
@@ -575,12 +575,9 @@ pub struct SchedulerPaths {
 
 impl SchedulerPaths {
     pub fn new_default() -> Result<Self> {
-        let config_root = get_config_dir()
-            .ok_or_else(|| anyhow!("Failed to resolve VT Code config directory"))?
-            .join(DURABLE_STORE_DIR);
-        let data_root = get_data_dir()
-            .ok_or_else(|| anyhow!("Failed to resolve VT Code data directory"))?
-            .join(DURABLE_STORE_DIR);
+        let paths = VtCodePaths::resolve().context("Failed to resolve VT Code paths")?;
+        let config_root = paths.config_path(DURABLE_STORE_DIR)?;
+        let data_root = paths.state_path(DURABLE_STORE_DIR)?;
         Ok(Self { config_root, data_root })
     }
 
@@ -613,7 +610,7 @@ impl SchedulerPaths {
             &self.claims_dir(),
             &self.runs_dir(),
         ] {
-            fs::create_dir_all(dir)
+            VtCodePaths::ensure_user_dir(dir)
                 .with_context(|| format!("Failed to create scheduler directory {}", dir.display()))?;
         }
         Ok(())
@@ -858,8 +855,7 @@ impl SchedulerDaemon {
                 let workspace_label = scheduled_workspace_label(&record.definition);
                 let workspace = resolve_scheduled_task_workspace(&record.definition);
                 let execution = async {
-                    tokio::fs::create_dir_all(&artifact_dir)
-                        .await
+                    VtCodePaths::ensure_user_dir(&artifact_dir)
                         .with_context(|| format!("Failed to create run artifact dir {}", artifact_dir.display()))?;
 
                     let mut command = Command::new(&self.executable_path);
@@ -965,7 +961,7 @@ pub fn render_service_install_plan(executable_path: &Path) -> Result<ServiceInst
 pub fn install_service_file(executable_path: &Path) -> Result<ServiceInstallPlan> {
     let plan = render_service_install_plan(executable_path)?;
     if let Some(parent) = plan.path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("Failed to create {}", parent.display()))?;
+        VtCodePaths::ensure_user_dir(parent).with_context(|| format!("Failed to create {}", parent.display()))?;
     }
     atomic_write(&plan.path, plan.contents.as_bytes())?;
     Ok(plan)
@@ -1275,32 +1271,27 @@ fn read_definition(path: &Path) -> Result<ScheduledTaskDefinition> {
 }
 
 fn atomic_write(path: &Path, content: &[u8]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("Failed to create {}", parent.display()))?;
-    }
-
-    let temp_name = format!(
-        ".{}.tmp-{}",
-        path.file_name().and_then(|value| value.to_str()).unwrap_or("task"),
-        NEXT_TASK_COUNTER.fetch_add(1, Ordering::Relaxed)
-    );
-    let temp_path = path.with_file_name(temp_name);
-    fs::write(&temp_path, content).with_context(|| format!("Failed to write {}", temp_path.display()))?;
-    fs::rename(&temp_path, path).with_context(|| format!("Failed to replace {}", path.display()))?;
-    Ok(())
+    VtCodePaths::write_private_file_atomic(path, content)
+        .with_context(|| format!("Failed to atomically write {}", path.display()))
 }
 
 fn try_acquire_claim(paths: &SchedulerPaths, id: &str) -> Result<bool> {
     paths.ensure_dirs()?;
     let path = paths.claim_path(id);
-    match OpenOptions::new().write(true).create_new(true).open(&path) {
+    match VtCodePaths::create_private_file(&path) {
         Ok(mut file) => {
             let timestamp = Utc::now().to_rfc3339();
             file.write_all(timestamp.as_bytes())
                 .with_context(|| format!("Failed to write {}", path.display()))?;
             Ok(true)
         }
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+        Err(error)
+            if error.chain().any(|cause| {
+                cause
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io_error| io_error.kind() == std::io::ErrorKind::AlreadyExists)
+            }) =>
+        {
             if claim_is_stale(&path)? {
                 let _ = fs::remove_file(&path);
                 return try_acquire_claim(paths, id);

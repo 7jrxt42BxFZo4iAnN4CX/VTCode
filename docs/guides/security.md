@@ -164,7 +164,7 @@ workspace.
   `vtcode.toml` or an agent spec — invalidates the approval and requires a new
   review before anything runs again.
 
-User-level hooks in `~/.vtcode/vtcode.toml` run without approval when the
+User-level hooks in the canonical user config `vtcode.toml` run without approval when the
 workspace defines no lifecycle hook content of its own.
 
 ## Threat Model
@@ -205,21 +205,27 @@ workspace defines no lifecycle hook content of its own.
 
 ### Tool Policy Configuration
 
-Configure tool approval policies in `~/.config/vtcode/tool_policy.toml`:
+Configure default tool policies in the canonical user `vtcode.toml` (on
+Linux/BSD this is `$XDG_CONFIG_HOME/vtcode/vtcode.toml`, defaulting to
+`~/.config/vtcode/vtcode.toml`; see the [user data directories guide](user-data-directories.md)):
 
 ```toml
-# Allow specific tools without prompting
 [tools]
-exec_command = "ask"
+default_policy = "prompt"
+
+[tools.policies]
+exec_command = "prompt"
 code_search = "allow"
 apply_patch = "prompt"
-
-# Require approval for sensitive operations
 write_stdin = "prompt"
 
-# Block dangerous operations
-bash = "deny"
+# Block a specific tool
+some_tool = "deny"
 ```
+
+Interactive approval decisions are persisted separately in the generated
+`tool-policy.json` file in the same canonical config directory. VT Code manages
+that JSON file; it is not a second TOML configuration file.
 
 ### Execution Policy
 
@@ -239,7 +245,7 @@ root = "/path/to/project"
 ### For Users
 
 1. **Review Tool Approvals**
-   - Check `~/.config/vtcode/tool_policy.toml` regularly
+   - Review the generated `tool-policy.json` in the canonical user config directory regularly
    - Use "Approve Once" for unfamiliar operations
    - Only use "Always Allow" for trusted tools
 

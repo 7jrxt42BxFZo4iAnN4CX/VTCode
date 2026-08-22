@@ -8,6 +8,7 @@ use crate::utils::file_utils::canonicalize_with_context;
 use anyhow::{Context, Result, anyhow};
 use glob::{Pattern, glob};
 use tracing::warn;
+use vtcode_commons::VtCodePaths;
 use vtcode_commons::canonicalize;
 use vtcode_commons::canonicalize_async;
 use vtcode_commons::walk::build_walker_single_threaded;
@@ -23,7 +24,7 @@ const IMPORT_PROBE_NAME: &str = "__vtcode_instruction_probe__";
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "scope", rename_all = "snake_case")]
 pub enum InstructionScope {
-    /// User-level instructions from `~/.vtcode/` or `~/.config/vtcode/`.
+    /// User-level instructions from the canonical config root or a compatibility root.
     User,
     /// Workspace-level instructions from the project root or subdirectories.
     Workspace,
@@ -593,22 +594,39 @@ pub async fn read_instruction_bundle(
 
 fn user_instruction_candidates(home: &Path, fallback_filenames: &[String]) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
-    let roots = [
-        home.to_path_buf(),
-        home.join(".vtcode"),
-        home.join(GLOBAL_CONFIG_DIRECTORY),
-    ];
-    for root in roots {
+    for root in user_global_instruction_roots(home) {
         candidates.extend(instruction_candidates_for_dir(&root, fallback_filenames));
     }
     candidates
 }
 
 fn user_rules_roots(home: &Path) -> Vec<PathBuf> {
-    vec![
-        home.join(RULES_DIRECTORY),
-        home.join(GLOBAL_CONFIG_DIRECTORY).join("rules"),
-    ]
+    user_global_instruction_roots(home)
+        .into_iter()
+        .map(|root| root.join("rules"))
+        .collect()
+}
+
+fn user_global_instruction_roots(home: &Path) -> Vec<PathBuf> {
+    let canonical_config = VtCodePaths::resolve()
+        .ok()
+        .filter(|_paths| dirs::home_dir().as_deref() == Some(home))
+        .map(|paths| paths.config_dir().to_path_buf())
+        .unwrap_or_else(|| home.join(GLOBAL_CONFIG_DIRECTORY));
+    let legacy = VtCodePaths::resolve()
+        .ok()
+        .filter(|_paths| dirs::home_dir().as_deref() == Some(home))
+        .map(|paths| paths.legacy_dir().to_path_buf())
+        .unwrap_or_else(|| home.join(".vtcode"));
+
+    let mut roots = vec![
+        home.to_path_buf(),
+        legacy,
+        home.join(GLOBAL_CONFIG_DIRECTORY),
+        canonical_config,
+    ];
+    roots.dedup();
+    roots
 }
 
 fn instruction_candidates_for_dir(dir: &Path, fallback_filenames: &[String]) -> Vec<PathBuf> {
@@ -1243,20 +1261,12 @@ async fn allowed_import_roots(project_root: &Path, home_dir: Option<&Path>) -> R
                 .with_context(|| format!("Failed to canonicalize home import root {}", home.display()))?,
         );
 
-        let vtcode_dir = home.join(".vtcode");
-        if tokio::fs::try_exists(&vtcode_dir).await.unwrap_or(false) {
-            roots.push(
-                canonicalize_async(&vtcode_dir).await.with_context(|| {
-                    format!("Failed to canonicalize vtcode user import root {}", vtcode_dir.display())
-                })?,
-            );
-        }
-
-        let legacy_dir = home.join(GLOBAL_CONFIG_DIRECTORY);
-        if tokio::fs::try_exists(&legacy_dir).await.unwrap_or(false) {
-            roots.push(canonicalize_async(&legacy_dir).await.with_context(|| {
-                format!("Failed to canonicalize legacy vtcode user import root {}", legacy_dir.display())
-            })?);
+        for user_root in user_global_instruction_roots(home) {
+            if tokio::fs::try_exists(&user_root).await.unwrap_or(false) {
+                roots.push(canonicalize_async(&user_root).await.with_context(|| {
+                    format!("Failed to canonicalize VT Code user import root {}", user_root.display())
+                })?);
+            }
         }
     }
 

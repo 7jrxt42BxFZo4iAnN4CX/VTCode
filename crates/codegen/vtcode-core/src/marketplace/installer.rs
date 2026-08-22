@@ -1,12 +1,13 @@
 //! Plugin installer for marketplace system
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::tools::plugins::PluginRuntime;
-use crate::utils::file_utils::{ensure_dir_exists, write_file_with_context, write_json_file};
 use crate::utils::validation::{validate_all_non_empty, validate_non_empty};
 use anyhow::{Context, Result, bail};
 use tokio::fs;
+use vtcode_commons::VtCodePaths;
+use vtcode_commons::fs::{read_private_file_no_follow, write_private_file_atomic, write_private_json_file};
 
 use super::PluginManifest;
 
@@ -27,12 +28,16 @@ impl PluginInstaller {
 
     /// Install a plugin from its manifest
     pub async fn install_plugin(&self, manifest: &PluginManifest) -> Result<()> {
+        self.validate_manifest(manifest)?;
+
         // Create plugins directory if it doesn't exist
-        ensure_dir_exists(&self.plugins_dir).await?;
+        VtCodePaths::ensure_user_dir(&self.plugins_dir)
+            .with_context(|| format!("Failed to create plugin directory: {}", self.plugins_dir.display()))?;
 
         // Create plugin installation directory
         let plugin_dir = self.plugins_dir.join(&manifest.id);
-        ensure_dir_exists(&plugin_dir).await?;
+        VtCodePaths::ensure_user_dir(&plugin_dir)
+            .with_context(|| format!("Failed to create plugin directory: {}", plugin_dir.display()))?;
 
         // Download the plugin from its source
         self.download_plugin(manifest, &plugin_dir).await?;
@@ -40,7 +45,7 @@ impl PluginInstaller {
         // Save the manifest to the plugin directory
         let manifest_dir = plugin_dir.join(".vtcode-plugin");
         let manifest_path = manifest_dir.join("plugin.json");
-        write_json_file(&manifest_path, manifest).await?;
+        write_private_json_file(&manifest_path, manifest).await?;
 
         // Integrate with VT Code's existing plugin system
         self.integrate_with_core_plugin_system(&manifest_path).await?;
@@ -91,14 +96,9 @@ impl PluginInstaller {
     /// Download plugin from HTTP source
     async fn download_from_http(&self, manifest: &PluginManifest, plugin_dir: &Path) -> Result<()> {
         // For now, we'll create a placeholder since we don't have the actual HTTP client configured
-        let placeholder_path = plugin_dir.join(&manifest.entrypoint);
+        let placeholder_path = self.entrypoint_path(plugin_dir, manifest)?;
 
-        write_file_with_context(
-            &placeholder_path,
-            &format!("# HTTP Downloaded plugin: {}\n", manifest.id),
-            "plugin entrypoint",
-        )
-        .await?;
+        write_private_file_atomic(&placeholder_path, format!("# HTTP Downloaded plugin: {}\n", manifest.id)).await?;
 
         tracing::info!(plugin_id = %manifest.id, "http download completed");
         Ok(())
@@ -107,20 +107,13 @@ impl PluginInstaller {
     /// Download plugin from local file
     async fn download_from_file(&self, manifest: &PluginManifest, plugin_dir: &Path) -> Result<()> {
         let source_path = PathBuf::from(&manifest.source.replace("file://", ""));
-        if !fs::try_exists(&source_path)
+        let content = read_private_file_no_follow(&source_path)
             .await
-            .with_context(|| format!("Failed to check local source file {}", source_path.display()))?
-        {
-            bail!("Local source file path does not exist: {}", source_path.display());
-        }
-
-        let dest_path = plugin_dir.join(&manifest.entrypoint);
-        if let Some(parent) = dest_path.parent() {
-            ensure_dir_exists(parent).await?;
-        }
+            .with_context(|| format!("Failed to read local source file {}", source_path.display()))?;
+        let dest_path = self.entrypoint_path(plugin_dir, manifest)?;
 
         // Copy the file from source to destination
-        fs::copy(&source_path, &dest_path).await.with_context(|| {
+        write_private_file_atomic(&dest_path, content).await.with_context(|| {
             format!("Failed to copy plugin from {} to {}", source_path.display(), dest_path.display())
         })?;
 
@@ -131,20 +124,13 @@ impl PluginInstaller {
     /// Download plugin from local path
     async fn download_from_local(&self, manifest: &PluginManifest, plugin_dir: &Path) -> Result<()> {
         let source_path = PathBuf::from(&manifest.source);
-        if !fs::try_exists(&source_path)
+        let content = read_private_file_no_follow(&source_path)
             .await
-            .with_context(|| format!("Failed to check local source path {}", source_path.display()))?
-        {
-            bail!("Local source path path does not exist: {}", source_path.display());
-        }
-
-        let dest_path = plugin_dir.join(&manifest.entrypoint);
-        if let Some(parent) = dest_path.parent() {
-            ensure_dir_exists(parent).await?;
-        }
+            .with_context(|| format!("Failed to read local source path {}", source_path.display()))?;
+        let dest_path = self.entrypoint_path(plugin_dir, manifest)?;
 
         // Copy the file from source to destination
-        fs::copy(&source_path, &dest_path).await.with_context(|| {
+        write_private_file_atomic(&dest_path, content).await.with_context(|| {
             format!("Failed to copy plugin from {} to {}", source_path.display(), dest_path.display())
         })?;
 
@@ -155,14 +141,9 @@ impl PluginInstaller {
     /// Download plugin from git repository
     async fn download_from_git(&self, manifest: &PluginManifest, plugin_dir: &Path) -> Result<()> {
         // For now, we'll create a placeholder since we don't have git functionality integrated
-        let placeholder_path = plugin_dir.join(&manifest.entrypoint);
+        let placeholder_path = self.entrypoint_path(plugin_dir, manifest)?;
 
-        write_file_with_context(
-            &placeholder_path,
-            &format!("# Git downloaded plugin: {}\n", manifest.id),
-            "plugin entrypoint",
-        )
-        .await?;
+        write_private_file_atomic(&placeholder_path, format!("# Git downloaded plugin: {}\n", manifest.id)).await?;
 
         tracing::info!(plugin_id = %manifest.id, "git download completed");
         Ok(())
@@ -176,9 +157,8 @@ impl PluginInstaller {
         validate_non_empty(&manifest.source, "Plugin source URL")?;
 
         // Validate entrypoint path
-        if manifest.entrypoint.as_os_str().is_empty() {
-            bail!("Plugin manifest must have a valid entrypoint path");
-        }
+        validate_plugin_component(&manifest.id, "Plugin ID")?;
+        validate_relative_path(&manifest.entrypoint, "Plugin entrypoint")?;
 
         // Validate trust level if specified
         if let Some(trust_level) = &manifest.trust_level {
@@ -199,12 +179,22 @@ impl PluginInstaller {
 
     /// Uninstall a plugin by ID
     pub async fn uninstall_plugin(&self, plugin_id: &str) -> Result<()> {
+        validate_plugin_component(plugin_id, "Plugin ID")?;
+        VtCodePaths::ensure_user_dir(&self.plugins_dir)
+            .with_context(|| format!("Failed to validate plugin directory: {}", self.plugins_dir.display()))?;
         let plugin_dir = self.plugins_dir.join(plugin_id);
-        if !fs::try_exists(&plugin_dir)
-            .await
-            .with_context(|| format!("Failed to check installed plugin {}", plugin_dir.display()))?
-        {
-            bail!("Installed plugin path does not exist: {}", plugin_dir.display());
+        let metadata = match fs::symlink_metadata(&plugin_dir).await {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                bail!("Installed plugin path does not exist: {}", plugin_dir.display());
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("Failed to inspect installed plugin {}", plugin_dir.display()));
+            }
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            bail!("Refusing to remove non-directory plugin path: {}", plugin_dir.display());
         }
 
         // Remove from VT Code's plugin system before filesystem removal
@@ -236,7 +226,40 @@ impl PluginInstaller {
 
     /// Check if a plugin is installed
     pub async fn is_installed(&self, plugin_id: &str) -> bool {
+        if validate_plugin_component(plugin_id, "Plugin ID").is_err() {
+            return false;
+        }
         let plugin_dir = self.plugins_dir.join(plugin_id);
-        fs::try_exists(plugin_dir).await.unwrap_or(false)
+        fs::symlink_metadata(plugin_dir)
+            .await
+            .is_ok_and(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
     }
+
+    fn entrypoint_path(&self, plugin_dir: &Path, manifest: &PluginManifest) -> Result<PathBuf> {
+        validate_relative_path(&manifest.entrypoint, "Plugin entrypoint")?;
+        let path = plugin_dir.join(&manifest.entrypoint);
+        if let Some(parent) = path.parent() {
+            VtCodePaths::ensure_user_dir(parent)
+                .with_context(|| format!("Failed to create plugin entrypoint directory: {}", parent.display()))?;
+        }
+        Ok(path)
+    }
+}
+
+fn validate_plugin_component(value: &str, label: &str) -> Result<()> {
+    let mut components = Path::new(value).components();
+    if value.trim().is_empty()
+        || !matches!(components.next(), Some(Component::Normal(_)))
+        || components.next().is_some()
+    {
+        bail!("{label} must be one normal path component: {value}");
+    }
+    Ok(())
+}
+
+fn validate_relative_path(path: &Path, label: &str) -> Result<()> {
+    if path.as_os_str().is_empty() || !path.components().all(|component| matches!(component, Component::Normal(_))) {
+        bail!("{label} must be a non-empty relative path without traversal: {}", path.display());
+    }
+    Ok(())
 }

@@ -375,14 +375,10 @@ mod tests {
 
     #[test]
     fn startup_update_check_suppresses_dismissed_version() {
-        use std::env;
         use tempfile::TempDir;
-        use vtcode_commons::env_lock;
 
-        let env_guard = env_lock::lock();
         let temp_dir = TempDir::new().expect("temp dir");
-        let previous = env::var_os("XDG_CACHE_HOME");
-        env_guard.set_var("XDG_CACHE_HOME", temp_dir.path());
+        let previous = cache::set_cache_dir_override_for_tests(Some(temp_dir.path().to_path_buf()));
 
         let dismissed = Version::parse("0.113.0").expect("dismissed");
         cache::record_successful_check(Some(&dismissed), true).expect("write cache");
@@ -396,19 +392,15 @@ mod tests {
         let check = updater.startup_update_check().expect("startup check");
         assert!(check.cached_notice.is_none(), "Dismissed version should not produce a cached notice");
 
-        env_guard.restore_var("XDG_CACHE_HOME", previous);
+        cache::set_cache_dir_override_for_tests(previous);
     }
 
     #[test]
     fn startup_update_check_shows_undismissed_newer_version() {
-        use std::env;
         use tempfile::TempDir;
-        use vtcode_commons::env_lock;
 
-        let env_guard = env_lock::lock();
         let temp_dir = TempDir::new().expect("temp dir");
-        let previous = env::var_os("XDG_CACHE_HOME");
-        env_guard.set_var("XDG_CACHE_HOME", temp_dir.path());
+        let previous = cache::set_cache_dir_override_for_tests(Some(temp_dir.path().to_path_buf()));
 
         let latest = Version::parse("0.114.0").expect("latest");
         cache::record_successful_check(Some(&latest), true).expect("write cache");
@@ -423,6 +415,6 @@ mod tests {
         let check = updater.startup_update_check().expect("startup check");
         assert!(check.cached_notice.is_some(), "Newer, non-dismissed version should produce a cached notice");
 
-        env_guard.restore_var("XDG_CACHE_HOME", previous);
+        cache::set_cache_dir_override_for_tests(previous);
     }
 }

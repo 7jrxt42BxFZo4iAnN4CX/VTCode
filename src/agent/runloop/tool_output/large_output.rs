@@ -12,7 +12,7 @@
 //! - Agent can read full context from file when needed for accurate responses
 //!
 //! Directory structure:
-//! `~/.vtcode/tmp/<session_hash>/call_<call_id>.output`
+//! The configured cache directory's `large-output/<session_hash>/call_<call_id>.output`
 //!
 //! ## Usage
 //!
@@ -32,7 +32,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use vtcode_commons::fs::ensure_dir_exists_sync;
+use vtcode_commons::VtCodePaths;
 #[cfg(test)]
 use vtcode_commons::fs::read_file_with_context_sync;
 #[cfg(test)]
@@ -41,7 +41,7 @@ use vtcode_commons::preview::excerpt_text_lines;
 /// Configuration for large output spooling
 #[derive(Debug, Clone)]
 pub(crate) struct LargeOutputConfig {
-    /// Base directory for temporary output files (default: ~/.vtcode/tmp)
+    /// Base directory for temporary output files (default: the VT Code cache directory)
     pub base_dir: PathBuf,
     /// Size threshold (bytes) above which output is spooled to file
     pub threshold_bytes: usize,
@@ -51,9 +51,15 @@ pub(crate) struct LargeOutputConfig {
 
 impl Default for LargeOutputConfig {
     fn default() -> Self {
-        let home = std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("."));
+        let base_dir = VtCodePaths::resolve()
+            .and_then(|paths| paths.cache_path("large-output"))
+            .unwrap_or_else(|_| {
+                std::env::temp_dir()
+                    .join(format!("vtcode-{}", std::process::id()))
+                    .join("large-output")
+            });
         Self {
-            base_dir: home.join(".vtcode").join("tmp"),
+            base_dir,
             threshold_bytes: 50_000, // 50KB — aligned with DEFAULT_SPOOL_THRESHOLD in streams.rs
             session_id: None,
         }
@@ -262,7 +268,7 @@ pub(crate) fn spool_large_output(
     let session_dir = config.base_dir.join(&session_hash);
 
     // Create session directory
-    ensure_dir_exists_sync(&session_dir)
+    VtCodePaths::ensure_user_dir(&session_dir)
         .with_context(|| format!("Failed to create output spool directory: {}", session_dir.display()))?;
 
     // Generate unique call ID
@@ -271,7 +277,7 @@ pub(crate) fn spool_large_output(
     let file_path = session_dir.join(&filename);
 
     // Write content to file
-    let mut file = fs::File::create(&file_path)
+    let mut file = VtCodePaths::create_private_file(&file_path)
         .with_context(|| format!("Failed to create spool file: {}", file_path.display()))?;
 
     // Write metadata header
@@ -309,7 +315,7 @@ pub(crate) fn spool_large_output(
 /// Example output:
 /// ```text
 /// │ Output too long and was saved to:                                    │
-/// │ /Users/user/.vtcode/tmp/40490821eec37be65d00bb1d9e60f6f4d2aa9753e... │
+/// │ /Users/user/.cache/vtcode/large-output/40490821eec37be65d00bb1d9e60f6f4d2aa9753e... │
 /// │ call_b557fe1443144e71a2c00a34.output                                  │
 /// ```
 #[cfg(test)]
@@ -337,7 +343,7 @@ pub(crate) fn format_spool_notification(result: &SpoolResult) -> String {
     lines.join("\n")
 }
 
-/// Clean up old spooled output directories under `base_dir` (typically `~/.vtcode/tmp/`).
+/// Clean up old spooled output directories under `base_dir`.
 /// Removes session subdirectories whose modification time exceeds `max_age_secs`.
 pub(crate) fn cleanup_old_temp_spools(base_dir: &Path, max_age_secs: u64) -> Result<usize> {
     if max_age_secs == 0 || !base_dir.exists() {

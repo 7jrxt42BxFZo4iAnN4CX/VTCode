@@ -10,8 +10,11 @@ use crate::agent::runloop::slash_commands::StatuslineTargetMode;
 use crate::agent::runloop::unified::palettes::refresh_runtime_config_from_manager;
 use crate::agent::runloop::unified::turn::session::slash_commands::SlashCommandContext;
 
-use super::super::super::config_toml::{ensure_child_table, load_toml_value, save_toml_value};
+use super::super::super::config_toml::{
+    ensure_child_table, load_private_toml_value, load_toml_value, save_private_toml_value, save_toml_value,
+};
 use super::config::statusline_mode_id;
+use vtcode_commons::VtCodePaths;
 
 const STATUSLINE_SCRIPT_FILE_NAME: &str = "statusline.sh";
 const STATUSLINE_SCRIPT_TEMPLATE: &str = r#"#!/bin/sh
@@ -57,7 +60,7 @@ pub(super) async fn persist_statusline_config(
     target: StatuslineTargetMode,
     script_path: &Path,
 ) -> Result<()> {
-    write_statusline_config(config_path, &draft)?;
+    write_statusline_config(config_path, &draft, target)?;
     refresh_runtime_config_from_manager(
         ctx.renderer,
         ctx.handle,
@@ -71,7 +74,7 @@ pub(super) async fn persist_statusline_config(
 
     if target == StatuslineTargetMode::Workspace {
         let command = draft.command.as_deref().map(str::trim).unwrap_or_default().to_string();
-        if command == default_script_command(target, script_path) && !script_path.exists() {
+        if command == default_script_command(target, script_path) && !statusline_script_exists(script_path) {
             ctx.renderer.line(
                 MessageStyle::Warning,
                 "Saved command path points to a missing script. Use \"Create script template\" to scaffold it.",
@@ -82,8 +85,11 @@ pub(super) async fn persist_statusline_config(
     Ok(())
 }
 
-fn write_statusline_config(config_path: &Path, draft: &StatusLineConfig) -> Result<()> {
-    let mut root = load_toml_value(config_path)?;
+fn write_statusline_config(config_path: &Path, draft: &StatusLineConfig, target: StatuslineTargetMode) -> Result<()> {
+    let mut root = match target {
+        StatuslineTargetMode::User => load_private_toml_value(config_path)?,
+        StatuslineTargetMode::Workspace => load_toml_value(config_path)?,
+    };
     let root_table = root.as_table_mut().context("Status line config root is not a TOML table")?;
     let ui_table = ensure_child_table(root_table, "ui");
     let status_table = ensure_child_table(ui_table, "status_line");
@@ -104,7 +110,10 @@ fn write_statusline_config(config_path: &Path, draft: &StatusLineConfig) -> Resu
         TomlValue::Integer(u64_to_toml_integer(draft.command_timeout_ms, "command_timeout_ms")?),
     );
 
-    save_toml_value(config_path, &root)
+    match target {
+        StatuslineTargetMode::User => save_private_toml_value(config_path, &root),
+        StatuslineTargetMode::Workspace => save_toml_value(config_path, &root),
+    }
 }
 
 fn u64_to_toml_integer(value: u64, label: &str) -> Result<i64> {
@@ -134,23 +143,53 @@ fn shell_quote(path: &Path) -> String {
     format!("'{}'", path.replace('\'', "'\\''"))
 }
 
-pub(super) fn scaffold_statusline_script(path: &Path, replace_existing: bool) -> Result<ScriptScaffoldResult> {
-    if path.exists() && !replace_existing {
+pub(super) fn scaffold_statusline_script(
+    target: StatuslineTargetMode,
+    path: &Path,
+    replace_existing: bool,
+) -> Result<ScriptScaffoldResult> {
+    let existing = match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            anyhow::bail!("Refusing to use symlinked status line script {}", path.display());
+        }
+        Ok(metadata) if !metadata.is_file() => {
+            anyhow::bail!("Status line script path is not a regular file: {}", path.display());
+        }
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error).with_context(|| format!("Failed to inspect {}", path.display())),
+    };
+    if existing && !replace_existing {
         return Ok(ScriptScaffoldResult::SkippedExisting);
     }
 
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("Failed to create {}", parent.display()))?;
+        if target == StatuslineTargetMode::User {
+            VtCodePaths::ensure_user_dir(parent).with_context(|| format!("Failed to create {}", parent.display()))?;
+        } else {
+            fs::create_dir_all(parent).with_context(|| format!("Failed to create {}", parent.display()))?;
+        }
     }
 
-    let result = if path.exists() {
+    let result = if existing {
         ScriptScaffoldResult::Replaced
     } else {
         ScriptScaffoldResult::Created
     };
-    fs::write(path, STATUSLINE_SCRIPT_TEMPLATE).with_context(|| format!("Failed to write {}", path.display()))?;
+    if target == StatuslineTargetMode::User {
+        VtCodePaths::write_private_file_atomic(path, STATUSLINE_SCRIPT_TEMPLATE.as_bytes())
+            .with_context(|| format!("Failed to write {}", path.display()))?;
+    } else {
+        fs::write(path, STATUSLINE_SCRIPT_TEMPLATE).with_context(|| format!("Failed to write {}", path.display()))?;
+    }
     set_executable(path)?;
     Ok(result)
+}
+
+pub(super) fn statusline_script_exists(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
+        .unwrap_or(false)
 }
 
 #[cfg(unix)]

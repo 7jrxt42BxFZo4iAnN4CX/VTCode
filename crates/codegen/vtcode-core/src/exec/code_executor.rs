@@ -522,11 +522,13 @@ from uuid import uuid4
 class MCPTools:
     """Interface to MCP tools from agent code via file-based IPC."""
 
-    IPC_DIR = os.environ.get("VTCODE_IPC_DIR", "/tmp/vtcode_ipc")
+    IPC_DIR = os.environ.get("VTCODE_IPC_DIR")
 
     def __init__(self):
         self._call_count = 0
         self._results = []
+        if not self.IPC_DIR:
+            raise RuntimeError("VTCODE_IPC_DIR is required for the VT Code SDK")
         os.makedirs(self.IPC_DIR, exist_ok=True)
 
     def _call_tool(self, name: str, args: Dict[str, Any]) -> Any:
@@ -620,7 +622,10 @@ class MCPTools {
   constructor() {
     this.callCount = 0;
     this.results = [];
-    this.ipcDir = process.env.VTCODE_IPC_DIR || '/tmp/vtcode_ipc';
+    this.ipcDir = process.env.VTCODE_IPC_DIR;
+    if (!this.ipcDir) {
+      throw new Error('VTCODE_IPC_DIR is required for the VT Code SDK');
+    }
     if (!fs.existsSync(this.ipcDir)) {
       fs.mkdirSync(this.ipcDir, { recursive: true });
     }
@@ -811,6 +816,7 @@ mod tests {
             .expect("python sdk should generate");
 
         assert!(sdk.contains("VTCODE_IPC_DIR"));
+        assert!(!sdk.contains("/tmp/vtcode_ipc"));
         assert!(!sdk.contains("VTCODE_WORKSPACE"));
     }
 
@@ -822,6 +828,7 @@ mod tests {
             .expect("javascript sdk should generate");
 
         assert!(sdk.contains("VTCODE_IPC_DIR"));
+        assert!(!sdk.contains("/tmp/vtcode_ipc"));
         assert!(!sdk.contains("VTCODE_WORKSPACE"));
     }
 }

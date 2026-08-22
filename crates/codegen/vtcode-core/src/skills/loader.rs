@@ -20,6 +20,7 @@ use std::sync::{OnceLock, RwLock};
 use std::time::{Duration, SystemTime};
 use tracing::{error, warn};
 use vtcode_agent_plugins::LoadedPlugin;
+use vtcode_commons::VtCodePaths;
 
 // Config for loader
 #[derive(Debug, Clone)]
@@ -339,6 +340,35 @@ fn skill_roots_with_home_dir(config: &SkillLoaderConfig, home_dir: Option<&Path>
             is_tool_root: false,
             is_plugin_root: false,
         });
+
+        if let Ok(paths) = VtCodePaths::resolve()
+            && dirs::home_dir().as_deref() == Some(home)
+        {
+            roots.push(SkillRoot {
+                path: paths.data_dir().join("skills"),
+                scope: SkillScope::User,
+                is_tool_root: false,
+                is_plugin_root: false,
+            });
+            roots.push(SkillRoot {
+                path: paths.legacy_dir().join("skills"),
+                scope: SkillScope::User,
+                is_tool_root: false,
+                is_plugin_root: false,
+            });
+            roots.push(SkillRoot {
+                path: paths.plugins_dir(),
+                scope: SkillScope::User,
+                is_tool_root: false,
+                is_plugin_root: true,
+            });
+            roots.push(SkillRoot {
+                path: paths.legacy_dir().join("plugins"),
+                scope: SkillScope::User,
+                is_tool_root: false,
+                is_plugin_root: true,
+            });
+        }
     }
 
     #[cfg(unix)]
@@ -756,8 +786,15 @@ fn plugin_loader_for_workspace(
 
     if let Some(codex_home) = codex_home {
         plugin_loader.add_trusted_dir(codex_home.join("plugins"));
-    } else {
-        plugin_loader.add_trusted_dir(dirs::home_dir().unwrap_or_default().join(".vtcode/plugins"));
+        if let Ok(paths) = VtCodePaths::resolve() {
+            plugin_loader
+                .add_trusted_dir(paths.plugins_dir())
+                .add_trusted_dir(paths.legacy_dir().join("plugins"));
+        }
+    } else if let Ok(paths) = VtCodePaths::resolve() {
+        plugin_loader
+            .add_trusted_dir(paths.plugins_dir())
+            .add_trusted_dir(paths.legacy_dir().join("plugins"));
     }
 
     plugin_loader

@@ -7,6 +7,7 @@ use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use vtcode_commons::VtCodePaths;
 
 /// Records tool approval decisions for learning
 #[derive(Clone)]
@@ -24,11 +25,14 @@ impl ApprovalRecorder {
 
 impl Default for ApprovalRecorder {
     fn default() -> Self {
-        // This default implementation creates a temporary directory for the cache.
-        // In a real application, you might want a more robust default path or
-        // to make `new` take an optional `cache_dir`.
-        let temp_dir = std::env::temp_dir().join(format!("approval_recorder_default_{}", std::process::id()));
-        Self::new(temp_dir)
+        let cache_dir = VtCodePaths::resolve()
+            .and_then(|paths| paths.ensure_cache_child_dir("approval"))
+            .unwrap_or_else(|_| {
+                std::env::temp_dir()
+                    .join(format!("vtcode-{}", std::process::id()))
+                    .join("approval")
+            });
+        Self::new(cache_dir)
     }
 }
 
@@ -85,7 +89,7 @@ impl ApprovalRecorder {
     ///
     /// Refreshes the in-memory pattern map from disk first so we observe
     /// approvals recorded by concurrent sessions (e.g. another running vtcode
-    /// instance sharing the same `~/.vtcode/cache/approval_patterns.json`).
+    /// instance sharing the same user cache approval-pattern file).
     pub async fn should_auto_approve(&self, approval_key: &str) -> bool {
         let manager = self.manager.write().await;
         if let Err(err) = manager.refresh_patterns() {

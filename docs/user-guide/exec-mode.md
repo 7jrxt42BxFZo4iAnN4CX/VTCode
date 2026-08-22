@@ -107,7 +107,7 @@ optional exports.
 also respects `agent.harness.event_log_path`; relative or absolute file paths
 write JSONL events directly, while directory paths get a timestamped
 `harness-<session>-<timestamp>.jsonl` file. Neither option creates a global
-`~/.vtcode/sessions` harness file by default.
+the user state directory's `sessions` harness file by default.
 
 `agent.harness.max_budget_usd` applies to exec mode as well as interactive runs.
 If model pricing metadata is unavailable, VT Code leaves `total_cost_usd` unset

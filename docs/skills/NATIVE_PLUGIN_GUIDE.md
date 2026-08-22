@@ -254,9 +254,11 @@ Copy the plugin to a VT Code plugin directory:
 
 **User Plugins:**
 ```bash
-mkdir -p ~/.vtcode/plugins/my-plugin
-cp target/release/libmy_plugin.dylib ~/.vtcode/plugins/my-plugin/
-cp plugin.json ~/.vtcode/plugins/my-plugin/
+# Set PLUGIN_DIR to the resolved user data directory's plugins/ path
+# shown by `vtcode --version`.
+mkdir -p "$PLUGIN_DIR/my-plugin"
+cp target/release/libmy_plugin.dylib "$PLUGIN_DIR/my-plugin/"
+cp plugin.json "$PLUGIN_DIR/my-plugin/"
 ```
 
 **Project Plugins:**
@@ -284,7 +286,7 @@ vtcode skills info my-plugin
 ### Trusted Directories
 
 VT Code only loads plugins from trusted directories:
-- `~/.vtcode/plugins/` - User plugins
+- canonical user data directory/`plugins/` - User plugins
 - `<project>/.vtcode/plugins/` - Project plugins
 - `<project>/.agents/plugins/` - Agent plugins
 
@@ -450,7 +452,7 @@ vtcode skills use plugin-a | vtcode skills use plugin-b
 use vtcode_core::skills::native_plugin::PluginLoader;
 
 let mut loader = PluginLoader::new();
-loader.add_trusted_dir(PathBuf::from("~/.vtcode/plugins"));
+loader.add_trusted_dir(PathBuf::from("/path/from-vtcode--version/plugins"));
 
 // Discover all plugins
 let plugins = loader.discover_plugins()?;

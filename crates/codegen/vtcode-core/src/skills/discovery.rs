@@ -15,6 +15,7 @@ use hashbrown::HashMap;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
+use vtcode_commons::VtCodePaths;
 
 /// Enhanced skill discovery configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,13 +41,16 @@ pub struct DiscoveryConfig {
 
 impl Default for DiscoveryConfig {
     fn default() -> Self {
+        let mut tool_paths = vec![PathBuf::from("./tools"), PathBuf::from("./vendor/tools")];
+        if let Ok(paths) = VtCodePaths::resolve() {
+            if let Ok(user_tool_path) = paths.data_path("tools") {
+                tool_paths.push(user_tool_path);
+            }
+            tool_paths.push(paths.legacy_dir().join("tools"));
+        }
         Self {
             skill_paths: Vec::new(),
-            tool_paths: vec![
-                PathBuf::from("./tools"),
-                PathBuf::from("./vendor/tools"),
-                PathBuf::from("~/.vtcode/tools"),
-            ],
+            tool_paths,
             auto_discover_system_tools: false,
             max_depth: 3,
             skill_patterns: vec!["SKILL.md".to_string()],
@@ -432,6 +436,11 @@ fn default_skill_paths(workspace_root: &Path) -> Vec<PathBuf> {
 
     if let Some(home) = dirs::home_dir() {
         paths.push(home.join(".agents/skills"));
+    }
+    if let Ok(vtcode_paths) = VtCodePaths::resolve() {
+        paths.push(vtcode_paths.data_dir().join("skills"));
+        paths.push(vtcode_paths.legacy_dir().join("skills"));
+        paths.extend(vtcode_paths.system_data_paths("skills").unwrap_or_default());
     }
     #[cfg(unix)]
     paths.push(PathBuf::from("/etc/codex/skills"));

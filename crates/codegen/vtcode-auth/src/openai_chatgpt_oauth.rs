@@ -1370,7 +1370,7 @@ mod tests {
             .expect("session should be present");
 
         assert_eq!(loaded.account_id, session.account_id);
-        assert!(!legacy_path.exists(), "legacy session should be removed after migration");
+        assert!(legacy_path.exists(), "legacy session should remain as a rollback source after migration");
         assert!(
             OpenAiSessionStorage::new()
                 .current_file_path()

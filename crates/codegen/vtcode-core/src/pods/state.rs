@@ -20,7 +20,7 @@ impl Default for PodsState {
     }
 }
 
-/// Active pod definition persisted in `~/.vtcode/pods/state.json`.
+/// Active pod definition persisted in the user state directory's `pods/state.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PodState {
     /// Human-readable pod name.

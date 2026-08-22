@@ -16,6 +16,7 @@ VT Code uses a configuration file named `vtcode.toml` that can be placed at the 
 - [Context compaction and session history](#context-compaction-and-session-history)
 - [MCP integration](#mcp-integration)
 - [Security and approvals](#security-and-approvals)
+- [User data directories](../guides/user-data-directories.md)
 - [Permissions guide](../guides/permissions.md)
 - [Participant system](#participant-system)
 - [Profiles and overrides](#profiles-and-overrides)
@@ -24,7 +25,8 @@ VT Code uses a configuration file named `vtcode.toml` that can be placed at the 
 
 VT Code supports several mechanisms for setting config values:
 
-- The `$VTCODE_HOME/vtcode.toml` configuration file where the `VTCODE_HOME` environment value defaults to `~/.vtcode`.
+- The canonical platform config directory's `vtcode.toml` (for example, `$XDG_CONFIG_HOME/vtcode/vtcode.toml` on Linux/BSD). See the [user data directories guide](../guides/user-data-directories.md) for all category roots and overrides.
+- The legacy `$VTCODE_HOME/vtcode.toml` file, defaulting to `~/.vtcode/vtcode.toml`, remains a read-compatibility and migration source.
 - The workspace-level `vtcode.toml` file that can be placed at the root of your project (similar to `AGENTS.md` in the OpenAI Codex).
 - Environment variables that can override certain configuration options.
 
@@ -318,7 +320,7 @@ top_p = 0.9                # Top-P sampling parameter
 
 VT Code separates authored guidance from learned persistent memory.
 
-- Authored guidance automatically includes `~/.vtcode/AGENTS.md`, project `AGENTS.md`, project `.vtcode/rules/`, and any `agent.instruction_files` entries you configure. The full content of these files is inlined into the prompt up to `agent.instruction_max_bytes` (default 16384); files that exceed the budget are truncated with a notice in the prompt.
+- Authored guidance automatically includes the canonical user config `AGENTS.md` (and legacy `~/.vtcode/AGENTS.md`), project `AGENTS.md`, project `.vtcode/rules/`, and any `agent.instruction_files` entries you configure. The full content of these files is inlined into the prompt up to `agent.instruction_max_bytes` (default 16384); files that exceed the budget are truncated with a notice in the prompt.
 - Persistent memory is a per-repository memory store summarized into a compact startup section after authored guidance.
 
 ### Instruction discovery controls
@@ -342,7 +344,10 @@ Workspace rules live under project `.vtcode/rules/`. Rules without frontmatter a
 
 Persistent memory uses `memory_summary.md` as the source for a compact startup summary and stores the durable registry under the repository memory directory.
 
-By default, that directory is `~/.vtcode/projects/<project>/memory/`. VT Code also migrates older per-repository memory directories from the legacy config root into `~/.vtcode` when it resolves repository memory.
+By default, that directory is the user state directory's
+`projects/<project>/memory/` path. VT Code also migrates older per-repository
+memory directories from the legacy `VTCODE_HOME` root into the canonical state
+directory when it resolves repository memory.
 
 ```toml
 [agent.persistent_memory]
@@ -826,15 +831,18 @@ human_in_the_loop = false
 default_tool_policy = "allow"
 ```
 
-Users can specify config values at multiple levels. Order of precedence is as follows:
+Users can specify config values at multiple levels. Values are merged from
+lowest to highest precedence as follows:
 
-1. Runtime overrides (`-c/--config key=value`) and explicit runtime flags (highest precedence)
-2. Workspace root `vtcode.toml`
-3. Workspace fallback `.vtcode/vtcode.toml`
-4. Project profile `.vtcode/projects/<project>/config/vtcode.toml`
-5. User-level `~/.vtcode/vtcode.toml`
-6. System-level `/etc/vtcode/vtcode.toml` (Unix)
-7. Built-in defaults (lowest precedence)
+1. Built-in defaults
+2. System-level `/etc/vtcode/vtcode.toml` and `XDG_CONFIG_DIRS` candidates (Unix)
+3. Legacy user-level `$VTCODE_HOME/vtcode.toml` (default `~/.vtcode/vtcode.toml`)
+4. Canonical user-level config-directory `vtcode.toml`
+5. Project profile `.vtcode/projects/<project>/config/vtcode.toml`
+6. Workspace fallback `.vtcode/vtcode.toml`
+7. Workspace root `vtcode.toml`
+8. Explicit config file (`VTCODE_CONFIG_PATH` or `--config path/to/file.toml`), retaining the global layers
+9. Runtime overrides (`-c/--config key=value`) and explicit runtime flags
 
 Merge semantics are layered: tables merge recursively, while scalar and array values are replaced by higher-precedence layers.
 

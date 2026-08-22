@@ -81,8 +81,9 @@ Complete guide to VT Code's security documentation.
 ## Configuration
 
 ### Tool Policy
-- **File**: `~/.config/vtcode/tool_policy.toml`
-- **Documentation**: [Tool Policies](../modules/vtcode_tools_policy.md)
+- **Defaults**: `vtcode.toml` in the canonical user config directory
+- **Persisted approvals**: `tool-policy.json` in the canonical user config directory
+- **Documentation**: [Tool Policies](../modules/vtcode_tools_policy.md), [User Data Directories](../guides/user-data-directories.md)
 
 ### Workspace Configuration
 - **File**: `vtcode.toml`

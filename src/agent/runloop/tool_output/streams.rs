@@ -34,8 +34,9 @@
 //! - `INLINE_STREAM_MAX_LINES: 30`: Limits visible output in inline mode
 //! - `MAX_CODE_LINES: 30`: For code fence blocks (full output in spool files)
 //!
-//! Full output is spooled to `.vtcode/tool-output/` for later review.
-//! For very large outputs, files are saved to `~/.vtcode/tmp/<session_hash>/call_<id>.output`
+//! Full output is spooled to workspace `.vtcode/tool-output/` for later review.
+//! For very large outputs, files are saved to the user cache's
+//! `large-output/<session_hash>/call_<id>.output`
 //! with a notification displayed to the client.
 
 use std::borrow::Cow;

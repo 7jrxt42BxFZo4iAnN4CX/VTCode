@@ -163,19 +163,39 @@ fn cli_args_include_provider_or_model() -> bool {
 /// and validating all config layers just to decide which `--help` text to
 /// show.
 fn config_includes_provider_or_model() -> bool {
-    // Check user-home config first (most common location for provider/model).
-    if let Some(found) = check_toml_file(home_config_path()) {
-        return found;
+    // Check every global layer: a higher-precedence file may be valid while
+    // leaving provider/model unset, allowing the effective lower layer to
+    // supply it.
+    for path in global_config_paths() {
+        if check_toml_file(Some(path)).is_some_and(|found| found) {
+            return true;
+        }
     }
     // Fall back to workspace config in the current directory.
-    if let Some(found) = check_toml_file(workspace_config_path()) {
-        return found;
-    }
-    false
+    check_toml_file(workspace_config_path()).unwrap_or(false)
 }
 
-fn home_config_path() -> Option<std::path::PathBuf> {
-    dirs::home_dir().map(|h| h.join(".vtcode").join("vtcode.toml"))
+fn global_config_paths() -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = std::env::var_os("VTCODE_CONFIG_PATH")
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
+    {
+        candidates.push(path);
+    }
+    let Ok(paths) = vtcode_commons::VtCodePaths::resolve() else {
+        return candidates;
+    };
+
+    // The resolver returns merge order (lowest precedence first); this probe
+    // checks the effective user-facing configuration from highest to lowest.
+    candidates.push(paths.config_file());
+    candidates.push(paths.legacy_dir().join("vtcode.toml"));
+    let mut system_paths = paths.system_config_paths("vtcode.toml").unwrap_or_default();
+    system_paths.reverse();
+    candidates.extend(system_paths);
+    candidates.dedup();
+    candidates
 }
 
 fn workspace_config_path() -> Option<std::path::PathBuf> {
@@ -440,11 +460,77 @@ fn extract_workspace_invalid_value(err_text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_augmented_cli_command, cached_candidates, extract_workspace_invalid_value, similarity_score,
-        suggest_similar_commands, try_enhance_clap_error,
+        build_augmented_cli_command, cached_candidates, extract_workspace_invalid_value, global_config_paths,
+        similarity_score, suggest_similar_commands, try_enhance_clap_error,
     };
     use clap::Parser;
+    use serial_test::serial;
+    use tempfile::TempDir;
+    use vtcode_commons::{VtCodePaths, env_lock};
     use vtcode_core::cli::args::Cli;
+
+    #[test]
+    #[serial]
+    fn global_config_paths_use_canonical_and_legacy_resolver_candidates() {
+        let env = env_lock::lock();
+        let config = TempDir::new().expect("create config root");
+        let legacy = TempDir::new().expect("create legacy root");
+        let previous_config = std::env::var_os("VTCODE_CONFIG");
+        let previous_home = std::env::var_os("VTCODE_HOME");
+        env.set_var("VTCODE_CONFIG", config.path());
+        env.set_var("VTCODE_HOME", legacy.path());
+
+        let mut expected = vec![config.path().join("vtcode.toml"), legacy.path().join("vtcode.toml")];
+        let mut system_paths = VtCodePaths::resolve()
+            .expect("resolve test VT Code paths")
+            .system_config_paths("vtcode.toml")
+            .expect("resolve system config candidates");
+        system_paths.reverse();
+        expected.extend(system_paths);
+        expected.dedup();
+        assert_eq!(global_config_paths(), expected);
+
+        env.restore_var("VTCODE_CONFIG", previous_config);
+        env.restore_var("VTCODE_HOME", previous_home);
+    }
+
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))]
+    #[test]
+    #[serial]
+    fn global_config_paths_put_user_layers_ahead_of_xdg_system_layers() {
+        let env = env_lock::lock();
+        let config = TempDir::new().expect("create config root");
+        let legacy = TempDir::new().expect("create legacy root");
+        let first_system = TempDir::new().expect("create first system root");
+        let second_system = TempDir::new().expect("create second system root");
+        let previous_config = std::env::var_os("VTCODE_CONFIG");
+        let previous_home = std::env::var_os("VTCODE_HOME");
+        let previous_system = std::env::var_os("XDG_CONFIG_DIRS");
+        let system_dirs =
+            std::env::join_paths([first_system.path(), second_system.path()]).expect("join XDG config directories");
+        env.set_var("VTCODE_CONFIG", config.path());
+        env.set_var("VTCODE_HOME", legacy.path());
+        env.set_var("XDG_CONFIG_DIRS", system_dirs);
+
+        let expected = vec![
+            config.path().join("vtcode.toml"),
+            legacy.path().join("vtcode.toml"),
+            first_system.path().join("vtcode/vtcode.toml"),
+            second_system.path().join("vtcode/vtcode.toml"),
+            std::path::PathBuf::from("/etc/vtcode/vtcode.toml"),
+        ];
+        assert_eq!(global_config_paths(), expected);
+
+        env.restore_var("VTCODE_CONFIG", previous_config);
+        env.restore_var("VTCODE_HOME", previous_home);
+        env.restore_var("XDG_CONFIG_DIRS", previous_system);
+    }
 
     #[test]
     fn invalid_positional_workspace_fails_during_cli_parse() {

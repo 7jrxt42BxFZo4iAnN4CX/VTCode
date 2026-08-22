@@ -66,10 +66,10 @@ allowed_domains = [
 ```toml
 [tools.web_fetch]
 dynamic_blocklist_enabled = true
-dynamic_blocklist_path = "~/.vtcode/web_fetch_blocklist.json"
+dynamic_blocklist_path = "<config>/web_fetch_blocklist.json"
 ```
 
-Create `~/.vtcode/web_fetch_blocklist.json`:
+Create `<config>/web_fetch_blocklist.json`:
 
 ```json
 {
@@ -90,10 +90,10 @@ Create `~/.vtcode/web_fetch_blocklist.json`:
 [tools.web_fetch]
 mode = "whitelist"
 dynamic_whitelist_enabled = true
-dynamic_whitelist_path = "~/.vtcode/web_fetch_whitelist.json"
+dynamic_whitelist_path = "<config>/web_fetch_whitelist.json"
 ```
 
-Create `~/.vtcode/web_fetch_whitelist.json`:
+Create `<config>/web_fetch_whitelist.json`:
 
 ```json
 {
@@ -173,7 +173,7 @@ strict_https_only = false  # Use with caution!
 ```toml
 [tools.web_fetch]
 enable_audit_logging = true
-audit_log_path = "~/.vtcode/web_fetch_audit.log"
+audit_log_path = "<state>/audit/web_fetch_audit.log"
 ```
 
 ## Configuration Examples
@@ -194,9 +194,9 @@ blocked_domains = []       # Minimal restrictions
 mode = "restricted"
 strict_https_only = true
 dynamic_blocklist_enabled = true
-dynamic_blocklist_path = "~/.vtcode/web_fetch_blocklist.json"
+dynamic_blocklist_path = "<config>/web_fetch_blocklist.json"
 enable_audit_logging = true
-audit_log_path = "~/.vtcode/web_fetch_audit.log"
+audit_log_path = "<state>/audit/web_fetch_audit.log"
 ```
 
 ### Enterprise (Whitelist Only)
@@ -205,9 +205,9 @@ audit_log_path = "~/.vtcode/web_fetch_audit.log"
 [tools.web_fetch]
 mode = "whitelist"
 dynamic_whitelist_enabled = true
-dynamic_whitelist_path = "~/.vtcode/web_fetch_whitelist.json"
+dynamic_whitelist_path = "<config>/web_fetch_whitelist.json"
 enable_audit_logging = true
-audit_log_path = "~/.vtcode/web_fetch_audit.log"
+audit_log_path = "<state>/audit/web_fetch_audit.log"
 ```
 
 ## Troubleshooting

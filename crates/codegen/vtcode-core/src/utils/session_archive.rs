@@ -2,9 +2,7 @@ use crate::config::constants::defaults;
 use crate::config::{HistoryPersistence, VTCodeConfig};
 use crate::llm::provider::{AssistantPhase, Message, MessageContent, MessageRole, ToolCall};
 use crate::telemetry::perf::PerfSpan;
-use crate::utils::dot_config::DotManager;
 use crate::utils::error_log_collector::ErrorLogEntry;
-use crate::utils::file_utils::{ensure_dir_exists, read_json_file, write_json_file, write_json_file_sync};
 use crate::utils::session_transcript_norm::{
     format_repeated_summary, normalize_distinct_tools_for_summary, normalize_recovery_line, normalized_transcript_key,
     push_clean_transcript_line, should_drop_transcript_line, summarize_tool_block,
@@ -22,6 +20,8 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
+use vtcode_commons::VtCodePaths;
+use vtcode_commons::fs::{read_private_json_file, write_private_json_file};
 
 const SESSION_FILE_PREFIX: &str = "session";
 const SESSION_FILE_EXTENSION: &str = "json";
@@ -787,7 +787,7 @@ fn session_archive_path_for_identifier(sessions_dir: &Path, session_identifier: 
 
 fn reserve_new_session_archive_path(sessions_dir: &Path, session_identifier: &str) -> Result<PathBuf> {
     let path = session_archive_path_for_identifier(sessions_dir, session_identifier)?;
-    if path.exists() {
+    if fs::symlink_metadata(&path).is_ok() {
         return Err(anyhow::anyhow!("Session archive identifier '{session_identifier}' already exists"));
     }
 
@@ -1105,7 +1105,7 @@ impl SessionArchive {
             return Ok(self.path.clone());
         };
 
-        write_json_file_sync(&self.path, &snapshot)?;
+        write_private_json_file_sync(&self.path, &snapshot)?;
         Ok(self.path.clone())
     }
 
@@ -1114,7 +1114,7 @@ impl SessionArchive {
             return Ok(self.path.clone());
         };
 
-        write_json_file(&self.path, &snapshot).await?;
+        write_private_json_file(&self.path, &snapshot).await?;
         Ok(self.path.clone())
     }
 
@@ -1252,7 +1252,7 @@ pub async fn list_recent_sessions(limit: usize) -> Result<Vec<SessionListing>> {
         for path in batch {
             let path = path.clone();
             let task = tokio::task::spawn(async move {
-                read_json_file::<SessionSnapshot>(&path)
+                read_private_json_file::<SessionSnapshot>(&path)
                     .await
                     .ok()
                     .map(|snapshot| SessionListing { path, snapshot })
@@ -1292,12 +1292,24 @@ pub async fn find_session_by_identifier(identifier: &str) -> Result<Option<Sessi
         Ok(path) => path,
         Err(_) => return Ok(None),
     };
-    if !path.exists() {
-        return Ok(None);
+    match tokio::fs::symlink_metadata(&path).await {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => return Ok(None),
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to inspect session archive {}", path.display()));
+        }
     }
 
-    let snapshot: SessionSnapshot = read_json_file(&path).await?;
+    let snapshot: SessionSnapshot = read_private_json_file(&path).await?;
     Ok(Some(SessionListing { path, snapshot }))
+}
+
+fn write_private_json_file_sync<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    let contents =
+        serde_json::to_vec_pretty(value).with_context(|| format!("failed to serialize {}", path.display()))?;
+    VtCodePaths::write_private_file_atomic(path, &contents)
+        .with_context(|| format!("failed to write private session archive {}", path.display()))
 }
 
 /// Find a saved session by ID or name for TUI `/resume` command.
@@ -1420,17 +1432,18 @@ fn ceil_char_boundary(content: &str, mut index: usize) -> usize {
 async fn resolve_sessions_dir() -> Result<PathBuf> {
     if let Some(custom) = read_env_var_os(SESSION_DIR_ENV) {
         let path = PathBuf::from(custom);
-        ensure_dir_exists(&path).await?;
+        VtCodePaths::ensure_user_dir(&path)
+            .with_context(|| format!("failed to initialize session directory {}", path.display()))?;
         return Ok(path);
     }
 
-    let manager = DotManager::new().context("failed to load VT Code dot manager")?;
-    manager
-        .initialize()
-        .await
-        .context("failed to initialize VT Code dot directory structure")?;
-    let dir = manager.sessions_dir();
-    ensure_dir_exists(&dir).await?;
+    let paths = VtCodePaths::resolve().context("failed to resolve VT Code paths")?;
+    paths
+        .ensure_state_dir()
+        .context("failed to initialize VT Code state directory")?;
+    let dir = paths.state_path("sessions")?;
+    VtCodePaths::ensure_user_dir(&dir)
+        .with_context(|| format!("failed to initialize session directory {}", dir.display()))?;
     Ok(dir)
 }
 
@@ -1568,7 +1581,7 @@ fn collect_session_entries(sessions_dir: &Path) -> Result<Vec<SessionFileEntry>>
         if !is_session_file(&path) {
             continue;
         }
-        let metadata = match entry.metadata() {
+        let metadata = match fs::symlink_metadata(&path) {
             Ok(value) => value,
             Err(err) => {
                 tracing::warn!(

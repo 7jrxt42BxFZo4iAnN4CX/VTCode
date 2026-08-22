@@ -8,7 +8,7 @@ VT Code includes a built-in update system that can check for and install updates
 
 - **Multiple release channels** (stable, beta, nightly)
 - **Version pinning** for staying on specific versions
-- **Configurable update behavior** via `~/.vtcode/update.toml`
+- **Configurable update behavior** via `update.toml` in the canonical user config directory
 - **Download mirrors** for better availability
 
 Standalone updates use VT Code's native replacement pipeline: the updater selects the
@@ -140,7 +140,7 @@ VT Code follows three release channels:
 - **Quality**: Fully tested and validated
 
 ```toml
-# ~/.vtcode/update.toml
+# canonical user config directory/update.toml
 channel = "stable"
 ```
 
@@ -152,7 +152,7 @@ channel = "stable"
 - **Quality**: Feature-complete, minor bugs possible
 
 ```toml
-# ~/.vtcode/update.toml
+# canonical user config directory/update.toml
 channel = "beta"
 ```
 
@@ -164,7 +164,7 @@ channel = "beta"
 - **Quality**: May contain bugs, rapid iteration
 
 ```toml
-# ~/.vtcode/update.toml
+# canonical user config directory/update.toml
 channel = "nightly"
 ```
 
@@ -185,7 +185,7 @@ Version pinning allows you to stay on a specific version, disabling automatic up
 vtcode update --pin 0.85.3
 ```
 
-This creates/updates `~/.vtcode/update.toml`:
+This creates/updates `update.toml` in the canonical user config directory:
 
 ```toml
 [pin]
@@ -200,7 +200,7 @@ vtcode update --unpin
 
 ## Configuration File
 
-Location: `~/.vtcode/update.toml`
+Location: the canonical user config directory/update.toml
 
 ### Example Configuration
 
@@ -307,7 +307,10 @@ When `keep_backup = true` (default), the previous version is kept after update. 
 
 ### Update Checks
 
-By default, VT Code checks for updates every 24 hours. The check timestamp is cached in `~/.cache/vtcode/last_update_check`.
+By default, VT Code checks for updates every 24 hours. The check timestamp is
+stored in the resolved user cache directory (on Linux/BSD, `$XDG_CACHE_HOME/vtcode`,
+defaulting to `~/.cache/vtcode`). See the [user data directories guide](user-data-directories.md)
+when the cache root must be changed or diagnosed.
 
 To disable automatic checks:
 
@@ -386,7 +389,7 @@ For automated environments, you can:
 - Updates are downloaded from GitHub Releases over HTTPS
 - Binary signatures are verified automatically
 - Backup versions are kept for rollback safety
-- Configuration file is user-controlled (`~/.vtcode/update.toml`)
+- Configuration file is user-controlled (`update.toml` in the canonical user config directory)
 
 ## Related Documentation
 

@@ -6,6 +6,7 @@
 //! [`ToolAuditConfig::default`].
 
 use std::path::PathBuf;
+use vtcode_commons::VtCodePaths;
 
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +15,7 @@ use serde::{Deserialize, Serialize};
 /// ```toml
 /// [safety.audit]
 /// enabled = true
-/// path = "~/.vtcode/audit/tools.jsonl"
+/// path = "<state>/audit/tools.jsonl"
 /// max_size_bytes = 32 * 1024 * 1024
 /// max_files = 4
 /// ```
@@ -56,7 +57,9 @@ impl Default for ToolAuditConfig {
 }
 
 fn default_audit_path() -> PathBuf {
-    PathBuf::from("~/.vtcode/audit/tools.jsonl")
+    VtCodePaths::resolve()
+        .and_then(|paths| paths.state_path("audit/tools.jsonl"))
+        .unwrap_or_default()
 }
 
 fn default_max_size_bytes() -> u64 {

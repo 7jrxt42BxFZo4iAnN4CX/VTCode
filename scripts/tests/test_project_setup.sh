@@ -4,48 +4,58 @@
 
 echo "Testing VT Code project management..."
 
-# Check if ~/.vtcode/projects directory exists
-if [ -d "$HOME/.vtcode/projects" ]; then
-    echo "✓ Found ~/.vtcode/projects directory"
+if [ -n "${XDG_STATE_HOME:-}" ]; then
+    case "$XDG_STATE_HOME" in
+        /*) STATE_DIR="$XDG_STATE_HOME/vtcode" ;;
+        *) STATE_DIR="$HOME/.local/state/vtcode" ;;
+    esac
 else
-    echo "✗ ~/.vtcode/projects directory not found"
+    STATE_DIR="$HOME/.local/state/vtcode"
+fi
+PROJECTS_DIR="$STATE_DIR/projects"
+
+# Check if the canonical state projects directory exists
+if [ -d "$PROJECTS_DIR" ]; then
+    echo "✓ Found $PROJECTS_DIR"
+else
+    echo "✗ $PROJECTS_DIR not found"
     exit 1
 fi
 
 # Test creating a sample project structure
 echo "Creating test project structure..."
-mkdir -p "$HOME/.vtcode/projects/test-project/config"
-mkdir -p "$HOME/.vtcode/projects/test-project/cache"
-mkdir -p "$HOME/.vtcode/projects/test-project/embeddings"
-mkdir -p "$HOME/.vtcode/projects/test-project/retrieval"
+mkdir -p "$PROJECTS_DIR/test-project/config"
+mkdir -p "$PROJECTS_DIR/test-project/cache"
+mkdir -p "$PROJECTS_DIR/test-project/embeddings"
+mkdir -p "$PROJECTS_DIR/test-project/retrieval"
 
 # Check if all directories were created
-if [ -d "$HOME/.vtcode/projects/test-project/config" ]; then
+if [ -d "$PROJECTS_DIR/test-project/config" ]; then
     echo "✓ Config directory created"
 else
     echo "✗ Config directory not created"
 fi
 
-if [ -d "$HOME/.vtcode/projects/test-project/cache" ]; then
+if [ -d "$PROJECTS_DIR/test-project/cache" ]; then
     echo "✓ Cache directory created"
 else
     echo "✗ Cache directory not created"
 fi
 
-if [ -d "$HOME/.vtcode/projects/test-project/embeddings" ]; then
+if [ -d "$PROJECTS_DIR/test-project/embeddings" ]; then
     echo "✓ Embeddings directory created"
 else
     echo "✗ Embeddings directory not created"
 fi
 
-if [ -d "$HOME/.vtcode/projects/test-project/retrieval" ]; then
+if [ -d "$PROJECTS_DIR/test-project/retrieval" ]; then
     echo "✓ Retrieval directory created"
 else
     echo "✗ Retrieval directory not created"
 fi
 
 # Create a simple .project metadata file
-cat > "$HOME/.vtcode/projects/test-project/.project" << EOF
+cat > "$PROJECTS_DIR/test-project/.project" << EOF
 {
   "name": "test-project",
   "description": "Test project for VT Code",
@@ -56,7 +66,7 @@ cat > "$HOME/.vtcode/projects/test-project/.project" << EOF
 }
 EOF
 
-if [ -f "$HOME/.vtcode/projects/test-project/.project" ]; then
+if [ -f "$PROJECTS_DIR/test-project/.project" ]; then
     echo "✓ Project metadata file created"
 else
     echo "✗ Project metadata file not created"

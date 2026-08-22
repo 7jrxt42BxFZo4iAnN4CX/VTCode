@@ -1,19 +1,18 @@
 //! Permission audit logging system
 //! Tracks all permission decisions (allow/deny/prompt) with context
-//! Writes to ~/.vtcode/audit/permissions-{date}.log in JSON format
+//! Writes to the user state directory's `audit/permissions-{date}.log` in JSON format.
 //! Old audit logs are pruned after DEFAULT_AUDIT_LOG_MAX_AGE_DAYS days.
 
 use crate::utils::error_messages::ERR_CREATE_AUDIT_DIR;
-use crate::utils::file_utils::ensure_dir_exists_sync;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::fs::OpenOptions;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::info;
+use vtcode_commons::VtCodePaths;
 
 /// Default maximum age in days for audit log files before they are pruned.
 pub const DEFAULT_AUDIT_LOG_MAX_AGE_DAYS: u64 = 90;
@@ -99,7 +98,7 @@ impl PermissionAuditLog {
     /// Create or open the audit log for today
     pub fn new(audit_dir: PathBuf) -> Result<Self> {
         // Create audit directory if needed
-        ensure_dir_exists_sync(&audit_dir).context(ERR_CREATE_AUDIT_DIR)?;
+        VtCodePaths::ensure_user_dir(&audit_dir).context(ERR_CREATE_AUDIT_DIR)?;
 
         // Prune old audit logs
         if let Err(err) = cleanup_old_audit_logs(&audit_dir, DEFAULT_AUDIT_LOG_MAX_AGE_DAYS) {
@@ -174,10 +173,7 @@ impl PermissionAuditLog {
 
     fn writer_mut(&mut self) -> Result<&mut BufWriter<fs::File>> {
         if self.writer.is_none() {
-            let file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&self.log_path)
+            let file = VtCodePaths::open_private_append_file(&self.log_path)
                 .with_context(|| format!("Failed to open audit log at {:?}", self.log_path))?;
             self.writer = Some(BufWriter::new(file));
         }

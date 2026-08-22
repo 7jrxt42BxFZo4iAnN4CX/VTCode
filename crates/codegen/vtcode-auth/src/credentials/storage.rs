@@ -7,8 +7,7 @@ use std::fs;
 use super::encryption;
 use super::keyring;
 use super::mode::AuthCredentialsStoreMode;
-use crate::storage_paths::auth_storage_dir;
-use crate::storage_paths::write_private_file;
+use crate::storage_paths::{auth_storage_dir, read_private_file, write_private_file};
 
 /// Generic credential storage interface.
 ///
@@ -248,10 +247,8 @@ impl CredentialStorage {
 
     fn load_file(&self) -> Result<Option<String>> {
         let path = self.file_path()?;
-        let data = match fs::read(&path) {
-            Ok(data) => data,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(err) => return Err(anyhow!("failed to read encrypted credential file: {err}")),
+        let Some(data) = read_private_file(&path).context("failed to read encrypted credential file")? else {
+            return Ok(None);
         };
 
         let encrypted: encryption::EncryptedCredential =

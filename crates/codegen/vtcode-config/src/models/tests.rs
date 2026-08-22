@@ -608,6 +608,15 @@ fn test_all_models_have_non_empty_metadata_and_parse() {
             // GLM-5.2 is shared with OpenRouter; bare parsing preserves the
             // existing OpenRouter precedence.
             ModelId::NvidiaZaiGlm52 => continue,
+            // OpenCode Go routes Grok 4.5 through a prefix, while the bare
+            // model id remains owned by xAI.
+            ModelId::OpenCodeGoGrok45
+            | ModelId::OpenCodeGoGlm53
+            | ModelId::OpenCodeGoGpt56Luna
+            | ModelId::OpenCodeGoKimiK3
+            | ModelId::OpenCodeGoMuseSpark12Contributor
+            | ModelId::OpenCodeGoQwen38Max
+            | ModelId::OpenCodeGoHy3 => continue,
             // Merge Gateway deliberately reuses upstream provider/model ids;
             // bare parsing preserves OpenRouter precedence for overlapping ids.
             ModelId::MergeGatewayOpenAIGpt55

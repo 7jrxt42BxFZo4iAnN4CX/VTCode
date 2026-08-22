@@ -36,6 +36,17 @@ pub type PluginName = String;
 /// Plugin loading result
 pub type PluginResult<T> = Result<T, PluginError>;
 
+pub(crate) fn validate_plugin_component(value: &str) -> PluginResult<()> {
+    let mut components = std::path::Path::new(value).components();
+    if value.trim().is_empty()
+        || !matches!(components.next(), Some(std::path::Component::Normal(_)))
+        || components.next().is_some()
+    {
+        return Err(PluginError::LoadingError(format!("Plugin name must be one normal path component: {value}")));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     // Intentionally empty test module for compilation check

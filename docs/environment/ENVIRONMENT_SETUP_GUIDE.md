@@ -4,6 +4,23 @@
 
 This guide explains how VT Code manages environment variables when executing commands, how the PATH visibility fix works, and how to ensure your tools are accessible to the agent.
 
+## VT Code storage environment
+
+The path variables are inherited by sandboxed child processes so tools launched
+by VT Code resolve the same user directories as the parent process. The
+canonical list and precedence rules are in the [user data directories guide](../guides/user-data-directories.md).
+
+The most useful variables are:
+
+- `VTCODE_CONFIG` and `VTCODE_DATA` — absolute canonical config and data root overrides;
+- `VTCODE_CONFIG_PATH` — explicit config file override;
+- `VTCODE_HOME` — preserved legacy root used for migration and fallback reads;
+- `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR`, and `XDG_BIN_HOME` — Linux/BSD category roots;
+- `XDG_CONFIG_DIRS` and `XDG_DATA_DIRS` — ordered system search roots.
+
+Empty or relative XDG values are ignored. Use `vtcode --version` to inspect the
+resolved paths and the environment values visible to VT Code.
+
 ## Quick Start
 
 If you just installed VT Code and want your custom tools (cargo, npm, python, etc.) to work:
@@ -328,12 +345,15 @@ You can set up custom environment initialization via hooks:
 [hooks.lifecycle]
 session_start = [
     { hooks = [
-        { command = "$HOME/.vtcode/setup-env.sh", timeout_seconds = 30 }
+        { command = "/absolute/path/to/vtcode-config/setup-env.sh", timeout_seconds = 30 }
     ] }
 ]
 ```
 
-Example `~/.vtcode/setup-env.sh`:
+Use an absolute path for the script. VT Code does not inject a
+`VT_CODE_CONFIG_DIR` variable into hook commands; run `vtcode --version` to
+find the canonical config directory if the script is stored there, then replace
+the placeholder above.
 
 ```bash
 #!/bin/bash

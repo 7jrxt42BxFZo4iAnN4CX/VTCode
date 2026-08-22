@@ -177,9 +177,8 @@ pub(super) async fn count_pending_rollout_summaries_async(rollout_dir: &Path) ->
 pub(super) async fn read_note_summaries(notes_dir: &Path) -> Result<Vec<MemoryNoteSummary>> {
     let mut notes = Vec::new();
     for path in list_note_markdown_files_async(notes_dir).await? {
-        let content = tokio::fs::read_to_string(&path)
-            .await
-            .with_context(|| format!("Failed to read {}", path.display()))?;
+        let content = String::from_utf8(vtcode_commons::fs::read_private_file_no_follow(&path).await?)
+            .with_context(|| format!("Failed to decode {} as UTF-8", path.display()))?;
         let relative = path
             .strip_prefix(notes_dir)
             .with_context(|| format!("Failed to relativize {}", path.display()))?
@@ -197,9 +196,10 @@ pub(super) async fn read_topic_records(path: &Path, topic: MemoryTopic) -> Resul
     if !tokio::fs::try_exists(path).await.unwrap_or(false) {
         return Ok(Vec::new());
     }
-    let contents = tokio::fs::read_to_string(path)
+    let bytes = vtcode_commons::fs::read_private_file_no_follow(path)
         .await
         .with_context(|| format!("Failed to read {}", path.display()))?;
+    let contents = String::from_utf8(bytes).with_context(|| format!("Failed to decode {} as UTF-8", path.display()))?;
     Ok(parse_topic_file(&contents)
         .into_iter()
         .map(|r| GroundedFactRecord {
@@ -225,7 +225,8 @@ pub(super) async fn read_rollout_records(
         if path.extension().and_then(|v| v.to_str()) != Some("md") {
             continue;
         }
-        let contents = tokio::fs::read_to_string(&path).await?;
+        let contents = String::from_utf8(vtcode_commons::fs::read_private_file_no_follow(&path).await?)
+            .with_context(|| format!("Failed to decode {} as UTF-8", path.display()))?;
         for record in parse_topic_file(&contents) {
             let (topic, _) = decode_topic_source(&record.source);
             match topic.unwrap_or_else(|| classify_fact(&record)) {

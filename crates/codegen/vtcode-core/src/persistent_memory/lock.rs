@@ -26,11 +26,17 @@ impl MemoryLock {
     /// waiting for the full `LOCK_STALE_AFTER_SECS` duration.
     pub(crate) async fn acquire_with_stale_after(path: &Path, stale_after: Duration) -> Result<Self> {
         for _ in 0..LOCK_RETRY_ATTEMPTS {
-            match tokio::fs::OpenOptions::new().create_new(true).write(true).open(path).await {
+            match vtcode_commons::fs::create_private_file(path).await {
                 Ok(_) => {
                     return Ok(Self { path: path.to_path_buf() });
                 }
-                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                Err(err)
+                    if err.chain().any(|cause| {
+                        cause
+                            .downcast_ref::<std::io::Error>()
+                            .is_some_and(|io_error| io_error.kind() == std::io::ErrorKind::AlreadyExists)
+                    }) =>
+                {
                     if let Some(age) = lock_age(path).await {
                         if age >= stale_after {
                             // Best-effort removal of an orphaned lock file. If another
@@ -55,7 +61,10 @@ impl MemoryLock {
 /// its metadata or modification time cannot be determined (treated as "not
 /// stale" by callers).
 pub(crate) async fn lock_age(path: &Path) -> Option<Duration> {
-    let meta = tokio::fs::metadata(path).await.ok()?;
+    let meta = tokio::fs::symlink_metadata(path).await.ok()?;
+    if !meta.is_file() {
+        return None;
+    }
     meta.modified().ok()?.elapsed().ok()
 }
 

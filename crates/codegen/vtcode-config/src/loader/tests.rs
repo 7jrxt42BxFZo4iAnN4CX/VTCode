@@ -81,6 +81,116 @@ fn test_layered_config_loading() {
 
 #[test]
 #[serial]
+fn canonical_xdg_user_config_overrides_legacy_user_config() {
+    let workspace = assert_fs::TempDir::new().expect("workspace");
+    let legacy_path = workspace.path().join("legacy").join("vtcode.toml");
+    let canonical_path = workspace.path().join("xdg").join("vtcode.toml");
+    fs::create_dir_all(legacy_path.parent().expect("legacy parent")).expect("legacy dir");
+    fs::create_dir_all(canonical_path.parent().expect("canonical parent")).expect("canonical dir");
+    fs::write(&legacy_path, "agent.provider = \"openai\"\n").expect("legacy config");
+    fs::write(&canonical_path, "agent.provider = \"anthropic\"\n").expect("canonical config");
+
+    let paths = StaticWorkspacePaths::new(workspace.path(), workspace.path().join(".vtcode"));
+    let provider =
+        WorkspacePathsDefaults::new(Arc::new(paths)).with_home_paths(vec![legacy_path.clone(), canonical_path.clone()]);
+
+    defaults::provider::with_config_defaults_provider_for_test(Arc::new(provider), || {
+        let manager = ConfigManager::load_from_workspace(workspace.path()).expect("load config");
+        assert_eq!(manager.config().agent.provider, "anthropic");
+        let user_files = manager
+            .layer_stack()
+            .layers()
+            .iter()
+            .filter_map(|layer| match &layer.source {
+                ConfigLayerSource::User { file } => Some(file),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            user_files
+                .into_iter()
+                .map(|path| canonicalize(path).expect("canonical user path"))
+                .collect::<Vec<_>>(),
+            vec![
+                canonicalize(&legacy_path).expect("canonical legacy path"),
+                canonicalize(&canonical_path).expect("canonical XDG path"),
+            ]
+        );
+    });
+}
+
+#[test]
+#[serial]
+fn system_config_candidates_are_loaded_low_to_high_without_duplicates() {
+    let workspace = assert_fs::TempDir::new().expect("workspace");
+    let first_path = workspace.path().join("system-first.toml");
+    let second_path = workspace.path().join("system-second.toml");
+    fs::write(&first_path, "agent.provider = \"openai\"\n").expect("first system config");
+    fs::write(&second_path, "agent.provider = \"anthropic\"\n").expect("second system config");
+
+    let paths = StaticWorkspacePaths::new(workspace.path(), workspace.path().join(".vtcode"));
+    let provider = WorkspacePathsDefaults::new(Arc::new(paths))
+        .with_home_paths(Vec::new())
+        .with_system_config_paths(vec![second_path.clone(), first_path.clone(), first_path.clone()]);
+
+    defaults::provider::with_config_defaults_provider_for_test(Arc::new(provider), || {
+        let manager = ConfigManager::load_from_workspace(workspace.path()).expect("load config");
+        let system_files = manager
+            .layer_stack()
+            .layers()
+            .iter()
+            .filter_map(|layer| match &layer.source {
+                ConfigLayerSource::System { file } => Some(file),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(manager.config().agent.provider, "openai");
+        assert_eq!(
+            system_files
+                .into_iter()
+                .map(|path| canonicalize(path).expect("canonical system path"))
+                .collect::<Vec<_>>(),
+            vec![
+                canonicalize(&second_path).expect("canonical second system path"),
+                canonicalize(&first_path).expect("canonical first system path"),
+            ]
+        );
+    });
+}
+
+#[test]
+#[serial]
+fn save_config_uses_the_canonical_path_captured_during_load() {
+    let workspace = assert_fs::TempDir::new().expect("workspace");
+    let canonical_path = workspace.path().join("canonical/vtcode.toml");
+    let other_path = workspace.path().join("other/vtcode.toml");
+    fs::create_dir_all(canonical_path.parent().expect("canonical parent")).expect("canonical directory");
+    fs::write(&canonical_path, "agent.provider = \"openai\"\n").expect("canonical config");
+
+    let paths = StaticWorkspacePaths::new(workspace.path(), workspace.path().join(".vtcode"));
+    let provider = WorkspacePathsDefaults::new(Arc::new(paths)).with_home_paths(vec![canonical_path.clone()]);
+
+    defaults::provider::with_config_defaults_provider_for_test(Arc::new(provider), || {
+        let mut manager = ConfigManager::load_from_workspace(workspace.path()).expect("load config");
+        fs::remove_file(&canonical_path).expect("remove loaded config before save");
+
+        let replacement_paths = StaticWorkspacePaths::new(workspace.path(), workspace.path().join(".vtcode"));
+        let replacement_provider =
+            WorkspacePathsDefaults::new(Arc::new(replacement_paths)).with_home_paths(vec![other_path.clone()]);
+        let previous = defaults::provider::install_config_defaults_provider(Arc::new(replacement_provider));
+
+        let config = manager.config().clone();
+        manager.save_config(&config).expect("save canonical config");
+
+        let _ = defaults::provider::install_config_defaults_provider(previous);
+
+        assert!(canonical_path.exists());
+        assert!(!other_path.exists());
+    });
+}
+
+#[test]
+#[serial]
 fn test_invalid_layer_is_reported_with_source_context() {
     let workspace = assert_fs::TempDir::new().expect("failed to create workspace");
     let workspace_root = workspace.path();

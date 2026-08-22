@@ -4,12 +4,22 @@
 
 echo "=== VT Code Dot-Folder Project Management Test ==="
 
-# Test 1: Check if ~/.vtcode/projects directory exists
-echo "Test 1: Checking ~/.vtcode/projects directory..."
-if [ -d "$HOME/.vtcode/projects" ]; then
-    echo "PASS: ~/.vtcode/projects directory exists"
+if [ -n "${XDG_STATE_HOME:-}" ]; then
+    case "$XDG_STATE_HOME" in
+        /*) STATE_DIR="$XDG_STATE_HOME/vtcode" ;;
+        *) STATE_DIR="$HOME/.local/state/vtcode" ;;
+    esac
 else
-    echo "FAIL: ~/.vtcode/projects directory not found"
+    STATE_DIR="$HOME/.local/state/vtcode"
+fi
+PROJECTS_DIR="$STATE_DIR/projects"
+
+# Test 1: Check if the canonical state projects directory exists
+echo "Test 1: Checking $PROJECTS_DIR..."
+if [ -d "$PROJECTS_DIR" ]; then
+    echo "PASS: $PROJECTS_DIR exists"
+else
+    echo "FAIL: $PROJECTS_DIR not found"
     exit 1
 fi
 
@@ -24,7 +34,7 @@ echo "Initializing project structure..."
 cargo run --quiet --manifest-path /workspace/vtcode/Cargo.toml -- init-project --name test-vtcode-project --force >/dev/null 2>&1
 
 # Create project metadata
-cat > "$HOME/.vtcode/projects/test-vtcode-project/.project" << EOF
+cat > "$PROJECTS_DIR/test-vtcode-project/.project" << EOF
 {
   "name": "test-vtcode-project",
   "description": "Test project for VT Code dot-folder system",
@@ -37,7 +47,7 @@ EOF
 
 # Test 3: Verify project structure
 echo -e "\nTest 3: Verifying project structure..."
-PROJECT_DIR="$HOME/.vtcode/projects/test-vtcode-project"
+PROJECT_DIR="$PROJECTS_DIR/test-vtcode-project"
 if [ -d "$PROJECT_DIR" ]; then
     echo "PASS: Project directory exists"
 else
@@ -97,7 +107,7 @@ fi
 
 # Cleanup
 echo -e "\nCleaning up test files..."
-rm -rf "$HOME/.vtcode/projects/test-vtcode-project"
+rm -rf "$PROJECTS_DIR/test-vtcode-project"
 rm -rf /tmp/test-vtcode-project
 
 echo -e "\n=== All tests completed successfully! ==="

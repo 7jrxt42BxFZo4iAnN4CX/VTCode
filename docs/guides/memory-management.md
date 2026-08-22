@@ -3,7 +3,12 @@
 VT Code has two distinct memory surfaces:
 
 - Authored guidance that you write in `AGENTS.md` and `.vtcode/rules/`.
-- Learned per-repository memory that VT Code stores under your user config directory.
+- Learned per-repository memory that VT Code stores under your user state directory.
+
+The canonical user config root is the platform config directory (for example
+`$XDG_CONFIG_HOME/vtcode`, defaulting to `~/.config/vtcode` on Linux/BSD).
+The historical `VTCODE_HOME`/`~/.vtcode` tree remains readable for
+compatibility and is preserved as a migration backup.
 
 Understanding that split makes it easier to tune prompt quality without mixing durable project instructions with automatically learned notes.
 
@@ -15,9 +20,9 @@ VT Code loads authored guidance from the lowest-precedence scope to the highest-
 
 | Load order | Scope | Location | Purpose |
 | --- | --- | --- | --- |
-| 1 | User `AGENTS.md` | `~/AGENTS.md`, `~/.vtcode/AGENTS.md`, `~/.config/vtcode/AGENTS.md` | Personal preferences that apply across repositories. |
-| 2 | User unconditional rules | `~/.vtcode/rules/**/*.md` or `~/.config/vtcode/rules/**/*.md` without `paths` frontmatter | Always-on personal rules. |
-| 3 | User matched rules | Same rule roots, but with `paths` frontmatter that matches the current instruction context | Personal rules that only load for relevant files. |
+| 1 | User `AGENTS.md` | `~/AGENTS.md`, the canonical config directory's `AGENTS.md`, and legacy `~/.vtcode/AGENTS.md` | Personal preferences that apply across repositories. |
+| 2 | User unconditional rules | The canonical config directory's `rules/**/*.md`, then legacy `~/.vtcode/rules/**/*.md`, without `paths` frontmatter | Always-on personal rules. |
+| 3 | User matched rules | The same canonical and legacy rule roots, with `paths` frontmatter that matches the current instruction context | Personal rules that only load for relevant files. |
 | 4 | Extra instruction files | Paths or globs from `agent.instruction_files` | Explicitly injected docs such as runbooks or local conventions. |
 | 5 | Workspace `AGENTS.md` hierarchy | `<repo>/AGENTS.md` plus nested `AGENTS.md` files from repo root to the active instruction scope | Shared project guidance and subsystem overrides. |
 | 6 | Workspace unconditional rules | `<repo>/.vtcode/rules/**/*.md` without `paths` frontmatter | Always-on repository rules. |
@@ -73,10 +78,13 @@ Persistent memory is VT Code's learned, per-repository memory store. It is separ
 For each repository, VT Code stores memory under:
 
 ```text
-~/.vtcode/projects/<project>/memory/
+<user-state-directory>/projects/<project>/memory/
 ```
 
-Older VT Code builds stored persistent memory under the general config root on some platforms, such as macOS Application Support. VT Code now migrates the legacy per-repository memory directory into `~/.vtcode/projects/<project>/memory/` the next time that repository memory is resolved.
+Older VT Code builds stored persistent memory under the general config root on
+some platforms, such as macOS Application Support. VT Code now copies the
+legacy per-repository memory directory into the canonical state directory the
+next time that repository memory is resolved, while preserving the source.
 
 The directory contains:
 

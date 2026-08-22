@@ -6,9 +6,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
+use vtcode_commons::fs::write_private_file_atomic;
 use vtcode_core::config::models::Provider;
 use vtcode_core::utils::dot_config::get_dot_manager;
-use vtcode_core::utils::file_utils::write_file_with_context;
 
 use super::endpoints::default_provider_base;
 
@@ -55,7 +55,7 @@ impl CachedDynamicModelStore {
         };
 
         let serialized = serde_json::to_string_pretty(&self.entries)?;
-        write_file_with_context(&path, &serialized, "dynamic model cache").await?;
+        write_private_file_atomic(&path, serialized.as_bytes()).await?;
         self.dirty = false;
         Ok(())
     }

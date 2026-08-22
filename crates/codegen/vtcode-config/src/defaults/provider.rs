@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
-use directories::ProjectDirs;
 use once_cell::sync::Lazy;
+use vtcode_commons::VtCodePaths;
 use vtcode_commons::paths::WorkspacePaths;
 
 const DEFAULT_CONFIG_FILE_NAME: &str = "vtcode.toml";
@@ -36,6 +36,29 @@ pub trait ConfigDefaultsProvider: Send + Sync {
     /// workspace.
     fn home_config_paths(&self, config_file_name: &str) -> Vec<PathBuf>;
 
+    /// Returns the canonical user configuration directory.
+    ///
+    /// The default preserves custom providers by deriving it from their
+    /// highest-precedence home configuration path.
+    fn canonical_user_config_dir(&self) -> anyhow::Result<Option<PathBuf>> {
+        Ok(self
+            .canonical_user_config_path(self.config_file_name())?
+            .and_then(|path| path.parent().map(Path::to_path_buf)))
+    }
+
+    /// Returns the canonical user configuration file for `config_file_name`.
+    ///
+    /// Existing providers remain compatible: their last home path has always
+    /// represented the highest-precedence user layer.
+    fn canonical_user_config_path(&self, config_file_name: &str) -> anyhow::Result<Option<PathBuf>> {
+        Ok(self.home_config_paths(config_file_name).into_iter().last())
+    }
+
+    /// Returns system configuration files from lowest to highest precedence.
+    fn system_config_paths(&self, _config_file_name: &str) -> anyhow::Result<Vec<PathBuf>> {
+        Ok(Vec::new())
+    }
+
     /// Returns the default syntax highlighting theme identifier.
     fn syntax_theme(&self) -> String;
 
@@ -53,6 +76,18 @@ impl ConfigDefaultsProvider for DefaultConfigDefaults {
 
     fn home_config_paths(&self, config_file_name: &str) -> Vec<PathBuf> {
         default_home_paths(config_file_name)
+    }
+
+    fn canonical_user_config_dir(&self) -> anyhow::Result<Option<PathBuf>> {
+        Ok(Some(VtCodePaths::resolve()?.config_dir().to_path_buf()))
+    }
+
+    fn canonical_user_config_path(&self, config_file_name: &str) -> anyhow::Result<Option<PathBuf>> {
+        Ok(Some(VtCodePaths::resolve()?.config_path(config_file_name)?))
+    }
+
+    fn system_config_paths(&self, config_file_name: &str) -> anyhow::Result<Vec<PathBuf>> {
+        VtCodePaths::resolve()?.system_config_paths(config_file_name)
     }
 
     fn syntax_theme(&self) -> String {
@@ -115,67 +150,69 @@ where
     }
 }
 
-/// Get the XDG-compliant configuration directory for vtcode.
-///
-/// Follows the Ratatui recipe pattern for config directories:
-/// 1. Check environment variable VTCODE_CONFIG for custom location
-/// 2. Use XDG Base Directory Specification via ProjectDirs
-/// 3. Fallback to legacy ~/.vtcode/ for backwards compatibility
+/// Resolves the canonical configuration directory through the shared path
+/// policy. The legacy directory remains a read-only compatibility candidate;
+/// callers writing configuration must use the canonical path.
 ///
 /// Returns `None` if no suitable directory can be determined.
 pub fn get_config_dir() -> Option<PathBuf> {
-    // Allow custom config directory via environment variable
-    if let Some(custom_dir) = read_env_var("VTCODE_CONFIG") {
-        let trimmed = custom_dir.trim();
-        if !trimmed.is_empty() {
-            return Some(PathBuf::from(trimmed));
-        }
-    }
-
-    // Use XDG-compliant directories (e.g., ~/.config/vtcode on Linux)
-    if let Some(proj_dirs) = ProjectDirs::from("com", "vinhnx", "vtcode") {
-        return Some(proj_dirs.config_local_dir().to_path_buf());
-    }
-
-    // Fallback to legacy ~/.vtcode/ for backwards compatibility
-    dirs::home_dir().map(|home| home.join(DEFAULT_CONFIG_DIR_NAME))
+    resolve_vtcode_paths().ok().map(|paths| paths.config_dir().to_path_buf())
 }
 
-/// Get the XDG-compliant data directory for vtcode.
-///
-/// Follows the Ratatui recipe pattern for data directories:
-/// 1. Check environment variable VTCODE_DATA for custom location
-/// 2. Use XDG Base Directory Specification via ProjectDirs
-/// 3. Fallback to legacy ~/.vtcode/cache for backwards compatibility
+/// Returns the canonical VT Code data directory. The legacy root is only a
+/// migration/read-compatibility source.
 ///
 /// Returns `None` if no suitable directory can be determined.
 pub fn get_data_dir() -> Option<PathBuf> {
-    // Allow custom data directory via environment variable
-    if let Some(custom_dir) = read_env_var("VTCODE_DATA") {
-        let trimmed = custom_dir.trim();
-        if !trimmed.is_empty() {
-            return Some(PathBuf::from(trimmed));
+    resolve_vtcode_paths().ok().map(|paths| paths.data_dir().to_path_buf())
+}
+
+fn resolve_vtcode_paths() -> anyhow::Result<VtCodePaths> {
+    #[cfg(test)]
+    {
+        // The config crate's test environment helper intentionally avoids
+        // mutating the process environment. Feed those overrides through the
+        // shared resolver so the public compatibility APIs keep their test
+        // semantics without duplicating path parsing here.
+        let mut environment: Vec<(String, String)> = std::env::vars().collect();
+        for key in ["VTCODE_CONFIG", "VTCODE_DATA"] {
+            if crate::env_helpers::test_env_overrides::is_overridden(key) {
+                environment.retain(|(name, _)| name != key);
+                if let Some(value) = read_env_var(key) {
+                    environment.push((key.to_string(), value));
+                }
+            }
         }
+        let environment_refs: Vec<(&str, &str)> =
+            environment.iter().map(|(key, value)| (key.as_str(), value.as_str())).collect();
+        VtCodePaths::from_environment(&environment_refs)
     }
 
-    // Use XDG-compliant directories (e.g., ~/.local/share/vtcode on Linux)
-    if let Some(proj_dirs) = ProjectDirs::from("com", "vinhnx", "vtcode") {
-        return Some(proj_dirs.data_local_dir().to_path_buf());
+    #[cfg(not(test))]
+    {
+        VtCodePaths::resolve()
     }
-
-    // Fallback to legacy ~/.vtcode/cache for backwards compatibility
-    dirs::home_dir().map(|home| home.join(DEFAULT_CONFIG_DIR_NAME).join("cache"))
 }
 
 fn default_home_paths(config_file_name: &str) -> Vec<PathBuf> {
+    if let Ok(resolver) = VtCodePaths::resolve() {
+        let mut paths = vec![resolver.legacy_home_dir().join(config_file_name)];
+        if let Ok(canonical_path) = resolver.config_path(config_file_name)
+            && !paths.iter().any(|path| path == &canonical_path)
+        {
+            paths.push(canonical_path);
+        }
+        return paths;
+    }
+
     let mut paths = Vec::with_capacity(2);
 
-    // 1. Legacy fallback (lower precedence) — ~/.vtcode/vtcode.toml
+    // 1. Legacy fallback (lower precedence) — the historical VTCODE_HOME file.
     if let Some(home_dir) = dirs::home_dir() {
         paths.push(home_dir.join(DEFAULT_CONFIG_DIR_NAME).join(config_file_name));
     }
 
-    // 2. XDG-compliant config path (higher precedence) — ~/.config/vtcode/vtcode.toml
+    // 2. Canonical platform config path (higher precedence).
     if let Some(config_dir) = get_config_dir() {
         let xdg_path = config_dir.join(config_file_name);
         if !paths.iter().any(|p| p == &xdg_path) {
@@ -233,6 +270,7 @@ where
     paths: Arc<P>,
     config_file_name: String,
     home_paths: Option<Vec<PathBuf>>,
+    system_paths: Option<Vec<PathBuf>>,
     syntax_theme: String,
     syntax_languages: Vec<String>,
 }
@@ -248,6 +286,7 @@ where
             paths,
             config_file_name: DEFAULT_CONFIG_FILE_NAME.to_string(),
             home_paths: None,
+            system_paths: None,
             syntax_theme: DEFAULT_SYNTAX_THEME.to_string(),
             syntax_languages: default_syntax_languages(),
         }
@@ -262,6 +301,12 @@ where
     /// Overrides the fallback configuration search paths returned by the provider.
     pub fn with_home_paths(mut self, home_paths: Vec<PathBuf>) -> Self {
         self.home_paths = Some(home_paths);
+        self
+    }
+
+    /// Overrides the system configuration search paths returned by the provider.
+    pub fn with_system_config_paths(mut self, system_paths: Vec<PathBuf>) -> Self {
+        self.system_paths = Some(system_paths);
         self
     }
 
@@ -297,6 +342,11 @@ where
 
     fn home_config_paths(&self, config_file_name: &str) -> Vec<PathBuf> {
         self.home_paths.clone().unwrap_or_else(|| default_home_paths(config_file_name))
+    }
+
+    fn system_config_paths(&self, config_file_name: &str) -> anyhow::Result<Vec<PathBuf>> {
+        let _ = config_file_name;
+        Ok(self.system_paths.clone().unwrap_or_default())
     }
 
     fn syntax_theme(&self) -> String {

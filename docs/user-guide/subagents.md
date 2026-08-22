@@ -70,7 +70,7 @@ Use `- None` for empty sections. If a child reply does not follow this contract,
 
 1. Run `/agents`.
 2. Choose `Create project agent` or `Create user agent`.
-3. VT Code writes a scaffold to `.vtcode/agents/<name>.md` or `~/.vtcode/agents/<name>.md`.
+3. VT Code writes a scaffold to `.vtcode/agents/<name>.md` or the canonical user config directory's `agents/<name>.md`.
 4. Edit the scaffold. A minimal read-only reviewer looks like this:
 
 ```markdown
@@ -114,7 +114,7 @@ VT Code loads subagents from highest to lowest precedence:
 | 1 | `.vtcode/agents/*.md` | VT Code markdown | current project |
 | 2 | `.claude/agents/*.md` | Claude-style markdown | current project |
 | 3 | `.codex/agents/*.toml` | Codex TOML | current project |
-| 4 | `~/.vtcode/agents/*.md` | VT Code markdown | all projects |
+| 4 | canonical user config directory/`agents/*.md` | VT Code markdown | all projects |
 | 5 | `~/.claude/agents/*.md` | Claude-style markdown | all projects |
 | 6 | `~/.codex/agents/*.toml` | Codex TOML | all projects |
 | 7 | plugin agents | plugin-provided | where the plugin is enabled |
@@ -322,7 +322,7 @@ When `memory` is enabled, VT Code uses the same directory scheme for primary age
 | --- | --- |
 | `project` | `.vtcode/agent-memory/<agent-name>/` |
 | `local` | `.vtcode/agent-memory-local/<agent-name>/` |
-| `user` | `~/.vtcode/agent-memory/<agent-name>/` |
+| `user` | user state directory/`agent-memory/<agent-name>/` |
 
 The directory key is the canonical `name`, not an alias.
 
@@ -476,7 +476,7 @@ Cycling past the last available primary agent wraps back to the first agent.
 
 To create a custom primary agent:
 
-1. Create a markdown file in `.vtcode/agents/` (project scope) or `~/.vtcode/agents/` (user scope):
+1. Create a markdown file in `.vtcode/agents/` (project scope) or the canonical user config directory's `agents/` path (user scope):
 
 ```markdown
 ---

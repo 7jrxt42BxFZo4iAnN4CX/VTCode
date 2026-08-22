@@ -3,7 +3,8 @@
 //! Supports both restricted (blocklist) and whitelist (allowlist) modes
 //! with dynamic configuration loading from vtcode.toml
 //!
-//! Fetched content is written to ephemeral temp files under `~/.vtcode/tmp/web_fetch/`
+//! Fetched content is written to ephemeral cache files under the user cache
+//! directory's `web-fetch/` path.
 //! and cleaned up periodically. Content is never persisted to the workspace.
 
 use super::traits::Tool;
@@ -18,6 +19,7 @@ use serde_json::{Value, json};
 use std::net::IpAddr;
 use std::path::PathBuf;
 use url::Url;
+use vtcode_commons::VtCodePaths;
 
 pub mod classify_helpers;
 pub mod domains;
@@ -29,7 +31,7 @@ const MAX_CONTENT_SIZE: usize = 500_000; // 500KB max content size
 const MAX_ALLOWED_BYTES: usize = 2_000_000; // 2MB hard cap
 const MAX_ALLOWED_TIMEOUT_SECS: u64 = 120; // 2 minutes hard cap
 
-/// Subdirectory under `~/.vtcode/tmp/` for ephemeral web_fetch artifacts.
+/// Subdirectory under the user cache directory for ephemeral web-fetch artifacts.
 const TEMP_SUBDIR: &str = "web_fetch";
 
 /// Max age in seconds before temp files are cleaned up (1 hour).
@@ -98,15 +100,10 @@ fn fetched_content_from_bytes(bytes: &[u8], max_bytes: usize) -> Result<FetchedW
 /// Returns the path to the ephemeral temp directory for web_fetch artifacts.
 /// Creates the directory if it doesn't exist.
 async fn web_fetch_temp_dir() -> Result<PathBuf> {
-    let base = dirs::home_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join(".vtcode")
-        .join("tmp")
-        .join(TEMP_SUBDIR);
-    tokio::fs::create_dir_all(&base)
-        .await
-        .with_context(|| format!("Failed to create temp directory: {}", base.display()))?;
-    Ok(base)
+    VtCodePaths::resolve()
+        .context("Could not resolve VT Code cache directory")?
+        .ensure_cache_child_dir(TEMP_SUBDIR)
+        .context("Failed to create web-fetch cache directory")
 }
 
 /// Write content to an ephemeral temp file and return its path.
@@ -130,8 +127,11 @@ async fn write_to_temp_file(content: &str, url: &str) -> Result<PathBuf> {
     let filename = format!("{url_hash}_{timestamp}.txt");
     let file_path = temp_dir.join(&filename);
 
-    tokio::fs::write(&file_path, content)
+    let bytes = content.as_bytes().to_vec();
+    let write_path = file_path.clone();
+    tokio::task::spawn_blocking(move || VtCodePaths::write_private_file_atomic(&write_path, &bytes))
         .await
+        .context("web-fetch cache writer task panicked")?
         .with_context(|| format!("Failed to write temp file: {}", file_path.display()))?;
 
     Ok(file_path)

@@ -11,7 +11,8 @@ use super::fingerprint::fingerprint_toml_value;
 pub enum ConfigLayerSource {
     /// System-wide configuration (e.g., /etc/vtcode/vtcode.toml)
     System { file: PathBuf },
-    /// User-specific configuration (e.g., ~/.vtcode/vtcode.toml)
+    /// User-specific configuration (the canonical platform config directory;
+    /// the legacy `~/.vtcode` directory remains a read-compatibility source).
     User { file: PathBuf },
     /// Project-specific configuration (e.g., .vtcode/projects/foo/config/vtcode.toml)
     Project { file: PathBuf },

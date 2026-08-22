@@ -1,10 +1,11 @@
 use super::catalog::PodCatalog;
 use super::state::PodsState;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use std::path::PathBuf;
-use vtcode_commons::fs::{ensure_dir_exists, read_json_file, write_json_file};
+use vtcode_commons::VtCodePaths;
+use vtcode_commons::fs::{read_private_json_file, write_private_json_file};
 
-/// Persisted pod storage rooted in `~/.vtcode/pods`.
+/// Persisted pod storage rooted in the user state directory's `pods` path.
 #[derive(Debug, Clone)]
 pub struct PodsStore {
     base_dir: PathBuf,
@@ -16,10 +17,10 @@ impl PodsStore {
         Self { base_dir: base_dir.into() }
     }
 
-    /// Create a store using the default `~/.vtcode/pods` directory.
+    /// Create a store using the default user-state `pods` directory.
     pub fn default_store() -> Result<Self> {
-        let home = dirs::home_dir().ok_or_else(|| anyhow!("failed to resolve home directory"))?;
-        Ok(Self::new(home.join(".vtcode").join("pods")))
+        let paths = VtCodePaths::resolve().context("failed to resolve VT Code paths")?;
+        Ok(Self::new(paths.state_path("pods")?))
     }
 
     /// Return the path to the `state.json` file.
@@ -34,7 +35,7 @@ impl PodsStore {
 
     /// Create the base directory and seed default files if they do not exist.
     pub async fn ensure_initialized(&self) -> Result<()> {
-        ensure_dir_exists(&self.base_dir).await?;
+        ensure_user_dir(&self.base_dir)?;
 
         if !tokio::fs::try_exists(&self.catalog_path()).await.unwrap_or(false) {
             self.save_catalog(&PodCatalog::embedded_default()).await?;
@@ -50,15 +51,15 @@ impl PodsStore {
     /// Load the persisted pod state from disk.
     pub async fn load_state(&self) -> Result<PodsState> {
         self.ensure_initialized().await?;
-        read_json_file(&self.state_path())
+        read_private_json_file(&self.state_path())
             .await
             .with_context(|| format!("failed to read pod state at {}", self.state_path().display()))
     }
 
     /// Persist the pod state to disk.
     pub async fn save_state(&self, state: &PodsState) -> Result<()> {
-        ensure_dir_exists(&self.base_dir).await?;
-        write_json_file(&self.state_path(), state)
+        ensure_user_dir(&self.base_dir)?;
+        write_private_json_file(&self.state_path(), state)
             .await
             .with_context(|| format!("failed to write pod state at {}", self.state_path().display()))
     }
@@ -66,15 +67,20 @@ impl PodsStore {
     /// Load the deployment catalog from disk.
     pub async fn load_catalog(&self) -> Result<PodCatalog> {
         self.ensure_initialized().await?;
-        read_json_file(&self.catalog_path())
+        read_private_json_file(&self.catalog_path())
             .await
             .with_context(|| format!("failed to read pod catalog at {}", self.catalog_path().display()))
     }
 
     pub async fn save_catalog(&self, catalog: &PodCatalog) -> Result<()> {
-        ensure_dir_exists(&self.base_dir).await?;
-        write_json_file(&self.catalog_path(), catalog)
+        ensure_user_dir(&self.base_dir)?;
+        write_private_json_file(&self.catalog_path(), catalog)
             .await
             .with_context(|| format!("failed to write pod catalog at {}", self.catalog_path().display()))
     }
+}
+
+fn ensure_user_dir(path: &std::path::Path) -> Result<()> {
+    VtCodePaths::ensure_user_dir(path).context("failed to create private pod state directory")?;
+    Ok(())
 }

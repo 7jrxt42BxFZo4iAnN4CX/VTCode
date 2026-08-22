@@ -87,7 +87,11 @@ pub(crate) fn initialize_tracing_from_config(config: &vtcode_core::config::loade
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&filter_str));
 
-    let configured_dir = debug_cfg.debug_log_dir.as_ref().map(|_| debug_cfg.debug_log_path());
+    let configured_dir = debug_cfg
+        .debug_log_dir
+        .as_ref()
+        .map(|_| debug_cfg.debug_log_path())
+        .transpose()?;
     let session_id = current_debug_session_id();
     let log_file = prepare_debug_log_file(
         configured_dir,

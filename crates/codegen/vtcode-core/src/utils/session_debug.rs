@@ -6,8 +6,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 
 use crate::core::SECONDS_PER_DAY;
-use crate::utils::dot_config::DotManager;
 use crate::utils::session_archive::SESSION_DIR_ENV;
+use vtcode_commons::VtCodePaths;
 
 #[derive(Debug, Clone, Default)]
 struct RuntimeDebugContext {
@@ -105,14 +105,14 @@ fn debug_log_file_name(session_id: &str) -> String {
     format!("{DEBUG_LOG_FILE_PREFIX}{normalized}.log")
 }
 
-pub fn default_sessions_dir() -> PathBuf {
+pub fn default_sessions_dir() -> Result<PathBuf> {
     if let Some(custom) = std::env::var_os(SESSION_DIR_ENV) {
-        return PathBuf::from(custom);
+        return Ok(PathBuf::from(custom));
     }
-    if let Ok(manager) = DotManager::new() {
-        return manager.sessions_dir();
-    }
-    PathBuf::from(".vtcode/sessions")
+
+    VtCodePaths::resolve()
+        .map(|paths| paths.sessions_dir())
+        .context("could not resolve VT Code state directory for sessions")
 }
 
 fn is_debug_log_file(path: &Path) -> bool {
@@ -212,8 +212,8 @@ pub fn prepare_debug_log_file(
     max_size_mb: u64,
     max_age_days: u32,
 ) -> Result<PathBuf> {
-    let log_dir = configured_dir.unwrap_or_else(default_sessions_dir);
-    fs::create_dir_all(&log_dir)
+    let log_dir = configured_dir.map(Ok).unwrap_or_else(default_sessions_dir)?;
+    VtCodePaths::ensure_user_dir(&log_dir)
         .with_context(|| format!("Failed to create debug log directory {}", log_dir.display()))?;
     prune_expired_debug_logs(&log_dir, max_age_days)?;
     let log_file = log_dir.join(debug_log_file_name(session_id));

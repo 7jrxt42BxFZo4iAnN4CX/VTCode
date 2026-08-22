@@ -9,6 +9,7 @@ use anyhow::Result;
 use hashbrown::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
+use vtcode_commons::VtCodePaths;
 
 /// Skill location types with precedence ordering
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -129,13 +130,18 @@ impl SkillLocations {
 
     /// Get default skill locations following pi-mono pattern
     fn default_locations() -> Vec<SkillLocation> {
-        vec![
-            // VT Code locations (highest precedence)
-            SkillLocation::new(
+        let mut locations = Vec::new();
+        if let Ok(paths) = VtCodePaths::resolve() {
+            // VT Code locations (highest precedence). If the global path
+            // policy is unavailable, omit this optional user location rather
+            // than creating or scanning state relative to the cwd.
+            locations.push(SkillLocation::new(
                 SkillLocationType::VtcodeUser,
-                PathBuf::from("~/.vtcode/skills"),
+                paths.skills_dir(),
                 true, // recursive
-            ),
+            ));
+        }
+        locations.extend([
             SkillLocation::new(
                 SkillLocationType::AgentsProject,
                 PathBuf::from(".agents/skills"),
@@ -174,7 +180,8 @@ impl SkillLocations {
                 PathBuf::from("~/.codex/skills"),
                 true, // recursive
             ),
-        ]
+        ]);
+        locations
     }
 
     /// Discover all skills across all locations

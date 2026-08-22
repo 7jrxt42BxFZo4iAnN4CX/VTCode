@@ -32,7 +32,7 @@ mod allocator;
 use clap::FromArgMatches;
 use colorchoice::ColorChoice as GlobalColorChoice;
 use vtcode_commons::color_policy;
-use vtcode_commons::env_lock;
+use vtcode_commons::{VtCodePaths, env_lock};
 use vtcode_core::cli::args::Cli;
 use vtcode_core::config::api_keys::load_dotenv;
 use vtcode_ui::tui::panic_hook;
@@ -207,6 +207,8 @@ fn bootstrap_main() -> Result<BootstrapOutcome> {
         && !args.quiet
     {}
 
+    migrate_legacy_global_paths(args.quiet);
+
     if args.print.is_some() && args.command.is_some() {
         anyhow::bail!("The --print/-p flag cannot be combined with subcommands. Use print mode without a subcommand.");
     }
@@ -268,6 +270,22 @@ fn bootstrap_main() -> Result<BootstrapOutcome> {
     })))
 }
 
+fn migrate_legacy_global_paths(quiet: bool) {
+    match VtCodePaths::resolve().and_then(|paths| paths.migrate_legacy()) {
+        Ok(report) if !report.failures.is_empty() && !quiet => {
+            eprintln!(
+                "Warning: VT Code legacy migration is incomplete with {} diagnostic failure(s); startup will retry it. See `vtcode --version` for the migration report path.",
+                report.failures.len()
+            );
+        }
+        Ok(_) => {}
+        Err(error) if !quiet => {
+            eprintln!("Warning: VT Code could not start legacy migration: {error:#}. Startup will continue.");
+        }
+        Err(_) => {}
+    }
+}
+
 async fn run(prepared: PreparedRun) -> Result<()> {
     let PreparedRun { args, startup, print_mode } = prepared;
 
@@ -296,11 +314,12 @@ async fn run(prepared: PreparedRun) -> Result<()> {
     // The result is consumed later (after dispatch) via get_preflight_notice().
     tokio::spawn(updater::run_preflight_check());
 
-    // Clean up old spooled large output temp files (>24h) at startup to prevent
-    // unbounded growth. Deferred to a blocking task so a cold ~/.vtcode/tmp never
-    // blocks first user I/O on the critical startup path.
-    if let Ok(home) = std::env::var("HOME") {
-        let tmp_dir = std::path::Path::new(&home).join(".vtcode").join("tmp");
+    // Clean up old spooled large output files (>24h) at startup to prevent
+    // unbounded growth. Deferred to a blocking task so a cold cache does not
+    // block first user I/O on the critical startup path.
+    if let Ok(paths) = VtCodePaths::resolve()
+        && let Ok(tmp_dir) = paths.cache_path("large-output")
+    {
         tokio::task::spawn_blocking(move || {
             if let Err(err) = agent::runloop::tool_output::large_output::cleanup_old_temp_spools(
                 &tmp_dir, 86400, // 24 hours

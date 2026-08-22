@@ -1,5 +1,6 @@
 use crate::env_helpers::default_true;
 use serde::{Deserialize, Serialize};
+use vtcode_commons::VtCodePaths;
 
 /// Gatekeeper mitigation configuration (macOS only)
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -74,10 +75,16 @@ impl Default for SecurityConfig {
 }
 
 fn default_gatekeeper_auto_clear_paths() -> Vec<String> {
-    crate::constants::defaults::DEFAULT_GATEKEEPER_AUTO_CLEAR_PATHS
-        .iter()
-        .map(|s| s.to_string())
-        .collect()
+    let mut paths = vec![".vtcode/bin".to_string()];
+    if let Ok(resolver) = VtCodePaths::resolve() {
+        paths.push(resolver.executable_dir().display().to_string());
+        paths.push(resolver.legacy_dir().join("bin").display().to_string());
+    } else {
+        paths.push(".local/bin".to_string());
+    }
+    paths.sort();
+    paths.dedup();
+    paths
 }
 
 impl Default for GatekeeperConfig {

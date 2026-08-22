@@ -51,7 +51,7 @@ pub struct ConfigReadResponse {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigWriteTarget {
-    /// User-level configuration (`~/.vtcode/vtcode.toml`).
+    /// User-level configuration in the canonical platform config directory.
     User,
     /// Workspace-level configuration (workspace root).
     Workspace,
@@ -171,6 +171,7 @@ impl ConfigService {
 
         ConfigManager::save_config_to_path(&target_path, &updated_config)
             .with_context(|| format!("Failed to write updated configuration to {}", target_path.display()))?;
+        ConfigManager::invalidate_workspace_cache(&request.workspace);
 
         let reloaded_manager = ConfigManager::load_from_workspace(&request.workspace)
             .context("Failed to reload configuration after write")?;
@@ -234,12 +235,9 @@ fn resolve_target_path(manager: &ConfigManager, workspace: &Path, target: &Confi
         }
         ConfigWriteTarget::User => {
             let provider = defaults::current_config_defaults();
-            let paths = provider.home_config_paths(manager.config_file_name());
-            if let Some(path) = paths.first() {
-                return Ok(path.clone());
-            }
-            let home = dirs::home_dir().context("Could not resolve home directory")?;
-            Ok(home.join(".vtcode").join(manager.config_file_name()))
+            provider
+                .canonical_user_config_path(manager.config_file_name())?
+                .context("Could not resolve the canonical user configuration path")
         }
         ConfigWriteTarget::Project => {
             let provider = defaults::current_config_defaults();
@@ -403,6 +401,36 @@ mod tests {
 
             assert_eq!(response.effective_value, Some(TomlValue::String("gemini".to_string())));
             assert!(response.overridden_metadata.is_some());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn user_writes_target_the_canonical_path_not_the_legacy_fallback() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workspace = temp.path();
+        let legacy_path = workspace.join("legacy").join("vtcode.toml");
+        let canonical_path = workspace.join("xdg").join("vtcode.toml");
+        fs::create_dir_all(legacy_path.parent().expect("legacy parent")).expect("legacy dir");
+        fs::write(&legacy_path, "agent.provider = \"openai\"\n").expect("legacy config");
+
+        let static_paths = StaticWorkspacePaths::new(workspace, workspace.join(".vtcode"));
+        let provider = WorkspacePathsDefaults::new(Arc::new(static_paths))
+            .with_home_paths(vec![legacy_path.clone(), canonical_path.clone()]);
+
+        with_config_defaults_provider_for_test(Arc::new(provider), || {
+            ConfigService::write(ConfigWriteRequest {
+                workspace: workspace.to_path_buf(),
+                target: ConfigWriteTarget::User,
+                path: "agent.provider".to_string(),
+                value: TomlValue::String("anthropic".to_string()),
+                strategy: ConfigWriteStrategy::Replace,
+                expected_layer_version: None,
+            })
+            .expect("write response");
+
+            assert!(canonical_path.exists(), "the canonical user config should be created");
+            assert_eq!(fs::read_to_string(&legacy_path).expect("legacy config"), "agent.provider = \"openai\"\n");
         });
     }
 

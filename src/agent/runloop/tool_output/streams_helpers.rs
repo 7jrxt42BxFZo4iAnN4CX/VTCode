@@ -87,7 +87,8 @@ pub(crate) fn resolve_stdout_tail_limit(config: Option<&VTCodeConfig>) -> usize 
 
 /// Spool large output to a file with improved directory structure and notifications
 ///
-/// For outputs exceeding the threshold, saves to `~/.vtcode/tmp/<session_hash>/call_<id>.output`
+/// For outputs exceeding the threshold, saves to the user cache's
+/// `large-output/<session_hash>/call_<id>.output`.
 /// and returns the path. The session hash groups related outputs together for easier cleanup.
 ///
 /// This function also supports the legacy spool directory for backwards compatibility.

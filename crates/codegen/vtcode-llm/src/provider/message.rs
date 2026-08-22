@@ -56,6 +56,10 @@ impl ImageDetail {
         }
     }
 
+    #[allow(
+        clippy::should_implement_trait,
+        reason = "preserve the public compatibility parser API"
+    )]
     pub fn from_str(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
             "low" => Some(Self::Low),

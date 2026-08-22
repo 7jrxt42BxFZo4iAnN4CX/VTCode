@@ -2,15 +2,15 @@
 
 pub use crate::config::WorkspaceTrustLevel;
 use crate::config::constants::defaults;
-use crate::config::defaults::get_config_dir;
 use crate::utils::path::canonicalize_workspace;
 use hashbrown::HashMap;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use tokio::fs;
+use vtcode_commons::VtCodePaths;
 
-/// VT Code configuration stored in ~/.vtcode/.
+/// VT Code's auxiliary user configuration and cache/state metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DotConfig {
     /// Configuration schema version.
@@ -236,37 +236,43 @@ impl Default for UiConfig {
 pub struct DotManager {
     config_dir: PathBuf,
     cache_dir: PathBuf,
+    state_dir: PathBuf,
     config_file: PathBuf,
 }
 
 impl DotManager {
-    /// Creates a new `DotManager` using the default configuration directory.
+    /// Creates a new `DotManager` using the centralized VT Code path policy.
     pub fn new() -> Result<Self, DotError> {
-        let config_dir = get_config_dir().ok_or(DotError::HomeDirNotFound)?;
-        let cache_dir = config_dir.join("cache");
-        let config_file = config_dir.join("config.toml");
+        let paths = VtCodePaths::resolve().map_err(|_error| DotError::HomeDirNotFound)?;
+        let config_dir = paths.config_dir().to_path_buf();
+        let cache_dir = paths.cache_dir().to_path_buf();
+        let state_dir = paths.state_dir().to_path_buf();
+        let config_file = paths
+            .config_path("config.toml")
+            .map_err(|error| DotError::Io(std::io::Error::other(error.to_string())))?;
 
-        Ok(Self { config_dir, cache_dir, config_file })
+        Ok(Self { config_dir, cache_dir, state_dir, config_file })
     }
 
     /// Initialize the dot folder structure
     pub async fn initialize(&self) -> Result<(), DotError> {
         // Create directories
-        fs::create_dir_all(&self.config_dir).await.map_err(DotError::Io)?;
-        fs::create_dir_all(&self.cache_dir).await.map_err(DotError::Io)?;
+        ensure_user_dir(&self.config_dir)?;
+        ensure_user_dir(&self.cache_dir)?;
+        ensure_user_dir(&self.state_dir)?;
 
         // Create subdirectories
         let subdirs = [
-            "cache/prompts",
-            "cache/context",
-            "cache/models",
-            "logs",
-            "sessions",
-            "backups",
+            self.cache_dir.join("prompts"),
+            self.cache_dir.join("context"),
+            self.cache_dir.join("models"),
+            self.state_dir.join("logs"),
+            self.state_dir.join("sessions"),
+            self.state_dir.join("backups"),
         ];
 
-        for subdir in &subdirs {
-            fs::create_dir_all(self.config_dir.join(subdir)).await.map_err(DotError::Io)?;
+        for subdir in subdirs {
+            ensure_user_dir(&subdir)?;
         }
 
         // Create default config if it doesn't exist
@@ -284,7 +290,12 @@ impl DotManager {
             return Ok(DotConfig::default());
         }
 
-        let content = fs::read_to_string(&self.config_file).await.map_err(DotError::Io)?;
+        let content = String::from_utf8(
+            vtcode_commons::fs::read_private_file_no_follow(&self.config_file)
+                .await
+                .map_err(|error| DotError::Io(std::io::Error::other(error.to_string())))?,
+        )
+        .map_err(|error| DotError::Io(std::io::Error::other(error.to_string())))?;
 
         toml::from_str(&content).map_err(DotError::TomlDe)
     }
@@ -296,9 +307,11 @@ impl DotManager {
     pub async fn save_config(&self, config: &DotConfig) -> Result<(), DotError> {
         let content = toml::to_string_pretty(config).map_err(DotError::Toml)?;
 
-        let tmp_path = temp_sibling(&self.config_file);
-        fs::write(&tmp_path, content).await.map_err(DotError::Io)?;
-        fs::rename(&tmp_path, &self.config_file).await.map_err(DotError::Io)?;
+        let path = self.config_file.clone();
+        tokio::task::spawn_blocking(move || VtCodePaths::write_private_file_atomic(&path, content.as_bytes()))
+            .await
+            .map_err(|error| DotError::Io(std::io::Error::other(error.to_string())))?
+            .map_err(|error| DotError::Io(std::io::Error::other(error.to_string())))?;
 
         Ok(())
     }
@@ -370,17 +383,17 @@ impl DotManager {
 
     /// Get logs directory
     pub fn logs_dir(&self) -> PathBuf {
-        self.config_dir.join("logs")
+        self.state_dir.join("logs")
     }
 
     /// Get sessions directory
     pub fn sessions_dir(&self) -> PathBuf {
-        self.config_dir.join("sessions")
+        self.state_dir.join("sessions")
     }
 
     /// Get backups directory
     pub fn backups_dir(&self) -> PathBuf {
-        self.config_dir.join("backups")
+        self.state_dir.join("backups")
     }
 
     /// Clean up old cache files
@@ -496,7 +509,14 @@ impl DotManager {
         let backup_path = self.backups_dir().join(backup_name);
 
         if fs::try_exists(&self.config_file).await.unwrap_or(false) {
-            fs::copy(&self.config_file, &backup_path).await.map_err(DotError::Io)?;
+            let content = vtcode_commons::fs::read_private_file_no_follow(&self.config_file)
+                .await
+                .map_err(|error| DotError::Io(std::io::Error::other(error.to_string())))?;
+            let backup_destination = backup_path.clone();
+            tokio::task::spawn_blocking(move || VtCodePaths::write_private_file_atomic(&backup_destination, &content))
+                .await
+                .map_err(|error| DotError::Io(std::io::Error::other(error.to_string())))?
+                .map_err(|error| DotError::Io(std::io::Error::other(error.to_string())))?;
         }
 
         Ok(backup_path)
@@ -536,7 +556,14 @@ impl DotManager {
             return Err(DotError::BackupNotFound(backup_path.to_path_buf()));
         }
 
-        fs::copy(backup_path, &self.config_file).await.map_err(DotError::Io)?;
+        let content = vtcode_commons::fs::read_private_file_no_follow(backup_path)
+            .await
+            .map_err(|error| DotError::Io(std::io::Error::other(error.to_string())))?;
+        let path = self.config_file.clone();
+        tokio::task::spawn_blocking(move || VtCodePaths::write_private_file_atomic(&path, &content))
+            .await
+            .map_err(|error| DotError::Io(std::io::Error::other(error.to_string())))?
+            .map_err(|error| DotError::Io(std::io::Error::other(error.to_string())))?;
 
         Ok(())
     }
@@ -610,10 +637,10 @@ fn workspace_trust_key(workspace: &Path) -> String {
     canonicalize_workspace(workspace).to_string_lossy().into_owned()
 }
 
-/// A sibling path next to `path` for atomic replace via rename.
-fn temp_sibling(path: &Path) -> PathBuf {
-    let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("config.toml");
-    path.with_file_name(format!(".{file_name}.tmp"))
+fn ensure_user_dir(path: &Path) -> Result<(), DotError> {
+    VtCodePaths::ensure_user_dir(path)
+        .map(|_| ())
+        .map_err(|error| DotError::Io(std::io::Error::other(error.to_string())))
 }
 
 /// Global dot manager instance
@@ -733,13 +760,14 @@ mod tests {
         let manager = DotManager {
             config_dir: config_dir.clone(),
             cache_dir: config_dir.join("cache"),
+            state_dir: config_dir.join("state"),
             config_file: config_dir.join("config.toml"),
         };
 
         manager.initialize().await.unwrap();
         assert!(config_dir.exists());
         assert!(config_dir.join("cache").exists());
-        assert!(config_dir.join("logs").exists());
+        assert!(manager.logs_dir().exists());
     }
 
     #[tokio::test]
@@ -750,6 +778,7 @@ mod tests {
         let manager = DotManager {
             config_dir: config_dir.clone(),
             cache_dir: config_dir.join("cache"),
+            state_dir: config_dir.join("state"),
             config_file: config_dir.join("config.toml"),
         };
 
@@ -772,6 +801,7 @@ mod tests {
         let manager = DotManager {
             config_dir: config_dir.clone(),
             cache_dir: config_dir.join("cache"),
+            state_dir: config_dir.join("state"),
             config_file: config_dir.join("config.toml"),
         };
         manager.initialize().await.unwrap();

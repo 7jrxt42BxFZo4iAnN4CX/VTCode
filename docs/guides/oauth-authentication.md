@@ -236,9 +236,15 @@ When keyring is selected:
 - **Linux**: Secret Service API / libsecret
 
 **Encrypted file storage**:
-- Location: `~/.vtcode/auth/credential_<derived-name>.json`
+- Location: the canonical user config directory's `auth/credential_<derived-name>.json` (see the [user data directories guide](user-data-directories.md) for platform resolution and overrides)
 - Encryption: AES-256-GCM with machine-derived key and per-file salt
 - Existing `openai_chatgpt.json` files are migrated automatically when loaded
+
+Set `VTCODE_CONFIG` to select an absolute canonical config root for a managed
+deployment. New credentials are written there; legacy credential locations are
+still read for compatibility when startup migration is bypassed. Do not use
+`VTCODE_HOME` as a new credential destination: it identifies the preserved
+legacy source tree.
 
 #### Codex auth.json Fallback
 
@@ -324,7 +330,7 @@ credentials_store_mode = "keyring"
 
 Same shared storage as OpenAI:
 - **Keyring**: Platform-native credential store when selected
-- **Encrypted file**: `~/.vtcode/auth/credential_<derived-name>.json`
+- **Encrypted file**: the canonical user config directory's `auth/credential_<derived-name>.json`
 - Existing `openrouter.json` files are migrated automatically when loaded
 
 #### Refresh Tokens

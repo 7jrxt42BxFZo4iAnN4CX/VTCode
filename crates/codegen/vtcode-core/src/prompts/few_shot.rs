@@ -17,7 +17,7 @@
 //! ## Example file format
 //!
 //! Examples live under `<workspace>/.vtcode/prompts/examples/*.md` or
-//! `<home>/.vtcode/prompts/examples/*.md`. The filename stem is the
+//! the canonical user config prompts directory's `examples/*.md`. The filename stem is the
 //! stable id; the file body uses YAML frontmatter for metadata:
 //!
 //! ```markdown
@@ -43,6 +43,7 @@ use std::sync::OnceLock;
 use compact_str::CompactString;
 use serde::Deserialize;
 use tracing::warn;
+use vtcode_commons::VtCodePaths;
 use vtcode_commons::tokens::estimate_tokens;
 
 use super::resource_cache::{ResourceCache, canonical_cache_path, fingerprint_markdown_directories};
@@ -50,6 +51,16 @@ use super::resource_cache::{ResourceCache, canonical_cache_path, fingerprint_mar
 const EXAMPLES_DIR: &str = "examples";
 const PROMPTS_PARENT: &str = ".vtcode/prompts";
 const MIN_TOKEN_BUDGET: usize = 16;
+
+fn user_examples_dir(home: &Path) -> PathBuf {
+    if dirs::home_dir().as_deref() == Some(home)
+        && let Ok(paths) = VtCodePaths::resolve()
+        && let Ok(prompt_dir) = paths.config_path("prompts")
+    {
+        return prompt_dir.join(EXAMPLES_DIR);
+    }
+    home.join(PROMPTS_PARENT).join(EXAMPLES_DIR)
+}
 
 /// Default token budget for the `[Few-Shot Examples]` block of the system
 /// prompt. ~10% of an 8K context window, leaving the remainder for the
@@ -87,7 +98,7 @@ struct FewShotFrontmatter {
 /// Library of few-shot examples discovered from disk.
 ///
 /// Construct via [`FewShotStore::load`] to read from both the workspace
-/// `.vtcode/prompts/examples/` and the user `~/.vtcode/prompts/examples/`
+/// `.vtcode/prompts/examples/` and the canonical user config prompts directory
 /// directories. The constructor is fail-soft: unreadable files or bad
 /// frontmatter are skipped with a warning, not a panic.
 #[derive(Debug, Clone, Default)]
@@ -252,7 +263,7 @@ impl FewShotCacheKey {
         Self {
             workspace_examples_dir: workspace_root
                 .map(|root| canonical_cache_path(&root.join(PROMPTS_PARENT).join(EXAMPLES_DIR))),
-            home_examples_dir: home_dir.map(|home| canonical_cache_path(&home.join(PROMPTS_PARENT).join(EXAMPLES_DIR))),
+            home_examples_dir: home_dir.map(|home| canonical_cache_path(&user_examples_dir(home))),
         }
     }
 }
@@ -299,7 +310,7 @@ fn load_uncached(workspace_root: Option<&Path>, home_dir: Option<&Path>) -> FewS
     }
 
     if let Some(home) = home_dir {
-        merge_from_dir(&mut by_id, &home.join(PROMPTS_PARENT).join(EXAMPLES_DIR));
+        merge_from_dir(&mut by_id, &user_examples_dir(home));
     }
 
     FewShotStore::from_examples(by_id.into_values().collect())

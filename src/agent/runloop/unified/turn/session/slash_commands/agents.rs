@@ -1,5 +1,7 @@
 use anyhow::{Result, anyhow, bail};
 use std::path::PathBuf;
+use vtcode_commons::VtCodePaths;
+use vtcode_commons::fs::write_private_file_atomic;
 use vtcode_core::constants::tools;
 use vtcode_core::utils::ansi::MessageStyle;
 use vtcode_ui::tui::app::{AgentPaletteItem, InlineListItem, InlineListSearchConfig, InlineListSelection};
@@ -195,7 +197,7 @@ async fn show_agents_manager(mut ctx: SlashCommandContext<'_>) -> Result<SlashCo
             ),
             action_item(
                 "Create user agent",
-                "Guided flow for `~/.vtcode/agents/<name>.md` with VT Code-native frontmatter",
+                "Guided flow for a user agent in the canonical config directory with VT Code-native frontmatter",
                 Some("User"),
                 "create user agent guided authoring",
                 "create-user",
@@ -364,22 +366,33 @@ async fn legacy_create_agent_scaffold(
     validate_agent_name(name)?;
     let path = match scope {
         AgentDefinitionScope::Project => ctx.config.workspace.join(".vtcode/agents").join(format!("{name}.md")),
-        AgentDefinitionScope::User => dirs::home_dir()
-            .ok_or_else(|| anyhow!("Cannot resolve home directory for user-scope agent"))?
-            .join(".vtcode/agents")
-            .join(format!("{name}.md")),
+        AgentDefinitionScope::User => VtCodePaths::resolve()
+            .and_then(|paths| paths.config_path(format!("agents/{name}.md")))
+            .map_err(|error| anyhow!("Cannot resolve user-scope agent path: {error}"))?,
     };
 
-    if path.exists() {
-        bail!("Agent file already exists at {}", path.display());
+    match tokio::fs::symlink_metadata(&path).await {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            bail!("Refusing to use symlinked agent file {}", path.display());
+        }
+        Ok(metadata) if !metadata.is_file() => {
+            bail!("Agent path is not a regular file: {}", path.display());
+        }
+        Ok(_) => bail!("Agent file already exists at {}", path.display()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
     }
 
-    tokio::fs::create_dir_all(
+    VtCodePaths::ensure_user_dir(
         path.parent()
             .ok_or_else(|| anyhow!("Invalid agent destination {}", path.display()))?,
-    )
-    .await?;
-    tokio::fs::write(&path, scaffold_agent_markdown(name)).await?;
+    )?;
+    let contents = scaffold_agent_markdown(name);
+    if matches!(scope, AgentDefinitionScope::User) {
+        write_private_file_atomic(&path, contents.as_bytes()).await?;
+    } else {
+        tokio::fs::write(&path, contents).await?;
+    }
 
     if let Some(controller) = ctx.tool_registry.subagent_controller() {
         let _ = controller.reload().await;

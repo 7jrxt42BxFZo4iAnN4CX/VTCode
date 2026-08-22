@@ -129,7 +129,7 @@ pub struct JustificationExtractor;
 
 ### Approval Patterns
 
-Stored in `~/.vtcode/cache/approval_patterns.json`:
+Stored in the user cache directory's approval-pattern file:
 
 ```json
 {
@@ -152,7 +152,7 @@ Stored in `~/.vtcode/cache/approval_patterns.json`:
 
 ### Format
 
--   **Location**: `~/.vtcode/cache/approval_patterns.json`
+-   **Location**: `<cache>/approval_patterns.json`
 -   **Format**: JSON serialized HashMap<String, ApprovalPattern>
 -   **Persistence**: Automatic on each approval decision
 
@@ -272,7 +272,7 @@ enable_learning = true
 auto_approve_threshold = 0.80  # Approval rate
 min_approvals_for_auto = 3     # Minimum approval count
 show_suggestions = true         # Show approval history in dialog
-cache_dir = "~/.vtcode/cache"   # Pattern storage location
+cache_dir = "<cache>"   # Pattern storage location
 ```
 
 ## Testing

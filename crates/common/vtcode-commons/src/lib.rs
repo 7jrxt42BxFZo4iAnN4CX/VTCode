@@ -71,6 +71,7 @@ pub mod ui_protocol;
 pub mod unicode;
 pub mod utils;
 pub mod validation;
+pub mod vtcode_paths;
 pub mod vtcodegitignore;
 pub mod walk;
 pub mod workspace_snapshot;
@@ -101,6 +102,9 @@ pub use styling::{ColorPalette, DiffColorPalette, render_styled};
 pub use telemetry::{NoopTelemetry, TelemetrySink};
 pub use tokens::{estimate_tokens, truncate_to_tokens};
 pub use unicode::{UNICODE_MONITOR, UnicodeMonitor, UnicodeValidationContext};
+pub use vtcode_paths::{
+    MigrationEntry, MigrationFailure, MigrationReport, MigrationSkip, MigrationSkipReason, VtCodePaths,
+};
 
 // Re-export key thread safety primitives.
 pub(crate) use thread_safety::RelaxedAtomic;

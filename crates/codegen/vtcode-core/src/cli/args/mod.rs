@@ -517,7 +517,7 @@ pub enum Commands {
         force: bool,
     },
 
-    /// Initialize project in ~/.vtcode/projects/
+    /// Initialize project in the user state directory's `projects/` path.
     ///
     /// Create a new project entry in the VT Code projects directory.
     /// This is separate from `vtcode init` which bootstraps a workspace.
@@ -548,7 +548,7 @@ pub enum Commands {
     /// Generate configuration file
     ///
     /// Create a vtcode.toml configuration file with default settings.
-    /// Use --global to create in ~/.vtcode/ or specify an output path.
+    /// Use --global to create in the canonical user config directory or specify an output path.
     ///
     /// Examples:
     ///   vtcode config
@@ -561,10 +561,10 @@ pub enum Commands {
             long_help = "Write the configuration to this path.\nDefaults to ./vtcode.toml in the current directory."
         )]
         output: Option<PathBuf>,
-        /// Create in user home directory (~/.vtcode/vtcode.toml)
+        /// Create in the canonical user config directory.
         #[arg(
             long,
-            long_help = "Write the configuration to ~/.vtcode/vtcode.toml.\nThis sets global defaults for all workspaces."
+            long_help = "Write the configuration to the canonical user config directory.\nThis sets global defaults for all workspaces."
         )]
         global: bool,
     },
@@ -910,24 +910,54 @@ fn parse_workspace_directory(raw: &str) -> Result<PathBuf, String> {
 }
 
 pub fn long_version() -> String {
-    use crate::config::defaults::{get_config_dir, get_data_dir};
-
     let git_info = option_env!("VT_CODE_GIT_INFO").unwrap_or(env!("CARGO_PKG_VERSION"));
-
-    let config_dir = get_config_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "~/.vtcode/".to_string());
-
-    let data_dir = get_data_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "~/.vtcode/cache/".to_string());
+    let path_diagnostics = match vtcode_commons::VtCodePaths::resolve() {
+        Ok(paths) => format!(
+            "Config directory: {}\nData directory: {}\nState directory: {}\nCache directory: {}\nRuntime directory: {}\nExecutable directory: {}\nLegacy directory: {}\nMigration marker: {}\nMigration report: {}",
+            paths.config_dir().display(),
+            paths.data_dir().display(),
+            paths.state_dir().display(),
+            paths.cache_dir().display(),
+            paths.runtime_dir().display(),
+            paths.executable_dir().display(),
+            paths.legacy_dir().display(),
+            paths.migration_marker_path().display(),
+            paths.migration_report_path().display(),
+        ),
+        Err(error) => format!("Storage paths: unavailable ({error:#})"),
+    };
+    let environment = [
+        "HOME",
+        "VTCODE_HOME",
+        "VTCODE_CONFIG",
+        "VTCODE_CONFIG_PATH",
+        "VTCODE_DATA",
+        "CODEX_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME",
+        "XDG_CACHE_HOME",
+        "XDG_RUNTIME_DIR",
+        "XDG_BIN_HOME",
+        "XDG_CONFIG_DIRS",
+        "XDG_DATA_DIRS",
+    ]
+    .iter()
+    .map(|name| {
+        let value = env::var_os(name)
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "<not set>".to_string());
+        format!("  {name}={value}")
+    })
+    .collect::<Vec<_>>()
+    .join("\n");
 
     format!(
-        "{}\n\nAuthors: {}\nConfig directory: {}\nData directory: {}\n\nEnvironment variables:\n  VTCODE_CONFIG - Override config directory\n  VTCODE_DATA - Override data directory",
+        "{}\n\nAuthors: {}\n{}\n\nEnvironment variables:\n{}",
         git_info,
         env!("CARGO_PKG_AUTHORS"),
-        config_dir,
-        data_dir
+        path_diagnostics,
+        environment,
     )
 }
 
@@ -942,6 +972,13 @@ mod tests {
         assert!(text.contains("Authors:"));
         assert!(text.contains("Config directory:"));
         assert!(text.contains("Data directory:"));
+        assert!(text.contains("State directory:"));
+        assert!(text.contains("Cache directory:"));
+        assert!(text.contains("Runtime directory:"));
+        assert!(text.contains("Executable directory:"));
+        assert!(text.contains("Legacy directory:"));
+        assert!(text.contains("Migration marker:"));
+        assert!(text.contains("Migration report:"));
         assert!(text.contains("VTCODE_CONFIG"));
         assert!(text.contains("VTCODE_DATA"));
     }

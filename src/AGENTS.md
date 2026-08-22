@@ -19,7 +19,7 @@ Detailed runloop recovery and allocator notes live in the [vtcode binary gotchas
 - Route batched tool metrics through the shared execution helper so every executed status is recorded; checkpoint diagnostics use canonical `Usage` plus saturating per-turn counters.
 - Keep PTY status handoff during stream shutdown separate from output rendering.
 - `agent/runloop/unified/turn/compaction/` delegates to `vtcode-core::compaction`; reserve segment boundaries with the shared transition helper.
-- Updates own asset selection, checksum verification, safe extraction, and `self_replace`; TUI installs thread `UpdateProgress` callbacks through `install_update_reported` for real-time download/extract feedback; `main_helpers` owns relaunch context and runtime initialization.
+- Updates own asset selection, checksum verification, safe extraction, and `self_replace`; TUI installs thread `UpdateProgress` callbacks through `install_update_reported` for real-time download/extract feedback; `main_helpers` owns relaunch context, pre-config legacy migration, and runtime initialization.
 - Centralize provider-noise sanitization in `turn::provider_noise` and `stream_sanitization::StreamSanitizer`.
 - Preserve prompt-section ordering and wire-tool shaping invariants; see the detailed guide before changing request assembly. Keep clean request and continuation history Arc-shared; injected context/few-shot additions and provider compaction are intentional copy boundaries.
 - Preserve planning recovery, approval, interview, and budget-synthesis invariants; use the shared `ThreadEvent` contract for telemetry. After denied `request_user_input` or a transient tool-free synthesis failure, retry synthesis once and never advertise implementation without a validated persisted plan.

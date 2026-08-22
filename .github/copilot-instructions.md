@@ -246,7 +246,7 @@ Examples of effective steering:
 
 -   For operations that are potentially destructive (e.g., `git reset --hard`, `git push --force`, `rm -rf`), require explicit confirmation: supply `confirm=true` in the tool input or include an explicit `--confirm` flag.
 -   The agent should perform a pre-flight audit: run `git status` and `git diff` (or `cargo build --dry-run` where available) and present the results before executing destructive operations.
--   When `confirm=true` is supplied for a destructive command, the agent MUST write an audit event to the persistent audit log (`~/.vtcode/audit/permissions-{date}.log`) recording the command, reason, resolution, and 'Allowed' or 'Denied' decision.
+-   When `confirm=true` is supplied for a destructive command, the agent MUST write an audit event to the persistent audit log under the resolved VT Code state directory (`$XDG_STATE_HOME/vtcode/audit/permissions-{date}.log` on Linux/BSD, or the platform-native state root), recording the command, reason, resolution, and 'Allowed' or 'Denied' decision. Use `vtcode --version` to resolve the path.
 
 # Self-Documentation
 
