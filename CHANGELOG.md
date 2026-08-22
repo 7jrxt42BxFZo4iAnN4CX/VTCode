@@ -2,6 +2,22 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.147.0 - 2026-08-22
+
+### Highlights
+#### Documentation
+
+- Update contributor list with latest contributors (7d4cb316) 
+#### Features
+
+- Compact task tracker tree rendering (d4cf72ed) 
+- Add vision support for deepseek-v4-flash-vision-exp (6741d07f) 
+- Add XDG user data directory support (1bffe07e) 
+### Other Changes
+#### Other
+
+- Update TODO (e8c51be1) 
+- Update TODO (21b5069c) 
 ## 0.146.11 - 2026-08-22
 
 ### Highlights
