@@ -94,6 +94,8 @@ pub struct AgentSessionState {
     /// Per-tool execution latencies recorded during the current turn.
     /// Entries are (tool_name, duration_ms).
     pub turn_tool_latencies: Vec<(String, u64)>,
+    /// Bytes in final serialized tool responses admitted to model context.
+    pub model_visible_output_bytes: u64,
 
     /// Cached total estimated token count for the conversation history.
     /// Updated incrementally on each push to avoid O(n) scans per turn.
@@ -176,6 +178,7 @@ impl AgentSessionState {
             turn_max_ms: 0,
             turn_durations_ms: Vec::with_capacity(max_turns),
             turn_tool_latencies: Vec::with_capacity(32),
+            model_visible_output_bytes: 0,
             cached_total_tokens: 0,
             request_gap: RequestGapTracker::default(),
             last_reasoning_effort: None,
@@ -559,6 +562,7 @@ impl AgentSessionState {
             });
         }
         let serialized = serde_json::to_string(value).expect("Value serialization is infallible");
+        self.model_visible_output_bytes = self.model_visible_output_bytes.saturating_add(serialized.len() as u64);
         let msg = Message::tool_response(call_id, serialized);
         let tokens = msg.estimate_tokens();
         self.cached_total_tokens = self.cached_total_tokens.saturating_add(tokens);
@@ -741,6 +745,21 @@ mod tests {
         }
         let expected_serialized = serde_json::to_string(&payload).unwrap();
         assert_eq!(state.messages[0], Message::tool_response("call_1".to_string(), expected_serialized));
+    }
+
+    #[test]
+    fn push_tool_result_records_final_serialized_model_visible_bytes() {
+        let mut state = AgentSessionState::new("session".to_string(), 4, 4, 16_000);
+        let payload = serde_json::json!({
+            "preview": "bounded output",
+            "spool_path": ".vtcode/context/tool_outputs/result.txt",
+            "spooled_bytes": 36_877
+        });
+        let expected_bytes = serde_json::to_string(&payload).unwrap().len() as u64;
+
+        state.push_tool_result("call_1".to_string(), "exec_command", &payload, false);
+
+        assert_eq!(state.model_visible_output_bytes, expected_bytes);
     }
 
     #[test]

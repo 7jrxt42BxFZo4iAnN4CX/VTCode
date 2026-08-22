@@ -93,7 +93,12 @@ fn verification_preview_content(content: &str, max_preview_bytes: Option<usize>)
     truncate_byte_budget(&preview, byte_limit, "")
 }
 
-fn command_preview_content(
+/// Render the bounded model-facing preview for command-session output already
+/// held in memory by a response producer.
+///
+/// This deliberately accepts content rather than a spool path: consumers must
+/// not reopen spool files while shaping the model response.
+pub(crate) fn command_preview_content(
     tool_name: &str,
     response: &Value,
     content: &str,

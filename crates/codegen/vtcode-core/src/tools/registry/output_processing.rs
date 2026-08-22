@@ -8,7 +8,7 @@ use super::spool_processing::{
     limit_output_preview, limit_spooled_preview, preview_budget_bytes, should_force_spool,
     should_keep_inline_pty_output,
 };
-use crate::tools::output_spooler::ensure_spooled_reference_metadata;
+use crate::tools::output_spooler::{command_preview_content, ensure_spooled_reference_metadata};
 
 fn redact_value_strings(value: &mut Value) {
     match value {
@@ -178,6 +178,22 @@ impl ToolRegistry {
             // fields. Sanitize those fields before trusting the marker; the
             // marker only describes storage, not the safety of the payload.
             ensure_spooled_reference_metadata(&mut value);
+            if crate::tools::tool_intent::canonical_command_session_tool_name(tool_name).is_some()
+                && let Some(content) = value
+                    .get("preview")
+                    .and_then(Value::as_str)
+                    .filter(|preview| !preview.is_empty())
+                    .map(str::to_owned)
+            {
+                let preview =
+                    command_preview_content(tool_name, &value, &content, Some(preview_budget_bytes(max_output_tokens)));
+                if let Some(object) = value.as_object_mut() {
+                    object.remove("raw_output");
+                    object.remove("stdout");
+                    object.remove("output");
+                    object.insert("preview".to_string(), Value::String(preview));
+                }
+            }
             if let Some(object) = value.as_object_mut() {
                 object.remove("output_spooled");
             }
@@ -434,7 +450,8 @@ mod tests {
 
         let result = registry.process_tool_output("run_pty_cmd", value, false, 100).await;
 
-        assert_eq!(result["output"], "password=[REDACTED_SECRET]");
+        assert_eq!(result["preview"], "password=[REDACTED_SECRET]");
+        assert!(result.get("output").is_none());
         assert_eq!(result["spool_path"], ".vtcode/context/tool_outputs/result.txt");
         assert!(result.get("output_spooled").is_none());
     }
@@ -473,10 +490,43 @@ mod tests {
 
         let result = registry.process_tool_output("run_pty_cmd", value, false, 2).await;
 
-        assert_eq!(result["preview"], "01234567");
+        assert!(result["preview"].as_str().unwrap_or_default().len() <= 8);
+        assert!(result.get("output").is_none());
         assert_eq!(result["spooled_bytes"], 12_345);
         assert!(result["spool_note"].as_str().unwrap_or_default().contains("result.txt"));
         assert!(result.get("output_spooled").is_none());
+    }
+
+    #[tokio::test]
+    async fn synthetic_replay_of_producer_spooled_inspection_keeps_only_six_kib_preview() {
+        let temp = tempfile::tempdir().unwrap();
+        let registry = ToolRegistry::new(temp.path().to_path_buf()).await;
+        let output = format!("REPLAY_HEAD\n{}\nREPLAY_TAIL", "x".repeat(36 * 1024));
+        let value = json!({
+            "output_spooled": true,
+            "spool_path": ".vtcode/context/tool_outputs/replay-36k.txt",
+            "spool_complete": true,
+            "total_output_bytes": output.len(),
+            "output": output,
+            "command": "sed -n '1,80p' .vtcode/context/tool_outputs/replay-36k.txt",
+            "exit_code": 1,
+            "failure_diagnostic": "command completed with status 1"
+        });
+
+        let result = registry.process_tool_output("exec_command", value, false, 16_384).await;
+        let serialized_model_payload = serde_json::to_string(&result).unwrap();
+        let preview = result["preview"].as_str().unwrap();
+
+        assert!(preview.len() <= 6 * 1024);
+        assert!(result.get("output").is_none());
+        assert!(preview.contains("REPLAY_HEAD"));
+        assert!(preview.contains("REPLAY_TAIL"));
+        assert!(serialized_model_payload.len() < 8 * 1024);
+        assert_eq!(result["spool_path"], ".vtcode/context/tool_outputs/replay-36k.txt");
+        assert_eq!(result["spooled_bytes"], 36_888);
+        assert_eq!(result["spool_complete"], true);
+        assert_eq!(result["failure_diagnostic"], "command completed with status 1");
+        assert!(result["spool_note"].as_str().unwrap().contains("replay-36k.txt"));
     }
 
     #[tokio::test]

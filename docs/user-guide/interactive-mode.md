@@ -246,6 +246,11 @@ and `spool_path` when the spool file is open and healthy. An active session may
 set `spool_complete` to `false`; that path is a readable partial snapshot. If
 the process has exited before draining finishes, VT Code withholds the path,
 retains the session, and a later wait can return the completed reference.
+For spooled command results, the response contains one preview capped at the
+smaller of the requested output budget and 6 KiB. Inspection commands retain
+head and tail context; verification and mutation commands retain the tail.
+The complete spool file and failure or recovery metadata remain available by
+reference without being reread while the response is built.
 
 ### Bash Mode with `!`
 
