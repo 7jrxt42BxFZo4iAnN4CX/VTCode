@@ -78,6 +78,15 @@ cat /etc/passwd
 cat ./src/main.rs
 ```
 
+### Patch target containment
+
+`apply_patch` requires workspace-relative paths for every add, delete, update,
+and move source or destination. Absolute paths, `..`, and traversal-like forms
+are rejected by the parser. Before any mutation, VT Code also resolves every
+target with the workspace's symlink-aware containment check, so an in-workspace
+symlink cannot redirect a patch outside the workspace. All targets are
+preflighted before the first file mutation.
+
 ### Process sandbox boundaries
 
 When a restrictive sandbox policy is active, VT Code applies the same policy

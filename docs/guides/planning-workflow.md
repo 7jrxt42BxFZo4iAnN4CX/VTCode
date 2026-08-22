@@ -36,6 +36,13 @@ During planning, mutating tools should be denied unless a project explicitly all
 
 `task_tracker` is available for checklist state. Planning output should use `<proposed_plan>...</proposed_plan>` when the agent is ready for user review.
 
+Tracker updates use action-aware indices. Standard checklist item indices are
+positive and 1-based; the compatibility form `index: 0` is reserved for
+checklist-level completion with `status: "completed"`. Planning workflow
+updates accept positive flat indices or positive hierarchical `index_path`
+values such as `2.1`. Use `items` for bulk synchronization rather than an
+item index.
+
 ## Usage
 
 ### Start With The Planning Agent

@@ -197,6 +197,12 @@ path when the output file is available. `spool_complete` is false while an
 active session is still writing and the path is a readable partial snapshot.
 When an exited session is still draining, the path is withheld and
 `spool_pending` is set until a later wait completes the output spool.
+Producer-marked spooled command responses reuse the command preview policy and
+cap the model-visible preview at the smaller of the requested budget and 6 KiB.
+Inspection commands preserve head and tail context; verification and mutation
+commands preserve the tail. The complete spool, byte counts, reference
+metadata, and failure or recovery diagnostics remain available without
+reopening the spool while the response is constructed.
 
 Steering follow-ups are persisted as UUID-tagged intents. The schema-v3 session
 envelope keeps at most 16 pending intents and a 64-ID applied window. Recovery
