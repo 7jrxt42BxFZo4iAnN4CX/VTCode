@@ -730,11 +730,6 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: System Architecture Diagram, Data Flow: Style Parsing and Application, Module Dependencies, Effect Support Matrix, InlineTextStyle Evolution
   - **User Questions**: "What can you tell me about Architecture: Anstyle Integration in Vtcode?", "How does System Architecture Diagram work?", "How does Data Flow: Style Parsing and Application work?"
 
-- **File**: `docs/superpowers/specs/2026-07-29-github-gh-cli-guidance-design.md`
-  - **Content**: Authenticated GitHub CLI Guidance
-  - **Topics**: Goal, Design, Verification
-  - **User Questions**: "What can you tell me about Authenticated GitHub CLI Guidance?", "How does Goal work?", "How does Design work?"
-
 - **File**: `docs/analysis/BLOATY_ANALYSIS.md`
   - **Content**: Bloaty Analysis Report for vtcode
   - **Topics**: Overview, Binary Size Summary, Release-fast Binary Analysis (32 MiB), Debug Binary Analysis (84 MiB), Recommendations
@@ -819,16 +814,6 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Content**: Language Support in VT Code
   - **Topics**: Semantic Understanding, Tree-sitter Security Parsing (Bash), Syntax Highlighting
   - **User Questions**: "What can you tell me about Language Support in VT Code?", "How does Semantic Understanding work?", "How does Tree-sitter Security Parsing (Bash) work?"
-
-- **File**: `docs/superpowers/specs/2026-07-29-legacy-updater-compatibility-release-design.md`
-  - **Content**: Legacy Updater Compatibility Release
-  - **Topics**: Goal, Root Cause, Release Asset Contract, Pipeline Changes, Safety
-  - **User Questions**: "What can you tell me about Legacy Updater Compatibility Release?", "How does Goal work?", "How does Root Cause work?"
-
-- **File**: `docs/superpowers/plans/2026-07-29-legacy-updater-compatibility-release.md`
-  - **Content**: Legacy Updater Compatibility Release Implementation Plan
-  - **Topics**: Global Constraints
-  - **User Questions**: "What can you tell me about Legacy Updater Compatibility Release Implementation Plan?", "How does Global Constraints work?"
 
 - **File**: `docs/build-with-claude/migrating-to-claude-opus-5.md`
   - **Content**: Migrating Claude models in VT Code
