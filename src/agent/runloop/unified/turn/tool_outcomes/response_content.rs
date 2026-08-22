@@ -502,14 +502,14 @@ pub(super) async fn prepare_tool_response_content(
 fn record_prepared_tool_response_metrics(
     harness_state: &mut crate::agent::runloop::unified::run_loop_context::HarnessTurnState,
     output: &serde_json::Value,
-    content: &str,
+    _content: &str,
 ) {
     let spooled_output = SpooledOutputReference::from_value(output);
     let raw_spooled_bytes = spooled_output.and_then(|spooled| spooled.original_bytes).unwrap_or(0);
     let reused = ["reused_recent_result", "reused_spooled_output"]
         .into_iter()
         .any(|key| output.get(key).and_then(serde_json::Value::as_bool) == Some(true));
-    harness_state.record_tool_output_metrics(reused, spooled_output.is_some(), raw_spooled_bytes, content.len());
+    harness_state.record_tool_output_metrics(reused, spooled_output.is_some(), raw_spooled_bytes, 0);
 }
 
 fn compact_next_continue_args(value: &serde_json::Value) -> serde_json::Value {
@@ -620,6 +620,7 @@ mod tests {
 
     use super::*;
     use crate::agent::runloop::unified::run_loop_context::{HarnessTurnState, TurnId, TurnRunId};
+    use crate::agent::runloop::unified::turn::turn_processing::test_support::TestTurnProcessingBacking;
 
     fn big_read_output() -> serde_json::Value {
         json!({ "content_kind": "text", "path": "src/cli/mod.rs" })
@@ -681,7 +682,7 @@ mod tests {
     }
 
     #[test]
-    fn prepared_spooled_response_records_final_serialized_visible_bytes() {
+    fn prepared_spooled_response_records_spool_metadata_without_visible_bytes() {
         let output = json!({
             "spool_path": ".vtcode/context/tool_outputs/command.log",
             "spooled_bytes": 12_345,
@@ -703,6 +704,34 @@ mod tests {
         let diagnostics = harness_state.snapshot_turn_diagnostics(Default::default(), 0);
         assert_eq!(diagnostics.spooled_results, 1);
         assert_eq!(diagnostics.raw_spooled_bytes, 12_345);
-        assert_eq!(diagnostics.model_visible_output_bytes, content.len() as u64);
+        assert_eq!(diagnostics.model_visible_output_bytes, 0);
+    }
+
+    #[tokio::test]
+    async fn successful_prepared_tool_response_counts_visible_bytes_once_after_history_push() {
+        let output = json!({
+            "spool_path": ".vtcode/context/tool_outputs/command.log",
+            "spooled_bytes": 12_345,
+            "preview": "bounded command preview",
+            "exit_code": 1,
+            "failure_diagnostics": "command completed with status 1"
+        });
+        let mut backing = TestTurnProcessingBacking::new(4).await;
+
+        let diagnostics = {
+            let mut ctx = backing.turn_processing_context();
+            let args = json!({ "cmd": "printf test", "raw": true });
+            let content = prepare_tool_response_content(&mut ctx, tool_names::UNIFIED_EXEC, &args, &output).await;
+            let expected_visible_bytes = content.len() as u64;
+
+            ctx.push_tool_response("call_1", Some(tool_names::UNIFIED_EXEC), content);
+
+            let diagnostics = ctx.harness_state.snapshot_turn_diagnostics(Default::default(), 0);
+            assert_eq!(diagnostics.model_visible_output_bytes, expected_visible_bytes);
+            diagnostics
+        };
+
+        assert_eq!(diagnostics.spooled_results, 1);
+        assert_eq!(diagnostics.raw_spooled_bytes, 12_345);
     }
 }

@@ -595,7 +595,9 @@ impl SessionToolCatalog {
     ) -> Value {
         if entry.public_name == tools::TASK_TRACKER {
             return compact_parameters(
-                super::task_tracker::task_tracker_parameter_schema_for_workflow(config.planning_active),
+                with_max_output_tokens_parameter(super::task_tracker::task_tracker_parameter_schema_for_workflow(
+                    config.planning_active,
+                )),
                 config.documentation_mode,
             );
         }
@@ -2145,6 +2147,36 @@ mod tests {
             on_wire_schema_tokens(&catalog, planning_config),
             "planning task_tracker token estimate should match the emitted schema",
         );
+    }
+
+    #[test]
+    fn task_tracker_schema_keeps_max_output_tokens_in_standard_and_planning_modes() {
+        let catalog = SessionToolCatalog::rebuild_from_registrations(vec![
+            registration(tools::TASK_TRACKER)
+                .with_description("Track plan tasks")
+                .with_parameter_schema(empty_object_schema()),
+        ]);
+        let base_config = SessionToolsConfig::full_public(
+            SessionSurface::Interactive,
+            CapabilityLevel::CodeSearch,
+            ToolDocumentationMode::Full,
+            ToolModelCapabilities::default(),
+        )
+        .with_tool_profile(ToolProfile::AdvancedVtCode);
+
+        for planning_active in [false, true] {
+            let function = catalog
+                .model_tools(base_config.clone().with_planning_active(planning_active))
+                .into_iter()
+                .find_map(|tool| (tool.function_name() == tools::TASK_TRACKER).then_some(tool.function).flatten())
+                .unwrap_or_else(|| panic!("missing task_tracker function for planning_active={planning_active}"));
+
+            assert_eq!(
+                function.parameters["properties"]["max_output_tokens"]["default"],
+                json!(vtcode_utility_tool_specs::DEFAULT_MAX_OUTPUT_TOKENS),
+                "task_tracker schema must keep max_output_tokens when planning_active={planning_active}",
+            );
+        }
     }
 
     /// Build a simulated MCP tool registration for `server`/`tool` with a
