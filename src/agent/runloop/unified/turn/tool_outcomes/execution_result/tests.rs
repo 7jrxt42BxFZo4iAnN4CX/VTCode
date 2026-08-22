@@ -531,11 +531,7 @@ fn maybe_inline_spooled_with_preview_keeps_spool_reference_when_path_is_invalid(
 }
 
 #[test]
-fn maybe_inline_spooled_with_preview_skips_tail_when_failure_diagnostics_present() {
-    // When structured failure_diagnostics are embedded (e.g. cargo test
-    // failures), the ~10 KB tail_preview of raw PASS/FAIL lines is redundant
-    // token waste — the diagnostics already carry panic, source location,
-    // rerun hint, and next action.
+fn maybe_inline_spooled_with_preview_keeps_preview_and_failure_diagnostics() {
     let spool_relative = ".vtcode/context/tool_outputs/test_failure.txt";
     let serialized = maybe_inline_spooled_with_preview(
         tool_names::UNIFIED_EXEC,
@@ -543,9 +539,11 @@ fn maybe_inline_spooled_with_preview_skips_tail_when_failure_diagnostics_present
             "output": "",
             "command": "cargo nextest run -p my-crate",
             "spool_path": spool_relative,
+            "spooled_bytes": 38_912,
             "preview": "PASS test_pass_1\nFAIL my_test",
             "exit_code": 100,
             "is_exited": true,
+            "auto_recovered": true,
             "failure_diagnostics": {
                 "kind": "cargo_test_failure",
                 "package": "my-crate",
@@ -559,12 +557,14 @@ fn maybe_inline_spooled_with_preview_skips_tail_when_failure_diagnostics_present
     );
 
     let parsed: serde_json::Value = serde_json::from_str(&serialized).expect("serialized JSON payload");
-    assert!(parsed.get("preview").is_none(), "preview should be skipped when failure_diagnostics is present");
+    assert_eq!(parsed.get("preview"), Some(&serde_json::json!("PASS test_pass_1\nFAIL my_test")));
     assert_eq!(parsed.get("result_ref_only"), Some(&serde_json::json!(true)));
     assert_eq!(parsed.get("spool_path"), Some(&serde_json::json!(spool_relative)));
+    assert_eq!(parsed.get("spooled_bytes"), Some(&serde_json::json!(38_912)));
+    assert_eq!(parsed.get("auto_recovered"), Some(&serde_json::json!(true)));
     assert!(
         parsed.get("failure_diagnostics").is_some(),
-        "failure_diagnostics should be preserved in the compacted payload"
+        "failure_diagnostics should remain alongside the bounded preview"
     );
 }
 

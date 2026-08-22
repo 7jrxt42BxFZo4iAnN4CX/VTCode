@@ -175,6 +175,10 @@ pub(crate) fn validate_update_shape<T>(
     index_path: Option<&str>,
     status: Option<&str>,
 ) -> Result<()> {
+    if index.is_some() && index_path.is_some() {
+        bail!("task-tracker updates cannot combine 'index' and 'index_path'");
+    }
+
     if items.is_some() && (index.is_some() || index_path.is_some() || status.is_some()) {
         bail!("bulk task-tracker updates cannot combine 'items' with 'index', 'index_path', or 'status'");
     }
@@ -357,6 +361,14 @@ mod tests {
             .expect_err("mixed bulk and single update fields must fail closed");
 
         assert!(error.to_string().contains("cannot combine 'items'"));
+    }
+
+    #[test]
+    fn task_tracker_update_rejects_both_index_forms() {
+        let error = validate_update_shape::<String>(None, Some(1), Some("1"), Some("completed"))
+            .expect_err("an update must select exactly one index form");
+
+        assert!(error.to_string().contains("cannot combine 'index' and 'index_path'"));
     }
 
     #[test]

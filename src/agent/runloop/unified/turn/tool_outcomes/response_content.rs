@@ -196,10 +196,9 @@ pub(super) fn maybe_inline_spooled_with_preview(tool_name: &str, output: &serde_
 
     let spooled_output = SpooledOutputReference::from_value(output);
     apply_spool_reference_only(&mut compacted, output);
-    let has_failure_diagnostics = output.get("failure_diagnostics").is_some_and(|v| !v.is_null());
     if let Some(obj) = compacted.as_object_mut() {
         obj.remove("preview");
-        if !has_failure_diagnostics && let Some(preview) = spooled_output.and_then(|spooled| spooled.preview) {
+        if let Some(preview) = spooled_output.and_then(|spooled| spooled.preview) {
             obj.insert("preview".to_string(), serde_json::Value::String(preview.to_string()));
         }
     }

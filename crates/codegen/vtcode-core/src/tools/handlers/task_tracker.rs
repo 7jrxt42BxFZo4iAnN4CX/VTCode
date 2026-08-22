@@ -553,11 +553,21 @@ fn standard_task_tracker_parameter_schema() -> Value {
                     "anyOf": [
                         {
                             "required": ["index", "status"],
-                            "not": { "required": ["items"] }
+                            "not": {
+                                "anyOf": [
+                                    { "required": ["items"] },
+                                    { "required": ["index_path"] }
+                                ]
+                            }
                         },
                         {
                             "required": ["index_path", "status"],
-                            "not": { "required": ["items"] }
+                            "not": {
+                                "anyOf": [
+                                    { "required": ["items"] },
+                                    { "required": ["index"] }
+                                ]
+                            }
                         },
                         {
                             "required": ["items"],
@@ -1338,6 +1348,7 @@ mod tests {
         let invalid_cases = [
             json!({"action": "update", "items": ["Done"], "index": 1, "status": "completed"}),
             json!({"action": "update", "items": ["Done"], "index_path": "1", "status": "completed"}),
+            json!({"action": "update", "index": 1, "index_path": "1", "status": "completed"}),
             json!({"action": "update", "items": ["Done"], "status": "completed"}),
             json!({"action": "update", "items": ["Done"], "index": 0, "status": "completed"}),
         ];
@@ -1370,6 +1381,35 @@ mod tests {
             .await
             .expect_err("mixed update must fail closed");
         assert!(error.to_string().contains("cannot combine 'items'"));
+
+        let result = tool.execute(json!({"action": "list"})).await.unwrap();
+        assert_eq!(result["checklist"]["items"][0]["description"], "Original");
+        assert_eq!(result["checklist"]["items"][0]["status"], "pending");
+    }
+
+    #[tokio::test]
+    async fn update_rejects_both_index_forms_before_mutation() {
+        let temp = TempDir::new().unwrap();
+        let (_state, tool) = setup_tool(&temp);
+
+        tool.execute(json!({
+            "action": "create",
+            "title": "Test",
+            "items": ["Original"]
+        }))
+        .await
+        .unwrap();
+
+        let error = tool
+            .execute(json!({
+                "action": "update",
+                "index": 1,
+                "index_path": "1",
+                "status": "completed"
+            }))
+            .await
+            .expect_err("ambiguous index forms must fail closed");
+        assert!(error.to_string().contains("cannot combine 'index' and 'index_path'"));
 
         let result = tool.execute(json!({"action": "list"})).await.unwrap();
         assert_eq!(result["checklist"]["items"][0]["description"], "Original");
