@@ -411,12 +411,19 @@ fn is_low_signal_outcome(outcome: &ToolPipelineOutcome, canonical_tool_name: &st
 /// auto-permission probe replaying a result) and gets overwritten in place.
 /// If the boundary is hit first, the id has been reused across turns, so we
 /// append instead of clobbering an unrelated, earlier Tool result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ToolResponseHistoryUpdate {
+    Appended,
+    Replaced { previous_text_len: usize },
+}
+
 pub(crate) fn push_tool_response<S>(
     history: &mut Vec<uni::Message>,
     tool_call_id: S,
     tool_name: Option<&str>,
     content: String,
-) where
+) -> ToolResponseHistoryUpdate
+where
     S: AsRef<str> + Into<String>,
 {
     let tool_call_id_ref = tool_call_id.as_ref();
@@ -439,8 +446,9 @@ pub(crate) fn push_tool_response<S>(
     }
 
     if let Some(index) = overwrite_index {
+        let previous_text_len = history[index].content.as_text().len();
         history[index].content = uni::MessageContent::Text(content);
-        return;
+        return ToolResponseHistoryUpdate::Replaced { previous_text_len };
     }
 
     let tool_call_id = tool_call_id.into();
@@ -448,6 +456,7 @@ pub(crate) fn push_tool_response<S>(
         Some(name) => uni::Message::tool_response_with_origin(tool_call_id, content, name.to_string()),
         None => uni::Message::tool_response(tool_call_id, content),
     });
+    ToolResponseHistoryUpdate::Appended
 }
 
 /// Generate a tool signature key with predictable structure for loop tracking.
@@ -777,20 +786,28 @@ mod tests {
             "{\"output\":\"first\"}".to_string(),
         )];
 
-        push_tool_response(&mut history, "call_1".to_string(), None, "{\"output\":\"latest\"}".to_string());
+        let update =
+            push_tool_response(&mut history, "call_1".to_string(), None, "{\"output\":\"latest\"}".to_string());
 
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].content.as_text_borrowed(), Some("{\"output\":\"latest\"}"));
+        assert_eq!(update, ToolResponseHistoryUpdate::Replaced { previous_text_len: "{\"output\":\"first\"}".len() });
     }
 
     #[test]
     fn push_tool_response_sets_origin_tool_when_provided() {
         let mut history = Vec::new();
 
-        push_tool_response(&mut history, "call_1".to_string(), Some("read_file"), "{\"output\":\"first\"}".to_string());
+        let update = push_tool_response(
+            &mut history,
+            "call_1".to_string(),
+            Some("read_file"),
+            "{\"output\":\"first\"}".to_string(),
+        );
 
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].origin_tool.as_deref(), Some("read_file"));
+        assert_eq!(update, ToolResponseHistoryUpdate::Appended);
     }
 
     #[test]
@@ -818,7 +835,7 @@ mod tests {
             ),
         ];
 
-        push_tool_response(
+        let update = push_tool_response(
             &mut history,
             "call_1".to_string(),
             Some(tools::CODE_SEARCH),
@@ -836,6 +853,7 @@ mod tests {
             "earlier unrelated Tool result must remain intact"
         );
         assert_eq!(tool_messages[1].content.as_text_borrowed(), Some("{\"output\":\"second\"}"));
+        assert_eq!(update, ToolResponseHistoryUpdate::Appended);
     }
 
     #[test]
@@ -866,7 +884,7 @@ mod tests {
             ),
         ];
 
-        push_tool_response(
+        let update = push_tool_response(
             &mut history,
             "call_0".to_string(),
             Some("apply_patch"),
@@ -884,6 +902,7 @@ mod tests {
             "earlier file read result must remain intact"
         );
         assert_eq!(tool_messages[1].content.as_text_borrowed(), Some("{\"output\":\"patch result\"}"));
+        assert_eq!(update, ToolResponseHistoryUpdate::Appended);
     }
 
     #[test]

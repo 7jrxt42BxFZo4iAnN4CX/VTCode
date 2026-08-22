@@ -239,13 +239,24 @@ impl<'a> TurnProcessingContext<'a> {
     where
         S: AsRef<str> + Into<String>,
     {
-        self.harness_state.record_tool_output_metrics(false, false, 0, content.len());
-        crate::agent::runloop::unified::turn::tool_outcomes::helpers::push_tool_response(
+        let visible_output_bytes = content.len();
+        let history_update = crate::agent::runloop::unified::turn::tool_outcomes::helpers::push_tool_response(
             self.working_history,
             tool_call_id,
             tool_name,
             content,
         );
+        match history_update {
+            crate::agent::runloop::unified::turn::tool_outcomes::helpers::ToolResponseHistoryUpdate::Appended => {
+                self.harness_state.record_model_visible_output_append(visible_output_bytes);
+            }
+            crate::agent::runloop::unified::turn::tool_outcomes::helpers::ToolResponseHistoryUpdate::Replaced {
+                previous_text_len,
+            } => {
+                self.harness_state
+                    .replace_model_visible_output_bytes(previous_text_len, visible_output_bytes);
+            }
+        }
     }
 
     pub(crate) async fn record_recovery_error(

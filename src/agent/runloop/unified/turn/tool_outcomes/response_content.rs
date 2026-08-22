@@ -734,4 +734,37 @@ mod tests {
         assert_eq!(diagnostics.spooled_results, 1);
         assert_eq!(diagnostics.raw_spooled_bytes, 12_345);
     }
+
+    #[tokio::test]
+    async fn same_call_tool_response_overwrite_replaces_visible_byte_accounting() {
+        let mut backing = TestTurnProcessingBacking::new(4).await;
+
+        let diagnostics = {
+            let mut ctx = backing.turn_processing_context();
+            let first_content = r#"{"output":"first"}"#.to_string();
+            let final_content = r#"{"output":"latest result"}"#.to_string();
+
+            ctx.push_tool_response("call_1", Some(tool_names::READ_FILE), first_content);
+            ctx.push_tool_response("call_1", Some(tool_names::READ_FILE), final_content.clone());
+
+            let tool_messages: Vec<&vtcode_core::llm::provider::Message> = ctx
+                .working_history
+                .iter()
+                .filter(|message| matches!(message.role, vtcode_core::llm::provider::MessageRole::Tool))
+                .collect();
+            assert_eq!(tool_messages.len(), 1, "same-call overwrite should replace the in-place history entry");
+            assert_eq!(tool_messages[0].content.as_text_borrowed(), Some(final_content.as_str()));
+
+            let diagnostics = ctx.harness_state.snapshot_turn_diagnostics(Default::default(), 0);
+            assert_eq!(
+                diagnostics.model_visible_output_bytes,
+                final_content.len() as u64,
+                "visible-byte diagnostics should match the final history content exactly once"
+            );
+            diagnostics
+        };
+
+        assert_eq!(diagnostics.spooled_results, 0);
+        assert_eq!(diagnostics.raw_spooled_bytes, 0);
+    }
 }

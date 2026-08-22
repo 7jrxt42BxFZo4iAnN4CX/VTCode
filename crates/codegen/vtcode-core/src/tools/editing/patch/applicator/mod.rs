@@ -48,7 +48,11 @@ async fn ensure_target_within_workspace(root: &Path, path: &str) -> Result<(), P
     vtcode_commons::paths::ensure_path_within_workspace_resolved(&candidate, root)
         .await
         .map(|_| ())
-        .map_err(|error| PatchError::WorkspaceContainment { path: candidate, reason: error.to_string() })
+        .map_err(|error| PatchError::InvalidPath {
+            operation: "apply",
+            path: path.to_string(),
+            reason: format!("workspace containment check failed: {error}"),
+        })
 }
 
 pub(crate) fn render_updated_content<'a>(

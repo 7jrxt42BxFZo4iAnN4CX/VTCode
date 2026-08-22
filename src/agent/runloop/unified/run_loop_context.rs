@@ -593,9 +593,19 @@ impl HarnessTurnState {
             self.spooled_results = self.spooled_results.saturating_add(1);
         }
         self.raw_spooled_bytes = self.raw_spooled_bytes.saturating_add(raw_spooled_bytes);
+        self.record_model_visible_output_append(model_visible_output_bytes);
+    }
+
+    pub(crate) fn record_model_visible_output_append(&mut self, model_visible_output_bytes: usize) {
         self.model_visible_output_bytes = self
             .model_visible_output_bytes
             .saturating_add(u64::try_from(model_visible_output_bytes).unwrap_or(u64::MAX));
+    }
+
+    pub(crate) fn replace_model_visible_output_bytes(&mut self, previous_len: usize, new_len: usize) {
+        let previous_len = u64::try_from(previous_len).unwrap_or(u64::MAX);
+        self.model_visible_output_bytes = self.model_visible_output_bytes.saturating_sub(previous_len);
+        self.record_model_visible_output_append(new_len);
     }
 
     pub(crate) fn snapshot_turn_diagnostics(
