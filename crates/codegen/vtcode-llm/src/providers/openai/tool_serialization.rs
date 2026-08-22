@@ -479,7 +479,12 @@ pub(crate) fn serialize_tools_for_responses(
                     json!({
                         "type": "custom",
                         "name": "apply_patch_grammar",
-                        "description": "Use the `apply_patch` tool to edit files. This is a FREEFORM tool.",
+                        "description": format!(
+                            "Use the `apply_patch` tool to edit files. {} This is a FREEFORM tool.",
+                            vtcode_utility_tool_specs::with_semantic_anchor_guidance(
+                                vtcode_utility_tool_specs::DEFAULT_APPLY_PATCH_INPUT_DESCRIPTION
+                            )
+                        ),
                         "format": {
                             "type": "grammar",
                             "syntax": &grammar.syntax,
@@ -546,5 +551,18 @@ mod tests {
             assert!(text.contains("`..`"));
             assert!(text.contains("traversal-like forms"));
         }
+    }
+
+    #[test]
+    fn apply_patch_grammar_description_requires_workspace_relative_paths() {
+        let tool = ToolDefinition::grammar("lark".to_owned(), "start: \"patch\"".to_owned());
+        let serialized = serialize_tools_for_responses(&[tool], None).expect("serialized tool list");
+        let grammar_tool = &serialized[0];
+        let description = grammar_tool["description"].as_str().expect("grammar description");
+
+        assert!(description.contains("workspace-relative"));
+        assert!(description.contains("absolute paths"));
+        assert!(description.contains("`..`"));
+        assert!(description.contains("traversal-like forms"));
     }
 }

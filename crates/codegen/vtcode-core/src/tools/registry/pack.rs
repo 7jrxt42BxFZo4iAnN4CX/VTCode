@@ -150,4 +150,29 @@ mod tests {
         assert!(inventory.has_tool(tools::EXEC_COMMAND), "EXEC_COMMAND should be registered");
         assert!(inventory.has_tool(tools::SEARCH_TOOLS), "SEARCH_TOOLS should be registered");
     }
+
+    #[tokio::test]
+    async fn planning_pack_task_tracker_registration_matches_planning_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let inventory = ToolInventory::new(
+            temp.path().to_path_buf(),
+            Arc::new(crate::tools::edited_file_monitor::EditedFileMonitor::new()),
+        );
+        let plan_state = PlanningWorkflowState::new(temp.path().to_path_buf());
+        plan_state.enable();
+
+        register_builtin_packs(&inventory, &plan_state, &ToolConfigSnapshot::default()).await;
+
+        let registration = inventory
+            .get_registration(tools::TASK_TRACKER)
+            .expect("planning task_tracker registration should exist");
+        assert_eq!(
+            registration.metadata().description(),
+            Some(crate::tools::handlers::task_tracker::task_tracker_description_for_workflow(true))
+        );
+        assert_eq!(
+            registration.metadata().parameter_schema().expect("planning schema")["properties"]["index"]["minimum"],
+            1
+        );
+    }
 }

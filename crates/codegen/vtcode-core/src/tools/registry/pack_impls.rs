@@ -20,6 +20,9 @@ use crate::config::constants::tools;
 use crate::config::types::CapabilityLevel;
 use crate::tool_policy::ToolPolicy;
 use crate::tools::defuddle::{DEFUDDLE_FETCH_DESCRIPTION, DefuddleTool};
+use crate::tools::handlers::task_tracker::{
+    task_tracker_description_for_workflow, task_tracker_parameter_schema_for_workflow,
+};
 use crate::tools::handlers::{PlanningWorkflowState, StartPlanningTool, TaskTrackerTool};
 use crate::tools::native_memory;
 use crate::tools::registry::distributed::ToolConfigSnapshot;
@@ -116,6 +119,7 @@ impl ToolPack for PlanningPack {
         plan_state: &PlanningWorkflowState,
         _tool_config: &ToolConfigSnapshot,
     ) {
+        let planning_active = plan_state.is_active();
         let plan_state = Clone::clone(plan_state);
         let factory_state = Arc::new(plan_state.clone());
         let start_factory = Arc::clone(&factory_state);
@@ -133,21 +137,14 @@ impl ToolPack for PlanningPack {
             ToolRegistration::from_tool_instance(
                 tools::TASK_TRACKER,
                 CapabilityLevel::Basic,
-                TaskTrackerTool::new(
-                    plan_state.workspace_root().unwrap_or_default(),
-                    plan_state.clone(),
-                ),
+                TaskTrackerTool::new(plan_state.workspace_root().unwrap_or_default(), plan_state.clone()),
             )
             .with_native_cgp_factory(native_cgp_tool_factory(move || {
                 let state = Arc::clone(&tracker_factory);
-                TaskTrackerTool::new(
-                    state.as_ref().workspace_root().unwrap_or_default(),
-                    state.as_ref().clone(),
-                )
+                TaskTrackerTool::new(state.as_ref().workspace_root().unwrap_or_default(), state.as_ref().clone())
             }))
-            .with_description(
-                "Track task progress through a single checklist API (action: create | update | list | add). Use task_tracker with action=create at the start of a multi-step plan; use action=update as work progresses; use action=list to review current state. For action=update, item indices are 1-based; standard checklist-level completion alone may use index: 0 with status: completed. Planning workflow accepts only positive flat or hierarchical index paths. Use items for bulk updates. Do NOT call action=create twice — subsequent calls update the existing checklist. Tracker state mirrors between `.vtcode/tasks/current_task.md` and active plan sidecar files when available.",
-            )
+            .with_description(task_tracker_description_for_workflow(planning_active))
+            .with_parameter_schema(task_tracker_parameter_schema_for_workflow(planning_active))
             .with_aliases(["plan_manager", "track_tasks", "checklist"]),
         ];
         batch_register(inventory, registrations);

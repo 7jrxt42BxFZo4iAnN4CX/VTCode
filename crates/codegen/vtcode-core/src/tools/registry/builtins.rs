@@ -14,6 +14,9 @@ use crate::config::constants::tools;
 use crate::config::types::CapabilityLevel;
 use crate::tool_policy::ToolPolicy;
 use crate::tools::defuddle::{DEFUDDLE_FETCH_DESCRIPTION, DefuddleTool};
+use crate::tools::handlers::task_tracker::{
+    task_tracker_description_for_workflow, task_tracker_parameter_schema_for_workflow,
+};
 use crate::tools::handlers::{PlanningWorkflowState, StartPlanningTool, TaskTrackerTool};
 use crate::tools::native_memory;
 use crate::tools::request_user_input::RequestUserInputTool;
@@ -144,6 +147,7 @@ fn register_start_planning(plan_state: Option<&PlanningWorkflowState>) -> ToolRe
 
 #[distributed_slice(BUILTIN_TOOLS)]
 fn register_task_tracker(plan_state: Option<&PlanningWorkflowState>) -> ToolRegistration {
+    let planning_active = plan_state.is_some_and(PlanningWorkflowState::is_active);
     let plan_state = plan_state
         .cloned()
         .unwrap_or_else(|| PlanningWorkflowState::new(PathBuf::new()));
@@ -151,20 +155,13 @@ fn register_task_tracker(plan_state: Option<&PlanningWorkflowState>) -> ToolRegi
     ToolRegistration::from_tool_instance(
         tools::TASK_TRACKER,
         CapabilityLevel::Basic,
-        TaskTrackerTool::new(
-            plan_state.workspace_root().unwrap_or_else(PathBuf::new),
-            plan_state,
-        ),
+        TaskTrackerTool::new(plan_state.workspace_root().unwrap_or_else(PathBuf::new), plan_state),
     )
     .with_native_cgp_factory(native_cgp_tool_factory(move || {
-        TaskTrackerTool::new(
-            factory_state.workspace_root().unwrap_or_else(PathBuf::new),
-            factory_state.clone(),
-        )
+        TaskTrackerTool::new(factory_state.workspace_root().unwrap_or_else(PathBuf::new), factory_state.clone())
     }))
-    .with_description(
-        "Track task progress through a single checklist API (action: create | update | list | add). Use task_tracker with action=create at the start of a multi-step plan; use action=update as work progresses; use action=list to review current state. For action=update, item indices are 1-based; standard checklist-level completion alone may use index: 0 with status: completed. Planning workflow accepts only positive flat or hierarchical index paths. Use items for bulk updates. Do NOT call action=create twice — subsequent calls update the existing checklist. Tracker state mirrors between `.vtcode/tasks/current_task.md` and active plan sidecar files when available.",
-    )
+    .with_description(task_tracker_description_for_workflow(planning_active))
+    .with_parameter_schema(task_tracker_parameter_schema_for_workflow(planning_active))
     .with_aliases(["plan_manager", "track_tasks", "checklist"])
 }
 
@@ -601,6 +598,32 @@ mod tests {
                     && registration.name() != tools::UNIFIED_FILE
                     && registration.name() != tools::UNIFIED_EXEC),
             "removed unified tools must not have builtin registrations"
+        );
+    }
+
+    #[test]
+    fn task_tracker_builtin_registration_matches_workflow_metadata() {
+        let plan_state = PlanningWorkflowState::new(PathBuf::from("/workspace"));
+
+        let standard = builtin_tool_registrations(Some(&plan_state))
+            .into_iter()
+            .find(|registration| registration.name() == tools::TASK_TRACKER)
+            .expect("standard task_tracker registration should exist");
+        assert_eq!(standard.metadata().description(), Some(task_tracker_description_for_workflow(false)));
+        assert_eq!(
+            standard.metadata().parameter_schema().expect("standard schema")["properties"]["index"]["minimum"],
+            0
+        );
+
+        plan_state.enable();
+        let planning = builtin_tool_registrations(Some(&plan_state))
+            .into_iter()
+            .find(|registration| registration.name() == tools::TASK_TRACKER)
+            .expect("planning task_tracker registration should exist");
+        assert_eq!(planning.metadata().description(), Some(task_tracker_description_for_workflow(true)));
+        assert_eq!(
+            planning.metadata().parameter_schema().expect("planning schema")["properties"]["index"]["minimum"],
+            1
         );
     }
 
