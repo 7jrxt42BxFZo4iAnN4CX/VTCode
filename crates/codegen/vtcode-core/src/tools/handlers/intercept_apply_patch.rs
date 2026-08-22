@@ -14,7 +14,7 @@ use super::turn_diff_tracker::SharedTurnDiffTracker;
 use crate::tools::apply_patch::decode_apply_patch_input;
 use crate::tools::editing::Patch;
 use serde_json::json;
-use vtcode_commons::paths::ensure_path_within_workspace;
+use vtcode_commons::paths::ensure_path_within_workspace_resolved;
 
 /// The argument used to indicate apply_patch mode (from Codex)
 pub const CODEX_APPLY_PATCH_ARG: &str = "--codex-run-as-apply-patch";
@@ -105,7 +105,7 @@ pub async fn intercept_apply_patch(
     // session trait. This prevents intercepting a patch whose target is outside the
     // workspace sandbox.
     let workspace_root = session.workspace_root();
-    if let Err(reason) = ensure_path_within_workspace(cwd, workspace_root) {
+    if let Err(reason) = ensure_path_within_workspace_resolved(cwd, workspace_root).await {
         return Err(ApplyPatchError::ParseError(format!(
             "intercept_apply_patch rejected cwd '{}' (workspace='{}'): {}",
             cwd.display(),
@@ -167,6 +167,21 @@ pub enum ApplyPatchError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::handlers::Constrained;
+    use crate::tools::handlers::adapter::DefaultToolSession;
+    use crate::tools::handlers::tool_handler::ShellEnvironmentPolicy;
+
+    fn test_turn_context(cwd: PathBuf) -> TurnContext {
+        TurnContext {
+            cwd,
+            turn_id: "test-turn".to_string(),
+            sub_id: None,
+            shell_environment_policy: ShellEnvironmentPolicy::default(),
+            approval_policy: Constrained::default(),
+            codex_linux_sandbox_exe: None,
+            sandbox_policy: Constrained::default(),
+        }
+    }
 
     #[test]
     fn maybe_parse_apply_patch_detects_direct_invocation() {
@@ -207,5 +222,30 @@ mod tests {
         assert_eq!(req.timeout_ms, Some(5000));
         assert!(req.user_explicitly_approved);
         assert_eq!(req.codex_exe, Some(PathBuf::from("/usr/bin/codex")));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn intercept_rejects_symlink_escaped_cwd_before_outside_mutation() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempfile::TempDir::new().expect("workspace should be created");
+        let outside = tempfile::TempDir::new().expect("outside directory should be created");
+        let escaped_cwd = workspace.path().join("escape");
+        symlink(outside.path(), &escaped_cwd).expect("workspace symlink should be created");
+
+        let session = DefaultToolSession::with_workspace(escaped_cwd.clone(), workspace.path().to_path_buf());
+        let turn = test_turn_context(escaped_cwd.clone());
+        let command = vec![
+            "apply_patch".to_string(),
+            "*** Begin Patch\n*** Add File: outside.txt\n+must not exist\n*** End Patch\n".to_string(),
+        ];
+
+        let error = intercept_apply_patch(&command, &escaped_cwd, None, &session, &turn, None, "call-1", "apply_patch")
+            .await
+            .expect_err("symlink-escaped cwd must be rejected");
+
+        assert!(matches!(error, ApplyPatchError::ParseError(_)));
+        assert!(!outside.path().join("outside.txt").exists(), "rejection must precede mutation");
     }
 }
