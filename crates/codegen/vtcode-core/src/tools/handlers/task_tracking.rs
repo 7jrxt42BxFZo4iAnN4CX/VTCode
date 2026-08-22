@@ -169,13 +169,26 @@ pub fn append_notes_section(markdown: &mut String, notes: Option<&str>) {
     }
 }
 
+pub(crate) fn validate_update_shape<T>(
+    items: Option<&[T]>,
+    index: Option<usize>,
+    index_path: Option<&str>,
+    status: Option<&str>,
+) -> Result<()> {
+    if items.is_some() && (index.is_some() || index_path.is_some() || status.is_some()) {
+        bail!("bulk task-tracker updates cannot combine 'items' with 'index', 'index_path', or 'status'");
+    }
+
+    Ok(())
+}
+
 pub fn is_bulk_sync_update<T>(
     items: Option<&[T]>,
     index: Option<usize>,
     index_path: Option<&str>,
     status: Option<&str>,
 ) -> bool {
-    items.is_some() && ((index.is_none() && index_path.is_none()) || status.is_none())
+    items.is_some() && index.is_none() && index_path.is_none() && status.is_none()
 }
 
 pub fn deserialize_optional_string_list<'de, D>(deserializer: D) -> std::result::Result<Option<Vec<String>>, D::Error>
@@ -332,8 +345,18 @@ mod tests {
     #[test]
     fn is_bulk_sync_update_requires_items_and_missing_single_item_fields() {
         let items = vec!["Step".to_string()];
+        let no_items: Option<&[String]> = None;
         assert!(is_bulk_sync_update(Some(&items), None, None, None));
-        assert!(!is_bulk_sync_update(Some(&items), Some(1), None, Some("completed")));
+        assert!(!is_bulk_sync_update(no_items, Some(1), None, Some("completed")));
+    }
+
+    #[test]
+    fn is_bulk_sync_update_rejects_mixed_single_item_fields() {
+        let items = vec!["Step".to_string()];
+        let error = validate_update_shape(Some(&items), Some(1), None, Some("completed"))
+            .expect_err("mixed bulk and single update fields must fail closed");
+
+        assert!(error.to_string().contains("cannot combine 'items'"));
     }
 
     #[test]

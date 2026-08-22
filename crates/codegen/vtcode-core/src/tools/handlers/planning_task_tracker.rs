@@ -9,7 +9,7 @@ use crate::tools::error_helpers::deserialize_tool_args;
 use crate::tools::handlers::task_tracking::{
     TaskCounts, TaskItemInput, TaskStepMetadata, TaskTrackingStatus, append_notes, append_notes_section,
     append_task_step_metadata, is_bulk_sync_update, metadata_from_input, normalize_optional_text,
-    normalize_string_items, parse_marked_status_prefix, parse_status_prefix,
+    normalize_string_items, parse_marked_status_prefix, parse_status_prefix, validate_update_shape,
 };
 use crate::tools::traits::Tool;
 use crate::utils::file_utils::{ensure_dir_exists, read_file_with_context, write_file_with_context};
@@ -632,9 +632,24 @@ pub(crate) fn planning_task_tracker_parameter_schema() -> Value {
                 },
                 "then": {
                     "anyOf": [
-                        { "required": ["index_path", "status"] },
-                        { "required": ["index", "status"] },
-                        { "required": ["items"] }
+                        {
+                            "required": ["index_path", "status"],
+                            "not": { "required": ["items"] }
+                        },
+                        {
+                            "required": ["index", "status"],
+                            "not": { "required": ["items"] }
+                        },
+                        {
+                            "required": ["items"],
+                            "not": {
+                                "anyOf": [
+                                    { "required": ["index"] },
+                                    { "required": ["index_path"] },
+                                    { "required": ["status"] }
+                                ]
+                            }
+                        }
                     ]
                 }
             },
@@ -783,12 +798,15 @@ impl PlanningTaskTrackerTool {
     }
 
     async fn handle_update(&self, args: &PlanningTaskTrackerArgs) -> Result<Value> {
+        validate_update_shape(args.items.as_deref(), args.index, args.index_path.as_deref(), args.status.as_deref())?;
+        let is_bulk_update =
+            is_bulk_sync_update(args.items.as_deref(), args.index, args.index_path.as_deref(), args.status.as_deref());
         let mut document = self
             .load_document()
             .await?
             .context("No active plan tracker. Use action='create' first.")?;
 
-        if is_bulk_sync_update(args.items.as_deref(), args.index, args.index_path.as_deref(), args.status.as_deref()) {
+        if is_bulk_update {
             let input_items = args.items.as_deref().unwrap_or(&[]);
             let flat_lines = build_flat_create_lines(input_items)?;
             if flat_lines.is_empty() {
@@ -1163,6 +1181,48 @@ mod tests {
                 .expect("index path description")
                 .contains("positive")
         );
+    }
+
+    #[tokio::test]
+    async fn planning_task_tracker_schema_rejects_mixed_bulk_and_single_updates() {
+        let (_temp_dir, _state, tool) = setup_planning_workflow().await;
+        let schema = tool.parameter_schema().expect("planning task tracker schema");
+        let invalid_cases = [
+            json!({"action": "update", "items": ["Done"], "index": 1, "status": "completed"}),
+            json!({"action": "update", "items": ["Done"], "index_path": "1.1", "status": "completed"}),
+            json!({"action": "update", "items": ["Done"], "status": "completed"}),
+        ];
+
+        for args in invalid_cases {
+            assert!(jsonschema::validate(&schema, &args).is_err(), "expected invalid args: {args}");
+        }
+    }
+
+    #[tokio::test]
+    async fn planning_update_rejects_mixed_bulk_and_single_fields_before_mutation() {
+        let (_temp_dir, _state, tool) = setup_planning_workflow().await;
+
+        tool.execute(json!({
+            "action": "create",
+            "items": ["Original"]
+        }))
+        .await
+        .expect("create tracker");
+
+        let error = tool
+            .execute(json!({
+                "action": "update",
+                "items": ["Replacement"],
+                "index_path": "1",
+                "status": "completed"
+            }))
+            .await
+            .expect_err("mixed update must fail closed");
+        assert!(error.to_string().contains("cannot combine 'items'"));
+
+        let result = tool.execute(json!({"action": "list"})).await.unwrap();
+        assert_eq!(result["checklist"]["items"][0]["description"], "Original");
+        assert_eq!(result["checklist"]["items"][0]["status"], "pending");
     }
 
     #[tokio::test]
