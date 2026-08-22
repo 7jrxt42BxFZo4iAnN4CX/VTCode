@@ -59,3 +59,7 @@ final response and task tracker; blockers: none.
 ---
 
 https://blog.rust-lang.org/2026/08/20/supply-chain-attack-on-arrayref/
+
+--
+
+remove codegraph and superpower from git
