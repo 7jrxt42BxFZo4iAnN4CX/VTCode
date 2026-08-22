@@ -42,7 +42,10 @@ pub(super) fn rule_fill(kind: InlineMessageKind, border_type: ratatui::widgets::
 /// duplicating the prefix list (DRY).
 pub(super) fn has_summary_prefix(text: &str) -> bool {
     let stripped = super::super::text_utils::strip_ansi_codes(text);
-    stripped.starts_with("• ") || stripped.starts_with("  └ ") || stripped.starts_with("  │ ")
+    stripped.starts_with("• ")
+        || stripped.starts_with("  ├ ")
+        || stripped.starts_with("  └ ")
+        || stripped.starts_with("  │ ")
 }
 
 pub(crate) fn parse_tool_call_prefix(text: &str) -> Option<(&str, &str)> {

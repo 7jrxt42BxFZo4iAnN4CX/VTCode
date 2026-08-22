@@ -5,7 +5,8 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use super::overlay::{
     AgentPaletteItem, AgentPaletteTransientRequest, FilePaletteTransientRequest, ListOverlayRequest,
-    LocalAgentsTransientRequest, ModalOverlayRequest, TaskPanelTransientRequest, TransientEvent, TransientRequest,
+    LocalAgentsTransientRequest, ModalOverlayRequest, TaskPanelMetadata, TaskPanelTransientRequest, TransientEvent,
+    TransientRequest,
 };
 use crate::tui::core_tui::session::config::AppearanceConfig;
 pub use crate::tui::core_tui::types::SubmittedInput;
@@ -449,6 +450,7 @@ impl InlineHandle {
         self.show_transient(TransientRequest::TaskPanel(TaskPanelTransientRequest {
             lines: Vec::new(),
             visible: Some(true),
+            metadata: None,
         }));
     }
 
@@ -464,11 +466,16 @@ impl InlineHandle {
         self.show_transient(TransientRequest::TaskPanel(TaskPanelTransientRequest {
             lines: Vec::new(),
             visible: Some(false),
+            metadata: None,
         }));
     }
 
     pub fn update_task_panel(&self, lines: Vec<String>) {
-        self.show_transient(TransientRequest::TaskPanel(TaskPanelTransientRequest { lines, visible: None }));
+        self.update_task_panel_with_metadata(lines, None);
+    }
+
+    pub fn update_task_panel_with_metadata(&self, lines: Vec<String>, metadata: Option<TaskPanelMetadata>) {
+        self.show_transient(TransientRequest::TaskPanel(TaskPanelTransientRequest { lines, visible: None, metadata }));
     }
 
     pub fn close_transient(&self) {

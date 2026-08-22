@@ -9,7 +9,7 @@ pub(super) use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::tui::core_tui::app::types::{
     DiffOverlayRequest, DiffPreviewState, InlineCommand, InlineEvent, LocalAgentsTransientRequest, SlashCommandItem,
-    TaskPanelTransientRequest, TransientRequest,
+    TaskPanelMetadata, TaskPanelTransientRequest, TransientRequest,
 };
 use crate::tui::core_tui::runner::TuiSessionDriver;
 use crate::tui::core_tui::session::Session as CoreSessionState;
@@ -34,6 +34,7 @@ pub(crate) mod render;
 pub(crate) mod slash;
 /// Slash command palette widget.
 pub mod slash_palette;
+mod task_panel;
 mod transcript_review;
 mod transient;
 /// Workspace trust state management.
@@ -62,6 +63,7 @@ pub struct AppSession {
     local_agents_auto_opened: bool,
     pub(crate) show_task_panel: bool,
     pub(crate) task_panel_lines: Vec<String>,
+    pub(crate) task_panel_metadata: Option<TaskPanelMetadata>,
     diff_preview_state: Option<DiffPreviewState>,
     transcript_review_state: Option<TranscriptReviewState>,
     diff_overlay_queue: VecDeque<DiffOverlayRequest>,
@@ -97,6 +99,7 @@ impl AppSession {
             local_agents_auto_opened: false,
             show_task_panel: false,
             task_panel_lines: Vec::new(),
+            task_panel_metadata: None,
             diff_preview_state: None,
             transcript_review_state: None,
             diff_overlay_queue: VecDeque::new(),
@@ -139,6 +142,7 @@ impl AppSession {
             local_agents_auto_opened: false,
             show_task_panel: false,
             task_panel_lines: Vec::new(),
+            task_panel_metadata: None,
             diff_preview_state: None,
             transcript_review_state: None,
             diff_overlay_queue: VecDeque::new(),
@@ -444,9 +448,12 @@ impl AppSession {
                 self.ensure_inline_lists_visible_for_trigger();
                 self.show_transient_surface(TransientSurface::SlashPalette);
             }
-            TransientRequest::TaskPanel(TaskPanelTransientRequest { lines, visible }) => {
+            TransientRequest::TaskPanel(TaskPanelTransientRequest { lines, visible, metadata }) => {
                 self.core.set_task_panel_lines(lines.clone());
                 self.task_panel_lines = lines;
+                if visible.is_none() {
+                    self.task_panel_metadata = metadata;
+                }
                 if let Some(visible) = visible {
                     let suppressed = visible && !self.core.appearance.should_show_task_panel();
                     if !suppressed {

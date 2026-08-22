@@ -50,7 +50,7 @@ mod queue;
 pub(crate) mod render;
 mod scroll;
 pub mod styling;
-mod text_utils;
+pub(crate) mod text_utils;
 mod textarea_bridge;
 mod transcript;
 pub(crate) mod utils;

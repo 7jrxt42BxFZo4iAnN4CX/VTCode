@@ -95,7 +95,16 @@ pub fn wrap_line(line: Line<'static>, max_width: usize) -> Vec<Line<'static>> {
     wrap_line_internal(line, max_width, "", true)
 }
 
-pub(super) fn wrap_line_with_hanging_prefix(
+pub(crate) fn compact_tree_continuation_prefix(line: &str) -> Option<String> {
+    let leading_spaces = line.chars().take_while(|character| *character == ' ').count();
+    let rest = line.get(leading_spaces..)?;
+    let is_tree_row = ["├ ", "└ ", "│ ", "[-] ", "□ ", "[x] ", "[!] "]
+        .iter()
+        .any(|prefix| rest.starts_with(prefix));
+    is_tree_row.then(|| " ".repeat(leading_spaces + 2))
+}
+
+pub(crate) fn wrap_line_with_hanging_prefix(
     line: Line<'static>,
     max_width: usize,
     continuation_prefix: &str,

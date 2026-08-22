@@ -1,9 +1,10 @@
 use super::layout::{BottomPanelKind, resolve_bottom_panel_spec, split_input_and_bottom_panel_area};
+use super::task_panel;
 use super::*;
 use crate::tui::config::constants::ui;
 use crate::tui::core_tui::app::session::transient::TransientSurface;
 use crate::tui::core_tui::session::render as core_render;
-use crate::tui::core_tui::session::{inline_list, list_panel, message_renderer};
+use crate::tui::core_tui::session::{list_panel, message_renderer};
 
 impl Session {
     pub fn render(&mut self, frame: &mut Frame<'_>) {
@@ -134,34 +135,16 @@ fn render_task_panel(session: &mut Session, frame: &mut Frame<'_>, area: Rect) {
         return;
     }
 
-    let rows = if session.task_panel_lines.is_empty() {
-        vec![(
-            inline_list::InlineListRow::single(
-                ui::PLAN_STATUS_EMPTY.to_string().into(),
-                session.core.header_secondary_style(),
-            ),
-            1,
-        )]
-    } else {
-        session
-            .task_panel_lines
-            .iter()
-            .map(|line| {
-                (inline_list::InlineListRow::single(line.clone().into(), session.core.header_secondary_style()), 1)
-            })
-            .collect()
-    };
-    let item_count = session.task_panel_lines.len();
+    let panel_lines = task_panel::body_lines(&session.task_panel_lines, session.task_panel_metadata.as_ref());
+    let rows = task_panel::rows(panel_lines, area.width, session.core.header_secondary_style());
+    let item_count = panel_lines.len();
+    let (title, progress) = task_panel::header(session.task_panel_metadata.as_ref(), item_count);
     let sections = list_panel::SharedListPanelSections {
         header: vec![Line::from(vec![Span::styled(
-            ui::PLAN_BLOCK_TITLE.to_string(),
+            title.to_string(),
             session.core.section_title_style(),
         )])],
-        info: vec![Line::from(format!(
-            "{} item{}",
-            item_count,
-            if item_count == 1 { "" } else { "s" }
-        ))],
+        info: vec![Line::from(progress)],
         search: None,
     };
     let styles = list_panel::SharedListPanelStyles {

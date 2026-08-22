@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct TaskStepMetadata {
@@ -98,6 +99,15 @@ impl TaskTrackingStatus {
             Self::InProgress => ">",
             Self::Completed => "✔",
             Self::Blocked => "!",
+        }
+    }
+
+    pub fn compact_view_symbol(&self) -> &'static str {
+        match self {
+            Self::Pending => "□",
+            Self::InProgress => "[-]",
+            Self::Completed => "[x]",
+            Self::Blocked => "[!]",
         }
     }
 }
@@ -281,6 +291,159 @@ pub fn metadata_from_input(
     }
 }
 
+/// A renderer-independent task tree used by both task-tracker implementations.
+///
+/// The persisted checklist formats remain implementation-specific; this type is
+/// only the shared shape required to produce the compact visible view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TaskTreeNode {
+    pub(crate) index_path: String,
+    pub(crate) description: String,
+    pub(crate) status: TaskTrackingStatus,
+    pub(crate) metadata: TaskStepMetadata,
+    pub(crate) children: Vec<TaskTreeNode>,
+}
+
+/// Format task nodes as the compact tree shared by inline output and the task
+/// panel. Root leaves retain `├`/`└` connectors; nested leaves use their status
+/// glyph as the connector so the hierarchy stays readable without redundant
+/// branch characters.
+pub(crate) fn compact_task_tree_view(nodes: &[TaskTreeNode]) -> Vec<Value> {
+    let mut lines = Vec::new();
+    append_compact_task_tree_view(nodes, "  ", &mut lines);
+    lines
+}
+
+fn append_compact_task_tree_view(nodes: &[TaskTreeNode], tree_prefix: &str, out: &mut Vec<Value>) {
+    for (index, node) in nodes.iter().enumerate() {
+        let is_last = index + 1 == nodes.len();
+        let branch = if is_last { "└" } else { "├" };
+        let display = if node.children.is_empty() {
+            if tree_prefix == "  " {
+                format!("{tree_prefix}{branch} {} {}", node.status.compact_view_symbol(), node.description)
+            } else {
+                format!("{tree_prefix}{} {}", node.status.compact_view_symbol(), node.description)
+            }
+        } else {
+            format!("{tree_prefix}{branch} {}", node.description)
+        };
+
+        out.push(json!({
+            "display": display,
+            "index_path": node.index_path.clone(),
+            "status": node.status.as_str(),
+            "text": node.description.clone(),
+            "files": node.metadata.files.clone(),
+            "outcome": node.metadata.outcome.clone(),
+            "verify": node.metadata.verify.clone(),
+        }));
+
+        let next_prefix = if is_last {
+            format!("{tree_prefix}  ")
+        } else {
+            format!("{tree_prefix}│ ")
+        };
+        append_compact_task_tree_view(&node.children, &next_prefix, out);
+    }
+}
+
+/// Build the compact tree from a flattened checklist summary.
+///
+/// Standard task trackers expose numeric `index` values while planning
+/// trackers expose dotted `index_path` values. Accept both forms so callers at
+/// the UI boundary do not need to know which tracker produced the payload.
+pub fn compact_task_tree_view_from_items(items: &[Value]) -> Vec<Value> {
+    let mut ordered_paths = Vec::with_capacity(items.len());
+    let mut nodes_by_path = std::collections::HashMap::with_capacity(items.len());
+
+    for (position, item) in items.iter().enumerate() {
+        let index_path = item
+            .get("index_path")
+            .and_then(Value::as_str)
+            .filter(|path| !path.trim().is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| item.get("index").and_then(Value::as_u64).map(|index| index.to_string()))
+            .unwrap_or_else(|| (position + 1).to_string());
+        if nodes_by_path.contains_key(&index_path) {
+            continue;
+        }
+
+        let status = match item.get("status").and_then(Value::as_str) {
+            Some(value) => match TaskTrackingStatus::from_str(value) {
+                Ok(status) => status,
+                Err(_) => continue,
+            },
+            None => TaskTrackingStatus::Pending,
+        };
+        let Some(description) = item
+            .get("description")
+            .and_then(Value::as_str)
+            .or_else(|| item.get("text").and_then(Value::as_str))
+            .filter(|description| !description.trim().is_empty())
+        else {
+            continue;
+        };
+        let description = description.to_string();
+        let metadata = TaskStepMetadata {
+            files: string_array(item.get("files")),
+            outcome: item.get("outcome").and_then(Value::as_str).map(ToOwned::to_owned),
+            verify: string_or_string_array(item.get("verify")),
+        };
+
+        ordered_paths.push(index_path.clone());
+        nodes_by_path.insert(
+            index_path.clone(),
+            TaskTreeNode {
+                index_path,
+                description,
+                status,
+                metadata,
+                children: Vec::new(),
+            },
+        );
+    }
+
+    let mut attachment_order = ordered_paths.clone();
+    attachment_order.sort_by_key(|path| std::cmp::Reverse(path.split('.').count()));
+    for path in attachment_order {
+        let Some(parent_path) = path.rsplit_once('.').map(|(parent, _)| parent.to_string()) else {
+            continue;
+        };
+        let Some(child) = nodes_by_path.remove(&path) else {
+            continue;
+        };
+        if let Some(parent) = nodes_by_path.get_mut(&parent_path) {
+            parent.children.push(child);
+        } else {
+            nodes_by_path.insert(path, child);
+        }
+    }
+
+    let roots = ordered_paths
+        .into_iter()
+        .filter_map(|path| nodes_by_path.remove(&path))
+        .collect::<Vec<_>>();
+    compact_task_tree_view(&roots)
+}
+
+fn string_array(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn string_or_string_array(value: Option<&Value>) -> Vec<String> {
+    match value {
+        Some(Value::String(value)) => vec![value.clone()],
+        Some(Value::Array(_)) => string_array(value),
+        _ => Vec::new(),
+    }
+}
+
 #[derive(Default)]
 pub struct TaskCounts {
     pub total: usize,
@@ -394,5 +557,81 @@ mod tests {
         assert_eq!(counts.blocked, 1);
         assert_eq!(counts.in_progress, 1);
         assert_eq!(counts.progress_percent(), 25);
+    }
+
+    #[test]
+    fn compact_task_tree_view_formats_flat_leaf_statuses_exactly() {
+        let nodes = [
+            TaskTreeNode {
+                index_path: "1".to_string(),
+                description: "Pending".to_string(),
+                status: TaskTrackingStatus::Pending,
+                metadata: TaskStepMetadata::default(),
+                children: Vec::new(),
+            },
+            TaskTreeNode {
+                index_path: "2".to_string(),
+                description: "In progress".to_string(),
+                status: TaskTrackingStatus::InProgress,
+                metadata: TaskStepMetadata::default(),
+                children: Vec::new(),
+            },
+            TaskTreeNode {
+                index_path: "3".to_string(),
+                description: "Completed".to_string(),
+                status: TaskTrackingStatus::Completed,
+                metadata: TaskStepMetadata::default(),
+                children: Vec::new(),
+            },
+            TaskTreeNode {
+                index_path: "4".to_string(),
+                description: "Blocked".to_string(),
+                status: TaskTrackingStatus::Blocked,
+                metadata: TaskStepMetadata::default(),
+                children: Vec::new(),
+            },
+        ];
+
+        let displays = compact_task_tree_view(&nodes)
+            .into_iter()
+            .filter_map(|line| line.get("display").and_then(Value::as_str).map(ToOwned::to_owned))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            displays,
+            vec![
+                "  ├ □ Pending".to_string(),
+                "  ├ [-] In progress".to_string(),
+                "  ├ [x] Completed".to_string(),
+                "  └ [!] Blocked".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn compact_task_tree_view_omits_parent_status_but_keeps_metadata_fields() {
+        let nodes = [TaskTreeNode {
+            index_path: "1".to_string(),
+            description: "Parent".to_string(),
+            status: TaskTrackingStatus::InProgress,
+            metadata: TaskStepMetadata {
+                files: vec!["Cargo.toml".to_string()],
+                outcome: Some("Ready".to_string()),
+                verify: vec!["cargo check".to_string()],
+            },
+            children: vec![TaskTreeNode {
+                index_path: "1.1".to_string(),
+                description: "Child".to_string(),
+                status: TaskTrackingStatus::Completed,
+                metadata: TaskStepMetadata::default(),
+                children: Vec::new(),
+            }],
+        }];
+
+        let lines = compact_task_tree_view(&nodes);
+        assert_eq!(lines[0]["display"], "  └ Parent");
+        assert_eq!(lines[1]["display"], "    [x] Child");
+        assert_eq!(lines[0]["files"], json!(["Cargo.toml"]));
+        assert_eq!(lines[0]["outcome"], "Ready");
+        assert_eq!(lines[0]["verify"], json!(["cargo check"]));
     }
 }

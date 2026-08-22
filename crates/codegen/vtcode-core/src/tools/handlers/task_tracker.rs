@@ -21,10 +21,10 @@ use std::str::FromStr;
 use crate::config::constants::tools;
 use crate::tools::error_helpers::deserialize_tool_args;
 use crate::tools::handlers::task_tracking::{
-    TaskCounts, TaskItemInput, TaskStepMetadata, TaskTrackingStatus, append_notes, append_notes_section,
-    append_task_step_metadata, is_bulk_sync_update, metadata_from_input, normalize_optional_text,
-    normalize_string_items, parse_marked_status_prefix, parse_status_prefix, validate_action_index_fields,
-    validate_update_shape,
+    TaskCounts, TaskItemInput, TaskStepMetadata, TaskTrackingStatus, TaskTreeNode, append_notes, append_notes_section,
+    append_task_step_metadata, compact_task_tree_view, is_bulk_sync_update, metadata_from_input,
+    normalize_optional_text, normalize_string_items, parse_marked_status_prefix, parse_status_prefix,
+    validate_action_index_fields, validate_update_shape,
 };
 use crate::utils::file_utils::{ensure_dir_exists, read_file_with_context, write_file_with_context};
 use anyhow::{Context, Result, bail};
@@ -113,45 +113,21 @@ impl TaskChecklist {
     }
 
     fn view(&self) -> Value {
-        let mut lines = Vec::new();
-        for (idx, item) in self.items.iter().enumerate() {
-            let branch = if idx + 1 == self.items.len() { "└" } else { "├" };
-            lines.push(json!({
-                "display": format!("{} {} {}", branch, item.status.view_symbol(), item.description),
-                "status": item.status.to_string(),
-                "text": item.description,
-                "index_path": item.index.to_string(),
-                "files": item.metadata.files.clone(),
-                "outcome": item.metadata.outcome.clone(),
-                "verify": item.metadata.verify.clone(),
-            }));
-
-            if !item.metadata.files.is_empty() {
-                lines.push(json!({
-                    "display": format!("  files: {}", item.metadata.files.join(", ")),
-                    "status": item.status.to_string(),
-                    "text": format!("files: {}", item.metadata.files.join(", ")),
-                }));
-            }
-            if let Some(outcome) = item.metadata.outcome.as_deref() {
-                lines.push(json!({
-                    "display": format!("  outcome: {}", outcome),
-                    "status": item.status.to_string(),
-                    "text": format!("outcome: {}", outcome),
-                }));
-            }
-            for command in &item.metadata.verify {
-                lines.push(json!({
-                    "display": format!("  verify: {}", command),
-                    "status": item.status.to_string(),
-                    "text": format!("verify: {}", command),
-                }));
-            }
-        }
+        let nodes = self
+            .items
+            .iter()
+            .map(|item| TaskTreeNode {
+                index_path: item.index.to_string(),
+                description: item.description.clone(),
+                status: item.status,
+                metadata: item.metadata.clone(),
+                children: Vec::new(),
+            })
+            .collect::<Vec<_>>();
 
         json!({
             "title": self.title,
-            "lines": lines,
+            "lines": compact_task_tree_view(&nodes),
         })
     }
 }

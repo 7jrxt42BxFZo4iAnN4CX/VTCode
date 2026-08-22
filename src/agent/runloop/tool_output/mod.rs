@@ -28,8 +28,10 @@ use vtcode_core::config::mcp::McpRendererProfile;
 use vtcode_core::tools::continuation::{
     NEXT_CONTINUE_PROMPT, NEXT_READ_PROMPT, PtyContinuationArgs, ReadChunkContinuationArgs,
 };
+use vtcode_core::tools::handlers::task_tracking::compact_task_tree_view_from_items;
 use vtcode_core::utils::ansi::{AnsiRenderer, MessageStyle};
 use vtcode_core::utils::style_helpers::{ColorPalette, render_styled};
+use vtcode_ui::tui::app::TaskPanelMetadata;
 
 pub(crate) fn spooled_output_hint(path: &str) -> String {
     format!(
@@ -315,13 +317,26 @@ fn is_git_diff_payload(val: &Value) -> bool {
 
 pub(crate) fn tracker_view_lines(val: &Value) -> Vec<String> {
     let view = val.get("view").and_then(Value::as_object);
+    let checklist_items = val
+        .get("checklist")
+        .and_then(Value::as_object)
+        .and_then(|checklist| checklist.get("items"))
+        .and_then(Value::as_array);
+    let compact_rows = checklist_items
+        .filter(|items| !items.is_empty())
+        .map(|items| compact_task_tree_view_from_items(items))
+        .unwrap_or_default();
+    let view_rows = if compact_rows.is_empty() {
+        view.and_then(|obj| obj.get("lines"))
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().filter_map(visible_tracker_view_row).collect::<Vec<_>>())
+            .unwrap_or_default()
+    } else {
+        compact_rows.iter().filter_map(visible_tracker_view_row).collect::<Vec<_>>()
+    };
     let summary_lines = tracker_summary_lines(val);
 
-    let has_view_lines = view
-        .and_then(|obj| obj.get("lines"))
-        .and_then(Value::as_array)
-        .is_some_and(|lines| !lines.is_empty());
-    if !has_view_lines && summary_lines.is_empty() {
+    if view_rows.is_empty() && summary_lines.is_empty() {
         return Vec::new();
     }
 
@@ -331,20 +346,32 @@ pub(crate) fn tracker_view_lines(val: &Value) -> Vec<String> {
         .or_else(|| val.get("checklist").and_then(|c| c.get("title")).and_then(Value::as_str))
         .unwrap_or("Task tracker");
 
-    let mut lines = Vec::new();
+    let mut lines = Vec::with_capacity(view_rows.len() + summary_lines.len() + 1);
     lines.push(format!("• {title}"));
     lines.extend(summary_lines);
-    if let Some(view_lines) = view.and_then(|obj| obj.get("lines")).and_then(Value::as_array) {
-        for line in view_lines {
-            if let Some(display) = line.get("display").and_then(Value::as_str) {
-                lines.push(display.to_string());
-            } else if let Some(text) = line.as_str() {
-                lines.push(text.to_string());
-            }
-        }
-    }
-
+    lines.extend(view_rows);
     lines
+}
+
+fn visible_tracker_view_row(value: &Value) -> Option<String> {
+    let display = value.get("display").and_then(Value::as_str).or_else(|| value.as_str())?;
+    let trimmed = display.trim_start();
+    if trimmed.starts_with("files:") || trimmed.starts_with("outcome:") || trimmed.starts_with("verify:") {
+        return None;
+    }
+    Some(display.to_string())
+}
+
+pub(crate) fn tracker_panel_metadata(val: &Value) -> Option<TaskPanelMetadata> {
+    let checklist = val.get("checklist").and_then(Value::as_object)?;
+    let title = checklist
+        .get("title")
+        .and_then(Value::as_str)
+        .filter(|title| !title.trim().is_empty())?
+        .to_string();
+    let completed = usize::try_from(checklist.get("completed").and_then(Value::as_u64)?).ok()?;
+    let total = usize::try_from(checklist.get("total").and_then(Value::as_u64)?).ok()?;
+    Some(TaskPanelMetadata { title, completed, total })
 }
 
 fn render_tracker_view(renderer: &mut AnsiRenderer, val: &Value) -> Result<bool> {
@@ -361,66 +388,38 @@ fn render_tracker_view(renderer: &mut AnsiRenderer, val: &Value) -> Result<bool>
 }
 
 fn tracker_summary_lines(val: &Value) -> Vec<String> {
+    let has_valid_checklist_items = val
+        .get("checklist")
+        .and_then(Value::as_object)
+        .and_then(|checklist| checklist.get("items"))
+        .and_then(Value::as_array)
+        .is_some_and(|items| !compact_task_tree_view_from_items(items).is_empty());
+    if has_valid_checklist_items && tracker_response_is_successful(val) {
+        return Vec::new();
+    }
+
+    tracker_diagnostic_lines(val)
+}
+
+fn tracker_response_is_successful(val: &Value) -> bool {
+    if val.get("error").is_some() || val.get("error_type").is_some() {
+        return false;
+    }
+
+    match val.get("status").and_then(Value::as_str) {
+        Some("created" | "replaced" | "updated" | "unchanged" | "ok" | "added") => true,
+        Some(_) => false,
+        None => true,
+    }
+}
+
+fn tracker_diagnostic_lines(val: &Value) -> Vec<String> {
     let mut lines = Vec::new();
 
     if let Some(status) = val.get("status").and_then(Value::as_str)
         && !status.trim().is_empty()
     {
         lines.push(format!("  Tracker status: {status}"));
-    }
-
-    let Some(checklist) = val.get("checklist").and_then(Value::as_object) else {
-        if let Some(message) = val.get("message").and_then(Value::as_str)
-            && !message.trim().is_empty()
-        {
-            lines.push(format!("  Update: {message}"));
-        }
-        return lines;
-    };
-
-    let total = checklist.get("total").and_then(Value::as_u64).unwrap_or(0);
-    let completed = checklist.get("completed").and_then(Value::as_u64).unwrap_or(0);
-    let in_progress = checklist.get("in_progress").and_then(Value::as_u64).unwrap_or(0);
-    let pending = checklist.get("pending").and_then(Value::as_u64).unwrap_or(0);
-    let blocked = checklist.get("blocked").and_then(Value::as_u64).unwrap_or(0);
-
-    if total > 0 {
-        let progress_percent = checklist
-            .get("progress_percent")
-            .and_then(Value::as_u64)
-            .unwrap_or_else(|| (completed * 100) / total.max(1));
-        lines.push(format!("  Progress: {completed}/{total} complete ({progress_percent}%)"));
-        lines.push(format!("  Breakdown: {in_progress} in progress, {pending} pending, {blocked} blocked"));
-    }
-
-    if let Some(items) = checklist.get("items").and_then(Value::as_array) {
-        let active_items = items
-            .iter()
-            .filter(|item| {
-                item.get("status")
-                    .and_then(Value::as_str)
-                    .is_some_and(|status| status == "in_progress")
-            })
-            .map(|item| {
-                let index = item.get("index").and_then(Value::as_u64).unwrap_or(0);
-                let description = item.get("description").and_then(Value::as_str).unwrap_or("Unnamed task");
-                if index > 0 {
-                    format!("#{index} {description}")
-                } else {
-                    description.to_string()
-                }
-            })
-            .collect::<Vec<_>>();
-
-        if !active_items.is_empty() {
-            lines.push("  Active items:".to_string());
-            for item in active_items.iter().take(3) {
-                lines.push(format!("    - {item}"));
-            }
-            if active_items.len() > 3 {
-                lines.push(format!("    - ... and {} more", active_items.len() - 3));
-            }
-        }
     }
 
     if let Some(message) = val.get("message").and_then(Value::as_str)
@@ -565,7 +564,8 @@ mod tests {
 
     use super::{
         collect_inline_output, preferred_follow_up_rendered_body, render_tool_output,
-        should_render_command_session_terminal_panel, spooled_output_hint, tracker_summary_lines,
+        should_render_command_session_terminal_panel, spooled_output_hint, tracker_panel_metadata,
+        tracker_summary_lines, tracker_view_lines,
     };
 
     #[test]
@@ -1063,7 +1063,7 @@ mod tests {
     }
 
     #[test]
-    fn tracker_summary_lines_include_progress_and_active_items() {
+    fn tracker_summary_lines_hide_successful_tracker_details() {
         let payload = json!({
             "status": "updated",
             "message": "Item 2 status changed: pending -> in_progress",
@@ -1083,16 +1083,7 @@ mod tests {
             }
         });
 
-        let lines = tracker_summary_lines(&payload);
-        assert!(lines.iter().any(|line| line == "  Tracker status: updated"));
-        assert!(lines.iter().any(|line| line == "  Progress: 1/4 complete (25%)"));
-        assert!(
-            lines
-                .iter()
-                .any(|line| line == "  Breakdown: 2 in progress, 1 pending, 0 blocked")
-        );
-        assert!(lines.iter().any(|line| line == "    - #2 B"));
-        assert!(lines.iter().any(|line| line == "    - #3 C"));
+        assert!(tracker_summary_lines(&payload).is_empty());
     }
 
     #[test]
@@ -1104,5 +1095,148 @@ mod tests {
         let lines = tracker_summary_lines(&payload);
         assert!(lines.iter().any(|line| line == "  Tracker status: empty"));
         assert!(lines.iter().any(|line| line == "  Update: No active checklist."));
+    }
+
+    #[test]
+    fn tracker_view_lines_formats_flat_leaf_statuses_as_a_compact_tree() {
+        // A status-to-glyph regression here would make the active plan harder
+        // to scan; rows must stay compact and show all leaf states directly.
+        let payload = json!({
+            "status": "updated",
+            "checklist": {
+                "title": "Release",
+                "items": [
+                    { "index_path": "1", "description": "Investigate", "status": "pending" },
+                    { "index_path": "2", "description": "Implement", "status": "in_progress" },
+                    { "index_path": "3", "description": "Verify", "status": "completed" },
+                    { "index_path": "4", "description": "Resolve dependency", "status": "blocked" }
+                ]
+            }
+        });
+
+        let rows = tracker_view_lines(&payload);
+
+        assert_eq!(
+            rows,
+            vec![
+                "• Release",
+                "  ├ □ Investigate",
+                "  ├ [-] Implement",
+                "  ├ [x] Verify",
+                "  └ [!] Resolve dependency",
+            ]
+        );
+    }
+
+    #[test]
+    fn tracker_view_lines_formats_hierarchy_without_status_for_parent_rows() {
+        // Parents summarize their children, so showing their stored leaf status
+        // would be misleading. Metadata remains in the structured payload but
+        // must not turn into visible detail rows.
+        let payload = json!({
+            "status": "updated",
+            "checklist": {
+                "title": "Release",
+                "items": [
+                    {
+                        "index_path": "1",
+                        "level": 0,
+                        "description": "Prepare release",
+                        "status": "in_progress",
+                        "files": ["Cargo.toml"],
+                        "outcome": "Version is ready",
+                        "verify": ["cargo nextest run -p vtcode"]
+                    },
+                    { "index_path": "1.1", "level": 1, "description": "Update version", "status": "completed" },
+                    { "index_path": "1.2", "level": 1, "description": "Run checks", "status": "in_progress" },
+                    { "index_path": "2", "level": 0, "description": "Publish", "status": "pending" }
+                ]
+            }
+        });
+
+        let rows = tracker_view_lines(&payload);
+
+        assert_eq!(
+            rows,
+            vec![
+                "• Release",
+                "  ├ Prepare release",
+                "  │ [x] Update version",
+                "  │ [-] Run checks",
+                "  └ □ Publish",
+            ]
+        );
+        assert!(
+            rows.iter()
+                .all(|line| { !line.contains("files:") && !line.contains("outcome:") && !line.contains("verify:") })
+        );
+        assert_eq!(payload["checklist"]["items"][0]["files"], json!(["Cargo.toml"]));
+        assert_eq!(payload["checklist"]["items"][0]["outcome"], "Version is ready");
+        assert_eq!(payload["checklist"]["items"][0]["verify"], json!(["cargo nextest run -p vtcode"]));
+        let metadata = tracker_panel_metadata(&json!({
+            "checklist": {
+                "title": "Release",
+                "completed": 1,
+                "total": 4
+            }
+        }))
+        .expect("structured panel metadata");
+        assert_eq!(metadata.title, "Release");
+        assert_eq!((metadata.completed, metadata.total), (1, 4));
+    }
+
+    #[test]
+    fn tracker_view_lines_keeps_diagnostics_for_empty_or_malformed_tracker_responses() {
+        // Compact rendering applies only to successful structured checklists.
+        // Empty and malformed responses must remain diagnosable instead of
+        // silently presenting a blank task panel.
+        let empty = json!({});
+        let malformed = json!({
+            "status": "error",
+            "message": "Tracker response did not include checklist items.",
+            "view": { "lines": "not an array" }
+        });
+        let malformed_items = json!({
+            "status": "error",
+            "message": "Tracker response contained invalid checklist items.",
+            "checklist": { "items": [{}] }
+        });
+
+        assert!(tracker_view_lines(&empty).is_empty());
+        assert_eq!(
+            tracker_view_lines(&malformed),
+            vec![
+                "• Task tracker",
+                "  Tracker status: error",
+                "  Update: Tracker response did not include checklist items.",
+            ]
+        );
+        assert_eq!(
+            tracker_view_lines(&malformed_items),
+            vec![
+                "• Task tracker",
+                "  Tracker status: error",
+                "  Update: Tracker response contained invalid checklist items.",
+            ]
+        );
+
+        let partial_failure = json!({
+            "status": "error",
+            "message": "Tracker response was only partially applied.",
+            "checklist": {
+                "items": [
+                    { "index": 1, "description": "Still present", "status": "completed" }
+                ]
+            }
+        });
+        assert_eq!(
+            tracker_view_lines(&partial_failure),
+            vec![
+                "• Task tracker",
+                "  Tracker status: error",
+                "  Update: Tracker response was only partially applied.",
+                "  └ [x] Still present",
+            ]
+        );
     }
 }

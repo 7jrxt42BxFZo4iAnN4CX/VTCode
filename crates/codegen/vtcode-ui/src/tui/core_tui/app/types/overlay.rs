@@ -61,10 +61,18 @@ pub struct AgentPaletteTransientRequest {
     pub(crate) visible: Option<bool>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TaskPanelMetadata {
+    pub title: String,
+    pub completed: usize,
+    pub total: usize,
+}
+
 #[derive(Clone, Debug)]
 pub struct TaskPanelTransientRequest {
     pub(crate) lines: Vec<String>,
     pub(crate) visible: Option<bool>,
+    pub(crate) metadata: Option<TaskPanelMetadata>,
 }
 
 #[derive(Clone, Debug)]

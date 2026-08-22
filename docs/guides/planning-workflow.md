@@ -43,6 +43,12 @@ updates accept positive flat indices or positive hierarchical `index_path`
 values such as `2.1`. Use `items` for bulk synchronization rather than an
 item index.
 
+Successful tracker updates render as one compact hierarchical tree in both the
+inline transcript and the TODO panel. Parent rows show their branch and
+description; leaf rows use `[-]`, `□`, `[x]`, or `[!]` for in-progress, pending,
+completed, and blocked work. Files, outcomes, and verification commands remain
+structured tracker metadata rather than extra visible rows.
+
 ## Usage
 
 ### Start With The Planning Agent

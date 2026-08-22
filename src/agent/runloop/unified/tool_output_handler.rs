@@ -165,69 +165,8 @@ fn is_task_tracker_tool(name: &str) -> bool {
     matches!(name, tools::TASK_TRACKER)
 }
 
-fn task_tracker_item_preview(item: &serde_json::Value) -> Option<String> {
-    item.as_str()
-        .map(str::to_string)
-        .or_else(|| item.get("description").and_then(serde_json::Value::as_str).map(str::to_string))
-}
-
-fn task_tracker_call_lines(args_val: &serde_json::Value) -> Vec<String> {
-    let mut lines = Vec::with_capacity(8);
-    lines.push("• Task tracker".to_string());
-
-    if let Some(action) = args_val.get("action").and_then(serde_json::Value::as_str) {
-        lines.push(format!("  └ Action: {action}"));
-    }
-    if let Some(title) = args_val.get("title").and_then(serde_json::Value::as_str) {
-        lines.push(format!("  └ Title: {title}"));
-    }
-    if let Some(index) = args_val.get("index").and_then(serde_json::Value::as_u64) {
-        lines.push(format!("  └ Index: {index}"));
-    } else if let Some(index_path) = args_val.get("index_path").and_then(serde_json::Value::as_str) {
-        lines.push(format!("  └ Index: {index_path}"));
-    }
-    if let Some(status) = args_val.get("status").and_then(serde_json::Value::as_str) {
-        lines.push(format!("  └ Status: {status}"));
-    }
-    if let Some(files) = args_val.get("files").and_then(serde_json::Value::as_array) {
-        let display = files.iter().filter_map(serde_json::Value::as_str).collect::<Vec<_>>();
-        if !display.is_empty() {
-            lines.push(format!("  └ Files: {}", display.join(", ")));
-        }
-    }
-    if let Some(outcome) = args_val.get("outcome").and_then(serde_json::Value::as_str) {
-        lines.push(format!("  └ Outcome: {outcome}"));
-    }
-    if let Some(verify) = args_val.get("verify") {
-        let commands = match verify {
-            serde_json::Value::String(command) => vec![command.as_str()],
-            serde_json::Value::Array(values) => values.iter().filter_map(serde_json::Value::as_str).collect::<Vec<_>>(),
-            _ => Vec::new(),
-        };
-        if !commands.is_empty() {
-            lines.push(format!("  └ Verify: {}", commands.join(" | ")));
-        }
-    }
-    if let Some(items) = args_val.get("items").and_then(serde_json::Value::as_array)
-        && !items.is_empty()
-    {
-        let preview = items.iter().filter_map(task_tracker_item_preview).take(2).collect::<Vec<_>>();
-        let suffix = match items.len().saturating_sub(preview.len()) {
-            0 => String::new(),
-            remaining => format!(" +{remaining} more"),
-        };
-        if !preview.is_empty() {
-            lines.push(format!("  └ Items: {}{}", preview.join(", "), suffix));
-        }
-    }
-
-    lines
-}
-
-fn task_tracker_block_lines(args_val: &serde_json::Value, output: &serde_json::Value) -> Vec<String> {
-    let mut lines = task_tracker_call_lines(args_val);
-    lines.extend(crate::agent::runloop::tool_output::tracker_view_lines(output));
-    lines
+fn task_tracker_block_lines(output: &serde_json::Value) -> Vec<String> {
+    crate::agent::runloop::tool_output::tracker_view_lines(output)
 }
 
 fn task_tracker_block_segments(lines: &[String]) -> Vec<Vec<InlineSegment>> {
@@ -423,9 +362,14 @@ async fn handle_success_common(
         let tool_name = tool_name.split("__").last().unwrap_or(tool_name);
         record_mcp_success_event(ctx.mcp_panel_state, tool_name, args_val);
     } else if is_task_tracker_tool(name) && ctx.renderer.supports_inline_ui() {
-        let block_lines = task_tracker_block_lines(args_val, payload.output);
-        ctx.handle.update_task_panel(block_lines.clone());
-        apply_task_tracker_block(ctx.handle, ctx.harness_state, block_lines);
+        let block_lines = task_tracker_block_lines(payload.output);
+        if !block_lines.is_empty() {
+            ctx.handle.update_task_panel_with_metadata(
+                block_lines.clone(),
+                crate::agent::runloop::tool_output::tracker_panel_metadata(payload.output),
+            );
+            apply_task_tracker_block(ctx.handle, ctx.harness_state, block_lines);
+        }
     } else {
         render_tool_output_common(
             ctx.renderer,
@@ -631,6 +575,60 @@ mod tests {
 
     fn dummy_handle() -> InlineHandle {
         InlineHandle::new_for_tests(unbounded_channel().0)
+    }
+
+    #[test]
+    fn successful_task_tracker_replacement_contains_only_compact_tree_rows() {
+        // Successful updates replace the prior tracker block as one compact
+        // tree. Tool-call arguments are operational detail, not task-panel or
+        // transcript content.
+        let (sender, mut receiver) = unbounded_channel();
+        let handle = InlineHandle::new_for_tests(sender);
+        let mut harness_state = build_harness_state();
+        let first = serde_json::json!({
+            "status": "updated",
+            "checklist": {
+                "items": [
+                    { "index_path": "1", "level": 0, "description": "Release", "status": "in_progress" },
+                    { "index_path": "1.1", "level": 1, "description": "Update version", "status": "completed" },
+                    { "index_path": "1.2", "level": 1, "description": "Run checks", "status": "in_progress" }
+                ]
+            }
+        });
+        let second = serde_json::json!({
+            "status": "updated",
+            "checklist": {
+                "items": [
+                    { "index_path": "1", "level": 0, "description": "Release", "status": "completed" },
+                    { "index_path": "1.1", "level": 1, "description": "Update version", "status": "completed" },
+                    { "index_path": "1.2", "level": 1, "description": "Run checks", "status": "completed" }
+                ]
+            }
+        });
+
+        apply_task_tracker_block(&handle, &mut harness_state, task_tracker_block_lines(&first));
+        apply_task_tracker_block(&handle, &mut harness_state, task_tracker_block_lines(&second));
+
+        let replacement = std::iter::from_fn(|| receiver.try_recv().ok()).find_map(|command| match command {
+            InlineCommand::ReplaceLast { count, lines, .. } => Some((count, lines)),
+            _ => None,
+        });
+        let (count, rows) = replacement.expect("second tracker update should replace the previous compact tree");
+        let rows = rows
+            .into_iter()
+            .map(|row| row.into_iter().map(|segment| segment.text).collect::<String>())
+            .collect::<Vec<_>>();
+
+        assert_eq!(count, 4);
+        assert_eq!(
+            rows,
+            vec![
+                "• Task tracker",
+                "  └ Release",
+                "    [x] Update version",
+                "    [x] Run checks",
+            ]
+        );
     }
 
     // Use Tokio runtime for async test blocks

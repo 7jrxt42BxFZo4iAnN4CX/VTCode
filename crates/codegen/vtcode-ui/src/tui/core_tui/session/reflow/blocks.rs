@@ -173,12 +173,16 @@ impl Session {
             Self::wrapped_diff_continuation_prefix(text)
         });
 
+        let line_text = content.iter().map(|span| span.content.as_ref()).collect::<String>();
+        let tree_continuation_prefix = text_utils::compact_tree_continuation_prefix(&line_text);
         let content_line = Line::from(content);
         // URL-aware wrapping historically reused the first span's style for
         // every fragment. That makes a path-bearing command header inherit
         // the status-colored bullet. Preserve header spans through the normal
         // style-aware wrapper; URL-aware wrapping remains useful for output.
-        let mut wrapped = if line_is_tool_command_header(&content_line) {
+        let mut wrapped = if let Some(prefix) = tree_continuation_prefix {
+            text_utils::wrap_line_with_hanging_prefix(content_line, content_width, &prefix)
+        } else if line_is_tool_command_header(&content_line) {
             text_utils::wrap_line(content_line, content_width)
         } else {
             self.wrap_line(content_line, content_width)

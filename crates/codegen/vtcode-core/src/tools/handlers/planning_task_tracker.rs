@@ -7,10 +7,10 @@ use super::planning_workflow::{PlanningWorkflowState, sync_tracker_into_plan_fil
 use crate::config::constants::tools;
 use crate::tools::error_helpers::deserialize_tool_args;
 use crate::tools::handlers::task_tracking::{
-    TaskCounts, TaskItemInput, TaskStepMetadata, TaskTrackingStatus, append_notes, append_notes_section,
-    append_task_step_metadata, is_bulk_sync_update, metadata_from_input, normalize_optional_text,
-    normalize_string_items, parse_marked_status_prefix, parse_status_prefix, validate_action_index_fields,
-    validate_update_shape,
+    TaskCounts, TaskItemInput, TaskStepMetadata, TaskTrackingStatus, TaskTreeNode, append_notes, append_notes_section,
+    append_task_step_metadata, compact_task_tree_view, is_bulk_sync_update, metadata_from_input,
+    normalize_optional_text, normalize_string_items, parse_marked_status_prefix, parse_status_prefix,
+    validate_action_index_fields, validate_update_shape,
 };
 use crate::tools::traits::Tool;
 use crate::utils::file_utils::{ensure_dir_exists, read_file_with_context, write_file_with_context};
@@ -129,12 +129,9 @@ impl PlanTaskDocument {
     }
 
     fn view_json(&self) -> Value {
-        let mut lines = Vec::new();
-        build_view_lines(&self.items, "", "", &mut lines);
-
         json!({
             "title": self.title,
-            "lines": lines,
+            "lines": compact_task_tree_view(&compact_view_nodes(&self.items, "")),
         })
     }
 }
@@ -197,55 +194,25 @@ fn flatten_items_json_inner(nodes: &[PlanTaskNode], index_prefix: &str, level: u
     }
 }
 
-fn build_view_lines(nodes: &[PlanTaskNode], tree_prefix: &str, index_prefix: &str, out: &mut Vec<Value>) {
-    for (idx, node) in nodes.iter().enumerate() {
-        let is_last = idx + 1 == nodes.len();
-        let branch = if is_last { "└" } else { "├" };
-        let next_prefix = if is_last {
-            format!("{tree_prefix}  ")
-        } else {
-            format!("{tree_prefix}│ ")
-        };
-        let index_path = if index_prefix.is_empty() {
-            format!("{}", idx + 1)
-        } else {
-            format!("{index_prefix}.{}", idx + 1)
-        };
-        let display = format!("{tree_prefix}{branch} {} {}", node.status.view_symbol(), node.description);
-
-        out.push(json!({
-            "display": display,
-            "index_path": index_path,
-            "status": node.status.as_str(),
-            "text": node.description,
-            "files": node.metadata.files.clone(),
-            "outcome": node.metadata.outcome.clone(),
-            "verify": node.metadata.verify.clone(),
-        }));
-        if !node.metadata.files.is_empty() {
-            let files_text = node.metadata.files.join(", ");
-            out.push(json!({
-                "display": format!("{next_prefix}files: {files_text}"),
-                "status": node.status.as_str(),
-                "text": format!("files: {files_text}"),
-            }));
-        }
-        if let Some(outcome) = node.metadata.outcome.as_deref() {
-            out.push(json!({
-                "display": format!("{next_prefix}outcome: {outcome}"),
-                "status": node.status.as_str(),
-                "text": format!("outcome: {outcome}"),
-            }));
-        }
-        for command in &node.metadata.verify {
-            out.push(json!({
-                "display": format!("{next_prefix}verify: {command}"),
-                "status": node.status.as_str(),
-                "text": format!("verify: {command}"),
-            }));
-        }
-        build_view_lines(&node.children, &next_prefix, &index_path, out);
-    }
+fn compact_view_nodes(nodes: &[PlanTaskNode], index_prefix: &str) -> Vec<TaskTreeNode> {
+    nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| {
+            let index_path = if index_prefix.is_empty() {
+                format!("{}", index + 1)
+            } else {
+                format!("{index_prefix}.{}", index + 1)
+            };
+            TaskTreeNode {
+                index_path: index_path.clone(),
+                description: node.description.clone(),
+                status: node.status,
+                metadata: node.metadata.clone(),
+                children: compact_view_nodes(&node.children, &index_path),
+            }
+        })
+        .collect()
 }
 
 fn parse_task_line(line: &str) -> Option<FlatTaskLine> {

@@ -18,7 +18,10 @@ fn render_created_task_tracker(handle: &InlineHandle, output: &serde_json::Value
     // the same panel/transcript updates that a regular task_tracker call gets.
     // Without this, the checklist exists on disk but remains invisible until
     // the user manually opens the task panel.
-    handle.update_task_panel(lines.clone());
+    handle.update_task_panel_with_metadata(
+        lines.clone(),
+        crate::agent::runloop::tool_output::tracker_panel_metadata(output),
+    );
     handle.show_task_panel();
     handle.append_pasted_message(InlineMessageKind::Tool, lines.join("\n"), lines.len());
 }
