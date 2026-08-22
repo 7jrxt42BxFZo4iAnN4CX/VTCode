@@ -6,29 +6,6 @@ apply learning https://github.com/cordiverse/paper and improve vtcode archiectur
 
 ---
 
-refine and update plan/task mode visualization.
-
-eg:
-
-```
-• Updated Plan
-  └ Investigate the supplied runtime evidence before making any code changes,
-    then add a failing regression test and fix the root cause.
-    [-] Inspect session/checkpoint logs and locate anti-blind-editing
-      implementation
-    □ Add a focused regression test and verify it fails for the observed
-      behavior
-    □ Implement the root-cause fix and update required documentation if
-      behavior changes
-    □ Run focused and broader verification, then review the final diff
-```
-
----
-
-support Vercel AI gateway https://vercel.com/docs/ai-gateway
-
----
-
 check if vtcode can support this. https://github.com/earendil-works/pi/issues/534#issue-3789055759
 
 https://specifications.freedesktop.org/basedir/latest/
@@ -43,7 +20,7 @@ check plan mode still not working,
 
 ---
 
-for
+for vtcode's response message info with execution summary, changed files, verification, and blockers, improve to only show the relative path of the changed files in the execution summary, instead of the full path, to make it more readable and concise.
 
 ------------------------------------------------------- Info -------------------------------------------------------
 Execution summary: completed; changed files:
@@ -52,14 +29,4 @@ Execution summary: completed; changed files:
 /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/docs/guides/agent-loop-contract.md; verification: see the
 final response and task tracker; blockers: none.
 
----
-
---> improve to only show the relative path of the changed files in the execution summary, instead of the full path, to make it more readable and concise.
-
----
-
-https://blog.rust-lang.org/2026/08/20/supply-chain-attack-on-arrayref/
-
---
-
-remove codegraph and superpower from git
+=> improve to only show the relative path of the changed files in the execution summary, instead of the full path, to make it more readable and concise.
