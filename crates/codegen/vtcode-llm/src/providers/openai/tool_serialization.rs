@@ -461,8 +461,8 @@ pub(crate) fn serialize_tools_for_responses(
                         Some(json!({
                             "type": "function",
                             "name": tools::APPLY_PATCH,
-                            "description": vtcode_utility_tool_specs::with_semantic_anchor_guidance("Apply VT Code patches. Use format: *** Begin Patch, *** Update File: path, @@ context, -/+ lines, *** End Patch. Do NOT use unified diff (---/+++)"),
-                            "parameters": vtcode_utility_tool_specs::apply_patch_parameter_schema("Patch in VT Code format")
+                            "description": vtcode_utility_tool_specs::with_semantic_anchor_guidance(vtcode_utility_tool_specs::DEFAULT_APPLY_PATCH_INPUT_DESCRIPTION),
+                            "parameters": vtcode_utility_tool_specs::apply_patch_parameter_schema(vtcode_utility_tool_specs::DEFAULT_APPLY_PATCH_INPUT_DESCRIPTION)
                         }))
                     }
                 }
@@ -517,4 +517,34 @@ fn is_gpt5_or_newer(model: &str) -> bool {
         || normalized.contains("o1")
         || normalized.contains("o3")
         || normalized.contains("o4")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::serialize_tools_for_responses;
+    use crate::provider::ToolDefinition;
+    use serde_json::json;
+    use vtcode_config::constants::tools;
+
+    #[test]
+    fn apply_patch_fallback_schema_requires_workspace_relative_paths() {
+        let tool: ToolDefinition = serde_json::from_value(json!({
+            "type": tools::APPLY_PATCH
+        }))
+        .expect("apply_patch tool definition");
+        let serialized = serialize_tools_for_responses(&[tool], None).expect("serialized tool list");
+        let patch_tool = &serialized[0];
+
+        let description = patch_tool["description"].as_str().expect("tool description");
+        let input_description = patch_tool["parameters"]["properties"]["input"]["description"]
+            .as_str()
+            .expect("input parameter description");
+
+        for text in [description, input_description] {
+            assert!(text.contains("workspace-relative"));
+            assert!(text.contains("absolute paths"));
+            assert!(text.contains("`..`"));
+            assert!(text.contains("traversal-like forms"));
+        }
+    }
 }

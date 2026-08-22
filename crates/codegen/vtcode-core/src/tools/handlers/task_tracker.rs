@@ -489,7 +489,7 @@ fn standard_task_tracker_parameter_schema() -> Value {
             "index": {
                 "type": "integer",
                 "minimum": 0,
-                "description": "Action=update only: use a 1-based item index. index: 0 is reserved for standard checklist-level completion and is valid only with status: completed."
+                "description": "Action=update only: use a 1-based item index. index: 0 is reserved for standard checklist-level completion and is valid only with action: update and status: completed."
             },
             "index_path": {
                 "type": "string",
@@ -559,17 +559,15 @@ fn standard_task_tracker_parameter_schema() -> Value {
             },
             {
                 "if": {
-                    "properties": {
-                        "action": { "const": "update" },
-                        "index": { "const": 0 }
-                    },
-                    "required": ["action", "index"]
+                    "properties": { "index": { "const": 0 } },
+                    "required": ["index"]
                 },
                 "then": {
                     "properties": {
+                        "action": { "const": "update" },
                         "status": { "const": "completed" }
                     },
-                    "required": ["status"]
+                    "required": ["action", "status"]
                 }
             },
             {
@@ -1271,8 +1269,31 @@ mod tests {
             .as_str()
             .expect("index description");
         assert!(description.contains("index: 0"));
+        assert!(description.contains("action: update"));
         assert!(description.contains("completed"));
         assert_eq!(schema["allOf"][2]["then"]["properties"]["status"]["const"], "completed");
+    }
+
+    #[test]
+    fn standard_task_tracker_schema_rejects_zero_except_legacy_completion() {
+        let schema = standard_task_tracker_parameter_schema();
+        let valid_cases = [
+            json!({"action": "update", "index": 0, "status": "completed"}),
+            json!({"action": "update", "index": 1, "status": "completed"}),
+            json!({"action": "update", "items": ["[x] Done"]}),
+        ];
+        let invalid_cases = [
+            json!({"action": "list", "index": 0}),
+            json!({"action": "add", "index": 0, "description": "New item"}),
+            json!({"action": "update", "index": 0, "status": "pending"}),
+        ];
+
+        for args in valid_cases {
+            assert!(jsonschema::validate(&schema, &args).is_ok(), "expected valid args: {args}");
+        }
+        for args in invalid_cases {
+            assert!(jsonschema::validate(&schema, &args).is_err(), "expected invalid args: {args}");
+        }
     }
 
     #[test]

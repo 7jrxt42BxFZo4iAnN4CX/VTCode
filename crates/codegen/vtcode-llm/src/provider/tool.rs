@@ -275,9 +275,7 @@ impl ToolDefinition {
         tool.function = Some(FunctionDefinition {
             name: "apply_patch".to_owned(),
             description: sanitized_description,
-            parameters: apply_patch_schema(
-                "Patch in VT Code format. MUST use *** Begin Patch, *** Update File: path, @@ context, -/+ lines, *** End Patch. Do NOT use unified diff (---/+++) format.",
-            ),
+            parameters: apply_patch_schema(vtcode_utility_tool_specs::DEFAULT_APPLY_PATCH_INPUT_DESCRIPTION),
         });
         tool
     }
@@ -534,4 +532,23 @@ fn apply_patch_schema(description: &str) -> Value {
         },
         "required": ["patch"]
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ToolDefinition;
+
+    #[test]
+    fn apply_patch_parameter_schema_requires_workspace_relative_paths() {
+        let tool = ToolDefinition::apply_patch("Apply patches".to_owned());
+        let function = tool.function.expect("apply_patch function definition");
+        let description = function.parameters["properties"]["patch"]["description"]
+            .as_str()
+            .expect("patch parameter description");
+
+        assert!(description.contains("workspace-relative"));
+        assert!(description.contains("absolute paths"));
+        assert!(description.contains("`..`"));
+        assert!(description.contains("traversal-like forms"));
+    }
 }
