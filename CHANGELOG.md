@@ -2,6 +2,44 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.146.11 - 2026-08-22
+
+### Highlights
+#### Bug Fixes
+
+- Preserve streamed plan handoff (7cfb2466) 
+- Enforce action-aware indices (085a9d99) 
+- Register planning tracker schema (0f9a1921) 
+- Enforce workspace containment (df58a91e) 
+- Contain intercepted cwd (65a1f1f4) 
+- Bound spooled command previews (70bab9b7) 
+- Account bounded spooled responses (3fb215f6) 
+- Align workflow-aware runtime schemas (97b9c3c8) 
+- Use unwrap_or_default for workspace root (bb75b4de) 
+- Apply final audit regressions (071aa5b0) 
+- Tighten patch containment and output accounting (26c06c41) 
+- Tighten patch paths and tracker indices (7d461e13) 
+- Align workflow metadata (89bdc52a) 
+- Reject mixed update shapes (844eb10a) 
+- Close final review gaps (9f8235ee) 
+- Preserve failure previews and reject ambiguous indices (abb021e6) 
+- Preserve adaptive index form (111454e6) 
+- Validate non-update indices (c8ad79c7) 
+- Harden workspace path boundaries (d38b26ee) 
+#### Documentation
+
+- Document reliability contracts (8adbec5b) 
+- Record patch containment invariant (842e068d) 
+#### Features
+
+- Add model stream tracing and error handling (680e8f1c) 
+### Other Changes
+#### Other
+
+- Update project (91857d46) 
+#### Tests
+
+- Cover spooled byte metadata (222424df) 
 ## 0.146.10 - 2026-08-21
 
 ### Highlights
