@@ -4,8 +4,8 @@ use super::{
     archive::workspace_archive_label,
     support::{
         TurnHistoryCheckpoint, build_tracked_file_freshness_note, build_unrelated_dirty_worktree_note,
-        checkpoint_session_archive_start, latest_assistant_result_text, prepare_resume_bootstrap_without_archive,
-        remove_transient_system_notes, take_pending_resumed_user_prompt,
+        checkpoint_session_archive_start, format_workspace_relative_paths, latest_assistant_result_text,
+        prepare_resume_bootstrap_without_archive, remove_transient_system_notes, take_pending_resumed_user_prompt,
     },
 };
 use crate::agent::agents::ResumeSession;
@@ -174,6 +174,27 @@ fn tracked_file_freshness_note_uses_relative_paths_and_reread_guidance() {
     assert!(note.contains("- src/main.rs"));
     assert!(note.contains("- docs/project/TODO.md"));
     assert!(note.contains("Re-read these files before relying on earlier content"));
+}
+
+#[test]
+fn changed_file_summary_uses_relative_paths_with_external_fallback() {
+    let summary = format_workspace_relative_paths(
+        Path::new("/tmp/workspace"),
+        &[
+            PathBuf::from("/tmp/workspace/src/main.rs"),
+            PathBuf::from("/tmp/external/generated.rs"),
+        ],
+    );
+
+    assert_eq!(summary, "src/main.rs, /tmp/external/generated.rs");
+}
+
+#[test]
+fn changed_file_summary_reports_empty_input() {
+    assert_eq!(
+        format_workspace_relative_paths(Path::new("/tmp/workspace"), std::iter::empty::<&PathBuf>()),
+        "none recorded"
+    );
 }
 
 fn init_git_repo() -> TempDir {

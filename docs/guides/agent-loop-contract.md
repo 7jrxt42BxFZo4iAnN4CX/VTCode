@@ -204,6 +204,14 @@ commands preserve the tail. The complete spool, byte counts, reference
 metadata, and failure or recovery diagnostics remain available without
 reopening the spool while the response is constructed.
 
+Workspace-aware tool responses and execution summaries render paths inside the
+active workspace relative to that workspace (for example,
+`.vtcode/tasks/current_task.md`). Paths outside the workspace keep their
+absolute form so diagnostics do not hide external locations. The same display
+rule is used for generated planning artifacts and handles canonical workspace
+paths reached through symlinks; planning lifecycle events reuse the same
+display value, and it does not change the path used for I/O.
+
 Steering follow-ups are persisted as UUID-tagged intents. The schema-v3 session
 envelope keeps at most 16 pending intents and a 64-ID applied window. Recovery
 replays only pending IDs absent from both the applied window and tagged user

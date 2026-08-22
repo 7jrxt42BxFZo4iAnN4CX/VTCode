@@ -244,11 +244,13 @@ pub(super) fn plan_title_seed(path: &Path, fallback_plan_name: &str) -> String {
 
 pub(super) async fn initialize_plan_file(
     plan_file: &Path,
+    plan_file_display: &str,
     plan_title: &str,
     description: Option<&str>,
     validation_hints: &ValidationCommandHints,
 ) -> Result<()> {
-    let initial_content = render_initial_plan_file_content(plan_title, description, plan_file, validation_hints);
+    let initial_content =
+        render_initial_plan_file_content(plan_title, description, plan_file_display, validation_hints);
     write_file_with_context(plan_file, &initial_content, "plan file")
         .await
         .with_context(|| format!("Failed to create plan file: {}", plan_file.display()))
@@ -264,13 +266,13 @@ pub(super) async fn plan_file_baseline(plan_file: &Path) -> SystemTime {
 fn render_initial_plan_file_content(
     plan_title: &str,
     description: Option<&str>,
-    plan_file: &Path,
+    plan_file_display: &str,
     validation_hints: &ValidationCommandHints,
 ) -> String {
     let mut content = format!("# {plan_title}\n\n");
     content.push_str("Status: drafting\n");
     content.push_str(&format!("Created: {}\n", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")));
-    content.push_str(&format!("Plan file: `{}`\n", plan_file.display()));
+    content.push_str(&format!("Plan file: `{plan_file_display}`\n"));
     if let Some(description) = description.map(str::trim).filter(|value| !value.is_empty()) {
         content.push_str(&format!("Description: {description}\n"));
     }

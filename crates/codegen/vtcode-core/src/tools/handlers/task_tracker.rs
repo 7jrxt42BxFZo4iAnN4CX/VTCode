@@ -13,7 +13,9 @@
 //! - `add`: Add a new item to an existing checklist
 
 use super::planning_task_tracker::{PlanningTaskTrackerArgs, PlanningTaskTrackerTool};
-use super::planning_workflow::{PlanningWorkflowState, plan_file_for_tracker_file, sync_tracker_into_plan_file};
+use super::planning_workflow::{
+    PlanningWorkflowState, plan_file_for_tracker_file, sync_tracker_into_plan_file, tracker_file_for_plan_file,
+};
 use std::str::FromStr;
 
 use crate::config::constants::tools;
@@ -33,6 +35,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use vtcode_commons::workspace_relative_display;
 
 use crate::tools::traits::Tool;
 
@@ -656,10 +659,13 @@ impl TaskTrackerTool {
         self.tasks_dir().join("current_task.md")
     }
 
+    fn display_path(&self, path: &Path) -> String {
+        workspace_relative_display(&self.workspace_root, path)
+    }
+
     async fn plan_task_file(&self) -> Option<PathBuf> {
         let plan_file = self.planning_workflow_state.get_plan_file().await?;
-        let stem = plan_file.file_stem()?.to_str()?;
-        Some(plan_file.with_file_name(format!("{stem}.tasks.md")))
+        tracker_file_for_plan_file(&plan_file)
     }
 
     async fn save_checklist(&self, checklist: &TaskChecklist) -> Result<()> {
@@ -930,7 +936,7 @@ impl TaskTrackerTool {
         if let Some(existing) = guard.as_ref() {
             existing_item_count = existing.items.len();
             if let Some(unchanged) =
-                Self::check_create_idempotency(existing, &title, &items, &self.task_file().display().to_string())
+                Self::check_create_idempotency(existing, &title, &items, &self.display_path(&self.task_file()))
             {
                 return Ok(unchanged);
             }
@@ -955,7 +961,7 @@ impl TaskTrackerTool {
         Ok(json!({
             "status": status,
             "message": message,
-            "task_file": self.task_file().display().to_string(),
+            "task_file": self.display_path(&self.task_file()),
             "checklist": summary,
             "view": view
         }))
@@ -1206,6 +1212,7 @@ mod tests {
         assert_eq!(result["checklist"]["total"], 3);
         assert_eq!(result["checklist"]["completed"], 0);
         assert_eq!(result["view"]["title"], "Refactor Auth");
+        assert_eq!(result["task_file"], ".vtcode/tasks/current_task.md");
     }
 
     #[tokio::test]

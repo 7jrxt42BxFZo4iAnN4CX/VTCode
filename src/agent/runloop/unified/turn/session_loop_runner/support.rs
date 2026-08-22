@@ -97,6 +97,22 @@ pub(super) fn build_tracked_file_freshness_note(
     ))
 }
 
+pub(super) fn format_workspace_relative_paths<I>(workspace: &std::path::Path, paths: I) -> String
+where
+    I: IntoIterator,
+    I::Item: AsRef<std::path::Path>,
+{
+    let display_paths = paths
+        .into_iter()
+        .map(|path| workspace_relative_display(workspace, path.as_ref()))
+        .collect::<Vec<_>>();
+    if display_paths.is_empty() {
+        return "none recorded".to_string();
+    }
+
+    display_paths.join(", ")
+}
+
 pub(super) fn build_unrelated_dirty_worktree_note(
     workspace: &std::path::Path,
     agent_touched_paths: &std::collections::BTreeSet<std::path::PathBuf>,

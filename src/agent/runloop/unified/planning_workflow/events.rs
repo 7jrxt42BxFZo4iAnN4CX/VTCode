@@ -1,5 +1,7 @@
 //! Shared planning approval events for interactive and headless runtimes.
 
+use std::path::Path;
+use vtcode_commons::workspace_relative_display;
 use vtcode_core::exec::events::{
     ContextResetEvent, ContextResetTrigger, HarnessEventKind, ItemCompletedEvent, ItemStartedEvent,
     PlanApprovalDecision, PlanApprovalRequestedEvent, PlanApprovalResolvedEvent, PlanDeltaEvent, PlanItem, ThreadEvent,
@@ -10,6 +12,13 @@ use super::PlanningWorkflowState;
 use crate::agent::runloop::unified::inline_events::harness::HarnessEventEmitter;
 use crate::agent::runloop::unified::inline_events::harness::harness_event;
 use crate::agent::runloop::unified::planning_workflow_state::PlanningWorkflowSessionState;
+
+fn display_plan_path(plan_state: &PlanningWorkflowState, path: &Path) -> String {
+    plan_state
+        .workspace_root()
+        .map(|workspace| workspace_relative_display(&workspace, path))
+        .unwrap_or_else(|| path.to_string_lossy().into_owned())
+}
 
 /// Publish the complete approval-ready plan lifecycle after the persisted
 /// artifact and its tracker have passed validation.
@@ -32,7 +41,10 @@ pub(crate) async fn emit_plan_ready_events(
     };
 
     let item_id = format!("{turn_id}-plan");
-    let plan_path = plan_state.get_plan_file().await.map(|path| path.display().to_string());
+    let plan_path = plan_state
+        .get_plan_file()
+        .await
+        .map(|path| display_plan_path(plan_state, &path));
 
     let _ = emitter.emit(harness_event(
         HarnessEventKind::PlanningStarted,
@@ -134,10 +146,64 @@ pub(crate) fn emit_plan_approval_resolved(
 
 #[cfg(test)]
 mod tests {
-    use super::{emit_plan_approval_requested, emit_plan_approval_resolved};
+    use super::PlanningWorkflowState;
+    use super::{display_plan_path, emit_plan_approval_requested, emit_plan_approval_resolved};
     use std::path::PathBuf;
     use tempfile::tempdir;
     use vtcode_core::exec::events::{PlanApprovalDecision, ThreadEvent, VersionedThreadEvent};
+
+    #[test]
+    fn plan_event_paths_use_workspace_relative_display() {
+        let directory = tempdir().expect("temporary workspace");
+        let state = PlanningWorkflowState::new(directory.path().to_path_buf());
+        let plan_file = directory.path().join(".vtcode/plans/task.md");
+
+        assert_eq!(display_plan_path(&state, &plan_file), ".vtcode/plans/task.md");
+    }
+
+    #[tokio::test]
+    async fn plan_ready_events_emit_workspace_relative_plan_paths() {
+        use crate::agent::runloop::unified::inline_events::harness::HarnessEventEmitter;
+        use crate::agent::runloop::unified::planning_workflow_state::PlanningWorkflowSessionState;
+        use vtcode_core::exec::events::{HarnessEventKind, ThreadItemDetails};
+
+        let directory = tempdir().expect("temporary workspace");
+        let plan_file = directory.path().join(".vtcode/plans/task.md");
+        std::fs::create_dir_all(plan_file.parent().expect("plan directory")).expect("plan directory");
+        std::fs::write(&plan_file, "# Task\n").expect("plan file");
+
+        let state = PlanningWorkflowState::new(directory.path().to_path_buf());
+        state.set_plan_file(Some(plan_file)).await;
+        let event_path = directory.path().join("events.jsonl");
+        let emitter = HarnessEventEmitter::new(event_path.clone()).expect("harness emitter");
+        let mut plan_session = PlanningWorkflowSessionState::default();
+
+        super::emit_plan_ready_events(&mut plan_session, &state, Some(&emitter), "thread-1", "turn-1", "# Task").await;
+
+        let events = std::fs::read_to_string(event_path)
+            .expect("event log")
+            .lines()
+            .map(|line| serde_json::from_str::<VersionedThreadEvent>(line).expect("versioned event"))
+            .map(VersionedThreadEvent::into_event)
+            .collect::<Vec<_>>();
+        let plan_paths = events.iter().filter_map(|event| match event {
+            ThreadEvent::ItemCompleted(item) => match &item.item.details {
+                ThreadItemDetails::Harness(details)
+                    if matches!(
+                        details.event,
+                        HarnessEventKind::PlanningStarted | HarnessEventKind::PlanningCompleted
+                    ) =>
+                {
+                    details.path.as_deref()
+                }
+                _ => None,
+            },
+            _ => None,
+        });
+
+        assert!(plan_paths.clone().all(|path| path == ".vtcode/plans/task.md"));
+        assert_eq!(plan_paths.count(), 2);
+    }
 
     #[test]
     fn approval_events_are_written_to_the_shared_harness_stream() {

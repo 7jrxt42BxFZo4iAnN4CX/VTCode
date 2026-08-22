@@ -3,7 +3,7 @@
 //! This tracker is intended for Planning workflow only and writes a sidecar markdown
 //! file next to the active plan file (`<plan>.tasks.md`).
 
-use super::planning_workflow::{PlanningWorkflowState, sync_tracker_into_plan_file};
+use super::planning_workflow::{PlanningWorkflowState, sync_tracker_into_plan_file, tracker_file_for_plan_file};
 use crate::config::constants::tools;
 use crate::tools::error_helpers::deserialize_tool_args;
 use crate::tools::handlers::task_tracking::{
@@ -21,6 +21,7 @@ use serde_json::{Value, json};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use vtcode_commons::workspace_relative_display;
 
 type PlanTaskStatus = TaskTrackingStatus;
 
@@ -696,12 +697,15 @@ impl PlanningTaskTrackerTool {
         Self { state }
     }
 
+    fn display_path(&self, path: &Path) -> String {
+        self.state
+            .workspace_root()
+            .map(|workspace| workspace_relative_display(&workspace, path))
+            .unwrap_or_else(|| path.to_string_lossy().into_owned())
+    }
+
     fn tracker_file_for_plan(plan_file: &Path) -> Result<PathBuf> {
-        let stem = plan_file
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .context("Active plan file is missing a valid file stem")?;
-        Ok(plan_file.with_file_name(format!("{stem}.tasks.md")))
+        tracker_file_for_plan_file(plan_file).context("Active plan file is missing a valid file stem")
     }
 
     async fn active_plan_file(&self) -> Result<PathBuf> {
@@ -774,11 +778,17 @@ impl PlanningTaskTrackerTool {
         Ok(())
     }
 
-    fn success_payload(status: &str, message: String, tracker_file: &Path, document: &PlanTaskDocument) -> Value {
+    fn success_payload(
+        &self,
+        status: &str,
+        message: String,
+        tracker_file: &Path,
+        document: &PlanTaskDocument,
+    ) -> Value {
         json!({
             "status": status,
             "message": message,
-            "tracker_file": tracker_file.display().to_string(),
+            "tracker_file": self.display_path(tracker_file),
             "checklist": document.summary_json(),
             "view": document.view_json(),
         })
@@ -797,7 +807,7 @@ impl PlanningTaskTrackerTool {
         {
             sync_tracker_into_plan_file(&plan_file, &document.to_markdown()).await?;
         }
-        Ok(Self::success_payload(status, message, &tracker_file, document))
+        Ok(self.success_payload(status, message, &tracker_file, document))
     }
 
     async fn handle_create(&self, args: &PlanningTaskTrackerArgs) -> Result<Value> {
@@ -897,12 +907,12 @@ impl PlanningTaskTrackerTool {
         let tracker_file = self.tracker_file().await?;
         match self.load_document().await? {
             Some(document) => {
-                Ok(Self::success_payload("ok", "Plan task tracker loaded.".to_string(), &tracker_file, &document))
+                Ok(self.success_payload("ok", "Plan task tracker loaded.".to_string(), &tracker_file, &document))
             }
             None => Ok(json!({
                 "status": "empty",
                 "message": "No active plan tracker. Use action='create' to start one.",
-                "tracker_file": tracker_file.display().to_string(),
+                "tracker_file": self.display_path(&tracker_file),
             })),
         }
     }
@@ -1020,6 +1030,7 @@ mod tests {
         assert_eq!(created["checklist"]["total"], 3);
         assert_eq!(created["checklist"]["in_progress"], 1);
         assert_eq!(created["view"]["title"], "Updated Plan");
+        assert_eq!(created["tracker_file"], ".vtcode/plans/test-plan.tasks.md");
 
         let lines = created["view"]["lines"].as_array().expect("view lines array");
         assert!(!lines.is_empty());

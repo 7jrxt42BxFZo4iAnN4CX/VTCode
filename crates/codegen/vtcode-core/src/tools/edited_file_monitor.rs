@@ -14,8 +14,8 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Notify;
-use vtcode_commons::canonicalize;
 use vtcode_commons::utils::calculate_sha256;
+use vtcode_commons::{canonicalize, workspace_relative_display};
 
 pub const FILE_CONFLICT_OVERRIDE_ARG: &str = "__vtcode_conflict_override";
 pub const FILE_CONFLICT_DETECTED_FIELD: &str = "conflict_detected";
@@ -749,18 +749,6 @@ fn snapshot_path_sync(path: &Path) -> Result<FileSnapshot> {
 
 fn system_time_to_millis(time: SystemTime) -> Option<u128> {
     time.duration_since(UNIX_EPOCH).ok().map(|duration| duration.as_millis())
-}
-
-fn workspace_relative_display(workspace_root: &Path, path: &Path) -> String {
-    if let Ok(relative) = path.strip_prefix(workspace_root) {
-        return relative.to_string_lossy().to_string();
-    }
-    if let Ok(canonical_root) = canonicalize(workspace_root)
-        && let Ok(relative) = path.strip_prefix(canonical_root)
-    {
-        return relative.to_string_lossy().to_string();
-    }
-    path.to_string_lossy().to_string()
 }
 
 pub fn conflict_override_snapshot(args: &Value) -> Option<FileSnapshot> {

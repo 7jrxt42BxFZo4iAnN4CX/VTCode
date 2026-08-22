@@ -97,17 +97,7 @@ pub(crate) fn normalize_workspace_path(workspace: &Path, path: &Path) -> PathBuf
     })
 }
 
-pub(crate) fn workspace_relative_display(workspace: &Path, path: &Path) -> String {
-    if let Ok(relative) = path.strip_prefix(workspace) {
-        return relative.display().to_string();
-    }
-    if let Ok(canonical_workspace) = canonicalize(workspace)
-        && let Ok(relative) = path.strip_prefix(canonical_workspace)
-    {
-        return relative.display().to_string();
-    }
-    path.display().to_string()
-}
+pub(crate) use vtcode_commons::workspace_relative_display;
 
 /// Collect modified/added/deleted worktree entries (excluding staged renames).
 ///

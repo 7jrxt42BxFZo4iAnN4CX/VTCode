@@ -6,6 +6,7 @@ use std::cmp::Ordering;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use vtcode_commons::walk::{build_default_walker, is_excluded_dir};
+use vtcode_commons::workspace_relative_display;
 
 const MAX_PATH_SUGGESTIONS: usize = 3;
 const MAX_PATH_SUGGESTION_SCAN: usize = 20_000;
@@ -68,13 +69,7 @@ impl FileOpsTool {
     }
 
     pub(super) fn workspace_relative_display(&self, path: &Path) -> String {
-        if let Ok(relative) = path.strip_prefix(&self.workspace_root) {
-            relative.to_string_lossy().into_owned()
-        } else if let Ok(relative) = path.strip_prefix(self.canonical_workspace_root()) {
-            relative.to_string_lossy().into_owned()
-        } else {
-            path.to_string_lossy().into_owned()
-        }
+        workspace_relative_display(&self.workspace_root, path)
     }
 
     fn absolute_candidate(&self, path: &Path) -> PathBuf {

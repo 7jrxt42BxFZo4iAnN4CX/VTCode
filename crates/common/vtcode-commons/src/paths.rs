@@ -82,6 +82,85 @@ pub fn canonicalize_workspace(workspace_root: &Path) -> PathBuf {
     })
 }
 
+/// Render a path relative to the workspace when it belongs to that workspace.
+///
+/// Paths outside the workspace remain absolute (or otherwise unchanged) so a
+/// diagnostic never hides that it refers to an external location. The
+/// filesystem-resolved comparison handles workspace aliases and symlink
+/// escapes without requiring callers to canonicalize their candidate first.
+pub fn workspace_relative_display(workspace_root: &Path, path: &Path) -> String {
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        workspace_root.join(path)
+    };
+
+    if let Ok(canonical_workspace) = canonicalize(workspace_root) {
+        // A successful canonicalization is authoritative: a path that
+        // resolves outside the workspace must not fall back to lexical
+        // containment through an escaping symlink.
+        match canonicalize_for_display(&candidate) {
+            DisplayResolution::Resolved(canonical_candidate) => {
+                return canonical_candidate
+                    .strip_prefix(&canonical_workspace)
+                    .map(|relative| relative.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| path.to_string_lossy().into_owned());
+            }
+            DisplayResolution::Unresolved => return path.to_string_lossy().into_owned(),
+        }
+    }
+
+    // If the candidate cannot be resolved yet (for example, a new file with a
+    // missing tail), retain the cheap lexical behavior for paths that are
+    // clearly under the workspace.
+    let normalized_candidate = normalize_path(&candidate);
+    let normalized_workspace = normalize_path(workspace_root);
+    if let Ok(relative) = normalized_candidate.strip_prefix(normalized_workspace) {
+        return relative.to_string_lossy().into_owned();
+    }
+    path.to_string_lossy().into_owned()
+}
+
+enum DisplayResolution {
+    Resolved(PathBuf),
+    Unresolved,
+}
+
+fn canonicalize_for_display(path: &Path) -> DisplayResolution {
+    if let Ok(canonical) = canonicalize(path) {
+        return DisplayResolution::Resolved(canonical);
+    }
+
+    let mut missing_tail = Vec::new();
+    let mut existing_prefix = path;
+    loop {
+        match std::fs::symlink_metadata(existing_prefix) {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let Some(file_name) = existing_prefix.file_name() else {
+                    return DisplayResolution::Unresolved;
+                };
+                let Some(parent) = existing_prefix.parent() else {
+                    return DisplayResolution::Unresolved;
+                };
+                missing_tail.push(PathBuf::from(file_name));
+                existing_prefix = parent;
+            }
+            Err(_) => return DisplayResolution::Unresolved,
+        }
+    }
+
+    let Ok(mut canonical) = canonicalize(existing_prefix) else {
+        // This includes dangling symlinks and inaccessible existing paths.
+        // Do not fall back to lexical containment for either case.
+        return DisplayResolution::Unresolved;
+    };
+    for component in missing_tail.into_iter().rev() {
+        canonical.push(component);
+    }
+    DisplayResolution::Resolved(canonical)
+}
+
 /// Resolve a path relative to a workspace root and ensure it stays within it.
 pub fn resolve_workspace_path(workspace_root: &Path, user_path: &Path) -> Result<PathBuf> {
     let candidate = if user_path.is_absolute() {
@@ -602,6 +681,77 @@ mod tests {
             PathBuf::from("/tmp/project/config/settings.toml")
         );
         assert_eq!(paths.cache_dir(), Some(PathBuf::from("/tmp/project/cache")));
+    }
+
+    #[test]
+    fn workspace_relative_display_uses_workspace_relative_paths() {
+        let workspace = Path::new("/workspace");
+        let path = Path::new("/workspace/src/main.rs");
+
+        assert_eq!(workspace_relative_display(workspace, path), "src/main.rs");
+    }
+
+    #[test]
+    fn workspace_relative_display_preserves_external_paths() {
+        let workspace = Path::new("/workspace");
+        let path = Path::new("/tmp/external.txt");
+
+        assert_eq!(workspace_relative_display(workspace, path), "/tmp/external.txt");
+    }
+
+    #[test]
+    fn workspace_relative_display_handles_canonical_workspace_paths() {
+        let workspace = tempfile::tempdir().unwrap();
+        let workspace_path = canonicalize(workspace.path()).unwrap();
+        let path = workspace_path.join("docs").join("guide.md");
+
+        assert_eq!(workspace_relative_display(workspace.path(), &path), "docs/guide.md");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_relative_display_resolves_workspace_aliases() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        std::fs::create_dir_all(workspace.join("src")).unwrap();
+        let alias = temp.path().join("workspace-alias");
+        symlink(&workspace, &alias).unwrap();
+
+        let path = alias.join("src").join("main.rs");
+        assert_eq!(workspace_relative_display(&workspace, &path), "src/main.rs");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_relative_display_preserves_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "secret").unwrap();
+        symlink(&outside, workspace.join("linked-outside")).unwrap();
+
+        let path = workspace.join("linked-outside").join("secret.txt");
+        assert_eq!(workspace_relative_display(&workspace, &path), path.to_string_lossy());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_relative_display_fails_closed_for_dangling_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let path = workspace.join("dangling-link");
+        symlink(temp.path().join("missing-target"), &path).unwrap();
+
+        assert_eq!(workspace_relative_display(&workspace, &path), path.to_string_lossy());
     }
 
     #[test]

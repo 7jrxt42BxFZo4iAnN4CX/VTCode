@@ -5,7 +5,7 @@ Detailed runloop recovery and allocator notes live in the [vtcode binary gotchas
 
 ## Modules
 
-`main.rs` binary entry | `agent/` runloop + subagent dispatch | `cli/` handlers | `startup/` onboarding | `updater/` downloads and self-replacement | `codex_app_server/` bridge | `main_helpers/` tracing and runtime init | `agent/runloop/unified/turn/session/interaction_loop_runner/status_refresh.rs` status/IDE/title cadence | `agent/runloop/unified/session_setup/hook_approval.rs` workspace lifecycle-hook approval overlay
+`main.rs` binary entry | `agent/` runloop + subagent dispatch | `cli/` handlers | `startup/` onboarding | `updater/` downloads and self-replacement | `codex_app_server/` bridge | `main_helpers/` tracing and runtime init | `agent/runloop/unified/planning_workflow/tracker_response.rs` model-facing path boundary | `agent/runloop/unified/turn/session/interaction_loop_runner/status_refresh.rs` status/IDE/title cadence | `agent/runloop/unified/session_setup/hook_approval.rs` workspace lifecycle-hook approval overlay
 
 ## Rules
 
@@ -13,7 +13,7 @@ Detailed runloop recovery and allocator notes live in the [vtcode binary gotchas
 - Spool preview generation and shell activity classification belong to `vtcode-core`; the binary only serializes the typed reference.
 - `mimalloc` is the default allocator; `allocator-jemalloc` opts into `tikv-jemalloc`. Measure with `vtcode bench-allocator` before changing it; see the [allocator guide](../docs/development/ALLOCATOR_MEMORY.md).
 - Install `vtcode_ui::tui::panic_hook` before producing output.
-- `agent/runloop/` is the single-agent loop; `unified/turn/session_loop_runner/mod.rs` is its facade and `orchestration.rs` owns the loop body. `session_loop_runner/blocked_handoff.rs` owns forced blocked-turn archive checkpoints and verified resume handoffs. `session_loop_runner/harness.rs` opens and closes canonical session persistence with shared one-shot finalization; unexpected exits must emit terminal lifecycle events before draining. Keep status-line command input, persistence, preview, and action policy behind the private child modules of `turn/session/slash_commands/ui/statusline.rs`.
+- `agent/runloop/` is the single-agent loop; `unified/turn/session_loop_runner/mod.rs` is its facade and `orchestration.rs` owns the loop body. `session_loop_runner/blocked_handoff.rs` owns forced blocked-turn archive checkpoints and verified resume handoffs. `session_loop_runner/harness.rs` opens and closes canonical session persistence with shared one-shot finalization; unexpected exits must emit terminal lifecycle events before draining. Keep status-line command input, persistence, preview, and action policy behind the private child modules of `turn/session/slash_commands/ui/statusline.rs`; workspace-local execution summaries use the shared relative-path formatter.
 - Keep transcript/modal editor opens on the bounded runtime coordinator, not queued `/edit` submissions.
 - Keep `/secret` provider/key validation and storage selection, including gateway providers, behind `turn/session/slash_commands/secrets/storage.rs` and the central resolver.
 - Route batched tool metrics through the shared execution helper so every executed status is recorded; checkpoint diagnostics use canonical `Usage` plus saturating per-turn counters.

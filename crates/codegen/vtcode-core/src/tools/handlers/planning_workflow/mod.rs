@@ -70,7 +70,8 @@ mod tests {
         let content = std::fs::read_to_string(&plan_file).unwrap();
         assert!(content.contains("# Test Plan"));
         assert!(content.contains("Status: drafting"));
-        assert!(content.contains(&format!("Plan file: `{}`", plan_file.display())));
+        assert!(content.contains("Plan file: `.vtcode/plans/test-plan.md`"));
+        assert_eq!(result["plan_file"], ".vtcode/plans/test-plan.md");
         assert!(content.contains("Description: Test planning"));
         assert!(!content.contains("Repository facts checked"));
         assert!(!content.contains("[Step]"));

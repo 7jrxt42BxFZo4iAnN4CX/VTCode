@@ -1,9 +1,11 @@
 use anyhow::{Context, bail};
 use std::collections::HashMap;
+use vtcode_commons::paths::ensure_path_within_workspace_resolved;
 use vtcode_core::config::constants::tools;
 use vtcode_core::tools::registry::ToolRegistry;
 use vtcode_ui::tui::app::{InlineHandle, InlineMessageKind, PlanContent};
 
+use super::tracker_response::resolve_tracker_file_response;
 use super::validate_plan_content;
 
 fn render_created_task_tracker(handle: &InlineHandle, output: &serde_json::Value) {
@@ -257,16 +259,19 @@ pub(crate) async fn create_task_tracker_from_active_plan(
     if result.get("status").and_then(|value| value.as_str()) == Some("error") {
         bail!("task_tracker returned an error during approved-plan handoff: {result}");
     }
-    let tracker_file = result
-        .get("tracker_file")
-        .and_then(|value| value.as_str())
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            plan_file.with_file_name(format!(
-                "{}.tasks.md",
-                plan_file.file_stem().and_then(|s| s.to_str()).unwrap_or("plan")
-            ))
-        });
+    // Tool responses intentionally expose workspace-relative paths. Resolve
+    // that model-facing value back into the workspace before using it for
+    // filesystem verification; otherwise a relative response would be
+    // interpreted against the process working directory.
+    let workspace_root = plan_state.workspace_root();
+    let tracker_file = resolve_tracker_file_response(&result, workspace_root.as_deref(), &plan_file)?;
+    let tracker_file = if let Some(workspace_root) = workspace_root.as_deref() {
+        ensure_path_within_workspace_resolved(&tracker_file, workspace_root)
+            .await
+            .with_context(|| format!("failed to validate task tracker {}", tracker_file.display()))?
+    } else {
+        tracker_file
+    };
     if !tokio::fs::try_exists(&tracker_file)
         .await
         .with_context(|| format!("failed to verify task tracker {}", tracker_file.display()))?
@@ -285,7 +290,31 @@ pub(crate) async fn create_task_tracker_from_active_plan(
 
 #[cfg(test)]
 mod tests {
-    use super::{PlanContent, task_items_from_plan};
+    use super::{PlanContent, resolve_tracker_file_response, task_items_from_plan};
+    use serde_json::json;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn tracker_response_resolves_workspace_relative_path() {
+        let result = json!({"tracker_file": ".vtcode/plans/task.tasks.md"});
+        let workspace = Path::new("/workspace");
+        let fallback = Path::new("/workspace/.vtcode/plans/fallback.tasks.md");
+
+        let resolved = resolve_tracker_file_response(&result, Some(workspace), fallback).unwrap();
+
+        assert_eq!(resolved, PathBuf::from("/workspace/.vtcode/plans/task.tasks.md"));
+    }
+
+    #[test]
+    fn tracker_response_rejects_workspace_escape() {
+        let result = json!({"tracker_file": "../outside.tasks.md"});
+        let workspace = Path::new("/workspace");
+        let fallback = Path::new("/workspace/.vtcode/plans/fallback.tasks.md");
+
+        let error = resolve_tracker_file_response(&result, Some(workspace), fallback).unwrap_err();
+
+        assert!(error.to_string().contains("escapes workspace"));
+    }
 
     #[test]
     fn sparse_approved_plan_is_distilled_into_tracker_items() {

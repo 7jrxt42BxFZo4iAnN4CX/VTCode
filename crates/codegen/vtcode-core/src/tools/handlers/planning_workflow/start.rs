@@ -13,6 +13,7 @@ use crate::tools::handlers::planning_workflow::persistence::{
 use crate::tools::handlers::planning_workflow::state::PlanningWorkflowState;
 use crate::tools::traits::Tool;
 use crate::utils::file_utils::ensure_dir_exists;
+use vtcode_commons::workspace_relative_display;
 
 /// Arguments for entering planning workflow
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +47,13 @@ pub struct StartPlanningTool {
 impl StartPlanningTool {
     pub fn new(state: PlanningWorkflowState) -> Self {
         Self { state }
+    }
+
+    fn display_path(&self, path: &Path) -> String {
+        self.state
+            .workspace_root()
+            .map(|workspace| workspace_relative_display(&workspace, path))
+            .unwrap_or_else(|| path.to_string_lossy().into_owned())
     }
 
     fn generate_plan_name(&self, provided: Option<&str>) -> String {
@@ -137,7 +145,7 @@ impl Tool for StartPlanningTool {
                 return Ok(json!({
                     "status": "already_active",
                     "message": "Planning workflow is already active. Continue with your planning workflow.",
-                    "plan_file": existing_plan_file.map(|p| p.display().to_string())
+                    "plan_file": existing_plan_file.map(|path| self.display_path(&path))
                 }));
             }
 
@@ -159,7 +167,15 @@ impl Tool for StartPlanningTool {
             let mut created_plan_file = false;
             if !tokio::fs::try_exists(&plan_file).await.unwrap_or(false) {
                 created_plan_file = true;
-                initialize_plan_file(&plan_file, &plan_title, args.description.as_deref(), &validation_hints).await?;
+                let plan_file_display = self.display_path(&plan_file);
+                initialize_plan_file(
+                    &plan_file,
+                    &plan_file_display,
+                    &plan_title,
+                    args.description.as_deref(),
+                    &validation_hints,
+                )
+                .await?;
             }
 
             self.state.set_plan_file(Some(plan_file.clone())).await;
@@ -175,7 +191,7 @@ impl Tool for StartPlanningTool {
             return Ok(json!({
                 "status": "already_active",
                 "message": message,
-                "plan_file": plan_file.display().to_string()
+                "plan_file": self.display_path(&plan_file)
             }));
         }
 
@@ -194,7 +210,7 @@ impl Tool for StartPlanningTool {
                 "status": "pending_confirmation",
                 "requires_confirmation": true,
                 "message": "Planning workflow entry requires user confirmation.",
-                "plan_file": plan_file.display().to_string(),
+                "plan_file": self.display_path(&plan_file),
                 "plan_title": plan_title.clone(),
                 "description": args.description,
             }));
@@ -209,7 +225,15 @@ impl Tool for StartPlanningTool {
                 .with_context(|| format!("Failed to create plan directory: {}", parent.display()))?;
         }
 
-        initialize_plan_file(&plan_file, &plan_title, args.description.as_deref(), &validation_hints).await?;
+        let plan_file_display = self.display_path(&plan_file);
+        initialize_plan_file(
+            &plan_file,
+            &plan_file_display,
+            &plan_title,
+            args.description.as_deref(),
+            &validation_hints,
+        )
+        .await?;
 
         // Track the current plan file
         self.state.set_plan_file(Some(plan_file.clone())).await;
@@ -219,7 +243,7 @@ impl Tool for StartPlanningTool {
         Ok(json!({
             "status": "success",
             "message": "Entered Planning workflow. Mutating actions are disabled for exploration and planning.",
-            "plan_file": plan_file.display().to_string(),
+            "plan_file": self.display_path(&plan_file),
             "instructions": [
                 "1. Explore files and capture repository facts before drafting the plan",
                 "2. Ask or close only material blocking decisions",

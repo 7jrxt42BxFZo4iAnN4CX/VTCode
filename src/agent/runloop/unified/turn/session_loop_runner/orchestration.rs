@@ -39,8 +39,9 @@ use super::plan_seed::load_active_plan_seed;
 use super::support::{
     ExecutionSummaryStatus, append_transient_turn_notes, approved_plan_execution_summary,
     build_unrelated_dirty_worktree_note, checkpoint_session_archive_start, force_reload_workspace_config_for_execution,
-    latest_assistant_result_text, live_reload_preserves_session_config, prepare_resume_bootstrap_without_archive,
-    prompt_startup_planning_workflow, remove_transient_system_notes, take_pending_resumed_user_prompt,
+    format_workspace_relative_paths, latest_assistant_result_text, live_reload_preserves_session_config,
+    prepare_resume_bootstrap_without_archive, prompt_startup_planning_workflow, remove_transient_system_notes,
+    take_pending_resumed_user_prompt,
 };
 use crate::agent::runloop::ResumeSession;
 use crate::agent::runloop::git::{compute_session_code_change_delta, normalize_workspace_path};
@@ -1246,16 +1247,8 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                     )
                     .await;
                     last_approved_plan_summary_status = Some(summary.status);
-                    let changed_files = if execution_modified_files.is_empty() {
-                        "none recorded".to_string()
-                    } else {
-                        execution_modified_files
-                            .iter()
-                            .map(|path| normalize_workspace_path(config.workspace.as_path(), path))
-                            .map(|path| path.display().to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    };
+                    let changed_files =
+                        format_workspace_relative_paths(config.workspace.as_path(), &execution_modified_files);
                     let _ = renderer.line(
                         MessageStyle::Info,
                         &format!(

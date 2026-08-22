@@ -12,9 +12,9 @@ use crate::utils::vtcodegitignore::should_exclude_file;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use serde_json::Value;
-use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use vtcode_commons::workspace_relative_display;
 
 /// File operations tool with multiple modes
 #[derive(Clone)]
@@ -76,16 +76,10 @@ impl FileOpsTool {
         }
     }
 
-    /// Get relative path from workspace root, avoiding allocation when possible
-    #[inline]
-    fn relative_path<'a>(&self, path: &'a Path) -> Cow<'a, str> {
-        path.strip_prefix(&self.workspace_root).unwrap_or(path).to_string_lossy()
-    }
-
     /// Get relative path as JSON value (for API responses)
     #[inline]
     pub(super) fn relative_path_json(&self, path: &Path) -> String {
-        self.relative_path(path).into_owned()
+        workspace_relative_display(&self.workspace_root, path)
     }
 }
 
