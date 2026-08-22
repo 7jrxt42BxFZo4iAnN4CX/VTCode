@@ -21,7 +21,8 @@ use crate::tools::error_helpers::deserialize_tool_args;
 use crate::tools::handlers::task_tracking::{
     TaskCounts, TaskItemInput, TaskStepMetadata, TaskTrackingStatus, append_notes, append_notes_section,
     append_task_step_metadata, is_bulk_sync_update, metadata_from_input, normalize_optional_text,
-    normalize_string_items, parse_marked_status_prefix, parse_status_prefix, validate_update_shape,
+    normalize_string_items, parse_marked_status_prefix, parse_status_prefix, validate_action_index_fields,
+    validate_update_shape,
 };
 use crate::utils::file_utils::{ensure_dir_exists, read_file_with_context, write_file_with_context};
 use anyhow::{Context, Result, bail};
@@ -1137,6 +1138,7 @@ impl TaskTrackerTool {
 impl Tool for TaskTrackerTool {
     async fn execute(&self, args: Value) -> Result<Value> {
         let args: TaskTrackerArgs = deserialize_tool_args(&args, "task_tracker")?;
+        validate_action_index_fields(&args.action, args.index, args.index_path.as_deref())?;
 
         if self.planning_workflow_state.is_active() {
             return self.execute_in_planning_workflow(&args).await;
@@ -1414,6 +1416,24 @@ mod tests {
         let result = tool.execute(json!({"action": "list"})).await.unwrap();
         assert_eq!(result["checklist"]["items"][0]["description"], "Original");
         assert_eq!(result["checklist"]["items"][0]["status"], "pending");
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_indices_for_non_update_actions() {
+        let temp = TempDir::new().unwrap();
+        let (_state, tool) = setup_tool(&temp);
+
+        let invalid_inputs = [
+            json!({"action": "list", "index": 1}),
+            json!({"action": "create", "index_path": "1", "items": ["New item"]}),
+            json!({"action": "add", "index": 1, "description": "New item"}),
+            json!({"action": "unexpected", "index_path": "1"}),
+        ];
+
+        for input in invalid_inputs {
+            let error = tool.execute(input).await.expect_err("non-update index must fail closed");
+            assert!(error.to_string().contains("cannot use 'index' or 'index_path'"), "unexpected error: {error}");
+        }
     }
 
     #[test]

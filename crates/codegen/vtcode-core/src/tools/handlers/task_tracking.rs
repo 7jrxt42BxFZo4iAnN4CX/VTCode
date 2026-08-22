@@ -186,6 +186,16 @@ pub(crate) fn validate_update_shape<T>(
     Ok(())
 }
 
+pub(crate) fn validate_action_index_fields(action: &str, index: Option<usize>, index_path: Option<&str>) -> Result<()> {
+    if action != "update" && (index.is_some() || index_path.is_some()) {
+        bail!(
+            "task-tracker action '{action}' cannot use 'index' or 'index_path'; indices are only valid with action='update'"
+        );
+    }
+
+    Ok(())
+}
+
 pub fn is_bulk_sync_update<T>(
     items: Option<&[T]>,
     index: Option<usize>,
