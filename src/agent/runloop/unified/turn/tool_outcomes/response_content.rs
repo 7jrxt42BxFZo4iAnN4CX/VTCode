@@ -495,14 +495,21 @@ pub(super) async fn prepare_tool_response_content(
     output: &serde_json::Value,
 ) -> String {
     let content = build_tool_response_content(ctx, tool_name, args_val, output).await;
+    record_prepared_tool_response_metrics(ctx.harness_state, output, &content);
+    content
+}
+
+fn record_prepared_tool_response_metrics(
+    harness_state: &mut crate::agent::runloop::unified::run_loop_context::HarnessTurnState,
+    output: &serde_json::Value,
+    content: &str,
+) {
     let spooled_output = SpooledOutputReference::from_value(output);
     let raw_spooled_bytes = spooled_output.and_then(|spooled| spooled.original_bytes).unwrap_or(0);
     let reused = ["reused_recent_result", "reused_spooled_output"]
         .into_iter()
         .any(|key| output.get(key).and_then(serde_json::Value::as_bool) == Some(true));
-    ctx.harness_state
-        .record_tool_output_metrics(reused, spooled_output.is_some(), raw_spooled_bytes, 0);
-    content
+    harness_state.record_tool_output_metrics(reused, spooled_output.is_some(), raw_spooled_bytes, content.len());
 }
 
 fn compact_next_continue_args(value: &serde_json::Value) -> serde_json::Value {
@@ -612,6 +619,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::agent::runloop::unified::run_loop_context::{HarnessTurnState, TurnId, TurnRunId};
 
     fn big_read_output() -> serde_json::Value {
         json!({ "content_kind": "text", "path": "src/cli/mod.rs" })
@@ -670,5 +678,31 @@ mod tests {
         }));
 
         assert_eq!(compacted, json!({"applied": [{"path": "src/widget.rs", "operation": "update"}]}));
+    }
+
+    #[test]
+    fn prepared_spooled_response_records_final_serialized_visible_bytes() {
+        let output = json!({
+            "spool_path": ".vtcode/context/tool_outputs/command.log",
+            "spooled_bytes": 12_345,
+            "preview": "bounded command preview",
+            "exit_code": 1,
+            "failure_diagnostics": "command completed with status 1"
+        });
+        let content = maybe_inline_spooled_with_preview(tool_names::UNIFIED_EXEC, &output);
+        let mut harness_state = HarnessTurnState::new(
+            TurnRunId("response-content-run".to_string()),
+            TurnId("response-content-turn".to_string()),
+            4,
+            120,
+            2,
+        );
+
+        record_prepared_tool_response_metrics(&mut harness_state, &output, &content);
+
+        let diagnostics = harness_state.snapshot_turn_diagnostics(Default::default(), 0);
+        assert_eq!(diagnostics.spooled_results, 1);
+        assert_eq!(diagnostics.raw_spooled_bytes, 12_345);
+        assert_eq!(diagnostics.model_visible_output_bytes, content.len() as u64);
     }
 }

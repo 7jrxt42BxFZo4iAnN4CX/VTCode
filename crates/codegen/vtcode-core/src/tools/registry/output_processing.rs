@@ -191,6 +191,7 @@ impl ToolRegistry {
                     object.remove("raw_output");
                     object.remove("stdout");
                     object.remove("output");
+                    object.remove("content");
                     object.insert("preview".to_string(), Value::String(preview));
                 }
             }
@@ -508,6 +509,7 @@ mod tests {
             "spool_complete": true,
             "total_output_bytes": output.len(),
             "output": output,
+            "content": format!("REPLAY_CONTENT_LEAK\\n{}", "y".repeat(36 * 1024)),
             "command": "sed -n '1,80p' .vtcode/context/tool_outputs/replay-36k.txt",
             "exit_code": 1,
             "failure_diagnostic": "command completed with status 1"
@@ -519,8 +521,10 @@ mod tests {
 
         assert!(preview.len() <= 6 * 1024);
         assert!(result.get("output").is_none());
+        assert!(result.get("content").is_none());
         assert!(preview.contains("REPLAY_HEAD"));
         assert!(preview.contains("REPLAY_TAIL"));
+        assert!(!serialized_model_payload.contains("REPLAY_CONTENT_LEAK"));
         assert!(serialized_model_payload.len() < 8 * 1024);
         assert_eq!(result["spool_path"], ".vtcode/context/tool_outputs/replay-36k.txt");
         assert_eq!(result["spooled_bytes"], 36_888);
