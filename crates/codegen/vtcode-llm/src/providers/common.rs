@@ -157,8 +157,49 @@ pub(crate) fn serialize_tools_openai_format(tools: &[ToolDefinition]) -> Option<
     )
 }
 
+/// Build a `data:` URL for base64 images (DRY helper shared across providers).
+#[inline]
+fn data_url(mime_type: &str, data: &str) -> String {
+    let mut s = String::with_capacity(13 + mime_type.len() + data.len());
+    s.push_str("data:");
+    s.push_str(mime_type);
+    s.push_str(";base64,");
+    s.push_str(data);
+    s
+}
+
+/// Serialize a single `Image` part to OpenAI `image_url` wire format.
+///
+/// Uses `ImageSource` dispatch (KISS/DRY guard rail) and strongly typed `ImageDetail`.
+#[inline]
+fn serialize_image_part(
+    data: &str,
+    mime_type: &str,
+    detail: &Option<crate::provider::ImageDetail>,
+    image_url: &Option<String>,
+) -> Value {
+    let url = if let Some(ext) = image_url {
+        ext.clone()
+    } else {
+        data_url(mime_type, data)
+    };
+    let mut image_url_obj = serde_json::Map::new();
+    image_url_obj.insert("url".to_owned(), Value::String(url));
+    if let Some(d) = detail {
+        image_url_obj.insert("detail".to_owned(), Value::String(d.as_str().to_owned()));
+    }
+    json!({
+        "type": "image_url",
+        "image_url": Value::Object(image_url_obj)
+    })
+}
+
 /// Serialize message content for OpenAI-compatible chat payloads.
 /// Falls back to a string when there are no image parts.
+///
+/// This is a thin orchestration over `serialize_image_part` and file handling.
+/// Provider-specific quirks (e.g., DeepSeek flat `file_id`) are handled in
+/// `DeepSeekSpec::finish_payload`, not here, keeping `common.rs` provider-agnostic.
 pub(crate) fn serialize_message_content_openai(content: &MessageContent) -> Value {
     match content {
         MessageContent::Text(text) => Value::String(text.clone()),
@@ -180,26 +221,15 @@ pub(crate) fn serialize_message_content_openai(content: &MessageContent) -> Valu
                             "text": text
                         }));
                     }
-                    ContentPart::Image { data, mime_type, .. } => {
+                    ContentPart::Image { data, mime_type, detail, image_url, .. } => {
                         has_non_text = true;
-                        let url = {
-                            let mut s = String::with_capacity(13 + mime_type.len() + data.len());
-                            s.push_str("data:");
-                            s.push_str(mime_type);
-                            s.push_str(";base64,");
-                            s.push_str(data);
-                            s
-                        };
-                        serialized_parts.push(json!({
-                            "type": "image_url",
-                            "image_url": {
-                                "url": url
-                            }
-                        }));
+                        serialized_parts.push(serialize_image_part(data, mime_type, detail, image_url));
                     }
                     ContentPart::File { filename, file_id, file_data, file_url, .. } => {
                         if file_id.is_some() || file_data.is_some() {
                             has_non_text = true;
+                            // Chat Completions: keep legacy nested shape; DeepSeek flat
+                            // transform is applied in `DeepSeekSpec::finish_payload` if needed.
                             let mut file_payload = serde_json::Map::new();
                             if let Some(id) = file_id {
                                 file_payload.insert("file_id".to_owned(), Value::String(id.clone()));

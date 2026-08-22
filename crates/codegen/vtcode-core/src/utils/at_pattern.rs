@@ -105,6 +105,8 @@ pub async fn parse_at_patterns_with_options(
                                     data: image_data.base64_data,
                                     mime_type: image_data.mime_type,
                                     content_type: "image".to_owned(),
+                                    detail: None,
+                                    image_url: None,
                                 });
                             }
                             Err(e) => {
@@ -125,6 +127,8 @@ pub async fn parse_at_patterns_with_options(
                                     data: image_data.base64_data,
                                     mime_type: image_data.mime_type,
                                     content_type: "image".to_owned(),
+                                    detail: None,
+                                    image_url: None,
                                 });
                             }
                             Err(_) => {
@@ -159,6 +163,8 @@ pub async fn parse_at_patterns_with_options(
                                 data: image_data.base64_data,
                                 mime_type: image_data.mime_type,
                                 content_type: "image".to_owned(),
+                                detail: None,
+                                image_url: None,
                             });
                         }
                         Err(_) => {
@@ -170,7 +176,13 @@ pub async fn parse_at_patterns_with_options(
                 }
             }
             PathMatch::DataUrl { mime_type, data, .. } => {
-                parts.push(ContentPart::Image { data, mime_type, content_type: "image".to_owned() });
+                parts.push(ContentPart::Image {
+                    data,
+                    mime_type,
+                    content_type: "image".to_owned(),
+                    detail: None,
+                    image_url: None,
+                });
             }
         }
 

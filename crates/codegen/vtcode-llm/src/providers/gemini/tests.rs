@@ -353,6 +353,8 @@ fn convert_to_interaction_request_supports_multimodal_function_results() {
                         data: "ZmFrZQ==".to_string(),
                         mime_type: "image/png".to_string(),
                         content_type: "image".to_string(),
+                        detail: None,
+                        image_url: None,
                     },
                 ]),
                 tool_call_id: Some("call_screenshot_1".to_string()),

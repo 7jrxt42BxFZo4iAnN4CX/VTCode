@@ -51,6 +51,7 @@ impl ModelId {
             // DeepSeek models
             ModelId::DeepSeekV4Pro,
             ModelId::DeepSeekV4Flash,
+            ModelId::DeepSeekV4FlashVisionExp,
             // Official Meta AI models (kept before marketplace entries)
             ModelId::MetaMuseSpark12,
             ModelId::MetaMuseSpark12Contributor,

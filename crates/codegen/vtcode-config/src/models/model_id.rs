@@ -92,6 +92,8 @@ pub enum ModelId {
     DeepSeekV4Pro,
     /// DeepSeek V4 Flash - Fast inference model for cost-effective reasoning
     DeepSeekV4Flash,
+    /// DeepSeek V4 Flash Vision Exp - Experimental vision model with image + text input
+    DeepSeekV4FlashVisionExp,
 
     // Official Meta AI models
     /// Meta Muse Spark 1.1 - Official Meta AI Standard-tier reasoning model

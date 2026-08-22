@@ -30,6 +30,54 @@ impl AssistantPhase {
     }
 }
 
+/// Detail level for image processing (DeepSeek/OpenAI `detail` field).
+///
+/// `Original` is retained for Gemini compatibility but not used for DeepSeek/OpenAI chat.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageDetail {
+    #[serde(rename = "low")]
+    Low,
+    #[serde(rename = "high")]
+    High,
+    #[serde(rename = "original")]
+    Original,
+    #[serde(rename = "auto")]
+    Auto,
+}
+
+impl ImageDetail {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::High => "high",
+            Self::Original => "original",
+            Self::Auto => "auto",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "low" => Some(Self::Low),
+            "high" => Some(Self::High),
+            "original" => Some(Self::Original),
+            "auto" => Some(Self::Auto),
+            _ => None,
+        }
+    }
+}
+
+/// Strictly typed image source — replaces bare `data`/`mime_type`/`image_url` triple.
+///
+/// This makes the mutual exclusivity explicit (shape-suffix naming) and provides
+/// a single dispatch point for serialization. The underlying `ContentPart::Image`
+/// fields are kept for serde backward compat, but new code should use this enum.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImageSource<'a> {
+    Base64 { data: &'a str, mime_type: &'a str },
+    Url { url: &'a str },
+}
+
 /// Content type for messages that can include both text and images
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -38,10 +86,14 @@ pub enum ContentPart {
         text: String,
     },
     Image {
-        data: String,      // Base64 encoded image data
+        data: String,      // Base64 encoded image data (empty when `image_url` is used)
         mime_type: String, // MIME type (e.g., "image/png")
         #[serde(rename = "type")]
         content_type: String, // "image"
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<ImageDetail>, // DeepSeek/OpenAI detail: low|high|original|auto
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        image_url: Option<String>, // External https URL alternative to base64 data
     },
     File {
         #[serde(rename = "type")]
@@ -63,7 +115,112 @@ impl ContentPart {
     }
 
     pub fn image(data: String, mime_type: String) -> Self {
-        ContentPart::Image { data, mime_type, content_type: "image".to_owned() }
+        ContentPart::Image {
+            data,
+            mime_type,
+            content_type: "image".to_owned(),
+            detail: None,
+            image_url: None,
+        }
+    }
+
+    pub fn image_with_detail(data: String, mime_type: String, detail: ImageDetail) -> Self {
+        ContentPart::Image {
+            data,
+            mime_type,
+            content_type: "image".to_owned(),
+            detail: Some(detail),
+            image_url: None,
+        }
+    }
+
+    /// Create an image part from an external URL.
+    ///
+    /// DeepSeek external URLs must be `https://`, ≤8192 chars, and ≤32MiB file.
+    /// Returns `Err` for malformed URLs (fail-closed) so callers must handle it.
+    pub fn image_from_url(url: String, detail: Option<ImageDetail>) -> Result<Self, String> {
+        let trimmed = url.trim();
+        if trimmed.is_empty() {
+            return Err("image URL must not be empty".to_owned());
+        }
+        if trimmed.len() > 8192 {
+            return Err(format!("image URL exceeds 8192 char limit (len={})", trimmed.len()));
+        }
+        if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
+            return Err(format!("image URL must be https://, got {trimmed:?}"));
+        }
+        Ok(ContentPart::Image {
+            data: String::new(),
+            mime_type: String::new(),
+            content_type: "image".to_owned(),
+            detail,
+            image_url: Some(url),
+        })
+    }
+
+    /// Strictly typed view of the image source (Base64 vs URL).
+    ///
+    /// This isolates the `data`/`mime_type`/`image_url` triple behind a single
+    /// dispatch point (KISS/DRY guard rail for the next generation phase).
+    pub fn image_source(&self) -> Option<ImageSource<'_>> {
+        match self {
+            ContentPart::Image { data, mime_type, image_url, .. } => {
+                if let Some(url) = image_url {
+                    Some(ImageSource::Url { url })
+                } else if !data.is_empty() && !mime_type.is_empty() {
+                    Some(ImageSource::Base64 { data, mime_type })
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Validate image part invariants (MIME allowlist, size, URL limits).
+    ///
+    /// DeepSeek supports JPEG/PNG/GIF/WebP; other types are warned but not rejected
+    /// to keep the interface open for future providers.
+    pub fn validate_image(&self) -> Result<(), String> {
+        match self {
+            ContentPart::Image { data, mime_type, image_url, .. } => {
+                if let Some(url) = image_url {
+                    if url.len() > 8192 {
+                        return Err(format!("image URL exceeds 8192 chars: {}", url.len()));
+                    }
+                    if !(url.starts_with("https://") || url.starts_with("http://")) {
+                        return Err(format!("image URL must be https://: {url:?}"));
+                    }
+                } else {
+                    if data.is_empty() || mime_type.is_empty() {
+                        return Err("image data and mime_type must be non-empty for base64 images".to_owned());
+                    }
+                    const ALLOWED: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
+                    if !ALLOWED.contains(&mime_type.as_str()) {
+                        tracing::warn!(mime_type = %mime_type, "image MIME type not in DeepSeek allowlist");
+                    }
+                    // Rough size check: base64 string length * 3/4 ≈ decoded bytes
+                    let decoded_approx = data.len() * 3 / 4;
+                    if decoded_approx > 32 * 1024 * 1024 {
+                        return Err(format!("image exceeds 32MiB limit: ~{} bytes", decoded_approx));
+                    }
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Ergonomic helper for string-based detail (parses case-insensitively).
+    /// Returns `None` and warns if `detail_str` is invalid.
+    pub fn image_with_detail_str(data: String, mime_type: String, detail_str: &str) -> Option<Self> {
+        match ImageDetail::from_str(detail_str) {
+            Some(d) => Some(Self::image_with_detail(data, mime_type, d)),
+            None => {
+                tracing::warn!(detail = %detail_str, "invalid image detail, expected low|high|original|auto");
+                None
+            }
+        }
     }
 
     pub(crate) fn file_from_id(file_id: String) -> Self {
@@ -557,7 +714,7 @@ impl Message {
 
         // Provider-specific validations based on official docs
         match provider {
-            "openai" | "openrouter" | "meta" | "zai" | "stepfun" | "evolink" => {
+            "openai" | "openrouter" | "meta" | "zai" | "stepfun" | "evolink" | "deepseek" => {
                 if self.role == MessageRole::Tool && self.tool_call_id.is_none() {
                     return Err(format!("{provider} requires tool_call_id for tool messages"));
                 }
@@ -576,6 +733,18 @@ impl Message {
                 // Tool messages are converted to user messages anyway
             }
             _ => {} // Generic validation already done above
+        }
+
+        // DeepSeek vision guard rails: images only in user messages, MIME/size checks
+        if provider == "deepseek" && self.has_images() {
+            if self.role != MessageRole::User {
+                return Err("DeepSeek vision images are only supported in user messages".to_owned());
+            }
+            for part in self.content.get_images() {
+                if let Err(e) = part.validate_image() {
+                    return Err(format!("DeepSeek image validation failed: {e}"));
+                }
+            }
         }
 
         Ok(())

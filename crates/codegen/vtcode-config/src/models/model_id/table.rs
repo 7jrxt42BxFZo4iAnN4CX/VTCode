@@ -312,6 +312,13 @@ model_id_table! {
         display: "DeepSeek V4 Flash",
         description: "Official release with significantly enhanced agent capabilities for coding and tool use (Terminal Bench 2.1: 82.7, DeepSWE: 54.4)",
     },
+    DeepSeekV4FlashVisionExp {
+        provider: DeepSeek,
+        id: models::deepseek::DEEPSEEK_V4_FLASH_VISION_EXP,
+        parse: [models::deepseek::DEEPSEEK_V4_FLASH_VISION_EXP],
+        display: "DeepSeek V4 Flash Vision Exp",
+        description: "Experimental vision model — image + text input via chat/completions (base64/file_id/URL, 600 images, 48MiB body, 8192px)",
+    },
     // Official Meta AI models
     MetaMuseSpark11 {
         provider: Meta,

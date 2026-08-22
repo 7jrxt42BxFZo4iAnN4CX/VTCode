@@ -167,6 +167,7 @@ impl ModelId {
             ModelId::CopilotGPT54 => Some(ModelId::CopilotGPT54Mini),
             ModelId::CopilotGPT52Codex | ModelId::CopilotGPT51CodexMax => Some(ModelId::CopilotGPT54Mini),
             ModelId::DeepSeekV4Pro => Some(ModelId::DeepSeekV4Flash),
+            ModelId::DeepSeekV4FlashVisionExp => Some(ModelId::DeepSeekV4Flash),
             ModelId::MergeGatewayDeepseekV4Pro0813 => Some(ModelId::MergeGatewayDeepseekV4Flash0731),
             ModelId::MetaMuseSpark12 => Some(ModelId::MetaMuseSpark11),
             ModelId::NvidiaNemotron3Ultra550bA55b => Some(ModelId::NvidiaNemotron3Super120bA12b),
@@ -256,7 +257,7 @@ impl ModelId {
             }
             ModelId::OpenCodeZenGPT54 => Some(ModelId::OpenCodeZenGPT54Mini),
             ModelId::CopilotGPT52Codex | ModelId::CopilotGPT54 => Some(ModelId::CopilotGPT54Mini),
-            ModelId::DeepSeekV4Pro => Some(ModelId::DeepSeekV4Flash),
+            ModelId::DeepSeekV4Pro | ModelId::DeepSeekV4FlashVisionExp => Some(ModelId::DeepSeekV4Flash),
             ModelId::MetaMuseSpark12 => Some(ModelId::MetaMuseSpark11),
             ModelId::NvidiaNemotron3Ultra550bA55b => Some(ModelId::NvidiaNemotron3Nano30bA3b),
             ModelId::NvidiaNemotron3Super120bA12b => Some(ModelId::NvidiaNemotron3Nano30bA3b),
@@ -314,6 +315,8 @@ impl ModelId {
                 | ModelId::StepFun37Flash
                 | ModelId::HuggingFaceDeepseekV4FlashNovita
                 | ModelId::MergeGatewayDeepseekV4Flash0731
+                | ModelId::DeepSeekV4Flash
+                | ModelId::DeepSeekV4FlashVisionExp
         )
     }
 
@@ -400,6 +403,7 @@ impl ModelId {
                 | ModelId::ClaudeHaiku45
                 | ModelId::OpenCodeZenGPT54Mini
                 | ModelId::DeepSeekV4Flash
+                | ModelId::DeepSeekV4FlashVisionExp
                 | ModelId::MergeGatewayDeepseekV4Flash0731
                 | ModelId::MetaMuseSpark11
                 | ModelId::MergeGatewayMinimaxH3
@@ -532,7 +536,7 @@ impl ModelId {
             ModelId::ClaudeSonnet46 => "4.6",
             ModelId::ClaudeHaiku45 => "4.5",
             // DeepSeek generations
-            ModelId::DeepSeekV4Pro | ModelId::DeepSeekV4Flash => "4",
+            ModelId::DeepSeekV4Pro | ModelId::DeepSeekV4Flash | ModelId::DeepSeekV4FlashVisionExp => "4",
             ModelId::MergeGatewayDeepseekV4Pro0813 => "4-pro-0813",
             ModelId::MergeGatewayDeepseekV4Flash0731 => "4-flash-0731",
             ModelId::MetaMuseSpark11 => "Muse-Spark-1.1",

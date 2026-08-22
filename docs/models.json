@@ -1616,6 +1616,24 @@
         "context": 1000000,
         "max_output_tokens": 384000,
         "description": "High-performance reasoning model with advanced thinking capabilities"
+      },
+      "deepseek-v4-flash-vision-exp": {
+        "id": "deepseek-v4-flash-vision-exp",
+        "name": "DeepSeek V4 Flash Vision Exp",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text",
+            "image"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 1000000,
+        "max_output_tokens": 384000,
+        "description": "Experimental vision model — image + text input via chat/completions (base64/file_id/URL, 600 images, 48MiB body, 8192px)"
       }
     }
   },
