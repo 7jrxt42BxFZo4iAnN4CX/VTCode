@@ -846,7 +846,7 @@ impl TaskTrackerTool {
             title: args.title.clone(),
             items: args.items.clone(),
             index: args.index,
-            index_path: args.index_path.clone().or_else(|| args.index.map(|value| value.to_string())),
+            index_path: args.index_path.clone(),
             status: args.status.clone(),
             description: args.description.clone(),
             files: args.files.clone(),
