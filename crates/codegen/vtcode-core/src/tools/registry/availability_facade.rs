@@ -108,7 +108,8 @@ impl ToolRegistry {
                     CapabilityLevel::CodeSearch,
                     ToolDocumentationMode::Full,
                     ToolModelCapabilities::default(),
-                ),
+                )
+                .with_planning_active(self.is_planning_active()),
             )
             .await
         {
@@ -116,10 +117,22 @@ impl ToolRegistry {
         }
 
         // Resolve tool (handles built-ins, MCP proxies, and aliases)
-        if let Some(registration) = self.inventory.get_registration(tool_name)
-            && let Some(schema) = registration.parameter_schema()
-        {
-            return Some(wrap_schema(tool_name, registration.metadata().description().unwrap_or(""), schema));
+        if let Some(registration) = self.inventory.get_registration(tool_name) {
+            let description = if registration.name() == tools::TASK_TRACKER {
+                crate::tools::handlers::task_tracker::task_tracker_description_for_workflow(self.is_planning_active())
+            } else {
+                registration.metadata().description().unwrap_or("")
+            };
+            let schema = if registration.name() == tools::TASK_TRACKER {
+                crate::tools::handlers::task_tracker::task_tracker_parameter_schema_for_workflow(
+                    self.is_planning_active(),
+                )
+            } else if let Some(schema) = registration.parameter_schema() {
+                schema.clone()
+            } else {
+                return None;
+            };
+            return Some(wrap_schema(tool_name, description, &schema));
         }
 
         None

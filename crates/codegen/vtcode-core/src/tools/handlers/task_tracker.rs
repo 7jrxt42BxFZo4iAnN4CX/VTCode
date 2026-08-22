@@ -439,6 +439,168 @@ pub struct TaskTrackerTool {
     checklist: Arc<RwLock<Option<TaskChecklist>>>,
 }
 
+fn standard_task_tracker_parameter_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["create", "update", "list", "add"],
+                "description": "Action to perform on the task checklist."
+            },
+            "title": {
+                "type": "string",
+                "description": "Title for the checklist (used with 'create')."
+            },
+            "items": {
+                "type": "array",
+                "items": {
+                    "anyOf": [
+                        { "type": "string" },
+                        {
+                            "type": "object",
+                            "properties": {
+                                "description": { "type": "string" },
+                                "status": {
+                                    "type": "string",
+                                    "enum": ["pending", "in_progress", "completed", "blocked"]
+                                },
+                                "files": {
+                                    "type": "array",
+                                    "items": { "type": "string" }
+                                },
+                                "outcome": { "type": "string" },
+                                "verify": {
+                                    "anyOf": [
+                                        { "type": "string" },
+                                        {
+                                            "type": "array",
+                                            "items": { "type": "string" }
+                                        }
+                                    ]
+                                }
+                            },
+                            "required": ["description"]
+                        }
+                    ]
+                },
+                "description": "Task descriptions or structured items. Supports [x]/[~]/[!]/[ ] prefixes for status sync."
+            },
+            "index": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Action=update only: use a 1-based item index. index: 0 is reserved for standard checklist-level completion and is valid only with status: completed."
+            },
+            "index_path": {
+                "type": "string",
+                "pattern": "^[1-9][0-9]*$",
+                "description": "Action=update only: positive flat index path for compatibility (example: '2'). Hierarchical paths are accepted only by Planning workflow."
+            },
+            "status": {
+                "type": "string",
+                "enum": ["pending", "in_progress", "completed", "blocked"],
+                "description": "New status for the item (used with single-item 'update')."
+            },
+            "description": {
+                "type": "string",
+                "description": "Description for a new item (used with 'add')."
+            },
+            "files": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Optional file paths associated with a single add/update item."
+            },
+            "outcome": {
+                "type": "string",
+                "description": "Optional expected outcome associated with a single add/update item."
+            },
+            "verify": {
+                "anyOf": [
+                    { "type": "string" },
+                    {
+                        "type": "array",
+                        "items": { "type": "string" }
+                    }
+                ],
+                "description": "Optional verification command or commands associated with a single add/update item."
+            },
+            "parent_index_path": {
+                "type": "string",
+                "description": "Optional parent path for add in Planning workflow (example: '2')."
+            },
+            "notes": {
+                "type": "string",
+                "description": "Optional notes to append to the checklist."
+            }
+        },
+        "required": ["action"],
+        "allOf": [
+            {
+                "if": {
+                    "properties": { "action": { "const": "create" } },
+                    "required": ["action"]
+                },
+                "then": {
+                    "required": ["items"]
+                }
+            },
+            {
+                "if": {
+                    "properties": { "action": { "const": "update" } },
+                    "required": ["action"]
+                },
+                "then": {
+                    "anyOf": [
+                        { "required": ["index", "status"] },
+                        { "required": ["index_path", "status"] },
+                        { "required": ["items"] }
+                    ]
+                }
+            },
+            {
+                "if": {
+                    "properties": {
+                        "action": { "const": "update" },
+                        "index": { "const": 0 }
+                    },
+                    "required": ["action", "index"]
+                },
+                "then": {
+                    "properties": {
+                        "status": { "const": "completed" }
+                    },
+                    "required": ["status"]
+                }
+            },
+            {
+                "if": {
+                    "properties": { "action": { "const": "add" } },
+                    "required": ["action"]
+                },
+                "then": {
+                    "required": ["description"]
+                }
+            }
+        ]
+    })
+}
+
+pub(crate) fn task_tracker_description_for_workflow(planning_active: bool) -> &'static str {
+    if planning_active {
+        "Adaptive task tracking for planning. Persists hierarchical plan progress under .vtcode/plans/<plan>.tasks.md and mirrors updates to .vtcode/tasks/current_task.md. Actions: create, update, list, add. For action=update, planning item indices are positive 1-based flat or hierarchical index_path values; index: 0 is invalid. Use items for bulk updates."
+    } else {
+        "Track task progress through a single checklist API (action: create | update | list | add). Use with action=create at the start of a multi-step plan; action=update as work progresses; action=list to review current state. For action=update, item indices are 1-based; standard checklist-level completion alone may use index: 0 with status: completed. Planning workflow accepts only positive flat or hierarchical index paths. Use items for bulk updates. Do NOT call action=create twice — subsequent calls update the existing checklist. Tracker state mirrors between .vtcode/tasks/current_task.md and active plan sidecar files when available."
+    }
+}
+
+pub(crate) fn task_tracker_parameter_schema_for_workflow(planning_active: bool) -> Value {
+    if planning_active {
+        super::planning_task_tracker::planning_task_tracker_parameter_schema()
+    } else {
+        standard_task_tracker_parameter_schema()
+    }
+}
+
 impl TaskTrackerTool {
     pub fn new(workspace_root: PathBuf, planning_workflow_state: PlanningWorkflowState) -> Self {
         Self {
@@ -957,153 +1119,11 @@ impl Tool for TaskTrackerTool {
     }
 
     fn description(&self) -> &str {
-        "Track task progress through a single checklist API (action: create | update | list | add). Use with action=create at the start of a multi-step plan; action=update as work progresses; action=list to review current state. For action=update, item indices are 1-based; standard checklist-level completion alone may use index: 0 with status: completed. Planning workflow accepts only positive flat or hierarchical index paths. Use items for bulk updates. Do NOT call action=create twice — subsequent calls update the existing checklist. Tracker state mirrors between .vtcode/tasks/current_task.md and active plan sidecar files when available."
+        task_tracker_description_for_workflow(self.planning_workflow_state.is_active())
     }
 
     fn parameter_schema(&self) -> Option<Value> {
-        Some(json!({
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["create", "update", "list", "add"],
-                    "description": "Action to perform on the task checklist."
-                },
-                "title": {
-                    "type": "string",
-                    "description": "Title for the checklist (used with 'create')."
-                },
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "anyOf": [
-                            { "type": "string" },
-                            {
-                                "type": "object",
-                                "properties": {
-                                    "description": { "type": "string" },
-                                    "status": {
-                                        "type": "string",
-                                        "enum": ["pending", "in_progress", "completed", "blocked"]
-                                    },
-                                    "files": {
-                                        "type": "array",
-                                        "items": { "type": "string" }
-                                    },
-                                    "outcome": { "type": "string" },
-                                    "verify": {
-                                        "anyOf": [
-                                            { "type": "string" },
-                                            {
-                                                "type": "array",
-                                                "items": { "type": "string" }
-                                            }
-                                        ]
-                                    }
-                                },
-                                "required": ["description"]
-                            }
-                        ]
-                    },
-                    "description": "Task descriptions or structured items. Supports [x]/[~]/[!]/[ ] prefixes for status sync."
-                },
-                "index": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "description": "Action=update only: use a 1-based item index. index: 0 is reserved for standard checklist-level completion and is valid only with status: completed."
-                },
-                "index_path": {
-                    "type": "string",
-                    "pattern": "^[1-9][0-9]*$",
-                    "description": "Action=update only: positive flat index path for compatibility (example: '2'). Hierarchical paths are accepted only by Planning workflow."
-                },
-                "status": {
-                    "type": "string",
-                    "enum": ["pending", "in_progress", "completed", "blocked"],
-                    "description": "New status for the item (used with single-item 'update')."
-                },
-                "description": {
-                    "type": "string",
-                    "description": "Description for a new item (used with 'add')."
-                },
-                "files": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Optional file paths associated with a single add/update item."
-                },
-                "outcome": {
-                    "type": "string",
-                    "description": "Optional expected outcome associated with a single add/update item."
-                },
-                "verify": {
-                    "anyOf": [
-                        { "type": "string" },
-                        {
-                            "type": "array",
-                            "items": { "type": "string" }
-                        }
-                    ],
-                    "description": "Optional verification command or commands associated with a single add/update item."
-                },
-                "parent_index_path": {
-                    "type": "string",
-                    "description": "Optional parent path for add in Planning workflow (example: '2')."
-                },
-                "notes": {
-                    "type": "string",
-                    "description": "Optional notes to append to the checklist."
-                }
-            },
-            "required": ["action"],
-            "allOf": [
-                {
-                    "if": {
-                        "properties": { "action": { "const": "create" } },
-                        "required": ["action"]
-                    },
-                    "then": {
-                        "required": ["items"]
-                    }
-                },
-                {
-                    "if": {
-                        "properties": { "action": { "const": "update" } },
-                        "required": ["action"]
-                    },
-                    "then": {
-                        "anyOf": [
-                            { "required": ["index", "status"] },
-                            { "required": ["index_path", "status"] },
-                            { "required": ["items"] }
-                        ]
-                    }
-                },
-                {
-                    "if": {
-                        "properties": {
-                            "action": { "const": "update" },
-                            "index": { "const": 0 }
-                        },
-                        "required": ["action", "index"]
-                    },
-                    "then": {
-                        "properties": {
-                            "status": { "const": "completed" }
-                        },
-                        "required": ["status"]
-                    }
-                },
-                {
-                    "if": {
-                        "properties": { "action": { "const": "add" } },
-                        "required": ["action"]
-                    },
-                    "then": {
-                        "required": ["description"]
-                    }
-                }
-            ]
-        }))
+        Some(task_tracker_parameter_schema_for_workflow(self.planning_workflow_state.is_active()))
     }
 
     fn is_mutating(&self) -> bool {
@@ -1253,6 +1273,20 @@ mod tests {
         assert!(description.contains("index: 0"));
         assert!(description.contains("completed"));
         assert_eq!(schema["allOf"][2]["then"]["properties"]["status"]["const"], "completed");
+    }
+
+    #[test]
+    fn task_tracker_metadata_switches_with_planning_state() {
+        let temp = TempDir::new().unwrap();
+        let (state, tool) = setup_tool(&temp);
+
+        assert_eq!(tool.description(), task_tracker_description_for_workflow(false));
+        assert_eq!(tool.parameter_schema().expect("standard schema")["properties"]["index"]["minimum"], 0);
+
+        state.enable();
+
+        assert_eq!(tool.description(), task_tracker_description_for_workflow(true));
+        assert_eq!(tool.parameter_schema().expect("planning schema")["properties"]["index"]["minimum"], 1);
     }
 
     #[tokio::test]
@@ -1409,6 +1443,69 @@ mod tests {
         let persisted = std::fs::read_to_string(task_file).unwrap();
         assert!(persisted.contains("Root task"));
         assert!(persisted.contains("Child task"));
+    }
+
+    #[tokio::test]
+    async fn test_planning_workflow_adaptive_tool_accepts_hierarchical_index_path() {
+        let temp = TempDir::new().unwrap();
+        let (state, tool) = setup_tool(&temp);
+
+        let plans_dir = state.plans_dir();
+        std::fs::create_dir_all(&plans_dir).unwrap();
+        let plan_file = plans_dir.join("hierarchical.md");
+        std::fs::write(&plan_file, "# Hierarchical\n").unwrap();
+        state.set_plan_file(Some(plan_file)).await;
+        state.enable();
+
+        tool.execute(json!({
+            "action": "create",
+            "items": ["Parent task", "  Child task"]
+        }))
+        .await
+        .unwrap();
+
+        let updated = tool
+            .execute(json!({
+                "action": "update",
+                "index_path": "1.1",
+                "status": "completed"
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(updated["status"], "updated");
+        assert_eq!(updated["checklist"]["completed"], 1);
+    }
+
+    #[tokio::test]
+    async fn test_planning_workflow_adaptive_tool_rejects_index_zero() {
+        let temp = TempDir::new().unwrap();
+        let (state, tool) = setup_tool(&temp);
+
+        let plans_dir = state.plans_dir();
+        std::fs::create_dir_all(&plans_dir).unwrap();
+        let plan_file = plans_dir.join("reject-zero.md");
+        std::fs::write(&plan_file, "# Reject zero\n").unwrap();
+        state.set_plan_file(Some(plan_file)).await;
+        state.enable();
+
+        tool.execute(json!({
+            "action": "create",
+            "items": ["Parent task"]
+        }))
+        .await
+        .unwrap();
+
+        let error = tool
+            .execute(json!({
+                "action": "update",
+                "index": 0,
+                "status": "completed"
+            }))
+            .await
+            .expect_err("planning index zero must be rejected");
+
+        assert!(error.to_string().contains("index_path components must be >= 1"));
     }
 
     #[tokio::test]

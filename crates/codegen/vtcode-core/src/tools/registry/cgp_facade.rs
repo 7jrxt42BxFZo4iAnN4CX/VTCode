@@ -19,6 +19,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
 
+fn registration_uses_live_task_tracker_metadata(registration: &ToolRegistration) -> bool {
+    registration.name() == crate::config::constants::tools::TASK_TRACKER
+}
+
 fn leak_pattern_str(value: impl Into<String>) -> &'static str {
     Box::leak(value.into().into_boxed_str())
 }
@@ -69,14 +73,23 @@ impl RegistrationMetadataSnapshot {
     where
         T: Tool + ?Sized,
     {
+        let use_live_task_tracker_metadata = registration_uses_live_task_tracker_metadata(registration);
         Self {
             name: Arc::<str>::from(registration.name()),
-            description: registration
-                .metadata()
-                .description()
-                .map(Arc::<str>::from)
-                .unwrap_or_else(|| Arc::<str>::from(tool.description())),
-            parameter_schema: registration.parameter_schema().cloned().or_else(|| tool.parameter_schema()),
+            description: if use_live_task_tracker_metadata {
+                Arc::<str>::from(tool.description())
+            } else {
+                registration
+                    .metadata()
+                    .description()
+                    .map(Arc::<str>::from)
+                    .unwrap_or_else(|| Arc::<str>::from(tool.description()))
+            },
+            parameter_schema: if use_live_task_tracker_metadata {
+                tool.parameter_schema()
+            } else {
+                registration.parameter_schema().cloned().or_else(|| tool.parameter_schema())
+            },
             config_schema: registration.config_schema().cloned().or_else(|| tool.config_schema()),
             state_schema: registration.state_schema().cloned().or_else(|| tool.state_schema()),
             prompt_path: registration
@@ -189,7 +202,11 @@ where
     }
 
     fn description(&self) -> &str {
-        self.metadata.description.as_ref()
+        if self.metadata.name.as_ref() == crate::config::constants::tools::TASK_TRACKER {
+            self.inner.description()
+        } else {
+            self.metadata.description.as_ref()
+        }
     }
 
     fn validate_args(&self, args: &Value) -> Result<()> {
@@ -197,7 +214,11 @@ where
     }
 
     fn parameter_schema(&self) -> Option<Value> {
-        self.metadata.parameter_schema.clone()
+        if self.metadata.name.as_ref() == crate::config::constants::tools::TASK_TRACKER {
+            self.inner.parameter_schema()
+        } else {
+            self.metadata.parameter_schema.clone()
+        }
     }
 
     fn config_schema(&self) -> Option<Value> {
@@ -274,7 +295,11 @@ impl Tool for RegistrationBackedDynTool {
     }
 
     fn description(&self) -> &str {
-        self.metadata.description.as_ref()
+        if self.metadata.name.as_ref() == crate::config::constants::tools::TASK_TRACKER {
+            self.inner.description()
+        } else {
+            self.metadata.description.as_ref()
+        }
     }
 
     fn validate_args(&self, args: &Value) -> Result<()> {
@@ -282,7 +307,11 @@ impl Tool for RegistrationBackedDynTool {
     }
 
     fn parameter_schema(&self) -> Option<Value> {
-        self.metadata.parameter_schema.clone()
+        if self.metadata.name.as_ref() == crate::config::constants::tools::TASK_TRACKER {
+            self.inner.parameter_schema()
+        } else {
+            self.metadata.parameter_schema.clone()
+        }
     }
 
     fn config_schema(&self) -> Option<Value> {
@@ -493,9 +522,12 @@ impl ToolRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::constants::tools;
+    use crate::tools::handlers::{PlanningWorkflowState, TaskTrackerTool};
     use crate::tools::traits::Tool;
     use futures::future::BoxFuture;
     use std::path::PathBuf;
+    use tempfile::TempDir;
 
     struct DummyTool;
 
@@ -738,6 +770,81 @@ mod tests {
         let result = tool.execute(serde_json::json!({})).await.expect("should execute");
 
         assert_eq!(result.get("path").and_then(|v| v.as_str()), Some("native"));
+    }
+
+    #[tokio::test]
+    async fn enable_cgp_pipeline_uses_live_task_tracker_metadata_for_native_factory_tools() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
+        let plan_state = registry.planning_workflow_state();
+        let registration = registry
+            .inventory
+            .get_registration(tools::TASK_TRACKER)
+            .expect("task_tracker registration exists");
+
+        registry.enable_cgp_pipeline(CgpRuntimeMode::Interactive).await;
+
+        let tool = registry.get_tool(tools::TASK_TRACKER).expect("wrapped task_tracker tool");
+        assert_eq!(
+            tool.description(),
+            crate::tools::handlers::task_tracker::task_tracker_description_for_workflow(false)
+        );
+        assert_eq!(tool.parameter_schema().expect("standard schema")["properties"]["index"]["minimum"], 0);
+
+        plan_state.enable();
+
+        let tool = registry.get_tool(tools::TASK_TRACKER).expect("wrapped task_tracker tool");
+        assert_eq!(
+            tool.description(),
+            crate::tools::handlers::task_tracker::task_tracker_description_for_workflow(true)
+        );
+        assert_eq!(tool.parameter_schema().expect("planning schema")["properties"]["index"]["minimum"], 1);
+
+        let direct_native = wrap_registered_native_tool(
+            &registration,
+            TaskTrackerTool::new(temp_dir.path().to_path_buf(), plan_state.clone()),
+            temp_dir.path().to_path_buf(),
+            CgpRuntimeMode::Interactive,
+        );
+        assert_eq!(
+            direct_native.description(),
+            crate::tools::handlers::task_tracker::task_tracker_description_for_workflow(true)
+        );
+        assert_eq!(
+            direct_native.parameter_schema().expect("native planning schema")["properties"]["index"]["minimum"],
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn enable_cgp_pipeline_uses_live_task_tracker_metadata_for_trait_object_tools() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
+        let state = PlanningWorkflowState::new(temp_dir.path().to_path_buf());
+        let registration = ToolRegistration::from_tool(
+            tools::TASK_TRACKER,
+            crate::config::types::CapabilityLevel::Basic,
+            Arc::new(TaskTrackerTool::new(temp_dir.path().to_path_buf(), state.clone())),
+        )
+        .with_description("stale registered task tracker metadata");
+
+        registry.register_tool(registration).await.expect("should register override");
+        registry.enable_cgp_pipeline(CgpRuntimeMode::Interactive).await;
+
+        let tool = registry.get_tool(tools::TASK_TRACKER).expect("wrapped task_tracker tool");
+        assert_eq!(
+            tool.description(),
+            crate::tools::handlers::task_tracker::task_tracker_description_for_workflow(false)
+        );
+
+        state.enable();
+
+        let tool = registry.get_tool(tools::TASK_TRACKER).expect("wrapped task_tracker tool");
+        assert_eq!(
+            tool.description(),
+            crate::tools::handlers::task_tracker::task_tracker_description_for_workflow(true)
+        );
+        assert_eq!(tool.parameter_schema().expect("planning schema")["properties"]["index"]["minimum"], 1);
     }
 
     #[tokio::test]

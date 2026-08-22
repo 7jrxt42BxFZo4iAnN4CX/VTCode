@@ -317,6 +317,42 @@ async fn registered_planning_task_tracker_exposes_planning_index_contract() -> R
 }
 
 #[tokio::test]
+async fn get_tool_schema_uses_runtime_planning_state_for_task_tracker() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
+
+    let standard_schema = registry
+        .get_tool_schema(tools::TASK_TRACKER)
+        .await
+        .expect("standard task_tracker schema");
+    assert_eq!(
+        standard_schema["description"].as_str(),
+        Some(crate::tools::handlers::task_tracker::task_tracker_description_for_workflow(false))
+    );
+    assert_eq!(standard_schema["parameters"]["properties"]["index"]["minimum"], 0);
+    assert_eq!(standard_schema["parameters"]["properties"]["index_path"]["pattern"], "^[1-9][0-9]*$");
+
+    registry.enable_planning();
+    registry.planning_workflow_state().enable();
+
+    let planning_schema = registry
+        .get_tool_schema(tools::TASK_TRACKER)
+        .await
+        .expect("planning task_tracker schema");
+    assert_eq!(
+        planning_schema["description"].as_str(),
+        Some(crate::tools::handlers::task_tracker::task_tracker_description_for_workflow(true))
+    );
+    assert_eq!(planning_schema["parameters"]["properties"]["index"]["minimum"], 1);
+    assert_eq!(
+        planning_schema["parameters"]["properties"]["index_path"]["pattern"],
+        "^[1-9][0-9]*(\\.[1-9][0-9]*)*$"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn public_routing_keeps_aliases_private_and_rebuilds_on_dynamic_updates() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
@@ -982,6 +1018,55 @@ async fn prevalidated_execution_allows_task_tracker_in_planning_workflow() -> Re
         .await
         .expect("task_tracker should be allowed in planning workflow");
     assert_eq!(response["status"], "created");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn preflight_task_tracker_schema_tracks_planning_state() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
+
+    registry.preflight_validate_call(
+        tools::TASK_TRACKER,
+        &json!({
+            "action": "update",
+            "index": 0,
+            "status": "completed"
+        }),
+    )?;
+
+    registry.enable_planning();
+    registry.planning_workflow_state().enable();
+
+    let plans_dir = temp_dir.path().join(".vtcode").join("plans");
+    fs::create_dir_all(&plans_dir)?;
+    let plan_file = plans_dir.join("preflight-schema.md");
+    fs::write(&plan_file, "# Preflight schema\n")?;
+    registry.planning_workflow_state().set_plan_file(Some(plan_file)).await;
+
+    registry.preflight_validate_call(
+        tools::TASK_TRACKER,
+        &json!({
+            "action": "update",
+            "index_path": "1.1",
+            "status": "completed"
+        }),
+    )?;
+
+    let error = registry
+        .preflight_validate_call(
+            tools::TASK_TRACKER,
+            &json!({
+                "action": "update",
+                "index": 0,
+                "status": "completed"
+            }),
+        )
+        .expect_err("planning schema should reject index 0");
+    let error_text = error.to_string();
+    assert!(error_text.contains("Invalid arguments for tool 'task_tracker'"));
+    assert!(error_text.contains("index"));
 
     Ok(())
 }

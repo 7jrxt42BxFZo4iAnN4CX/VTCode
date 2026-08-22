@@ -52,13 +52,22 @@ impl AgentRunner {
             }
         }
         let runtime_config = self.session_tools_config_for_snapshot(planning_active, false);
-        let mut runtime_tool_names: HashSet<String> = self
-            .tool_registry
-            .model_tools(runtime_config)
-            .await
-            .into_iter()
-            .map(|tool| tool.function_name().to_string())
-            .collect();
+        let runtime_tools = self.tool_registry.model_tools(runtime_config).await;
+        if let Some(runtime_task_tracker) = runtime_tools
+            .iter()
+            .find(|tool| tool.function_name() == crate::config::constants::tools::TASK_TRACKER)
+        {
+            if let Some(existing) = definitions
+                .iter_mut()
+                .find(|tool| tool.function_name() == crate::config::constants::tools::TASK_TRACKER)
+            {
+                *existing = runtime_task_tracker.clone();
+            } else {
+                definitions.push(runtime_task_tracker.clone());
+            }
+        }
+        let mut runtime_tool_names: HashSet<String> =
+            runtime_tools.into_iter().map(|tool| tool.function_name().to_string()).collect();
         if let Some(full_auto_allowlist) = self.tool_registry.current_full_auto_allowlist().await {
             runtime_tool_names.extend(full_auto_allowlist);
         }

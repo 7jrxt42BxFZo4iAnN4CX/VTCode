@@ -7,9 +7,9 @@ use crate::config::types::CapabilityLevel;
 use crate::llm::provider::{ToolDefinition, ToolNamespace, ToolSearchAlgorithm};
 use crate::llm::providers::gemini::wire::FunctionDeclaration;
 use crate::tool_policy::ToolPolicy;
-use crate::tools::handlers::compact::MCP_TOOL_DESCRIPTION_MAX_LEN;
 #[cfg(test)]
-use crate::tools::handlers::compact::{compact_parameters, compact_tool_description};
+use crate::tools::handlers::compact::compact_tool_description;
+use crate::tools::handlers::compact::{MCP_TOOL_DESCRIPTION_MAX_LEN, compact_parameters};
 use crate::tools::mcp::MCP_QUALIFIED_TOOL_PREFIX;
 use crate::tools::registry::{ToolHandler as RegistryToolHandler, ToolRegistration};
 use crate::tools::tool_intent::ToolSurfaceKind;
@@ -426,8 +426,8 @@ impl SessionToolCatalog {
                 let projection = self.projection(index, entry, config.documentation_mode);
                 ToolSchemaEntry {
                     name: entry.public_name.clone(),
-                    description: projection.description().to_owned(),
-                    parameters: projection.parameters().clone(),
+                    description: self.description_for_entry(entry, projection, &config).to_owned(),
+                    parameters: self.parameters_for_entry(entry, projection, &config),
                 }
             })
             .collect()
@@ -452,7 +452,7 @@ impl SessionToolCatalog {
             .iter()
             .filter(|&&index| should_defer_tool_loading(&self.entries[index], &config))
             .count();
-        let estimated_schema_tokens = self.estimate_schema_tokens(&visible_entry_indices, config.documentation_mode);
+        let estimated_schema_tokens = self.estimate_schema_tokens(&visible_entry_indices, &config);
         let has_mcp_tools = visible_entry_indices
             .iter()
             .any(|&index| matches!(self.entries[index].source, ToolCatalogSource::Mcp));
@@ -505,7 +505,8 @@ impl SessionToolCatalog {
             let defer_loading = should_defer_tool_loading(entry, &config);
             match entry.kind {
                 CatalogToolKind::ApplyPatch if config.model_capabilities.supports_apply_patch_tool => {
-                    let mut tool = ToolDefinition::apply_patch(projection.description().to_owned());
+                    let mut tool =
+                        ToolDefinition::apply_patch(self.description_for_entry(entry, projection, &config).to_owned());
                     if defer_loading && !expose_tools_directly {
                         tool = tool.with_defer_loading(true);
                         has_deferred_tools = true;
@@ -518,8 +519,8 @@ impl SessionToolCatalog {
                     } else {
                         ToolDefinition::function(
                             entry.public_name.clone(),
-                            projection.description().to_owned(),
-                            projection.parameters().clone(),
+                            self.description_for_entry(entry, projection, &config).to_owned(),
+                            self.parameters_for_entry(entry, projection, &config),
                         )
                     };
                     if defer_loading && !expose_tools_directly {
@@ -558,12 +559,21 @@ impl SessionToolCatalog {
         &self.entries
     }
 
-    fn estimate_schema_tokens(&self, entry_indices: &[usize], documentation_mode: ToolDocumentationMode) -> usize {
+    fn estimate_schema_tokens(&self, entry_indices: &[usize], config: &SessionToolsConfig) -> usize {
         entry_indices
             .iter()
             .map(|&index| {
-                self.projection(index, &self.entries[index], documentation_mode)
-                    .serialized_token_estimate()
+                let entry = &self.entries[index];
+                let projection = self.projection(index, entry, config.documentation_mode);
+                if entry.public_name == tools::TASK_TRACKER {
+                    serialized_schema_token_estimate(
+                        entry.public_name.as_str(),
+                        self.description_for_entry(entry, projection, config),
+                        &self.parameters_for_entry(entry, projection, config),
+                    )
+                } else {
+                    projection.serialized_token_estimate()
+                }
             })
             .sum()
     }
@@ -577,6 +587,35 @@ impl SessionToolCatalog {
         self.projection_cache.get_or_init(entry_index, entry, documentation_mode)
     }
 
+    fn parameters_for_entry(
+        &self,
+        entry: &ToolCatalogEntry,
+        projection: &ToolEntryProjection,
+        config: &SessionToolsConfig,
+    ) -> Value {
+        if entry.public_name == tools::TASK_TRACKER {
+            return compact_parameters(
+                super::task_tracker::task_tracker_parameter_schema_for_workflow(config.planning_active),
+                config.documentation_mode,
+            );
+        }
+
+        projection.parameters().clone()
+    }
+
+    fn description_for_entry<'a>(
+        &self,
+        entry: &'a ToolCatalogEntry,
+        projection: &'a ToolEntryProjection,
+        config: &SessionToolsConfig,
+    ) -> &'a str {
+        if entry.public_name == tools::TASK_TRACKER {
+            return super::task_tracker::task_tracker_description_for_workflow(config.planning_active);
+        }
+
+        projection.description()
+    }
+
     fn visible_entry_indices(&self, config: &SessionToolsConfig) -> Vec<usize> {
         self.entries
             .iter()
@@ -584,6 +623,16 @@ impl SessionToolCatalog {
             .filter_map(|(index, entry)| entry.is_visible(config).then_some(index))
             .collect()
     }
+}
+
+fn serialized_schema_token_estimate(name: &str, description: &str, parameters: &Value) -> usize {
+    serde_json::to_string(&json!({
+        "name": name,
+        "description": description,
+        "parameters": parameters,
+    }))
+    .map(|serialized| serialized.len() / 4)
+    .unwrap_or(0)
 }
 
 impl ToolCatalogEntry {
@@ -2064,6 +2113,38 @@ mod tests {
                 .unwrap_or(0)
             })
             .sum()
+    }
+
+    #[test]
+    fn task_tracker_schema_token_estimate_tracks_workflow_specific_parameters() {
+        let catalog = SessionToolCatalog::rebuild_from_registrations(vec![
+            registration(tools::TASK_TRACKER)
+                .with_description("Track plan tasks")
+                .with_parameter_schema(empty_object_schema()),
+        ]);
+        let base_config = SessionToolsConfig::full_public(
+            SessionSurface::Interactive,
+            CapabilityLevel::CodeSearch,
+            ToolDocumentationMode::Full,
+            ToolModelCapabilities::default(),
+        )
+        .with_tool_profile(ToolProfile::AdvancedVtCode);
+
+        let standard_config = base_config.clone().with_planning_active(false);
+        let standard_visible = catalog.visible_entry_indices(&standard_config);
+        assert_eq!(
+            catalog.estimate_schema_tokens(&standard_visible, &standard_config),
+            on_wire_schema_tokens(&catalog, standard_config),
+            "inactive task_tracker token estimate should match the emitted schema",
+        );
+
+        let planning_config = base_config.with_planning_active(true);
+        let planning_visible = catalog.visible_entry_indices(&planning_config);
+        assert_eq!(
+            catalog.estimate_schema_tokens(&planning_visible, &planning_config),
+            on_wire_schema_tokens(&catalog, planning_config),
+            "planning task_tracker token estimate should match the emitted schema",
+        );
     }
 
     /// Build a simulated MCP tool registration for `server`/`tool` with a

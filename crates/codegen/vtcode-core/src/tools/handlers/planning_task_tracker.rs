@@ -520,6 +520,137 @@ pub struct PlanningTaskTrackerTool {
     state: PlanningWorkflowState,
 }
 
+pub(crate) fn planning_task_tracker_parameter_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["create", "update", "list", "add"],
+                "description": "Action to perform on the plan-scoped tracker."
+            },
+            "title": {
+                "type": "string",
+                "description": "Title for tracker document (used with create)."
+            },
+            "items": {
+                "type": "array",
+                "items": {
+                    "anyOf": [
+                        { "type": "string" },
+                        {
+                            "type": "object",
+                            "properties": {
+                                "description": { "type": "string" },
+                                "status": {
+                                    "type": "string",
+                                    "enum": ["pending", "in_progress", "completed", "blocked"]
+                                },
+                                "files": {
+                                    "type": "array",
+                                    "items": { "type": "string" }
+                                },
+                                "outcome": { "type": "string" },
+                                "verify": {
+                                    "anyOf": [
+                                        { "type": "string" },
+                                        {
+                                            "type": "array",
+                                            "items": { "type": "string" }
+                                        }
+                                    ]
+                                }
+                            },
+                            "required": ["description"]
+                        }
+                    ]
+                },
+                "description": "Initial task items (used with create). Leading 2-space indentation in description indicates nesting."
+            },
+            "index_path": {
+                "type": "string",
+                "pattern": "^[1-9][0-9]*(\\.[1-9][0-9]*)*$",
+                "description": "Action=update only: positive flat or hierarchical item path (examples: '2' or '2.1'). Zero is not a valid planning index."
+            },
+            "index": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Action=update only: positive top-level item index compatibility fallback. Planning index 0 is invalid; use items for bulk updates."
+            },
+            "status": {
+                "type": "string",
+                "enum": ["pending", "in_progress", "completed", "blocked"],
+                "description": "New status for update."
+            },
+            "description": {
+                "type": "string",
+                "description": "Task description for add. Optional prefix like '[x] ' or '[~] ' is supported."
+            },
+            "files": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Optional file paths associated with a single add/update item."
+            },
+            "outcome": {
+                "type": "string",
+                "description": "Optional expected outcome associated with a single add/update item."
+            },
+            "verify": {
+                "anyOf": [
+                    { "type": "string" },
+                    {
+                        "type": "array",
+                        "items": { "type": "string" }
+                    }
+                ],
+                "description": "Optional verification command or commands associated with a single add/update item."
+            },
+            "parent_index_path": {
+                "type": "string",
+                "description": "Optional parent path for add (example: '2'). If omitted, adds top-level task."
+            },
+            "notes": {
+                "type": "string",
+                "description": "Optional notes to append."
+            }
+        },
+        "required": ["action"],
+        "allOf": [
+            {
+                "if": {
+                    "properties": { "action": { "const": "create" } },
+                    "required": ["action"]
+                },
+                "then": {
+                    "required": ["items"]
+                }
+            },
+            {
+                "if": {
+                    "properties": { "action": { "const": "update" } },
+                    "required": ["action"]
+                },
+                "then": {
+                    "anyOf": [
+                        { "required": ["index_path", "status"] },
+                        { "required": ["index", "status"] },
+                        { "required": ["items"] }
+                    ]
+                }
+            },
+            {
+                "if": {
+                    "properties": { "action": { "const": "add" } },
+                    "required": ["action"]
+                },
+                "then": {
+                    "required": ["description"]
+                }
+            }
+        ]
+    })
+}
+
 impl PlanningTaskTrackerTool {
     pub fn new(state: PlanningWorkflowState) -> Self {
         Self { state }
@@ -789,138 +920,11 @@ impl Tool for PlanningTaskTrackerTool {
     }
 
     fn description(&self) -> &str {
-        "Adaptive task tracking for planning. Persists hierarchical plan progress under .vtcode/plans/<plan>.tasks.md and mirrors updates to .vtcode/tasks/current_task.md. Actions: create, update, list, add. For action=update, planning item indices are positive 1-based flat or hierarchical index_path values; index: 0 is invalid. Use items for bulk updates."
+        super::task_tracker::task_tracker_description_for_workflow(true)
     }
 
     fn parameter_schema(&self) -> Option<Value> {
-        Some(json!({
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["create", "update", "list", "add"],
-                    "description": "Action to perform on the plan-scoped tracker."
-                },
-                "title": {
-                    "type": "string",
-                    "description": "Title for tracker document (used with create)."
-                },
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "anyOf": [
-                            { "type": "string" },
-                            {
-                                "type": "object",
-                                "properties": {
-                                    "description": { "type": "string" },
-                                    "status": {
-                                        "type": "string",
-                                        "enum": ["pending", "in_progress", "completed", "blocked"]
-                                    },
-                                    "files": {
-                                        "type": "array",
-                                        "items": { "type": "string" }
-                                    },
-                                    "outcome": { "type": "string" },
-                                    "verify": {
-                                        "anyOf": [
-                                            { "type": "string" },
-                                            {
-                                                "type": "array",
-                                                "items": { "type": "string" }
-                                            }
-                                        ]
-                                    }
-                                },
-                                "required": ["description"]
-                            }
-                        ]
-                    },
-                    "description": "Initial task items (used with create). Leading 2-space indentation in description indicates nesting."
-                },
-                "index_path": {
-                    "type": "string",
-                    "pattern": "^[1-9][0-9]*(\\.[1-9][0-9]*)*$",
-                    "description": "Action=update only: positive flat or hierarchical item path (examples: '2' or '2.1'). Zero is not a valid planning index."
-                },
-                "index": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": "Action=update only: positive top-level item index compatibility fallback. Planning index 0 is invalid; use items for bulk updates."
-                },
-                "status": {
-                    "type": "string",
-                    "enum": ["pending", "in_progress", "completed", "blocked"],
-                    "description": "New status for update."
-                },
-                "description": {
-                    "type": "string",
-                    "description": "Task description for add. Optional prefix like '[x] ' or '[~] ' is supported."
-                },
-                "files": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Optional file paths associated with a single add/update item."
-                },
-                "outcome": {
-                    "type": "string",
-                    "description": "Optional expected outcome associated with a single add/update item."
-                },
-                "verify": {
-                    "anyOf": [
-                        { "type": "string" },
-                        {
-                            "type": "array",
-                            "items": { "type": "string" }
-                        }
-                    ],
-                    "description": "Optional verification command or commands associated with a single add/update item."
-                },
-                "parent_index_path": {
-                    "type": "string",
-                    "description": "Optional parent path for add (example: '2'). If omitted, adds top-level task."
-                },
-                "notes": {
-                    "type": "string",
-                    "description": "Optional notes to append."
-                }
-            },
-            "required": ["action"],
-            "allOf": [
-                {
-                    "if": {
-                        "properties": { "action": { "const": "create" } },
-                        "required": ["action"]
-                    },
-                    "then": {
-                        "required": ["items"]
-                    }
-                },
-                {
-                    "if": {
-                        "properties": { "action": { "const": "update" } },
-                        "required": ["action"]
-                    },
-                    "then": {
-                        "anyOf": [
-                            { "required": ["index_path", "status"] },
-                            { "required": ["index", "status"] },
-                            { "required": ["items"] }
-                        ]
-                    }
-                },
-                {
-                    "if": {
-                        "properties": { "action": { "const": "add" } },
-                        "required": ["action"]
-                    },
-                    "then": {
-                        "required": ["description"]
-                    }
-                }
-            ]
-        }))
+        Some(planning_task_tracker_parameter_schema())
     }
 
     fn is_mutating(&self) -> bool {

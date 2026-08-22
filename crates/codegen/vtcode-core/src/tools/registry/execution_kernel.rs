@@ -578,6 +578,20 @@ pub(super) fn preflight_validate_resolved_call(
         effective_args = Some(validation_args.as_ref().clone());
     }
 
+    if validation_tool_name == tool_names::TASK_TRACKER {
+        effective_parameter_schema =
+            Some(crate::tools::handlers::task_tracker::task_tracker_parameter_schema_for_workflow(
+                registry.is_planning_active(),
+            ));
+        validation_args = std::borrow::Cow::Owned(
+            normalize_tool_args(&validation_tool_name, validation_args.as_ref(), effective_parameter_schema.as_ref())?
+                .into_owned(),
+        );
+        if effective_args.is_some() {
+            effective_args = Some(validation_args.as_ref().clone());
+        }
+    }
+
     let required = required_args_for_tool(&validation_tool_name);
     let mut failures = Vec::with_capacity(required.len());
     for key in required {

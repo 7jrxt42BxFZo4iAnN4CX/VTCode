@@ -416,6 +416,8 @@ async fn webfetch_domain_deny_does_not_filter_code_search() {
 #[tokio::test]
 async fn planning_mode_filters_provider_facing_mutating_tools() {
     let temp = TempDir::new().expect("tempdir");
+    let mut config = VTCodeConfig::default();
+    config.tools.profile = ToolProfile::AdvancedVtCode;
     let mut runner = Box::pin(AgentRunner::new_with_bootstrap(
         AgentType::Single,
         ModelId::default(),
@@ -425,7 +427,7 @@ async fn planning_mode_filters_provider_facing_mutating_tools() {
         RunnerSettings { reasoning_effort: None, verbosity: None },
         None,
         ThreadBootstrap::new(None),
-        Some(VTCodeConfig::default()),
+        Some(config),
         None,
     ))
     .await
@@ -437,23 +439,51 @@ async fn planning_mode_filters_provider_facing_mutating_tools() {
     assert_provider_exposes_tool(&before_planning, tools::WRITE_STDIN);
     assert_provider_exposes_tool(&before_planning, tools::APPLY_PATCH);
     assert_provider_exposes_tool(&before_planning, tools::SEARCH_TOOLS);
-    assert_provider_catalogues_inactive_tool(&before_planning, tools::CODE_SEARCH);
+    assert_provider_exposes_tool(&before_planning, tools::CODE_SEARCH);
 
     runner.tool_registry.enable_planning();
 
     let snapshot = runner.build_universal_tool_snapshot().await.expect("snapshot");
     assert_provider_catalogues_inactive_tool(&snapshot, tools::WRITE_STDIN);
     assert_provider_catalogues_inactive_tool(&snapshot, tools::APPLY_PATCH);
-    assert_provider_catalogues_inactive_tool(&snapshot, tools::SEARCH_TOOLS);
+    assert_provider_exposes_tool(&snapshot, tools::SEARCH_TOOLS);
     assert_provider_hides_tool(&snapshot, tools::READ_FILE);
     assert_provider_exposes_tool(&snapshot, tools::EXEC_COMMAND);
     assert_provider_exposes_tool(&snapshot, tools::CODE_SEARCH);
     assert!(!runner.is_tool_exposed(tools::WRITE_STDIN).await);
     assert!(!runner.is_tool_exposed(tools::APPLY_PATCH).await);
-    assert_eq!(
-        before_planning.tool_catalog_hash, snapshot.tool_catalog_hash,
-        "planning transitions should retain the stable provider catalogue"
-    );
+    assert_task_tracker_snapshot_schema(&before_planning, 0, "^[1-9][0-9]*$");
+    assert_task_tracker_snapshot_schema(&snapshot, 1, "^[1-9][0-9]*(\\.[1-9][0-9]*)*$");
+}
+
+#[tokio::test]
+async fn runner_task_tracker_snapshot_schema_tracks_planning_state() {
+    let temp = TempDir::new().expect("tempdir");
+    let mut config = VTCodeConfig::default();
+    config.tools.profile = ToolProfile::AdvancedVtCode;
+    let mut runner = Box::pin(AgentRunner::new_with_bootstrap(
+        AgentType::Single,
+        ModelId::default(),
+        "test-key".to_string(),
+        temp.path().to_path_buf(),
+        "thread-task-tracker-schema".to_string(),
+        RunnerSettings { reasoning_effort: None, verbosity: None },
+        None,
+        ThreadBootstrap::new(None),
+        Some(config),
+        None,
+    ))
+    .await
+    .expect("runner");
+    runner.provider_client = Box::new(RecordingQueuedProvider::new(Vec::new()));
+
+    let standard_snapshot = runner.build_universal_tool_snapshot().await.expect("standard snapshot");
+    assert_task_tracker_snapshot_schema(&standard_snapshot, 0, "^[1-9][0-9]*$");
+
+    runner.tool_registry.enable_planning();
+
+    let planning_snapshot = runner.build_universal_tool_snapshot().await.expect("planning snapshot");
+    assert_task_tracker_snapshot_schema(&planning_snapshot, 1, "^[1-9][0-9]*(\\.[1-9][0-9]*)*$");
 }
 
 #[tokio::test]
@@ -583,4 +613,21 @@ async fn review_tool_allowlist_expands_wildcard_read_only() {
     let snapshot = runner.build_universal_tool_snapshot().await.expect("review snapshot");
     assert_provider_exposes_tool(&snapshot, tools::CODE_SEARCH);
     assert_provider_hides_tool(&snapshot, tools::APPLY_PATCH);
+}
+
+fn assert_task_tracker_snapshot_schema(
+    snapshot: &SessionToolCatalogSnapshot,
+    expected_minimum: u64,
+    expected_pattern: &str,
+) {
+    let parameters = snapshot
+        .snapshot
+        .as_ref()
+        .and_then(|tools| tools.iter().find(|tool| tool.function_name() == tools::TASK_TRACKER))
+        .and_then(|tool| tool.function.as_ref())
+        .map(|function| &function.parameters)
+        .expect("task_tracker parameters should be present in snapshot");
+
+    assert_eq!(parameters["properties"]["index"]["minimum"], json!(expected_minimum));
+    assert_eq!(parameters["properties"]["index_path"]["pattern"], json!(expected_pattern));
 }
