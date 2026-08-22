@@ -134,14 +134,14 @@ impl ToolPack for PlanningPack {
                 tools::TASK_TRACKER,
                 CapabilityLevel::Basic,
                 TaskTrackerTool::new(
-                    plan_state.workspace_root().unwrap_or_else(std::path::PathBuf::new),
+                    plan_state.workspace_root().unwrap_or_default(),
                     plan_state.clone(),
                 ),
             )
             .with_native_cgp_factory(native_cgp_tool_factory(move || {
                 let state = Arc::clone(&tracker_factory);
                 TaskTrackerTool::new(
-                    state.as_ref().workspace_root().unwrap_or_else(std::path::PathBuf::new),
+                    state.as_ref().workspace_root().unwrap_or_default(),
                     state.as_ref().clone(),
                 )
             }))
