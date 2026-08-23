@@ -870,11 +870,6 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Summary, Goals, Non-Goals, Architecture, Error Handling and Safety
   - **User Questions**: "What can you tell me about Planning Workflow Reliability Design?", "How does Summary work?", "How does Goals work?"
 
-- **File**: `docs/superpowers/plans/2026-08-23-plan-mode-reliability.md`
-  - **Content**: Planning Workflow Reliability Implementation Plan
-  - **Topics**: Global Constraints, Task 1: Lock down the captured read-only exploration behavior, Task 2: Share discussion-first behavior between Duck and Plan, Task 3: Make the plan output contract persistence-aware, Task 4: Accept safe workspace-relative verification executables
-  - **User Questions**: "What can you tell me about Planning Workflow Reliability Implementation Plan?", "How does Global Constraints work?", "How does Task 1: Lock down the captured read-only exploration behavior work?"
-
 - **File**: `docs/harness/prompt-architecture.md`
   - **Content**: Prompt Architecture
   - **Topics**: Cache-stable segments, Assembly order, Few-shot management (Section 18.3.3), Tool description contract (Section 18.3.4)
