@@ -552,6 +552,57 @@ Keep startup verification concrete.
     }
 
     #[test]
+    fn validate_plan_content_accepts_relative_verification_executables() {
+        let report = validate_plan_content(
+            r#"# Relative executable verification
+
+## Summary
+Accept workspace-relative executables without requiring them to exist locally.
+
+## Steps
+1. Verify the release binary -> files: [crates/codegen/vtcode-core/src/tools/handlers/planning_workflow/artifacts.rs] -> verify: target/release/vtcode --version
+2. Compare performance -> files: [scripts/perf/compare.sh] -> verify: scripts/perf/compare.sh
+
+## Validation
+1. Run cargo nextest run -p vtcode-core.
+
+## Assumptions
+1. The verification executable is resolved from the workspace root.
+"#,
+        );
+
+        assert!(report.is_ready(), "relative executable plan should validate: {:?}", report.reasons());
+        assert_eq!(report.implementation_step_count, 2);
+    }
+
+    #[test]
+    fn validate_plan_content_rejects_unsafe_workspace_relative_executables() {
+        for verification in [
+            "https://example.com/verify.sh",
+            "../target/release/vtcode --version",
+            "scripts/../perf/compare.sh",
+            "scripts//perf/compare.sh",
+            "target/release/vtcode; --version",
+            "review target/release/vtcode output",
+        ] {
+            let plan = format!(
+                "# Unsafe relative executable\n\n## Summary\nReject unsafe or prose-only path-like verification values.\n\n## Steps\n1. Verify the release binary -> files: [src/main.rs] -> verify: {verification}\n\n## Validation\n1. Run cargo nextest run -p vtcode-core.\n\n## Assumptions\n1. Keep command validation side-effect free.\n"
+            );
+            let report = validate_plan_content(&plan);
+
+            assert!(!report.is_ready(), "unsafe verification should be rejected: {verification}");
+            assert!(
+                report
+                    .invalid_implementation_steps
+                    .iter()
+                    .any(|reason| reason.contains("verification marker must include a concrete command or check")),
+                "missing verification failure for {verification}: {:?}",
+                report.reasons()
+            );
+        }
+    }
+
+    #[test]
     fn validate_plan_content_rejects_env_prefixed_non_command_prose() {
         let report = validate_plan_content(
             r#"# Env-prefixed prose

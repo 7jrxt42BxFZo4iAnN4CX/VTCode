@@ -680,7 +680,29 @@ fn verification_words(value: &str) -> Vec<&str> {
         .split_whitespace()
         .map(|word| {
             word.trim_matches(|character: char| {
-                character.is_ascii_punctuation() && character != '_' && character != '/' && character != '.'
+                character.is_ascii_punctuation()
+                    && !matches!(
+                        character,
+                        '_' | '/'
+                            | '.'
+                            | ';'
+                            | '&'
+                            | '|'
+                            | '<'
+                            | '>'
+                            | '$'
+                            | '('
+                            | ')'
+                            | '{'
+                            | '}'
+                            | '['
+                            | ']'
+                            | '!'
+                            | '*'
+                            | '?'
+                            | '~'
+                            | '\\'
+                    )
             })
         })
         .filter(|word| !word.is_empty())
@@ -742,12 +764,53 @@ fn is_actual_command_token(raw_word: &str) -> bool {
     ];
     COMMAND_NAMES.iter().any(|candidate| bare_word.eq_ignore_ascii_case(candidate))
         || word.starts_with("./")
-        || word.starts_with("../")
         || word.starts_with('/')
-        || word.ends_with(".sh")
-        || word.ends_with(".cmd")
-        || word.ends_with(".ps1")
-        || word.ends_with(".bat")
+        || is_safe_workspace_relative_command_token(word)
+        || (!word.contains('/') && is_script_command_token(word))
+}
+
+fn is_safe_workspace_relative_command_token(raw_word: &str) -> bool {
+    let word = raw_word.trim_matches(|character: char| matches!(character, '`' | '"' | '\''));
+    let Some((first_component, remaining_components)) = word.split_once('/') else {
+        return false;
+    };
+
+    if first_component.is_empty()
+        || remaining_components.is_empty()
+        || has_url_scheme(word)
+        || word.chars().any(is_shell_metacharacter)
+    {
+        return false;
+    }
+
+    word.split('/').all(|component| {
+        !component.is_empty()
+            && component != "."
+            && component != ".."
+            && component
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-'))
+    })
+}
+
+fn has_url_scheme(word: &str) -> bool {
+    let Some((scheme, _)) = word.split_once(':') else {
+        return false;
+    };
+    let mut scheme_characters = scheme.chars();
+    matches!(scheme_characters.next(), Some(first) if first.is_ascii_alphabetic())
+        && scheme_characters.all(|character| character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.'))
+}
+
+fn is_shell_metacharacter(character: char) -> bool {
+    matches!(
+        character,
+        ';' | '&' | '|' | '<' | '>' | '$' | '(' | ')' | '{' | '}' | '[' | ']' | '!' | '*' | '?' | '~' | '\\'
+    )
+}
+
+fn is_script_command_token(word: &str) -> bool {
+    word.ends_with(".sh") || word.ends_with(".cmd") || word.ends_with(".ps1") || word.ends_with(".bat")
 }
 
 fn is_shell_assignment_token(raw_word: &str) -> bool {
@@ -772,12 +835,9 @@ fn is_shell_assignment_token(raw_word: &str) -> bool {
 fn is_pathlike_command_token(raw_word: &str) -> bool {
     let word = raw_word.trim_matches(|character: char| matches!(character, '`' | '"' | '\''));
     word.starts_with("./")
-        || word.starts_with("../")
         || word.starts_with('/')
-        || word.ends_with(".sh")
-        || word.ends_with(".cmd")
-        || word.ends_with(".ps1")
-        || word.ends_with(".bat")
+        || is_safe_workspace_relative_command_token(word)
+        || (!word.contains('/') && is_script_command_token(word))
 }
 
 fn contains_actual_command_invocation(value: &str) -> bool {
