@@ -2,6 +2,14 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.147.1 - 2026-08-23
+
+### Highlights
+#### Bug Fixes
+
+- Serialize f32 sampling params without binary tails  (cc875d39) (@7jrxt42BxFZo4iAnN4CX)
+- Guard against stale full_auto allowlist collapsing the tool catalog (545104b4) 
+### Other Changes
 ## 0.147.0 - 2026-08-22
 
 ### Highlights
