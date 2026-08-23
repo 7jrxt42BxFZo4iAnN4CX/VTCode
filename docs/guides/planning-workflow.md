@@ -12,7 +12,7 @@ During planning, the agent can:
 - run explicitly safe inspection or validation commands when the active permission policy allows them
 - ask clarifying questions through `request_user_input`
 
-The planning agent does not implement changes, shell-write plan files, or use file-writing tools for plan persistence. It emits exactly one final `<proposed_plan>` block when the plan is ready. The runtime validates that block, persists the plan and its `task_tracker`, and then exposes approval controls. Approval can hand off to the write-capable `build` agent or the configured `auto` workflow.
+The planning agent does not implement changes, shell-write plan files, or use file-writing tools for plan persistence. It emits exactly one final `<proposed_plan>` block when the plan is ready. The runtime validates and persists that plan, then exposes approval controls. During an approved handoff, the runtime creates and persists the `task_tracker` before handing off to the write-capable `build` agent or configured `auto` workflow.
 
 The built-in `plan` agent's permission rules allow `read`, `request_user_input`, and `bash` so its wire catalog keeps `exec_command`, `code_search`, `grep_file`, and the interview tool visible. Read-only enforcement is not delegated to those permissions: the planning dispatch gate hard-blocks every mutating tool call (and non-allow-listed shell command) before execution, so granting `bash` admits the tool without weakening plan-mode safety. The `plan` agent is also excluded by name from approved-plan execution routing — selecting it always re-enters planning, never implementation.
 
@@ -34,7 +34,7 @@ Shell commands in plan mode are validated against a read-only allow-list. Allowe
 
 Rejected: file redirections (`>`, `>>`), command substitution (`$(...)`, backticks), `;` chaining, in-place edits (`sed -i`), and any segment starting with a mutating or unknown command (`rm`, `mv`, `cargo build`, `git push`, arbitrary scripts).
 
-During planning, mutating tools should be denied unless a project explicitly allows durable planning artefacts such as files under `.vtcode/plans/`.
+During planning, the dispatch gate denies mutating tools. Plan remains read-only; the runtime alone persists validated planning artifacts under `.vtcode/plans/`.
 
 `task_tracker` is available for checklist state. Planning output should use `<proposed_plan>...</proposed_plan>` when the agent is ready for user review.
 
@@ -82,7 +82,7 @@ confirmation prompt appears:
 ```text
 Enter Planning workflow?
 
-- Enter Planning workflow (Recommended) — enter planning and persist the draft under .vtcode/plans
+- Enter Planning workflow (Recommended) — enter read-only planning and research
 - Continue without Planning workflow
 ```
 
