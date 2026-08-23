@@ -173,16 +173,13 @@ impl LLMProvider for CustomProviderBackendRouter {
         let resolved = self.resolved_model(model);
         let profile = self.profile_for_model(resolved);
         // A pin in THIS model's own profile implies effort support unless the
-        // same profile explicitly disables it. Provider-level effort defaults
-        // must not flip the capability for every model on the endpoint.
-        let own_pin = self
-            .custom_config
-            .profiles
-            .get(resolved)
-            .and_then(|p| p.reasoning_effort)
-            .is_some();
-        if own_pin && profile.supports_reasoning_effort != Some(false) {
-            return true;
+        // same profile explicitly disables it. Provider-level defaults — both
+        // the effort value and the capability flag — must not flip support for
+        // every model on the endpoint.
+        let own = self.custom_config.profiles.get(resolved);
+        let own_pin = own.and_then(|p| p.reasoning_effort).is_some();
+        if own_pin {
+            return own.and_then(|p| p.supports_reasoning_effort) != Some(false);
         }
         Self::override_bool(
             profile.supports_reasoning_effort,
@@ -430,6 +427,33 @@ mod tests {
         let warm = router.sampling_overrides("warm-model");
         assert_eq!(warm.temperature, Some(0.5));
         assert_eq!(warm.top_p, None);
+    }
+
+    #[test]
+    fn sampling_overrides_suppression_matrix_matches_native_semantics() {
+        let profile_openai = SamplingOverrides { profile_aware: true, ..Default::default() };
+        let profile_anthropic = SamplingOverrides {
+            suppresses_sampling_with_reasoning: true,
+            profile_aware: true,
+            ..Default::default()
+        };
+        let builtin_default = SamplingOverrides::default();
+
+        // Custom openai-shaped profile keeps pinned values during reasoning.
+        assert!(!profile_openai.suppresses_sampling(false, true));
+
+        // Custom anthropic-messages profile drops them.
+        assert!(profile_anthropic.suppresses_sampling(false, true));
+        assert!(!profile_anthropic.suppresses_sampling(false, false));
+
+        // Built-in Anthropic/MiniMax shape suppresses only via native match;
+        // built-in OpenAI shape never does through overrides alone.
+        assert!(builtin_default.suppresses_sampling(true, true));
+        assert!(!builtin_default.suppresses_sampling(true, false));
+        assert!(!builtin_default.suppresses_sampling(false, true));
+
+        // Level "none"/"unknown" is not active reasoning anywhere.
+        assert!(!profile_anthropic.suppresses_sampling(false, false));
     }
 
     fn write_tokens_file(dir: &Path, tokens: &[&str]) {

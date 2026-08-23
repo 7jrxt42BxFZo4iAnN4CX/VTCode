@@ -201,7 +201,7 @@ For fine-grained overrides you can declare sparse per-model profiles. Profiles l
 Example per-model profile:
 
 ```toml
-[custom_providers.profiles."gpt-5.4"]
+[custom_providers.profiles."corp-model"]
 api_format = "openai-responses"
 context_window = 131072
 temperature = 0.2            # sampling temperature (0.0-2.0)
@@ -236,6 +236,7 @@ Additional rules:
 - Omitting `api_format` preserves legacy autodetection behavior; explicitly setting `api_format` to a value instructs VT Code to use this API shape and not silently fall back.
 - Profiles do not make a model available in the picker — use `model` or `models` to control availability.
 - Wire delivery depends on the backend's API format. The OpenAI Chat shape sends `temperature`, `top_p`, and both penalties; the OpenAI Responses shape sends them inside a nested `sampling_parameters` object that some compatible endpoints ignore, and currently does not emit `max_output_tokens` for non-native endpoints; `top_k` is accepted in configuration but not serialized for these shapes today (it applies only to backends whose own request builders expose it).
+- Name-based OpenAI sampling gates apply to custom endpoints too, by bare model-name match: models named `gpt`, `gpt-5.2`, `gpt-5.4`, `gpt-5.5*` accept sampling only while reasoning effort resolves to `none` (values are silently omitted otherwise), and `gpt-5`/`gpt-5-mini`/`gpt-5-nano` never receive sampling parameters. Prefer neutral model IDs on custom gateways if you need pinned values on such names.
 
 Store a custom provider key with the same explicit identity used by the
 configuration:

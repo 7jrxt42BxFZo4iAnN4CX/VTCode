@@ -613,22 +613,15 @@ impl AgentRunner {
                     runtime.state.push_warning(message);
                 }
 
-                let temperature = if reasoning_active
-                    && (!sampling_overrides.profile_aware
-                        && matches!(provider_kind, ModelProvider::Anthropic | ModelProvider::Minimax)
-                        || sampling_overrides.suppresses_sampling_with_reasoning)
-                {
+                let anthropic_shaped = matches!(provider_kind, ModelProvider::Anthropic | ModelProvider::Minimax);
+                let temperature = if sampling_overrides.suppresses_sampling(anthropic_shaped, reasoning_active) {
                     None
                 } else {
                     Some(sampling_overrides.temperature.unwrap_or(self.config().agent.temperature))
                 };
                 let mut top_p_override = sampling_overrides.top_p;
                 let mut top_k_override = sampling_overrides.top_k;
-                if reasoning_active
-                    && (sampling_overrides.suppresses_sampling_with_reasoning
-                        || (!sampling_overrides.profile_aware
-                            && matches!(provider_kind, ModelProvider::Anthropic | ModelProvider::Minimax)))
-                {
+                if sampling_overrides.suppresses_sampling(anthropic_shaped, reasoning_active) {
                     // Keep the payload inside what our Anthropic reasoning
                     // validator accepts: `validate_reasoning_constraints`
                     // rejects any top_k and requires top_p in [0.95, 1.0]
@@ -658,20 +651,12 @@ impl AgentRunner {
                     temperature,
                     top_p: top_p_override,
                     top_k: top_k_override,
-                    presence_penalty: if reasoning_active
-                        && (sampling_overrides.suppresses_sampling_with_reasoning
-                            || (!sampling_overrides.profile_aware
-                                && matches!(provider_kind, ModelProvider::Anthropic | ModelProvider::Minimax)))
-                    {
+                    presence_penalty: if sampling_overrides.suppresses_sampling(anthropic_shaped, reasoning_active) {
                         None
                     } else {
                         sampling_overrides.presence_penalty
                     },
-                    frequency_penalty: if reasoning_active
-                        && (sampling_overrides.suppresses_sampling_with_reasoning
-                            || (!sampling_overrides.profile_aware
-                                && matches!(provider_kind, ModelProvider::Anthropic | ModelProvider::Minimax)))
-                    {
+                    frequency_penalty: if sampling_overrides.suppresses_sampling(anthropic_shaped, reasoning_active) {
                         None
                     } else {
                         sampling_overrides.frequency_penalty

@@ -84,10 +84,8 @@ pub(super) async fn build_turn_request(
         .vt_cfg
         .map(|cfg| cfg.agent.temperature)
         .unwrap_or(llm_generation::DEFAULT_TEMPERATURE);
-    let suppress_sampling = reasoning_active
-        && (sampling_overrides.profile_aware
-            || sampling_overrides.suppresses_sampling_with_reasoning
-            || matches!(turn_snapshot.provider_name.as_str(), "anthropic" | "minimax"));
+    let suppress_sampling = sampling_overrides
+        .suppresses_sampling(matches!(turn_snapshot.provider_name.as_str(), "anthropic" | "minimax"), reasoning_active);
     let mut top_p_override = sampling_overrides.top_p;
     let mut top_k_override = sampling_overrides.top_k;
     if suppress_sampling {

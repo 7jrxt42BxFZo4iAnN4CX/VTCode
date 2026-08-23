@@ -93,7 +93,7 @@ support for that model.
 Use sparse profiles for model-specific overrides:
 
 ```toml
-[custom_providers.profiles."gpt-5.4"]
+[custom_providers.profiles."corp-model"]
 api_format = "openai-responses"
 context_window = 131072
 temperature = 0.2            # sampling temperature (0.0-2.0)
@@ -127,6 +127,12 @@ reasoning is active.
 
 An explicit boolean `false` is honored at every level. Omitting `api_format`
 preserves autodetection, while an explicit value selects that API shape.
+
+Name-based OpenAI sampling gates apply to custom endpoints too: models named
+`gpt`, `gpt-5.2`, `gpt-5.4`, `gpt-5.5*` accept sampling only while reasoning
+effort resolves to `none` (pinned values are silently omitted otherwise), and
+`gpt-5`/`gpt-5-mini`/`gpt-5-nano` never receive sampling parameters. Prefer
+neutral model IDs on gateways if you need pinned values on such names.
 
 ### Validate the configuration
 

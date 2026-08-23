@@ -237,6 +237,16 @@ pub struct SamplingOverrides {
     pub profile_aware: bool,
 }
 
+impl SamplingOverrides {
+    /// Whether sampling parameters must be dropped for this request: either
+    /// the model's wire format rejects sampling while reasoning is active, or
+    /// a built-in Anthropic/MiniMax-shaped backend (`native_match`) enforces
+    /// the same rule outside of profile-aware routing.
+    pub fn suppresses_sampling(&self, native_match: bool, reasoning_active: bool) -> bool {
+        reasoning_active && (self.suppresses_sampling_with_reasoning || (!self.profile_aware && native_match))
+    }
+}
+
 /// Optional overrides for standalone Responses compaction requests.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct ResponsesCompactionOptions {

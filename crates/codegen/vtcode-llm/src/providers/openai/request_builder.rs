@@ -609,13 +609,17 @@ fn build_responses_request_from_history(
         has_sampling = true;
     }
 
-    if let Some(presence_penalty) = request.presence_penalty {
+    if let Some(presence_penalty) = request.presence_penalty
+        && allows_sampling_parameters(&request.model, effective_reasoning_effort)
+    {
         sampling_parameters["presence_penalty"] =
             Value::Number(crate::providers::common::float_to_json_number(presence_penalty)?);
         has_sampling = true;
     }
 
-    if let Some(frequency_penalty) = request.frequency_penalty {
+    if let Some(frequency_penalty) = request.frequency_penalty
+        && allows_sampling_parameters(&request.model, effective_reasoning_effort)
+    {
         sampling_parameters["frequency_penalty"] =
             Value::Number(crate::providers::common::float_to_json_number(frequency_penalty)?);
         has_sampling = true;
