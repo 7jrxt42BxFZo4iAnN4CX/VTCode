@@ -54,6 +54,7 @@ fn apply_permission_policy_to_tools(
     workspace: &std::path::Path,
     vt_cfg: Option<&vtcode_core::config::loader::VTCodeConfig>,
 ) -> Option<Arc<Vec<vtcode_core::llm::provider::ToolDefinition>>> {
+    use std::collections::HashSet;
     use vtcode_config::core::permissions::PermissionDefault;
     use vtcode_core::permissions::ResolvedPermissionDecision;
 
@@ -77,6 +78,32 @@ fn apply_permission_policy_to_tools(
         }
     } else {
         None
+    };
+
+    // Config-drift guard: allowlist entries are matched by exact tool name.
+    // Flag entries that match nothing in the emitted catalog so a stale
+    // `[automation.full_auto] allowed_tools` can never silently gut the
+    // model's toolset (the failure this guard addresses produced a catalog
+    // that had collapsed to `["web_fetch"]` with no diagnostic anywhere).
+    let allowlist_matches_emitted = if let Some(allowlist) = full_auto_allowlist {
+        let emitted: HashSet<&str> = tools.iter().map(|tool| tool.function_name()).collect();
+        let stale: Vec<&str> = allowlist
+            .iter()
+            .map(String::as_str)
+            .filter(|allowed| !emitted.contains(allowed))
+            .collect();
+        if !stale.is_empty() {
+            tracing::warn!(
+                target: "vtcode.tool_shaping",
+                stale_allowlist = ?stale,
+                allowed_tools = ?allowlist,
+                emitted_tools = ?tools.iter().map(|tool| tool.function_name()).collect::<Vec<_>>(),
+                "automation.full_auto.allowed_tools references tool names not present in the emitted catalog"
+            );
+        }
+        allowlist.iter().any(|allowed| emitted.contains(allowed.as_str()))
+    } else {
+        true
     };
 
     let filtered: Vec<_> = tools
@@ -105,6 +132,24 @@ fn apply_permission_policy_to_tools(
         .cloned()
         .collect();
 
+    // Fail loud instead of handing the model a zero-tool catalog. A non-empty
+    // full-auto allowlist whose entries match no emitted tool is pure config
+    // drift (every entry is stale), so degrade to the unrestricted catalog
+    // rather than an unusable empty one. An intentionally empty allowlist
+    // ("no tools allowed") and permission-denial collapses are left untouched.
+    if filtered.is_empty()
+        && let Some(allowlist) = full_auto_allowlist
+        && !allowlist.is_empty()
+        && !allowlist_matches_emitted
+    {
+        tracing::warn!(
+            target: "vtcode.tool_shaping",
+            allowed_tools = ?allowlist,
+            "automation.full_auto.allowed_tools matched no emitted tool; falling back to the full catalog"
+        );
+        return Some(tools);
+    }
+
     (!filtered.is_empty()).then(|| Arc::new(filtered))
 }
 
@@ -128,4 +173,151 @@ pub(super) fn client_local_wire_tools(
         return Some(tools);
     }
     Some(Arc::new(tools.iter().filter(|tool| tool.defer_loading != Some(true)).cloned().collect()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use vtcode_config::builtin_primary_auto_agent;
+    use vtcode_core::ActivePrimaryAgent;
+    use vtcode_core::config::loader::VTCodeConfig;
+    use vtcode_core::llm::provider::ToolDefinition;
+
+    use super::apply_permission_policy_to_tools;
+
+    const WORKSPACE: &str = "/workspace";
+
+    fn tool(name: &str) -> ToolDefinition {
+        ToolDefinition::function(name.to_string(), name.to_string(), serde_json::json!({}))
+    }
+
+    fn catalog(names: &[&str]) -> Option<Arc<Vec<ToolDefinition>>> {
+        Some(Arc::new(names.iter().map(|n| tool(n)).collect()))
+    }
+
+    fn names(filtered: Option<Arc<Vec<ToolDefinition>>>) -> Vec<String> {
+        let mut out: Vec<String> = filtered
+            .map(|tools| tools.iter().map(|t| t.function_name().to_string()).collect())
+            .unwrap_or_default();
+        out.sort();
+        out
+    }
+
+    fn auto_agent() -> ActivePrimaryAgent {
+        ActivePrimaryAgent::from_spec(&builtin_primary_auto_agent())
+    }
+
+    fn cfg_with_full_auto(allowed_tools: Vec<String>) -> VTCodeConfig {
+        let mut cfg = VTCodeConfig::default();
+        cfg.automation.full_auto.enabled = true;
+        cfg.automation.full_auto.allowed_tools = allowed_tools;
+        cfg
+    }
+
+    #[test]
+    fn stale_only_allowlist_collapses_and_falls_back_to_full_catalog() {
+        // Every allowlist entry is a legacy tool name that no emitted tool
+        // matches: the filter would collapse the catalog to zero. The guard
+        // must warn and degrade to the full catalog instead.
+        let cfg = cfg_with_full_auto(vec!["read_file".into(), "list_files".into(), "grep_file".into()]);
+        let result = apply_permission_policy_to_tools(
+            catalog(&["exec_command", "code_search", "web_fetch"]),
+            &auto_agent(),
+            PathBuf::from(WORKSPACE).as_path(),
+            Some(&cfg),
+        );
+        assert_eq!(names(result), vec!["code_search", "exec_command", "web_fetch"]);
+    }
+
+    #[test]
+    fn curated_allowlist_keeps_all_matching_tools() {
+        // The curated current set from the config fix: every name maps to an
+        // emitted tool, so all six survive unchanged.
+        let cfg = cfg_with_full_auto(vec![
+            "exec_command".into(),
+            "write_stdin".into(),
+            "apply_patch".into(),
+            "code_search".into(),
+            "web_fetch".into(),
+            "request_user_input".into(),
+        ]);
+        let result = apply_permission_policy_to_tools(
+            catalog(&[
+                "exec_command",
+                "write_stdin",
+                "apply_patch",
+                "code_search",
+                "web_fetch",
+                "request_user_input",
+            ]),
+            &auto_agent(),
+            PathBuf::from(WORKSPACE).as_path(),
+            Some(&cfg),
+        );
+        assert_eq!(
+            names(result),
+            vec![
+                "apply_patch",
+                "code_search",
+                "exec_command",
+                "request_user_input",
+                "web_fetch",
+                "write_stdin",
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_allowlist_means_no_tools() {
+        let cfg = cfg_with_full_auto(vec![]);
+        let result = apply_permission_policy_to_tools(
+            catalog(&["exec_command", "code_search"]),
+            &auto_agent(),
+            PathBuf::from(WORKSPACE).as_path(),
+            Some(&cfg),
+        );
+        assert!(result.is_none(), "an empty full-auto allowlist must allow no tools");
+    }
+
+    #[test]
+    fn wildcard_allowlist_is_unrestricted() {
+        let cfg = cfg_with_full_auto(vec!["*".into()]);
+        let result = apply_permission_policy_to_tools(
+            catalog(&["exec_command", "code_search", "web_fetch"]),
+            &auto_agent(),
+            PathBuf::from(WORKSPACE).as_path(),
+            Some(&cfg),
+        );
+        assert_eq!(names(result), vec!["code_search", "exec_command", "web_fetch"]);
+    }
+
+    #[test]
+    fn non_auto_agent_ignores_full_auto_allowlist() {
+        // The build agent (Ask default) must not be constrained by the
+        // full-auto allowlist even when it is enabled with stale names.
+        let cfg = cfg_with_full_auto(vec!["read_file".into(), "list_files".into()]);
+        let build = ActivePrimaryAgent::from_spec(&vtcode_config::builtin_primary_build_agent());
+        let result = apply_permission_policy_to_tools(
+            catalog(&["exec_command", "code_search", "web_fetch"]),
+            &build,
+            PathBuf::from(WORKSPACE).as_path(),
+            Some(&cfg),
+        );
+        assert_eq!(names(result), vec!["code_search", "exec_command", "web_fetch"]);
+    }
+
+    #[test]
+    fn full_auto_disabled_ignores_allowlist() {
+        let mut cfg = cfg_with_full_auto(vec!["read_file".into(), "list_files".into()]);
+        cfg.automation.full_auto.enabled = false;
+        let result = apply_permission_policy_to_tools(
+            catalog(&["exec_command", "code_search", "web_fetch"]),
+            &auto_agent(),
+            PathBuf::from(WORKSPACE).as_path(),
+            Some(&cfg),
+        );
+        assert_eq!(names(result), vec!["code_search", "exec_command", "web_fetch"]);
+    }
 }
