@@ -18,16 +18,24 @@ use std::sync::{Arc, Mutex};
 use crate::agent::runloop::unified::planning_workflow::recovery::{
     PLANNING_SYNTHESIS_TRUNCATED_CONDENSE_DIRECTIVE, plan_synthesis_was_truncated,
 };
+use crate::agent::runloop::unified::planning_workflow::{
+    PlanApprovalRequestContext, PlanApprovalTelemetryContext, PlanExecutionContext, execute_plan_approval,
+    load_plan_text_for_approval, persist_plan_draft,
+};
 use crate::agent::runloop::unified::planning_workflow_state::PlanningWorkflowSessionState;
+use crate::agent::runloop::unified::turn::context::TurnHandlerOutcome;
 use crate::agent::runloop::unified::turn::context::TurnLoopResult;
 use crate::agent::runloop::unified::turn::turn_processing::test_support::TestTurnProcessingBacking;
 use anyhow::anyhow;
 use serde_json::json;
+use vtcode_config::{builtin_primary_auto_agent, builtin_primary_build_agent};
 use vtcode_core::config::constants::tools as tool_names;
 use vtcode_core::exec::events::{ThreadEvent, ThreadItemDetails, VersionedThreadEvent};
 use vtcode_core::llm::provider as uni;
 use vtcode_core::utils::ansi::AnsiRenderer;
-use vtcode_ui::tui::app::InlineHandle;
+use vtcode_ui::tui::app::{
+    InlineEvent, InlineHandle, InlineListSelection, InlineSession, TransientEvent, TransientSubmission,
+};
 
 const PENDING_VERIFICATION_RESPONSE_MARKER: &str = "Inspection-only checks do not clear the verification gate";
 const CONTEXT_CAPACITY_RESPONSE_MARKER: &str = "context capacity or compaction failed";
@@ -1880,7 +1888,7 @@ async fn streamed_valid_plan_is_persisted_and_publishes_approval_ready_events() 
     assert!(outcome.plan_approved_execution_pending, "the existing automatic approval route should be selected");
     assert_eq!(
         outcome.pending_plan_execution_context,
-        crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Current,
+        PlanExecutionContext::Current,
         "automatic approval must retain the typed current-session execution handoff"
     );
 
@@ -1931,6 +1939,79 @@ async fn streamed_valid_plan_is_persisted_and_publishes_approval_ready_events() 
             .any(|event| matches!(event, ThreadEvent::PlanApprovalRequested(_))),
         "the existing approval-ready event path must be published"
     );
+}
+
+#[tokio::test]
+async fn explicit_build_and_auto_approval_selections_handoff_persisted_plan_without_implementation_writes() {
+    for (selection, expected_agent, expected_skip_confirmations) in [
+        (InlineListSelection::PlanApprovalSwitchBuild, builtin_primary_build_agent().name, false),
+        (InlineListSelection::PlanApprovalSwitchAuto, builtin_primary_auto_agent().name, true),
+    ] {
+        let workspace = tempfile::TempDir::new().expect("create approval selection workspace");
+        let mut tool_registry = vtcode_core::tools::ToolRegistry::new(workspace.path().to_path_buf()).await;
+        tool_registry.enable_planning();
+        let plan_state = tool_registry.planning_workflow_state();
+        persist_plan_draft(&plan_state, STREAMED_VALID_PLAN)
+            .await
+            .expect("persist canonical plan before explicit approval selection");
+        let plan = load_plan_text_for_approval(&tool_registry)
+            .await
+            .expect("load the canonical persisted plan for approval");
+        let mut plan_session = PlanningWorkflowSessionState::default();
+        plan_session.enter(vtcode_core::core::interfaces::session::PlanningEntrySource::UserRequest);
+
+        assert!(
+            fs::read_dir(workspace.path())
+                .expect("read workspace before approval")
+                .all(|entry| entry.expect("read workspace entry").file_name() == ".vtcode"),
+            "persisting a plan must not create implementation files before explicit approval"
+        );
+
+        let (command_tx, _command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let handle = InlineHandle::new_for_tests(command_tx);
+        let mut session = InlineSession { handle: handle.clone(), events: event_rx };
+        event_tx
+            .send(InlineEvent::Transient(TransientEvent::Submitted(TransientSubmission::Selection(selection))))
+            .expect("submit explicit plan approval selection");
+
+        let outcome = execute_plan_approval(
+            &mut tool_registry,
+            &mut plan_session,
+            &handle,
+            &mut session,
+            &Arc::new(crate::agent::runloop::unified::state::CtrlCState::new()),
+            &Arc::new(tokio::sync::Notify::new()),
+            PlanApprovalRequestContext {
+                plan: &plan,
+                active_agent_name: "plan",
+                skip_confirmations: false,
+                context_usage_percent: 0,
+            },
+            PlanApprovalTelemetryContext {
+                emitter: None,
+                thread_id: "thread-test",
+                turn_id: "turn-test",
+            },
+        )
+        .await
+        .expect("explicit approval selection should hand off the persisted plan");
+
+        assert!(matches!(
+            outcome,
+            TurnHandlerOutcome::SwitchPrimaryAgentWithPolicy {
+                agent,
+                skip_confirmations,
+                execution_context: PlanExecutionContext::Current,
+            } if agent == expected_agent && skip_confirmations == expected_skip_confirmations
+        ));
+        assert!(
+            fs::read_dir(workspace.path())
+                .expect("read workspace after approval handoff")
+                .all(|entry| entry.expect("read workspace entry").file_name() == ".vtcode"),
+            "approval handoff must remain execution-pending and must not write implementation files"
+        );
+    }
 }
 
 #[tokio::test]
