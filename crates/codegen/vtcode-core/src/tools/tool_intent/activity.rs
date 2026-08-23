@@ -161,6 +161,7 @@ mod tests {
 
     use super::*;
     use crate::config::constants::tools;
+    use crate::tools::tool_intent::is_readonly_command_session_command;
 
     fn exec_command(command: &str) -> Value {
         json!({"cmd": command})
@@ -186,6 +187,7 @@ mod tests {
     fn captured_read_commands_with_output_suppression_are_inspection() {
         for command in [
             r#"sed -n '1,180p' README.md; sed -n '280,350p' README.md; sed -n '389,411p' README.md; printf '\n--- repo metadata ---\n'; git log -1 --format='%h %s'; sed -n '1,100p' Cargo.toml; rg -n '^version\s*=|rust-version|workspace\.package' Cargo.toml crates -g Cargo.toml | head -40"#,
+            r#"sed -n '1,120p' crates/codegen/vtcode-core/src/tools/tool_intent/activity.rs; printf '\n--- readonly policy ---\n'; rg -n 'READONLY_UNIFIED_EXEC_COMMANDS|command_words_are_readonly' crates/codegen/vtcode-core/src/tools/tool_intent/readonly.rs; printf '\n--- recent commits ---\n'; git log -5 --oneline; printf '\n--- command arguments ---\n'; sed -n '1,180p' crates/codegen/vtcode-core/src/tools/command_args.rs"#,
             r###"git diff --stat; find docs -maxdepth 2 -type f | sort | head -40; rg -n "vtcode init|vtcode models|full-auto|run-debug|cargo install" docs/user-guide docs/installation docs/development 2>/dev/null | head -50"###,
         ] {
             assert_eq!(
@@ -193,6 +195,21 @@ mod tests {
                 ShellActivity::Inspection,
                 "{command}"
             );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn printf_output_safety_guards_remain_mutations() {
+        for command in [
+            "printf 'captured output\\n' > output.txt",
+            "printf '%s\\n' \"$(git status --short)\"",
+            "printf '%s\\n' `git status --short`",
+            "printf '\\n--- inspection ---\\n' && rm output.txt",
+        ] {
+            let args = exec_command(command);
+            assert_eq!(classify_shell_activity(tools::EXEC_COMMAND, &args), ShellActivity::Mutation, "{command}");
+            assert!(!is_readonly_command_session_command(&args), "unexpected readonly command: {command}");
         }
     }
 
