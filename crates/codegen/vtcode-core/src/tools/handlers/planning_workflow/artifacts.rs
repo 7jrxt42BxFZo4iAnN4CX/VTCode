@@ -1010,15 +1010,29 @@ fn is_observable_manual_verification(value: &str) -> bool {
     (evidence_count >= 2 && has_non_temporal_evidence) || legacy_observable_marker || tests_pass
 }
 
-fn is_concrete_verification(value: &str) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VerificationValidationError {
+    NotConcrete,
+    InvalidItem { ordinal: usize },
+}
+
+fn validate_concrete_verification(value: &str) -> Result<(), VerificationValidationError> {
     let value = value.trim();
     if !is_concrete_value(value) {
-        return false;
+        return Err(VerificationValidationError::NotConcrete);
     }
 
     if value.starts_with('[') && value.ends_with(']') {
         let items = parse_bracket_list(value);
-        return !items.is_empty() && items.iter().all(|item| is_concrete_verification(item));
+        if items.is_empty() {
+            return Err(VerificationValidationError::NotConcrete);
+        }
+        for (index, item) in items.iter().enumerate() {
+            if validate_concrete_verification(item).is_err() {
+                return Err(VerificationValidationError::InvalidItem { ordinal: index + 1 });
+            }
+        }
+        return Ok(());
     }
 
     let words = verification_words(value);
@@ -1036,10 +1050,14 @@ fn is_concrete_verification(value: &str) -> bool {
             && (words.len() > 2 || words.get(1).is_some_and(|word| is_pathlike_command_token(word))))
         || contains_actual_command_invocation(value)
     {
-        return true;
+        return Ok(());
     }
 
-    is_observable_manual_verification(value)
+    if is_observable_manual_verification(value) {
+        Ok(())
+    } else {
+        Err(VerificationValidationError::NotConcrete)
+    }
 }
 
 /// Normalize a step action line for `->` segmentation, tolerating the
@@ -1104,9 +1122,9 @@ fn implementation_step_shape_error(step: &ImplementationStepBlock) -> Option<Str
     }
 
     let mut has_verification = verify_index.is_some();
-    let mut verification_is_concrete = verify_index
+    let mut verification_error = verify_index
         .and_then(|index| marker_value(&segments[index], &["verify", "verification"]))
-        .is_none_or(is_concrete_verification);
+        .and_then(|verify| validate_concrete_verification(verify).err());
     for continuation in step.lines.iter().skip(1) {
         if let Some(target) = marker_value(continuation, &["files/symbols", "files", "symbols", "target"]) {
             has_target = true;
@@ -1114,7 +1132,9 @@ fn implementation_step_shape_error(step: &ImplementationStepBlock) -> Option<Str
         }
         if let Some(verify) = marker_value(continuation, &["verify", "verification"]) {
             has_verification = true;
-            verification_is_concrete &= is_concrete_verification(verify);
+            if verification_error.is_none() {
+                verification_error = validate_concrete_verification(verify).err();
+            }
         }
     }
 
@@ -1124,8 +1144,15 @@ fn implementation_step_shape_error(step: &ImplementationStepBlock) -> Option<Str
     if !has_verification {
         return Some("must include a `verify:` or `verification:` marker".to_string());
     }
-    if !verification_is_concrete {
-        return Some("verification marker must include a concrete command or check".to_string());
+    if let Some(error) = verification_error {
+        return Some(match error {
+            VerificationValidationError::NotConcrete => {
+                "verification marker must include a concrete command or check".to_string()
+            }
+            VerificationValidationError::InvalidItem { ordinal } => {
+                format!("verification item {ordinal} must be a concrete command or check")
+            }
+        });
     }
     None
 }
