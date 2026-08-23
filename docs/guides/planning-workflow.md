@@ -1,6 +1,6 @@
 # Planning Workflow
 
-The planning workflow lets you iterate with the agent on what you want to build before implementation starts. It is driven by the built-in `plan` primary agent and the `/plan` slash command.
+The planning workflow lets you iterate with the agent on what you want to build before implementation starts. It is driven by the built-in `plan` primary agent and the `/plan` slash command. Plan is discussion-first: it remains a distinct read-only workflow that investigates the repository, uses evidence and reasonable defaults, and asks only when a material choice remains.
 
 ## Overview
 
@@ -11,6 +11,8 @@ During planning, the agent can:
 - analyse patterns and constraints before proposing changes
 - run explicitly safe inspection or validation commands when the active permission policy allows them
 - ask clarifying questions through `request_user_input`
+
+The planning agent does not implement changes, shell-write plan files, or use file-writing tools for plan persistence. It emits exactly one final `<proposed_plan>` block when the plan is ready. The runtime validates that block, persists the plan and its `task_tracker`, and then exposes approval controls. Approval can hand off to the write-capable `build` agent or the configured `auto` workflow.
 
 The built-in `plan` agent's permission rules allow `read`, `request_user_input`, and `bash` so its wire catalog keeps `exec_command`, `code_search`, `grep_file`, and the interview tool visible. Read-only enforcement is not delegated to those permissions: the planning dispatch gate hard-blocks every mutating tool call (and non-allow-listed shell command) before execution, so granting `bash` admits the tool without weakening plan-mode safety. The `plan` agent is also excluded by name from approved-plan execution routing — selecting it always re-enters planning, never implementation.
 
@@ -84,8 +86,9 @@ Enter Planning workflow?
 - Continue without Planning workflow
 ```
 
-- **Enter Planning workflow** — starts planning; the draft is persisted under
-  `.vtcode/plans/` and mutating tools stay disabled until you approve execution.
+- **Enter Planning workflow** — starts planning; read-only research begins and
+  mutating tools stay disabled until you approve execution. The runtime persists
+  the validated plan after the final `<proposed_plan>` is emitted.
 - **Continue without Planning workflow** — the agent proceeds without planning
   (mutating tools remain enabled).
 
@@ -244,7 +247,7 @@ Next open decision: [if any], otherwise: No remaining scope decisions.
 ### Research Scope
 
 Research effort should scale with the request. The runtime gives planning a
-minimum per-turn tool-call budget of 120 and a minimum loop budget of 40 when
+minimum per-turn tool-call budget of 120 and a minimum loop budget of 60 when
 configured nonzero limits are lower; these floors are planning-specific and do
 not change the conversation-turn retention limit. For a narrow or simple ask,
 a handful of targeted reads/searches (roughly 5-10) is usually enough before
@@ -316,8 +319,9 @@ draft and research are preserved for a later approval or revision command.
 
 ## Plan File Persistence
 
-The draft is the single source of truth and always lives on disk under
-`.vtcode/plans/<plan>.md`, not only in chat history. A candidate is validated
+The runtime-owned draft is the single source of truth and lives on disk under
+`.vtcode/plans/<plan>.md`, not only in chat history. The planning agent never
+writes this file itself. A candidate is validated
 before the plan file, sidecar tracker, global tracker, or approval events are
 created or updated. Invalid or partial inline plans from normal or tool-free
 recovery are discarded for approval and cannot overwrite an existing valid

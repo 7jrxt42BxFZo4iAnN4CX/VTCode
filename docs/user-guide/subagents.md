@@ -23,7 +23,7 @@ For new `.vtcode/agents/*.md` files, use VT Code tool ids in frontmatter. Claude
 | --- | --- | --- | --- |
 | `build` | `inherit` | yes | Implementation agent for normal build and repair work |
 | `auto` | `inherit` | yes, classifier-reviewed | Build-oriented agent that routes configured tools through `permissions.auto` |
-| `plan` | `inherit` | no | Planning workflow agent for repository exploration and proposal drafting |
+| `plan` | `inherit` | no | Discussion-first, read-only planning workflow for repository evidence and proposal drafting |
 | `duck` | `inherit` | no | Discussion-first agent for scope, constraints, and trade-offs |
 
 Custom project or user specs with the same name override these built-ins using the normal discovery precedence. Use `mode: primary` for main-session agents, `mode: subagent` for delegated-only definitions, and `mode: all` for definitions that should support both.
@@ -36,7 +36,7 @@ Primary agents replace old behaviour labels: choose `duck` for discussion, `plan
 | --- | --- | --- | --- |
 | `default` | `inherit` | yes | General delegated work with inherited tools and config |
 | `explorer` | `small` | no | Read-only code search, file discovery, and repository understanding |
-| `plan` | `inherit` | no | Read-only planning research and constraint gathering |
+| `plan` | `inherit` | no | Read-only planning research and constraint gathering; it emits a proposal for runtime validation and persistence |
 | `worker` | `inherit` | yes | Bounded implementation and multi-step execution |
 
 Notes:
