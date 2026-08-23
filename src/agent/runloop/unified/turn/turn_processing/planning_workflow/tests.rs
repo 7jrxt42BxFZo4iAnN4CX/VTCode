@@ -112,7 +112,13 @@ fn maybe_force_planning_workflow_interview_preserves_untagged_plan_candidates() 
 fn planning_workflow_reminder_stays_fail_closed_before_persistence() {
     assert!(!PLANNING_WORKFLOW_REMINDER.contains(&format!("/{}", "mode")));
     assert!(!PLANNING_WORKFLOW_REMINDER.contains("implement"));
-    assert!(PLANNING_WORKFLOW_REMINDER.contains("validated plan is persisted"));
+    assert!(PLANNING_WORKFLOW_REMINDER.contains("Emit exactly one final `<proposed_plan>` block"));
+    assert!(
+        PLANNING_WORKFLOW_REMINDER
+            .contains("Do not use shell commands or file-writing tools to create or modify `.vtcode/plans/`")
+    );
+    assert!(PLANNING_WORKFLOW_REMINDER.contains("runtime owns plan/tracker persistence and validation"));
+    assert!(PLANNING_WORKFLOW_REMINDER.contains("approval controls only after successful persistence"));
 }
 
 #[test]

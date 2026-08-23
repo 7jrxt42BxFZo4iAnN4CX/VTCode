@@ -3,9 +3,9 @@ use std::fmt::Write as _;
 use super::system::{
     PLANNING_WORKFLOW_EXIT_INSTRUCTION_LINE, PLANNING_WORKFLOW_INTERVIEW_POLICY_LINE,
     PLANNING_WORKFLOW_NO_AUTO_EXIT_LINE, PLANNING_WORKFLOW_NO_REQUEST_USER_INPUT_POLICY_LINE,
-    PLANNING_WORKFLOW_PLAN_POLICY_LINE, PLANNING_WORKFLOW_PLAN_QUALITY_LINE, PLANNING_WORKFLOW_READ_ONLY_HEADER,
-    PLANNING_WORKFLOW_READ_ONLY_NOTICE_LINE, PLANNING_WORKFLOW_RESEARCH_SCOPE_LINE,
-    PLANNING_WORKFLOW_TASK_TRACKER_LINE,
+    PLANNING_WORKFLOW_PLAN_PERSISTENCE_POLICY_LINE, PLANNING_WORKFLOW_PLAN_POLICY_LINE,
+    PLANNING_WORKFLOW_PLAN_QUALITY_LINE, PLANNING_WORKFLOW_READ_ONLY_HEADER, PLANNING_WORKFLOW_READ_ONLY_NOTICE_LINE,
+    PLANNING_WORKFLOW_RESEARCH_SCOPE_LINE, PLANNING_WORKFLOW_TASK_TRACKER_LINE,
 };
 use crate::config::constants::tool_limits;
 
@@ -64,6 +64,8 @@ fn append_planning_workflow_notice(prompt: &mut String, request_user_input_enabl
     prompt.push('\n');
     prompt.push_str(PLANNING_WORKFLOW_EXIT_INSTRUCTION_LINE);
     prompt.push('\n');
+    prompt.push_str(PLANNING_WORKFLOW_PLAN_PERSISTENCE_POLICY_LINE);
+    prompt.push('\n');
     prompt.push_str(PLANNING_WORKFLOW_PLAN_POLICY_LINE);
     prompt.push('\n');
     prompt.push_str(PLANNING_WORKFLOW_PLAN_QUALITY_LINE);
@@ -112,6 +114,12 @@ mod tests {
 
             assert!(prompt.contains(PLANNING_WORKFLOW_READ_ONLY_HEADER));
             assert!(prompt.contains(PLANNING_WORKFLOW_INTERVIEW_POLICY_LINE));
+            assert!(prompt.contains("Emit exactly one final `<proposed_plan>` block"));
+            assert!(
+                prompt.contains("Do not use shell commands or file-writing tools to create or modify `.vtcode/plans/`")
+            );
+            assert!(prompt.contains("runtime owns plan/tracker persistence and validation"));
+            assert!(prompt.contains("approval controls only after successful persistence"));
         }
     }
 

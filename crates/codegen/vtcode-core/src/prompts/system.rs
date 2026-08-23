@@ -26,9 +26,11 @@ use tracing::warn;
 /// Shared Planning workflow header used by both static and incremental prompt builders.
 pub const PLANNING_WORKFLOW_READ_ONLY_HEADER: &str = "# PLANNING WORKFLOW (READ-ONLY)";
 /// Shared Planning workflow notice line describing strict read-only enforcement.
-pub const PLANNING_WORKFLOW_READ_ONLY_NOTICE_LINE: &str = "Mutating file edits are blocked, including `apply_patch`. Use `exec_command.cmd` only for read-only repository inspection with the active shell profile's syntax; keep `task_tracker` current. Plan artifacts under `.vtcode/plans/` are allowed.";
+pub const PLANNING_WORKFLOW_READ_ONLY_NOTICE_LINE: &str = "Mutating file edits are blocked, including `apply_patch`. Use `exec_command.cmd` only for read-only repository inspection with the active shell profile's syntax; keep `task_tracker` current.";
 /// Shared Planning workflow instruction line for transitioning to implementation.
 pub const PLANNING_WORKFLOW_EXIT_INSTRUCTION_LINE: &str = "Only a validated plan persisted under `.vtcode/plans/` is ready for user approval. Mutating tools stay disabled until the user approves.";
+/// Canonical contract for model-authored plan output and runtime-owned persistence.
+pub const PLANNING_WORKFLOW_PLAN_PERSISTENCE_POLICY_LINE: &str = "Emit exactly one final `<proposed_plan>` block. Do not use shell commands or file-writing tools to create or modify `.vtcode/plans/`; runtime owns plan/tracker persistence and validation, and exposes approval controls only after successful persistence.";
 /// Compact, spec-like plan quality line. The previous wording ("summary,
 /// steps, test cases, assumptions") let the model emit verbosely large plans
 /// that blew the generation token budget and were cut off mid-`<proposed_plan>`
@@ -46,7 +48,7 @@ pub const PLANNING_WORKFLOW_EXIT_INSTRUCTION_LINE: &str = "Only a validated plan
 /// exact shape up front matters: the repair directive prints it only after a
 /// rejection, and turn_912/913 showed planners repeatedly failing "step lacks
 /// a concrete target or verification" without ever seeing an example.
-pub const PLANNING_WORKFLOW_PLAN_QUALITY_LINE: &str = "Keep plans compact and spec-like. Emit ONE `<proposed_plan>` with these sections: `## Summary`; `## Implementation Steps` (or `## Steps`); `## Test Cases and Validation` (or `## Validation`); `## Assumptions and Defaults` (or `## Assumptions`). Every numbered implementation step must name a concrete file, symbol, behavior, or other repository target and include one concrete `verify:`/`verification:` command or observable check, written in the canonical one-line form `1. Action -> files: [path/to/file.rs] -> verify: [cargo check]`; generic `1. Do the work` steps, vague prose, and comma-separated verify entries that are not commands or observable checks are not plans. Prefer file:symbol references over prose, written as plain text or inline code (e.g. `src/main.rs:42`) — never as markdown links or editor/IDE URIs (no `[label](url)`, no `vscode-file://`/`file://` schemes). Resolve placeholders and open decisions before approval; use `Next open decision:` or `Open question:` only when a decision remains unresolved.";
+pub const PLANNING_WORKFLOW_PLAN_QUALITY_LINE: &str = "Keep the final proposed plan compact and spec-like, with these sections: `## Summary`; `## Implementation Steps` (or `## Steps`); `## Test Cases and Validation` (or `## Validation`); `## Assumptions and Defaults` (or `## Assumptions`). Every numbered implementation step must name a concrete file, symbol, behavior, or other repository target and include one concrete `verify:`/`verification:` command or observable check, written in the canonical one-line form `1. Action -> files: [path/to/file.rs] -> verify: [cargo check]`; generic `1. Do the work` steps, vague prose, and comma-separated verify entries that are not commands or observable checks are not plans. Prefer file:symbol references over prose, written as plain text or inline code (e.g. `src/main.rs:42`) — never as markdown links or editor/IDE URIs (no `[label](url)`, no `vscode-file://`/`file://` schemes). Resolve placeholders and open decisions before approval; use `Next open decision:` or `Open question:` only when a decision remains unresolved.";
 /// Scale research effort to the request instead of always exhaustively
 /// enumerating the repository. Checkpoint turn_647 showed a "make a simple
 /// plan to improve launch time" request burn 70+ tool calls across dozens of
@@ -68,7 +70,7 @@ pub const PLANNING_WORKFLOW_HINT: &str = "Planning workflow is active. Continue 
 
 pub const PLANNING_WORKFLOW_TASK_TRACKER_LINE: &str = "`task_tracker` remains available while planning.";
 /// Shared reminder appended when presenting plans while still in Planning workflow.
-pub const PLANNING_WORKFLOW_IMPLEMENT_REMINDER: &str = "• Planning workflow is active with read-only permissions. Continue refining and describe what to revise; approval controls appear only after a validated plan is persisted. If the tool-loop limit is near, stop researching and synthesize from existing evidence. For long research sessions, the approval screen preserves the plan and task tracker.";
+pub const PLANNING_WORKFLOW_IMPLEMENT_REMINDER: &str = PLANNING_WORKFLOW_PLAN_PERSISTENCE_POLICY_LINE;
 
 pub const PROMPT_TITLE: &str = "# VT Code";
 pub const PROMPT_INTRO: &str = "VT Code. Be concise and safe.";
@@ -829,6 +831,15 @@ mod tests {
         assert!(line.contains("one concrete `verify:`/`verification:` command or observable check"));
         assert!(line.contains("vague prose"));
         assert!(line.contains("comma-separated verify entries that are not commands or observable checks"));
+    }
+
+    #[test]
+    fn planning_workflow_persistence_policy_assigns_plan_lifecycle_to_runtime() {
+        let line = PLANNING_WORKFLOW_PLAN_PERSISTENCE_POLICY_LINE;
+        assert!(line.contains("Emit exactly one final `<proposed_plan>` block"));
+        assert!(line.contains("Do not use shell commands or file-writing tools to create or modify `.vtcode/plans/`"));
+        assert!(line.contains("runtime owns plan/tracker persistence and validation"));
+        assert!(line.contains("approval controls only after successful persistence"));
     }
 
     #[test]
