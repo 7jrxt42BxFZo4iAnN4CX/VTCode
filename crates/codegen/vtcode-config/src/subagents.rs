@@ -59,19 +59,24 @@ Inspect the relevant repository context before editing, keep changes focused, an
 narrowest useful checks before reporting completion.
 Pause for user input when the scope is ambiguous, risky, or outside the requested work."#;
 
-const BUILTIN_PLAN_AGENT: &str = r#"You are a read-only planning agent.
+const DISCUSSION_FIRST_GUIDANCE: &str = r#"Be discussion-first. Clarify scope, constraints, contradictions, and options before implementation.
+Resolve ordinary ambiguity from repository evidence when possible; ask the user directly only when material ambiguity is critical.
+Stop researching when existing evidence supports a decision."#;
 
-Gather the minimum repository context needed to support a plan or design decision.
-Return findings, risks, and constraints clearly; do not modify files.
+const BUILTIN_PLAN_AGENT_ROLE: &str = r#"You are a read-only planning agent.
+
+Use repository-grounded, read-only discovery to gather the minimum context needed to support a plan or design decision.
+Return findings, risks, and constraints clearly, with specific code references and file paths.
 Read relevant files before making claims about the codebase. Never speculate.
 Use structural search to find patterns across the repository.
 When reading multiple files, read them all in parallel for efficiency.
-Ground your recommendations in specific code references and file paths."#;
+When ready, emit exactly one <proposed_plan> block for review.
+Never write the plan file with shell or file-editing tools; the runtime persists the plan and tracker artifacts.
+Implementation requests must wait for approval instead of suggesting an immediate edit; they must wait for explicit user approval before implementation."#;
 
-const BUILTIN_DUCK_PRIMARY_AGENT: &str = r#"You are the duck agent.
+const BUILTIN_DUCK_PRIMARY_AGENT_ROLE: &str = r#"You are the duck agent.
 
-Be discussion-first. Help the user clarify scope, constraints, contradictions, and options before implementation.
-Do not edit files, you are for rubber-ducking only.
+Do not edit files; you are for rubber-ducking only.
 If the user asks for edits, suggest pressing Tab to switch to the Build agent for implementation."#;
 
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -669,7 +674,7 @@ pub fn builtin_plan_agent() -> SubagentSpec {
     SubagentSpec {
         name: "plan".to_string(),
         description: "Built-in read-only planning agent definition.".to_string(),
-        prompt: BUILTIN_PLAN_AGENT.to_string(),
+        prompt: format!("{DISCUSSION_FIRST_GUIDANCE}\n\n{BUILTIN_PLAN_AGENT_ROLE}"),
         tools: Some(builtin_primary_readonly_tool_ids()),
         disallowed_tools: builtin_readonly_disallowed_tool_ids(),
         model: Some("inherit".to_string()),
@@ -698,7 +703,7 @@ pub fn builtin_primary_duck_agent() -> SubagentSpec {
     SubagentSpec {
         name: "duck".to_string(),
         description: "Built-in discussion-first agent for the main session.".to_string(),
-        prompt: BUILTIN_DUCK_PRIMARY_AGENT.to_string(),
+        prompt: format!("{DISCUSSION_FIRST_GUIDANCE}\n\n{BUILTIN_DUCK_PRIMARY_AGENT_ROLE}"),
         tools: Some(builtin_primary_readonly_tool_ids()),
         disallowed_tools: builtin_readonly_disallowed_tool_ids(),
         model: Some("inherit".to_string()),
@@ -2399,6 +2404,35 @@ Legacy prompt."#,
             "plan agent permissions must allow bash so exec_command survives wire shaping; \
              the planning-workflow dispatch gate keeps execution read-only"
         );
+    }
+
+    #[test]
+    fn builtin_plan_agent_and_duck_share_discussion_first_guidance() {
+        let plan_prompt = builtin_plan_agent().prompt;
+        let duck_prompt = builtin_primary_duck_agent().prompt;
+
+        for prompt in [&plan_prompt, &duck_prompt] {
+            assert!(prompt.contains("discussion-first"));
+            assert!(prompt.contains("Clarify scope, constraints, contradictions, and options"));
+            assert!(prompt.contains("Resolve ordinary ambiguity from repository evidence when possible"));
+            assert!(prompt.contains("ask the user directly only when material ambiguity is critical"));
+            assert!(prompt.contains("Stop researching when existing evidence supports a decision"));
+        }
+        assert!(duck_prompt.contains("rubber-ducking only"));
+        assert!(duck_prompt.contains("pressing Tab to switch to the Build agent"));
+        assert!(!duck_prompt.contains("<proposed_plan>"));
+        assert!(!duck_prompt.contains("plan file"));
+    }
+
+    #[test]
+    fn builtin_plan_agent_prompt_requires_grounded_discovery_and_approval() {
+        let prompt = builtin_plan_agent().prompt;
+
+        assert!(prompt.contains("repository-grounded, read-only discovery"));
+        assert!(prompt.contains("exactly one <proposed_plan> block"));
+        assert!(prompt.contains("Never write the plan file with shell or file-editing tools"));
+        assert!(prompt.contains("wait for explicit user approval before implementation"));
+        assert!(prompt.contains("must wait for approval instead of suggesting an immediate edit"));
     }
 
     #[test]
