@@ -202,6 +202,7 @@ impl LLMProvider for CustomProviderBackendRouter {
             max_tokens: profile.max_tokens,
             reasoning_effort: profile.reasoning_effort,
             suppresses_sampling_with_reasoning: profile.api_format == Some(CustomProviderApiFormat::AnthropicMessages),
+            profile_aware: true,
         }
     }
 
@@ -414,8 +415,13 @@ mod tests {
             SamplingOverrides {
                 temperature: Some(0.0),
                 top_p: Some(0.9),
+                top_k: None,
+                presence_penalty: None,
+                frequency_penalty: None,
+                max_tokens: None,
                 reasoning_effort: Some(ReasoningEffortLevel::Low),
-                ..SamplingOverrides::default()
+                suppresses_sampling_with_reasoning: false,
+                profile_aware: true,
             }
         );
         assert!(router.supports_reasoning_effort("cold-model"));

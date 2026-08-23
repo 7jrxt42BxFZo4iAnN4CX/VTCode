@@ -232,6 +232,9 @@ pub struct SamplingOverrides {
     /// reasoning is active (e.g. custom endpoints speaking the Anthropic
     /// Messages shape).
     pub suppresses_sampling_with_reasoning: bool,
+    /// Set by providers that resolve overrides from an explicit user profile;
+    /// callers use it to trust these values over name-based heuristics.
+    pub profile_aware: bool,
 }
 
 /// Optional overrides for standalone Responses compaction requests.

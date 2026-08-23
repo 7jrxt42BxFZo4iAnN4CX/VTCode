@@ -596,6 +596,9 @@ impl AgentRunner {
                 } else {
                     None
                 };
+                let reasoning_active = reasoning_effort.is_some_and(|effort| {
+                    !matches!(effort, ReasoningEffortLevel::None | ReasoningEffortLevel::Unknown)
+                });
 
                 // Reasoning-effort-change advisory (Phase E4): a mid-task
                 // change to the reasoning effort alters the request prefix,
@@ -610,14 +613,29 @@ impl AgentRunner {
                     runtime.state.push_warning(message);
                 }
 
-                let temperature = if reasoning_effort.is_some()
-                    && (matches!(provider_kind, ModelProvider::Anthropic | ModelProvider::Minimax)
+                let temperature = if reasoning_active
+                    && (!sampling_overrides.profile_aware
+                        && matches!(provider_kind, ModelProvider::Anthropic | ModelProvider::Minimax)
                         || sampling_overrides.suppresses_sampling_with_reasoning)
                 {
                     None
                 } else {
                     Some(sampling_overrides.temperature.unwrap_or(self.config().agent.temperature))
                 };
+                let mut top_p_override = sampling_overrides.top_p;
+                let mut top_k_override = sampling_overrides.top_k;
+                if reasoning_active
+                    && (sampling_overrides.suppresses_sampling_with_reasoning
+                        || (!sampling_overrides.profile_aware
+                            && matches!(provider_kind, ModelProvider::Anthropic | ModelProvider::Minimax)))
+                {
+                    // Keep the payload inside what our Anthropic reasoning
+                    // validator accepts: `validate_reasoning_constraints`
+                    // rejects any top_k and requires top_p in [0.95, 1.0]
+                    // while extended thinking is active.
+                    top_k_override = None;
+                    top_p_override = top_p_override.filter(|value| *value >= 0.95);
+                }
 
                 let (request_messages, previous_response_id) = prepare_responses_request_messages(
                     &mut runtime.state.previous_response_chains,
@@ -638,10 +656,26 @@ impl AgentRunner {
                     model: turn_model.clone(),
                     max_tokens,
                     temperature,
-                    top_p: sampling_overrides.top_p,
-                    top_k: sampling_overrides.top_k,
-                    presence_penalty: sampling_overrides.presence_penalty,
-                    frequency_penalty: sampling_overrides.frequency_penalty,
+                    top_p: top_p_override,
+                    top_k: top_k_override,
+                    presence_penalty: if reasoning_active
+                        && (sampling_overrides.suppresses_sampling_with_reasoning
+                            || (!sampling_overrides.profile_aware
+                                && matches!(provider_kind, ModelProvider::Anthropic | ModelProvider::Minimax)))
+                    {
+                        None
+                    } else {
+                        sampling_overrides.presence_penalty
+                    },
+                    frequency_penalty: if reasoning_active
+                        && (sampling_overrides.suppresses_sampling_with_reasoning
+                            || (!sampling_overrides.profile_aware
+                                && matches!(provider_kind, ModelProvider::Anthropic | ModelProvider::Minimax)))
+                    {
+                        None
+                    } else {
+                        sampling_overrides.frequency_penalty
+                    },
                     stream: self.provider_client.supports_streaming(),
                     tool_choice: (provider_name.eq_ignore_ascii_case("openai")
                         && !prompt_bundle.tool_snapshot.active_tool_names.is_empty())
