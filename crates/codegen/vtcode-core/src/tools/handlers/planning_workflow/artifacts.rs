@@ -762,7 +762,7 @@ fn is_actual_command_token(raw_word: &str) -> bool {
         "xcodebuild",
         "yarn",
     ];
-    COMMAND_NAMES.iter().any(|candidate| bare_word.eq_ignore_ascii_case(candidate))
+    (!word.contains('/') && COMMAND_NAMES.iter().any(|candidate| bare_word.eq_ignore_ascii_case(candidate)))
         || word.starts_with('/')
         || is_safe_workspace_relative_command_token(word)
         || (!word.contains('/') && is_script_command_token(word))

@@ -609,6 +609,8 @@ Accept workspace-relative executables without requiring them to exist locally.
             "./scripts/../outside.sh --version",
             "./scripts//check.sh --changed",
             "./scripts/check.sh; --changed",
+            "./cargo; --version",
+            "./cargo/ --version",
             "review target/release/vtcode output",
         ] {
             let plan = format!(
