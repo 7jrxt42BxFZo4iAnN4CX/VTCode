@@ -770,27 +770,29 @@ fn is_actual_command_token(raw_word: &str) -> bool {
 
 fn is_safe_workspace_relative_command_token(raw_word: &str) -> bool {
     let word = raw_word.trim_matches(|character: char| matches!(character, '`' | '"' | '\''));
-    let word = word.strip_prefix("./").unwrap_or(word);
-    let Some((first_component, remaining_components)) = word.split_once('/') else {
-        return false;
+    let (word, dot_relative) = match word.strip_prefix("./") {
+        Some(relative_word) => (relative_word, true),
+        None => (word, false),
     };
 
-    if first_component.is_empty()
-        || remaining_components.is_empty()
-        || has_url_scheme(word)
-        || word.chars().any(is_shell_metacharacter)
-    {
+    if has_url_scheme(word) || word.chars().any(is_shell_metacharacter) {
         return false;
     }
 
-    word.split('/').all(|component| {
-        !component.is_empty()
-            && component != "."
-            && component != ".."
-            && component
-                .chars()
-                .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-'))
-    })
+    if word.contains('/') {
+        return word.split('/').all(is_safe_workspace_path_component);
+    }
+
+    dot_relative && is_safe_workspace_path_component(word)
+}
+
+fn is_safe_workspace_path_component(component: &str) -> bool {
+    !component.is_empty()
+        && component != "."
+        && component != ".."
+        && component
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-'))
 }
 
 fn has_url_scheme(word: &str) -> bool {

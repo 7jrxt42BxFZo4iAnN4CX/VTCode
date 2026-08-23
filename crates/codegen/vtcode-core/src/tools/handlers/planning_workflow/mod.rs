@@ -552,6 +552,31 @@ Keep startup verification concrete.
     }
 
     #[test]
+    fn validate_plan_content_accepts_single_component_relative_verification_executables() {
+        for verify in ["./cargo --version", "./verify --help"] {
+            let plan = format!(
+                r#"# Single-component relative executable verification
+
+## Summary
+Accept a conservative executable path from the workspace root.
+
+## Steps
+1. Verify the command -> files: [src/main.rs] -> verify: {verify}
+
+## Validation
+1. Run cargo check.
+
+## Assumptions
+1. The verification executable is resolved from the workspace root.
+"#
+            );
+            let report = validate_plan_content(&plan);
+
+            assert!(report.is_ready(), "single-component relative executable should validate: {:?}", report.reasons());
+        }
+    }
+
+    #[test]
     fn validate_plan_content_accepts_bracketed_env_prefixed_relative_verification_command() {
         let report = validate_plan_content(
             r#"# Bracketed env-prefixed verification
