@@ -865,6 +865,11 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Overview, Module Structure, Usage Examples, Process Group Management, Security Features
   - **User Questions**: "What can you tell me about PTY and Pipe Infrastructure?", "How does Overview work?", "How does Module Structure work?"
 
+- **File**: `docs/superpowers/specs/2026-08-23-plan-mode-reliability-design.md`
+  - **Content**: Planning Workflow Reliability Design
+  - **Topics**: Summary, Goals, Non-Goals, Architecture, Error Handling and Safety
+  - **User Questions**: "What can you tell me about Planning Workflow Reliability Design?", "How does Summary work?", "How does Goals work?"
+
 - **File**: `docs/harness/prompt-architecture.md`
   - **Content**: Prompt Architecture
   - **Topics**: Cache-stable segments, Assembly order, Few-shot management (Section 18.3.3), Tool description contract (Section 18.3.4)
