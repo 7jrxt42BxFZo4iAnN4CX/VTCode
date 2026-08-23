@@ -22,7 +22,7 @@ pub const MAX_TOOL_LOOP_CAP_MULTIPLIER: usize = 3;
 /// Maximum ordinary tool-loop extension accepted from one prompt.
 pub const MAX_TOOL_LOOP_INCREMENT_PER_PROMPT: usize = 50;
 /// Minimum tool-loop budget while planning research is active.
-pub const PLANNING_WORKFLOW_MIN_TOOL_LOOPS: usize = 40;
+pub const PLANNING_WORKFLOW_MIN_TOOL_LOOPS: usize = 60;
 /// Hard cap for planning tool-loop extensions.
 pub const PLANNING_WORKFLOW_MAX_TOOL_LOOP_LIMIT_ABSOLUTE_CAP: usize = 240;
 /// Multiplier used to derive the planning extension hard cap.
@@ -46,7 +46,7 @@ mod tests {
     fn planning_and_approved_plan_budgets_are_explicitly_separate() {
         assert_eq!(PLANNING_WORKFLOW_MIN_TOOL_CALLS_PER_TURN, 120);
         assert_eq!(APPROVED_PLAN_MIN_TOOL_CALLS_PER_TURN, 120);
-        assert_eq!(PLANNING_WORKFLOW_MIN_TOOL_LOOPS, 40);
+        assert_eq!(PLANNING_WORKFLOW_MIN_TOOL_LOOPS, 60);
         assert_eq!(MAX_TOOL_LOOP_LIMIT_ABSOLUTE_CAP, 120);
         assert_eq!(PLANNING_WORKFLOW_MAX_TOOL_LOOP_LIMIT_ABSOLUTE_CAP, 240);
     }

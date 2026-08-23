@@ -552,10 +552,10 @@ pub(super) async fn maybe_handle_tool_loop_limit(
 #[cfg(test)]
 mod tests {
     use super::{
-        PLANNING_WORKFLOW_MIN_TOOL_LOOPS, UNLIMITED_TOOL_LOOPS, clamp_tool_loop_increment,
-        effective_max_tool_calls_for_approved_plan_execution, effective_max_tool_calls_for_turn, extract_turn_config,
-        handle_steering_messages, is_stale_approved_plan_pause_response, resolve_safety_tool_call_limits,
-        resolve_tool_loop_limit, tool_loop_hard_cap,
+        UNLIMITED_TOOL_LOOPS, clamp_tool_loop_increment, effective_max_tool_calls_for_approved_plan_execution,
+        effective_max_tool_calls_for_turn, extract_turn_config, handle_steering_messages,
+        is_stale_approved_plan_pause_response, resolve_safety_tool_call_limits, resolve_tool_loop_limit,
+        tool_loop_hard_cap,
     };
     use crate::agent::runloop::unified::planning_workflow::{
         PlanningIntent, detect_enter_planning_intent, detect_planning_intent,
@@ -677,7 +677,7 @@ mod tests {
         assert_eq!(detect_planning_intent("yes", false), PlanningIntent::ExitAndImplement);
     }
 
-    #[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
+    #[test]
     fn tool_loop_hard_cap_scales_and_bounds() {
         assert_eq!(tool_loop_hard_cap(20, false), 60);
         assert_eq!(tool_loop_hard_cap(40, false), 120);
@@ -698,18 +698,22 @@ mod tests {
 
     #[test]
     fn extract_turn_config_applies_planning_workflow_loop_floor() {
-        let mut cfg = VTCodeConfig::default();
-        cfg.tools.max_tool_loops = 20;
-        let turn_cfg = extract_turn_config(Some(&cfg), true, true);
-        assert_eq!(turn_cfg.max_tool_loops, PLANNING_WORKFLOW_MIN_TOOL_LOOPS);
+        for (configured_limit, expected_limit) in [(20, 60), (40, 60), (60, 60), (80, 80)] {
+            let mut cfg = VTCodeConfig::default();
+            cfg.tools.max_tool_loops = configured_limit;
+            let turn_cfg = extract_turn_config(Some(&cfg), true, true);
+            assert_eq!(turn_cfg.max_tool_loops, expected_limit);
+        }
     }
 
     #[test]
     fn extract_turn_config_keeps_non_planning_workflow_loop_limit() {
-        let mut cfg = VTCodeConfig::default();
-        cfg.tools.max_tool_loops = 20;
-        let turn_cfg = extract_turn_config(Some(&cfg), false, true);
-        assert_eq!(turn_cfg.max_tool_loops, 20);
+        for configured_limit in [20, 40, 60, 80] {
+            let mut cfg = VTCodeConfig::default();
+            cfg.tools.max_tool_loops = configured_limit;
+            let turn_cfg = extract_turn_config(Some(&cfg), false, true);
+            assert_eq!(turn_cfg.max_tool_loops, configured_limit);
+        }
     }
 
     #[test]
