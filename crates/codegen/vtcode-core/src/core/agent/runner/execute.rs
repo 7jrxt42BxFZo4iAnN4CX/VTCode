@@ -529,17 +529,20 @@ impl AgentRunner {
                         "Provider debug turn selection"
                     );
                 }
+                let sampling_overrides = self.provider_client.sampling_overrides(&turn_model);
                 let turn_reasoning = if is_simple_task {
                     Some(ReasoningEffortLevel::Minimal)
                 } else {
-                    self.reasoning_effort
+                    sampling_overrides.reasoning_effort.or(self.reasoning_effort)
                 };
                 let turn_verbosity = if is_simple_task {
                     Some(VerbosityLevel::Low)
                 } else {
                     self.verbosity
                 };
-                let max_tokens = if is_simple_task { Some(800) } else { Some(2000) };
+                let max_tokens = sampling_overrides
+                    .max_tokens
+                    .or(if is_simple_task { Some(800) } else { Some(2000) });
 
                 self.maybe_auto_compact(&mut runtime.state, &mut event_recorder, &turn_model, preserve_recent_turns)
                     .await;
@@ -612,7 +615,7 @@ impl AgentRunner {
                 {
                     None
                 } else {
-                    Some(self.config().agent.temperature)
+                    Some(sampling_overrides.temperature.unwrap_or(self.config().agent.temperature))
                 };
 
                 let (request_messages, previous_response_id) = prepare_responses_request_messages(

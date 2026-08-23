@@ -10,6 +10,7 @@ use vtcode_commons::tool_types::CompactStr;
 
 use super::{
     LLMNormalizedStream, LLMRequest, LLMResponse, LLMStream, LLMStreamEvent, Message, ResponsesCompactionOptions,
+    SamplingOverrides,
 };
 pub use vtcode_commons::llm::{LLMError, LLMErrorMetadata};
 
@@ -175,6 +176,15 @@ pub trait LLMProvider: Send + Sync {
     /// Whether the provider accepts configurable reasoning effort for the model
     fn supports_reasoning_effort(&self, _model: &str) -> bool {
         false
+    }
+
+    /// Provider/model-specific sampling parameter overrides.
+    ///
+    /// Custom-provider profiles may pin exact sampling values per model; every
+    /// field defaults to `None`, meaning the agent loop's global config value
+    /// applies unchanged.
+    fn sampling_overrides(&self, _model: &str) -> SamplingOverrides {
+        SamplingOverrides::default()
     }
 
     /// Whether the provider supports structured tool calling for the given model

@@ -513,6 +513,13 @@ mod tests {
     #[serial_test::serial(global_llm_factory)]
     fn custom_openai_compatible_provider_uses_configured_display_name() {
         register_custom_providers(&[CustomProviderConfig {
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
+            reasoning_effort: None,
             name: "mycorp".to_string(),
             display_name: "MyCorporateName".to_string(),
             base_url: "https://llm.corp.example/v1".to_string(),
@@ -562,6 +569,13 @@ mod tests {
     #[serial_test::serial(global_llm_factory)]
     fn custom_openai_compatible_provider_uses_configured_context_window() {
         register_custom_providers(&[CustomProviderConfig {
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
+            reasoning_effort: None,
             name: "mycorp".to_string(),
             display_name: "MyCorporateName".to_string(),
             base_url: "https://llm.corp.example/v1".to_string(),
@@ -612,6 +626,13 @@ mod tests {
         supports_tools: Option<bool>,
     ) -> CustomProviderProfileConfig {
         CustomProviderProfileConfig {
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
+            reasoning_effort: None,
             api_format,
             context_window,
             supports_tools,
@@ -638,6 +659,13 @@ mod tests {
         );
 
         CustomProviderConfig {
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
+            reasoning_effort: None,
             name: "mixed".to_string(),
             display_name: "Mixed".to_string(),
             base_url: "https://llm.corp.example/v1".to_string(),
@@ -761,6 +789,13 @@ mod tests {
     /// `vtcode.toml.example`.
     fn atlas_cloud_provider_config() -> CustomProviderConfig {
         CustomProviderConfig {
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
+            reasoning_effort: None,
             name: "atlascloud".to_string(),
             display_name: "Atlas Cloud".to_string(),
             base_url: "https://api.atlascloud.ai/v1".to_string(),

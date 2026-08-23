@@ -267,9 +267,23 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `custom_providers[].supports_context_caching` | `boolean \| null` | no | `null` | Provider-level default for context caching when per-model metadata is unavailable. |
 | `custom_providers[].supports_responses_compaction` | `boolean \| null` | no | `null` | Provider-level default for Responses compaction when per-model metadata is unavailable. |
 | `custom_providers[].supports_context_edits` | `boolean \| null` | no | `null` | Provider-level default for context edits when per-model metadata is unavailable. |
+| `custom_providers[].temperature` | `number \| null` | no | `null` | Provider-level sampling temperature default (0.0-2.0) for models without a profile override. When omitted, the global `agent.temperature` applies. |
+| `custom_providers[].top_p` | `number \| null` | no | `null` | Provider-level nucleus-sampling default (0.0-1.0). |
+| `custom_providers[].top_k` | `integer \| null` | no | `null` | Provider-level top-k default (>= 0). |
+| `custom_providers[].presence_penalty` | `number \| null` | no | `null` | Provider-level presence penalty default (-2.0-2.0). |
+| `custom_providers[].frequency_penalty` | `number \| null` | no | `null` | Provider-level frequency penalty default (-2.0-2.0). |
+| `custom_providers[].max_tokens` | `integer \| null` | no | `null` | Provider-level max output tokens default (> 0); overrides the agent loop's built-in per-task limits. |
+| `custom_providers[].reasoning_effort` | `string \| null` | no | `null` | Provider-level reasoning effort default for models without a profile override. |
 | `custom_providers.profiles."<model-id>"` | `table` | no | `-` | Per-model sparse profile used to override runtime defaults for a specific model identifier. Profiles do NOT add models to the picker; they only alter runtime behavior (capabilities, api_format, context_window, etc.). |
 | `custom_providers.profiles."<model-id>".api_format` | `string \| null` | no | `null` | Per-model API format hint. Same allowed values as `custom_providers[].api_format`. Omitted preserves legacy/autodetect behavior for that model. |
 | `custom_providers.profiles."<model-id>".context_window` | `integer \| null` | no | `null` | Per-model context window in tokens. When omitted the provider or autodetected model metadata applies. |
+| `custom_providers.profiles."<model-id>".temperature` | `number \| null` | no | `null` | Per-model sampling temperature (0.0-2.0). Takes precedence over provider-level and global `agent.temperature` values. |
+| `custom_providers.profiles."<model-id>".top_p` | `number \| null` | no | `null` | Per-model nucleus sampling (0.0-1.0); overrides provider-level default. |
+| `custom_providers.profiles."<model-id>".top_k` | `integer \| null` | no | `null` | Per-model top-k cutoff (>= 0); overrides provider-level default. |
+| `custom_providers.profiles."<model-id>".presence_penalty` | `number \| null` | no | `null` | Per-model presence penalty (-2.0-2.0); overrides provider-level default. |
+| `custom_providers.profiles."<model-id>".frequency_penalty` | `number \| null` | no | `null` | Per-model frequency penalty (-2.0-2.0); overrides provider-level default. |
+| `custom_providers.profiles."<model-id>".max_tokens` | `integer \| null` | no | `null` | Per-model max output tokens (> 0); overrides the agent loop's built-in per-task limits (800/2000). |
+| `custom_providers.profiles."<model-id>".reasoning_effort` | `string \| null` | no | `null` | Per-model reasoning effort; implies effort support for this model and takes precedence over the global `agent.reasoning_effort`. |
 | `custom_providers.profiles."<model-id>".supports_tools` | `boolean \| null` | no | `null` | Whether the model supports external tool calls. Explicit `false` is honored. |
 | `custom_providers.profiles."<model-id>".supports_reasoning` | `boolean \| null` | no | `null` | Whether the model supports structured reasoning guidance and longer reasoning passes. |
 | `custom_providers.profiles."<model-id>".supports_reasoning_effort` | `boolean \| null` | no | `null` | Whether the model supports reasoning-effort controls. Explicit `false` is honored. |

@@ -4,7 +4,9 @@ use vtcode_config::core::AnthropicConfig;
 use vtcode_config::core::{CustomProviderApiFormat, CustomProviderConfig, ResolvedCustomProviderProfile};
 use vtcode_config::{ModelConfig, OpenAIConfig, PromptCachingConfig, TimeoutsConfig};
 
-use crate::provider::{LLMError, LLMProvider, LLMRequest, LLMResponse, LLMStream, Message, ResponsesCompactionOptions};
+use crate::provider::{
+    LLMError, LLMProvider, LLMRequest, LLMResponse, LLMStream, Message, ResponsesCompactionOptions, SamplingOverrides,
+};
 use crate::providers::anthropic::{self, AnthropicProvider};
 use crate::providers::common::{resolve_model, validate_request_common};
 use crate::providers::openai::{CustomProviderAuthHandle, OpenAIProvider};
@@ -170,10 +172,29 @@ impl LLMProvider for CustomProviderBackendRouter {
     fn supports_reasoning_effort(&self, model: &str) -> bool {
         let resolved = self.resolved_model(model);
         let profile = self.profile_for_model(resolved);
+        // Pinning an explicit effort value in the profile implies the model
+        // accepts it; otherwise the override could never reach the wire.
+        if profile.reasoning_effort.is_some() {
+            return true;
+        }
         Self::override_bool(
             profile.supports_reasoning_effort,
             self.backend_for_model(model).supports_reasoning_effort(resolved),
         )
+    }
+
+    fn sampling_overrides(&self, model: &str) -> SamplingOverrides {
+        let resolved = self.resolved_model(model);
+        let profile = self.profile_for_model(resolved);
+        SamplingOverrides {
+            temperature: profile.temperature,
+            top_p: profile.top_p,
+            top_k: profile.top_k,
+            presence_penalty: profile.presence_penalty,
+            frequency_penalty: profile.frequency_penalty,
+            max_tokens: profile.max_tokens,
+            reasoning_effort: profile.reasoning_effort,
+        }
     }
 
     fn supports_tools(&self, model: &str) -> bool {
@@ -327,7 +348,7 @@ impl LLMProvider for CustomProviderBackendRouter {
 #[cfg(test)]
 mod tests {
     use super::CustomProviderBackendRouter;
-    use crate::provider::{LLMProvider, LLMRequest, Message};
+    use crate::provider::{LLMProvider, LLMRequest, Message, SamplingOverrides};
     use crate::providers::openai::CustomProviderAuthHandle;
     use serde_json::json;
     use std::path::Path;
@@ -337,8 +358,65 @@ mod tests {
         AnthropicConfig, CustomProviderApiFormat, CustomProviderCommandAuthConfig, CustomProviderConfig,
         CustomProviderProfileConfig,
     };
+    use vtcode_config::types::ReasoningEffortLevel;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn sampling_router() -> CustomProviderBackendRouter {
+        let mut profiles = std::collections::BTreeMap::new();
+        profiles.insert(
+            "cold-model".to_string(),
+            CustomProviderProfileConfig {
+                temperature: Some(0.0),
+                top_p: Some(0.9),
+                reasoning_effort: Some(ReasoningEffortLevel::Low),
+                ..Default::default()
+            },
+        );
+
+        CustomProviderBackendRouter::from_config(
+            CustomProviderConfig {
+                name: "sampling-test".to_string(),
+                display_name: "Sampling Test".to_string(),
+                base_url: "https://llm.example/v1".to_string(),
+                temperature: Some(0.5),
+                models: vec!["cold-model".to_string(), "warm-model".to_string()],
+                profiles,
+                ..Default::default()
+            },
+            None,
+            None,
+            "https://llm.example/v1".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
+    #[test]
+    fn sampling_overrides_resolve_per_model_with_provider_defaults() {
+        let router = sampling_router();
+
+        let cold = router.sampling_overrides("cold-model");
+        assert_eq!(
+            cold,
+            SamplingOverrides {
+                temperature: Some(0.0),
+                top_p: Some(0.9),
+                reasoning_effort: Some(ReasoningEffortLevel::Low),
+                ..SamplingOverrides::default()
+            }
+        );
+        assert!(router.supports_reasoning_effort("cold-model"));
+
+        // Models without a profile fall back to provider-level defaults.
+        let warm = router.sampling_overrides("warm-model");
+        assert_eq!(warm.temperature, Some(0.5));
+        assert_eq!(warm.top_p, None);
+    }
 
     fn write_tokens_file(dir: &Path, tokens: &[&str]) {
         std::fs::write(dir.join("tokens.txt"), tokens.join("\n")).expect("write tokens file");
@@ -451,6 +529,13 @@ mod tests {
             base_url: server.uri(),
             api_format: CustomProviderApiFormat::AnthropicMessages,
             context_window: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
+            reasoning_effort: None,
             supports_tools: None,
             supports_reasoning: None,
             supports_reasoning_effort: None,
