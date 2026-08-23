@@ -763,7 +763,6 @@ fn is_actual_command_token(raw_word: &str) -> bool {
         "yarn",
     ];
     COMMAND_NAMES.iter().any(|candidate| bare_word.eq_ignore_ascii_case(candidate))
-        || word.starts_with("./")
         || word.starts_with('/')
         || is_safe_workspace_relative_command_token(word)
         || (!word.contains('/') && is_script_command_token(word))
@@ -771,6 +770,7 @@ fn is_actual_command_token(raw_word: &str) -> bool {
 
 fn is_safe_workspace_relative_command_token(raw_word: &str) -> bool {
     let word = raw_word.trim_matches(|character: char| matches!(character, '`' | '"' | '\''));
+    let word = word.strip_prefix("./").unwrap_or(word);
     let Some((first_component, remaining_components)) = word.split_once('/') else {
         return false;
     };
@@ -834,8 +834,7 @@ fn is_shell_assignment_token(raw_word: &str) -> bool {
 
 fn is_pathlike_command_token(raw_word: &str) -> bool {
     let word = raw_word.trim_matches(|character: char| matches!(character, '`' | '"' | '\''));
-    word.starts_with("./")
-        || word.starts_with('/')
+    word.starts_with('/')
         || is_safe_workspace_relative_command_token(word)
         || (!word.contains('/') && is_script_command_token(word))
 }

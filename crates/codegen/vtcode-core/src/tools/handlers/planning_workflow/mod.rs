@@ -552,6 +552,29 @@ Keep startup verification concrete.
     }
 
     #[test]
+    fn validate_plan_content_accepts_bracketed_env_prefixed_relative_verification_command() {
+        let report = validate_plan_content(
+            r#"# Bracketed env-prefixed verification
+
+## Summary
+Keep the failed planning-session verification shape concrete.
+
+## Steps
+1. Validate the release binary -> files: [src/main.rs] -> verify: [cargo nextest run -p vtcode-core, VTCODE_STARTUP_TRACE=1 target/release/vtcode --version]
+
+## Validation
+1. Run cargo check.
+
+## Assumptions
+1. The release binary is resolved from the workspace root.
+"#,
+        );
+
+        assert!(report.is_ready(), "bracketed env-prefixed command should validate: {:?}", report.reasons());
+        assert_eq!(report.implementation_step_count, 1);
+    }
+
+    #[test]
     fn validate_plan_content_accepts_relative_verification_executables() {
         let report = validate_plan_content(
             r#"# Relative executable verification
@@ -583,6 +606,9 @@ Accept workspace-relative executables without requiring them to exist locally.
             "scripts/../perf/compare.sh",
             "scripts//perf/compare.sh",
             "target/release/vtcode; --version",
+            "./scripts/../outside.sh --version",
+            "./scripts//check.sh --changed",
+            "./scripts/check.sh; --changed",
             "review target/release/vtcode output",
         ] {
             let plan = format!(

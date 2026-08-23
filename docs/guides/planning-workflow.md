@@ -30,9 +30,10 @@ Shell commands in plan mode are validated against a read-only allow-list. Allowe
 - `cd` prefixes: `cd <dir> && <read-only command>` (changing directory mutates nothing)
 - read-only subcommands: `git status|log|diff|show|blame|ls-files|rev-parse|describe|shortlog|grep`, `cargo check|test|clippy|metadata|tree|nextest run`, `npm|pnpm|yarn test`
 - `&&` chains and `|` pipelines where every segment is itself read-only
+- static `;` chains where every segment is independently read-only; literal-output `printf` is allowed as an inspection-output separator
 - `2>&1` stderr merges (no file is written)
 
-Rejected: file redirections (`>`, `>>`), command substitution (`$(...)`, backticks), `;` chaining, in-place edits (`sed -i`), and any segment starting with a mutating or unknown command (`rm`, `mv`, `cargo build`, `git push`, arbitrary scripts).
+Rejected: file redirections (`>`, `>>`), command substitution (`$(...)`, backticks), dynamic `;` chains, in-place edits (`sed -i`), and any chain with a mutating or unknown segment (`rm`, `mv`, `cargo build`, `git push`, arbitrary scripts).
 
 During planning, the dispatch gate denies mutating tools. Plan remains read-only; the runtime alone persists validated planning artifacts under `.vtcode/plans/`.
 
