@@ -386,6 +386,20 @@ pub(crate) fn build_chat_request(
         openai_request["temperature"] = Value::Number(crate::providers::common::float_to_json_number(temperature)?);
     }
 
+    if ctx.supports_temperature && allows_sampling_parameters(&request.model, effective_reasoning_effort) {
+        if let Some(top_p) = request.top_p {
+            openai_request["top_p"] = Value::Number(crate::providers::common::float_to_json_number(top_p)?);
+        }
+        if let Some(presence_penalty) = request.presence_penalty {
+            openai_request["presence_penalty"] =
+                Value::Number(crate::providers::common::float_to_json_number(presence_penalty)?);
+        }
+        if let Some(frequency_penalty) = request.frequency_penalty {
+            openai_request["frequency_penalty"] =
+                Value::Number(crate::providers::common::float_to_json_number(frequency_penalty)?);
+        }
+    }
+
     if ModelProvider::OpenAI.supports_service_tier(&request.model)
         && let Some(service_tier) = trimmed_non_empty(request.service_tier.as_deref().or(ctx.default_service_tier))
     {
@@ -736,7 +750,7 @@ fn build_responses_request_from_history(
 
 #[cfg(test)]
 mod tests {
-    use super::{ResponsesRequestContext, build_responses_request};
+    use super::{ChatRequestContext, ResponsesRequestContext, build_chat_request, build_responses_request};
     use crate::provider;
     use serde_json::{Value, json};
     use vtcode_config::constants::models;
@@ -778,6 +792,39 @@ mod tests {
             stream: true,
             ..Default::default()
         }
+    }
+
+    fn chat_context() -> ChatRequestContext<'static> {
+        ChatRequestContext {
+            model: "custom-chat-model",
+            is_native_openai: true,
+            supports_tools: false,
+            supports_parallel_tool_config: false,
+            supports_temperature: true,
+            prompt_cache_key: None,
+            default_service_tier: None,
+        }
+    }
+
+    #[test]
+    fn chat_request_carries_top_p_and_penalties_with_compact_wire_form() {
+        let mut request = request();
+        request.model = "custom-chat-model".to_string();
+        request.temperature = Some(0.7);
+        request.top_p = Some(0.9);
+        request.presence_penalty = Some(0.1);
+        request.frequency_penalty = Some(-0.5);
+
+        let payload = build_chat_request(&request, &chat_context()).expect("chat request should build");
+
+        assert_eq!(payload.get("temperature"), Some(&json!(0.7)));
+        assert_eq!(
+            payload.get("top_p").expect("top_p should serialize").to_string(),
+            "0.9",
+            "wire form must be compact"
+        );
+        assert_eq!(payload.get("presence_penalty").and_then(Value::as_f64), Some(0.1));
+        assert_eq!(payload.get("frequency_penalty").and_then(Value::as_f64), Some(-0.5));
     }
 
     #[test]

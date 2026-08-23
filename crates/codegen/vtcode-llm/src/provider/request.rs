@@ -228,6 +228,10 @@ pub struct SamplingOverrides {
     pub max_tokens: Option<u32>,
     /// Reasoning effort for models that accept it.
     pub reasoning_effort: Option<ReasoningEffortLevel>,
+    /// Whether this model's wire format rejects sampling parameters while
+    /// reasoning is active (e.g. custom endpoints speaking the Anthropic
+    /// Messages shape).
+    pub suppresses_sampling_with_reasoning: bool,
 }
 
 /// Optional overrides for standalone Responses compaction requests.

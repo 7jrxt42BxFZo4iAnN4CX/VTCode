@@ -171,6 +171,12 @@ impl CustomProviderProfileConfig {
             ));
         }
 
+        if self.reasoning_effort == Some(ReasoningEffortLevel::Unknown) {
+            return Err(format!(
+                "custom_providers[{provider_name}].profiles[{profile_key}]: `reasoning_effort` is not a recognized level (use none, minimal, low, medium, high, xhigh, or max)"
+            ));
+        }
+
         Ok(())
     }
 }
@@ -552,6 +558,13 @@ impl CustomProviderConfig {
 
         if self.max_tokens == Some(0) {
             return Err(format!("custom_providers[{}]: `max_tokens` must be greater than 0", self.name));
+        }
+
+        if self.reasoning_effort == Some(ReasoningEffortLevel::Unknown) {
+            return Err(format!(
+                "custom_providers[{}]: `reasoning_effort` is not a recognized level (use none, minimal, low, medium, high, xhigh, or max)",
+                self.name
+            ));
         }
 
         if let Some(auth) = &self.auth {

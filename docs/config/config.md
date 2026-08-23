@@ -229,13 +229,13 @@ When determining a model's runtime shape VT Code applies values in the following
 3. model metadata discovered from the provider (or autodetection)
 4. conservative built-in fallback defaults
 
-Sampling values resolve on the same chain, with one extra global layer beneath the provider: profile → provider default → `agent.temperature` / `agent.reasoning_effort` globals → built-in per-task limits (`max_tokens` only).
+Sampling values resolve on the same chain, with one extra global layer beneath the provider: profile → provider default → `agent.temperature` / `agent.reasoning_effort` globals → built-in per-task limits (`max_tokens` only). Two built-in behaviors sit above the profile chain: simple sub-tasks force `reasoning_effort = "minimal"` regardless of a profile pin, and backends that reject sampling during reasoning (native Anthropic/MiniMax, or custom profiles with `api_format = "anthropic-messages"`) drop `temperature` while reasoning is active.
 
 Additional rules:
 - An explicit boolean `false` in any overriding layer is honored and prevents a higher-level implicit `true` from taking effect.
 - Omitting `api_format` preserves legacy autodetection behavior; explicitly setting `api_format` to a value instructs VT Code to use this API shape and not silently fall back.
 - Profiles do not make a model available in the picker — use `model` or `models` to control availability.
-- Which sampling parameters actually reach the wire depends on the backend's API format (e.g., OpenAI-compatible chat sends `temperature`/`top_p`, native OpenAI also sends penalties; `top_k` is honored by backends that expose it).
+- Wire delivery depends on the backend's API format. The OpenAI Chat shape sends `temperature`, `top_p`, and both penalties; the OpenAI Responses shape sends them inside a nested `sampling_parameters` object that some compatible endpoints ignore, and currently does not emit `max_output_tokens` for non-native endpoints; `top_k` is accepted in configuration but not serialized for these shapes today (it applies only to backends whose own request builders expose it).
 
 Store a custom provider key with the same explicit identity used by the
 configuration:

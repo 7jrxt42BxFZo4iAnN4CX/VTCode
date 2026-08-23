@@ -120,7 +120,10 @@ order, from highest to lowest priority:
 Sampling values resolve on the same chain with one extra global layer beneath
 the provider: profile → provider default → `agent.temperature` /
 `agent.reasoning_effort` globals → built-in per-task limits (`max_tokens`
-only).
+only). Simple sub-tasks force `reasoning_effort = "minimal"` regardless of a
+profile pin, and reasoning-rejecting backends (native Anthropic/MiniMax, or
+`api_format = "anthropic-messages"` profiles) drop `temperature` while
+reasoning is active.
 
 An explicit boolean `false` is honored at every level. Omitting `api_format`
 preserves autodetection, while an explicit value selects that API shape.

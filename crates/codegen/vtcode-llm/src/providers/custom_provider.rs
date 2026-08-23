@@ -172,9 +172,16 @@ impl LLMProvider for CustomProviderBackendRouter {
     fn supports_reasoning_effort(&self, model: &str) -> bool {
         let resolved = self.resolved_model(model);
         let profile = self.profile_for_model(resolved);
-        // Pinning an explicit effort value in the profile implies the model
-        // accepts it; otherwise the override could never reach the wire.
-        if profile.reasoning_effort.is_some() {
+        // A pin in THIS model's own profile implies effort support unless the
+        // same profile explicitly disables it. Provider-level effort defaults
+        // must not flip the capability for every model on the endpoint.
+        let own_pin = self
+            .custom_config
+            .profiles
+            .get(resolved)
+            .and_then(|p| p.reasoning_effort)
+            .is_some();
+        if own_pin && profile.supports_reasoning_effort != Some(false) {
             return true;
         }
         Self::override_bool(
@@ -194,6 +201,7 @@ impl LLMProvider for CustomProviderBackendRouter {
             frequency_penalty: profile.frequency_penalty,
             max_tokens: profile.max_tokens,
             reasoning_effort: profile.reasoning_effort,
+            suppresses_sampling_with_reasoning: profile.api_format == Some(CustomProviderApiFormat::AnthropicMessages),
         }
     }
 

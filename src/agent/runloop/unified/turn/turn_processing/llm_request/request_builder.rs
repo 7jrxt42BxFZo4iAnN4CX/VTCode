@@ -58,7 +58,10 @@ pub(super) async fn build_turn_request(
     let request_model = turn_snapshot.active_model.as_str();
     let mut prompt_output = assemble_prompt(ctx, PromptAssemblyInput { turn: turn_snapshot }).await?;
 
-    let reasoning_effort = resolve_effective_reasoning_effort(ctx.vt_cfg, turn_snapshot);
+    let sampling_overrides = ctx.provider_client.sampling_overrides(request_model);
+    let reasoning_effort = sampling_overrides
+        .reasoning_effort
+        .or_else(|| resolve_effective_reasoning_effort(ctx.vt_cfg, turn_snapshot));
     let primary_agent_context = render_primary_agent_runtime_context(
         ctx,
         turn_snapshot,
@@ -69,12 +72,16 @@ pub(super) async fn build_turn_request(
     )
     .await;
     let _ = writeln!(prompt_output.system_prompt, "\n{primary_agent_context}");
-    let temperature =
-        if reasoning_effort.is_some() && matches!(turn_snapshot.provider_name.as_str(), "anthropic" | "minimax") {
-            None
-        } else {
-            Some(0.7)
-        };
+    let global_temperature = ctx.vt_cfg.map(|cfg| cfg.agent.temperature).unwrap_or(0.7);
+    let temperature = if reasoning_effort.is_some()
+        && (matches!(turn_snapshot.provider_name.as_str(), "anthropic" | "minimax")
+            || sampling_overrides.suppresses_sampling_with_reasoning)
+    {
+        None
+    } else {
+        Some(sampling_overrides.temperature.unwrap_or(global_temperature))
+    };
+    let max_tokens_opt = sampling_overrides.max_tokens.or(max_tokens_opt);
     let parallel_config = if prompt_output.tool_snapshot.has_tools()
         && !turn_snapshot.tool_free_recovery
         && turn_snapshot.capabilities.parallel_tool_config
@@ -207,6 +214,10 @@ pub(super) async fn build_turn_request(
         model: turn_snapshot.active_model.clone(),
         max_tokens: max_tokens_opt,
         temperature,
+        top_p: sampling_overrides.top_p,
+        top_k: sampling_overrides.top_k,
+        presence_penalty: sampling_overrides.presence_penalty,
+        frequency_penalty: sampling_overrides.frequency_penalty,
         stream: use_streaming,
         tool_choice,
         parallel_tool_config: parallel_config,

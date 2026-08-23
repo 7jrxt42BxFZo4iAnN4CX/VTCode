@@ -611,7 +611,8 @@ impl AgentRunner {
                 }
 
                 let temperature = if reasoning_effort.is_some()
-                    && matches!(provider_kind, ModelProvider::Anthropic | ModelProvider::Minimax)
+                    && (matches!(provider_kind, ModelProvider::Anthropic | ModelProvider::Minimax)
+                        || sampling_overrides.suppresses_sampling_with_reasoning)
                 {
                     None
                 } else {
