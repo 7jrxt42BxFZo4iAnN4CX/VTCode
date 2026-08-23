@@ -49,3 +49,24 @@ Output: formatting clean; 401 tests run, 401 passed, 0 skipped.
 ## Concerns
 
 None identified.
+
+## Fix round 1
+
+Changed the Plan role contract from one `<proposed_plan>` block to exactly one final `<proposed_plan>` block, and updated `builtin_plan_agent_prompt_requires_grounded_discovery_and_approval` to assert the final-block requirement.
+
+RED:
+
+```text
+cargo nextest run -p vtcode-config builtin_plan_agent
+```
+
+Output: 3 tests run; 2 passed, 1 failed. The Plan contract test failed because the prompt did not contain `exactly one final <proposed_plan> block`.
+
+GREEN and formatting:
+
+```text
+cargo nextest run -p vtcode-config builtin_plan_agent
+cargo fmt -- --check
+```
+
+Output: 3 tests run; 3 passed, 398 skipped; formatting clean. Covering tests include the shared Plan/Duck guidance test, the Plan grounded-discovery/final-plan/approval test, and the existing request-user-input test.
