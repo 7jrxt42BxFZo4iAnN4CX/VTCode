@@ -785,11 +785,6 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Overview, Usage, UI Design, Implementation Details, Benefits
   - **User Questions**: "What can you tell me about File Reference Feature (@-Symbol)?", "How does Overview work?", "How does Usage work?"
 
-- **File**: `docs/superpowers/plans/2026-08-22-xdg-review-refactor.md`
-  - **Content**: Full XDG Review and Refactor Implementation Plan
-  - **Topics**: Global Constraints
-  - **User Questions**: "What can you tell me about Full XDG Review and Refactor Implementation Plan?", "How does Global Constraints work?"
-
 - **File**: `docs/features/GPU_POD_MANAGER.md`
   - **Content**: GPU Pod Manager
   - **Topics**: Overview, Commands, Behavior Notes, Testing
@@ -864,11 +859,6 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Content**: PTY and Pipe Infrastructure
   - **Topics**: Overview, Module Structure, Usage Examples, Process Group Management, Security Features
   - **User Questions**: "What can you tell me about PTY and Pipe Infrastructure?", "How does Overview work?", "How does Module Structure work?"
-
-- **File**: `docs/superpowers/specs/2026-08-23-plan-mode-reliability-design.md`
-  - **Content**: Planning Workflow Reliability Design
-  - **Topics**: Summary, Goals, Non-Goals, Architecture, Error Handling and Safety
-  - **User Questions**: "What can you tell me about Planning Workflow Reliability Design?", "How does Summary work?", "How does Goals work?"
 
 - **File**: `docs/harness/prompt-architecture.md`
   - **Content**: Prompt Architecture

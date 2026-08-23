@@ -47,6 +47,7 @@ EXCLUDE_DIRS = [
     "docs/bugs",
     "docs/experimental",
     "docs/research", # Some research is ok but some might be too much, I'll keep it for now but let's see
+    "docs/superpowers",
 ]
 
 # Patterns to exclude from topics
