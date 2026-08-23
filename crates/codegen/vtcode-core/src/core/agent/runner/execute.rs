@@ -637,6 +637,10 @@ impl AgentRunner {
                     model: turn_model.clone(),
                     max_tokens,
                     temperature,
+                    top_p: sampling_overrides.top_p,
+                    top_k: sampling_overrides.top_k,
+                    presence_penalty: sampling_overrides.presence_penalty,
+                    frequency_penalty: sampling_overrides.frequency_penalty,
                     stream: self.provider_client.supports_streaming(),
                     tool_choice: (provider_name.eq_ignore_ascii_case("openai")
                         && !prompt_bundle.tool_snapshot.active_tool_names.is_empty())

@@ -82,6 +82,12 @@ return model metadata. Supported defaults include:
 - `supports_responses_compaction`
 - `supports_context_edits`
 
+Sampling values can also be pinned at the provider level or per model profile:
+`temperature` (0.0-2.0), `top_p` (0.0-1.0), `top_k` (>= 0),
+`presence_penalty` / `frequency_penalty` (-2.0-2.0), `max_tokens` (> 0), and
+`reasoning_effort`. Pinning `reasoning_effort` in a profile implies effort
+support for that model.
+
 ### Model profiles
 
 Use sparse profiles for model-specific overrides:
@@ -90,6 +96,9 @@ Use sparse profiles for model-specific overrides:
 [custom_providers.profiles."gpt-5.4"]
 api_format = "openai-responses"
 context_window = 131072
+temperature = 0.2            # sampling temperature (0.0-2.0)
+# max_tokens = 8192          # overrides built-in per-task limits (800/2000)
+reasoning_effort = "low"
 supports_tools = true
 supports_vision = false
 supports_structured_output = true
@@ -107,6 +116,11 @@ order, from highest to lowest priority:
 2. Provider-level capability defaults
 3. Metadata returned by the provider
 4. Conservative built-in defaults
+
+Sampling values resolve on the same chain with one extra global layer beneath
+the provider: profile → provider default → `agent.temperature` /
+`agent.reasoning_effort` globals → built-in per-task limits (`max_tokens`
+only).
 
 An explicit boolean `false` is honored at every level. Omitting `api_format`
 preserves autodetection, while an explicit value selects that API shape.

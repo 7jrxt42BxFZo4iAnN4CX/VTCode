@@ -34,6 +34,15 @@ pub struct HarnessRequestPlanInput {
     pub model: String,
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
+    /// Nucleus sampling mass (0.0-1.0); resolved from custom-provider profile
+    /// overrides when present.
+    pub top_p: Option<f32>,
+    /// Top-k token cutoff (>= 0).
+    pub top_k: Option<i32>,
+    /// Presence penalty (-2.0-2.0).
+    pub presence_penalty: Option<f32>,
+    /// Frequency penalty (-2.0-2.0).
+    pub frequency_penalty: Option<f32>,
     pub stream: bool,
     pub tool_choice: Option<ToolChoice>,
     pub parallel_tool_config: Option<Box<ParallelToolConfig>>,
@@ -68,6 +77,10 @@ pub fn build_harness_request_plan(input: HarnessRequestPlanInput) -> HarnessRequ
         model: input.model,
         max_tokens: input.max_tokens,
         temperature: input.temperature,
+        top_p: input.top_p,
+        top_k: input.top_k,
+        presence_penalty: input.presence_penalty,
+        frequency_penalty: input.frequency_penalty,
         stream: input.stream,
         tool_choice: input.tool_choice,
         parallel_tool_config: input.parallel_tool_config,
