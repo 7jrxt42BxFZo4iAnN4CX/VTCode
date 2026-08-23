@@ -38,7 +38,7 @@ const STREAMED_VALID_PLAN: &str = r#"# Streamed plan
 Preserve the streamed planning handoff.
 
 ## Implementation Steps
-1. Keep the semantic plan -> files: [src/agent/runloop/unified/ui_interaction_stream.rs] -> verify: cargo nextest run -p vtcode --bin vtcode
+1. Keep the semantic plan -> files: [src/agent/runloop/unified/ui_interaction_stream.rs] -> verify: [target/release/vtcode --version, cargo nextest run -p vtcode --bin vtcode]
 
 ## Test Cases and Validation
 1. Run the focused streamed-plan regression tests.
@@ -1878,6 +1878,11 @@ async fn streamed_valid_plan_is_persisted_and_publishes_approval_ready_events() 
 
     assert_eq!(calls.load(Ordering::SeqCst), 1, "a valid streamed plan must not re-enter synthesis");
     assert!(outcome.plan_approved_execution_pending, "the existing automatic approval route should be selected");
+    assert_eq!(
+        outcome.pending_plan_execution_context,
+        crate::agent::runloop::unified::planning_workflow::PlanExecutionContext::Current,
+        "automatic approval must retain the typed current-session execution handoff"
+    );
 
     let plans_dir = backing.workspace_path().join(".vtcode").join("plans");
     let plan_text = fs::read_dir(&plans_dir)
@@ -1893,6 +1898,19 @@ async fn streamed_valid_plan_is_persisted_and_publishes_approval_ready_events() 
         .expect("valid streamed plan should be persisted");
     assert!(plan_text.contains("Preserve the streamed planning handoff."));
     assert!(plan_text.contains("src/agent/runloop/unified/ui_interaction_stream.rs"));
+    assert!(plan_text.contains("target/release/vtcode --version"));
+    assert!(plan_text.contains("cargo nextest run -p vtcode --bin vtcode"));
+
+    let tracker_text = fs::read_dir(&plans_dir)
+        .expect("valid streamed plan should create the plans directory")
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().ends_with(".tasks.md"))
+        })
+        .map(|path| fs::read_to_string(path).expect("read persisted streamed task tracker"))
+        .expect("automatic approval should persist a task tracker before execution handoff");
+    assert!(tracker_text.contains("Keep the semantic plan"));
 
     let harness = fs::read_to_string(harness_path).expect("read harness events");
     let events = harness
