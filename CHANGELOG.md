@@ -2,6 +2,52 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.147.2 - 2026-08-24
+
+### Highlights
+
+#### Features
+
+- per-model sampling overrides for custom providers (#738) (4cc1e5641) (@7jrxt42BxFZo4iAnN4CX)
+
+#### Bug Fixes
+
+- accept single component commands (6c47c0a65) (@vinhnx)
+- reject malformed slash commands (1eea52082) (@vinhnx)
+- harden relative verification commands (2efc8d6a5) (@vinhnx)
+- raise discovery loop floor (a9b38eec7) (@vinhnx)
+- pinpoint invalid verification items (97e3fa86a) (@vinhnx)
+- accept relative verification executables (1e13837c8) (@vinhnx)
+- clarify canonical plan persistence (565dc88d3) (@vinhnx)
+- require final proposed plan block (f0ffd8a62) (@vinhnx)
+- make plan discussion first (12b1256d9) (@vinhnx)
+
+#### Documentation
+
+- clarify planning safety limits (eeb7f72af) (@vinhnx)
+- document planning reliability invariants (88323be73) (@vinhnx)
+- clarify runtime-owned plan handoff (f27e93908) (@vinhnx)
+- explain discovery and approval flow (0e2621b7a) (@vinhnx)
+- exclude superpowers docs from vtcode_docs_map (3e33a4ee9) (@vinhnx)
+- design reliable plan mode (6b9928dd3) (@vinhnx)
+
+### Other Changes
+
+#### Tests
+
+- cover explicit approval selection (50bf0e1e2) (@vinhnx)
+- cover approval ready handoff (5c682c56b) (@vinhnx)
+- cover safe compound discovery commands (6739f6bc3) (@vinhnx)
+
+#### Chores
+
+- remove generated plan index entry (40556cad2) (@vinhnx)
+- clean task artifacts (0a422ac26) (@vinhnx)
+
+### Contributors
+
+@vinhnx, @7jrxt42BxFZo4iAnN4CX
+
 ## 0.147.1 - 2026-08-23
 
 ### Highlights
