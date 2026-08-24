@@ -2,15 +2,15 @@ class Vtcode < Formula
   desc "Rust-based terminal coding agent with semantic code intelligence"
   homepage "https://github.com/vinhnx/vtcode"
   license "MIT"
-  version "0.147.1"
+  version "0.147.2"
 
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/vinhnx/vtcode/releases/download/#{version}/vtcode-#{version}-aarch64-apple-darwin.tar.gz"
-      sha256 "053630215c2a120f1246e096165485dd74e97c99eb46f59763db4ed033570860"
+      sha256 "f4fc577da5a1d86e7e6fc52b13e82c8b5692d2fbf66dedcfc8a899fc63eeb5ad"
     else
       url "https://github.com/vinhnx/vtcode/releases/download/#{version}/vtcode-#{version}-x86_64-apple-darwin.tar.gz"
-      sha256 "d49b8f379e5f8dba87f256e27f3ad02b49af1d111ca4ce81be4df5ba0a44185c"
+      sha256 "69f8b6a42723ecb15ce33f394288ec24f0957b3ae0cdabc782c445ff7e6f826a"
     end
   end
 
@@ -20,7 +20,7 @@ class Vtcode < Formula
       sha256 "ab77663ff1efd78bad21ac62a08e8ef885505ea8946895525e958d6e737207b2"
     elsif Hardware::CPU.arm?
       url "https://github.com/vinhnx/vtcode/releases/download/#{version}/vtcode-#{version}-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "34f4ea32591045f63a22f708a439618341e3711f52880135042a2b25ac9b57c0"
+      sha256 "d52aa876678612a42ab3ae2858bdd9bf4f7b5a5946fca4e5f0716819ab74cb5c"
     else
       odie "VT Code #{version} does not support this Linux architecture"
     end
