@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::types::ReasoningEffortLevel;
+
 fn default_auth_timeout_ms() -> u64 {
     5_000
 }
@@ -54,7 +56,7 @@ impl CustomProviderApiFormat {
 
 /// Sparse per-provider or per-model capability/profile settings.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct CustomProviderProfileConfig {
     /// Typed API format for this provider/profile.
     #[serde(default, skip_serializing_if = "skip_serializing_custom_provider_api_format")]
@@ -63,6 +65,34 @@ pub struct CustomProviderProfileConfig {
     /// Optional context window size in tokens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window: Option<usize>,
+
+    /// Optional sampling temperature override (0.0-2.0) sent with requests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+
+    /// Optional nucleus-sampling override (0.0-1.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f32>,
+
+    /// Optional top-k override (>= 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<i32>,
+
+    /// Optional presence penalty override (-2.0-2.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presence_penalty: Option<f32>,
+
+    /// Optional frequency penalty override (-2.0-2.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frequency_penalty: Option<f32>,
+
+    /// Optional max output tokens override (> 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+
+    /// Optional reasoning effort override sent with requests for this model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffortLevel>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_tools: Option<bool>,
@@ -100,6 +130,53 @@ impl CustomProviderProfileConfig {
             ));
         }
 
+        if let Some(temperature) = self.temperature
+            && !(0.0..=2.0).contains(&temperature)
+        {
+            return Err(format!(
+                "custom_providers[{provider_name}].profiles[{profile_key}]: `temperature` must be between 0.0 and 2.0"
+            ));
+        }
+
+        if let Some(top_p) = self.top_p
+            && !(0.0..=1.0).contains(&top_p)
+        {
+            return Err(format!(
+                "custom_providers[{provider_name}].profiles[{profile_key}]: `top_p` must be between 0.0 and 1.0"
+            ));
+        }
+
+        if let Some(top_k) = self.top_k
+            && top_k < 0
+        {
+            return Err(format!("custom_providers[{provider_name}].profiles[{profile_key}]: `top_k` must be >= 0"));
+        }
+
+        for (field, value) in [
+            ("`presence_penalty`", self.presence_penalty),
+            ("`frequency_penalty`", self.frequency_penalty),
+        ] {
+            if let Some(value) = value
+                && !(-2.0..=2.0).contains(&value)
+            {
+                return Err(format!(
+                    "custom_providers[{provider_name}].profiles[{profile_key}]: {field} must be between -2.0 and 2.0"
+                ));
+            }
+        }
+
+        if self.max_tokens == Some(0) {
+            return Err(format!(
+                "custom_providers[{provider_name}].profiles[{profile_key}]: `max_tokens` must be greater than 0"
+            ));
+        }
+
+        if self.reasoning_effort == Some(ReasoningEffortLevel::Unknown) {
+            return Err(format!(
+                "custom_providers[{provider_name}].profiles[{profile_key}]: `reasoning_effort` is not a recognized level (use none, minimal, low, medium, high, xhigh, or max)"
+            ));
+        }
+
         Ok(())
     }
 }
@@ -107,10 +184,17 @@ impl CustomProviderProfileConfig {
 /// Resolved capability/profile settings after applying provider defaults and
 /// exact model-specific overrides.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ResolvedCustomProviderProfile {
     pub api_format: Option<CustomProviderApiFormat>,
     pub context_window: Option<usize>,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub top_k: Option<i32>,
+    pub presence_penalty: Option<f32>,
+    pub frequency_penalty: Option<f32>,
+    pub max_tokens: Option<u32>,
+    pub reasoning_effort: Option<ReasoningEffortLevel>,
     pub supports_tools: Option<bool>,
     pub supports_reasoning: Option<bool>,
     pub supports_reasoning_effort: Option<bool>,
@@ -136,6 +220,13 @@ impl ResolvedCustomProviderProfile {
         Self {
             api_format: profile.api_format.resolved().or(defaults.api_format.resolved()),
             context_window: profile.context_window.or(defaults.context_window),
+            temperature: profile.temperature.or(defaults.temperature),
+            top_p: profile.top_p.or(defaults.top_p),
+            top_k: profile.top_k.or(defaults.top_k),
+            presence_penalty: profile.presence_penalty.or(defaults.presence_penalty),
+            frequency_penalty: profile.frequency_penalty.or(defaults.frequency_penalty),
+            max_tokens: profile.max_tokens.or(defaults.max_tokens),
+            reasoning_effort: profile.reasoning_effort.or(defaults.reasoning_effort),
             supports_tools: profile.supports_tools.or(defaults.supports_tools),
             supports_reasoning: profile.supports_reasoning.or(defaults.supports_reasoning),
             supports_reasoning_effort: profile.supports_reasoning_effort.or(defaults.supports_reasoning_effort),
@@ -215,7 +306,7 @@ impl CustomProviderCommandAuthConfig {
 /// proxies) with distinct display names, so they can toggle between them
 /// and clearly see which endpoint is active.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct CustomProviderConfig {
     /// Stable provider key used for routing and persistence (e.g., "mycorp").
     /// Must be lowercase alphanumeric with optional hyphens/underscores.
@@ -275,6 +366,36 @@ pub struct CustomProviderConfig {
     /// Optional support for context edits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_context_edits: Option<bool>,
+
+    /// Optional sampling temperature default (0.0-2.0) for models served by
+    /// this endpoint unless a profile overrides it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+
+    /// Optional nucleus-sampling default (0.0-1.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f32>,
+
+    /// Optional top-k default (>= 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<i32>,
+
+    /// Optional presence penalty default (-2.0-2.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presence_penalty: Option<f32>,
+
+    /// Optional frequency penalty default (-2.0-2.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frequency_penalty: Option<f32>,
+
+    /// Optional max output tokens default (> 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+
+    /// Optional reasoning effort default for models without a profile
+    /// override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffortLevel>,
 
     /// Environment variable name that holds the API key for this endpoint
     /// (e.g., "MYCORP_API_KEY").
@@ -361,6 +482,13 @@ impl CustomProviderConfig {
         CustomProviderProfileConfig {
             api_format: self.api_format,
             context_window: self.context_window,
+            temperature: self.temperature,
+            top_p: self.top_p,
+            top_k: self.top_k,
+            presence_penalty: self.presence_penalty,
+            frequency_penalty: self.frequency_penalty,
+            max_tokens: self.max_tokens,
+            reasoning_effort: self.reasoning_effort,
             supports_tools: self.supports_tools,
             supports_reasoning: self.supports_reasoning,
             supports_reasoning_effort: self.supports_reasoning_effort,
@@ -397,6 +525,46 @@ impl CustomProviderConfig {
 
         if self.context_window == Some(0) {
             return Err(format!("custom_providers[{}]: `context_window` must be greater than 0", self.name));
+        }
+
+        if let Some(temperature) = self.temperature
+            && !(0.0..=2.0).contains(&temperature)
+        {
+            return Err(format!("custom_providers[{}]: `temperature` must be between 0.0 and 2.0", self.name));
+        }
+
+        if let Some(top_p) = self.top_p
+            && !(0.0..=1.0).contains(&top_p)
+        {
+            return Err(format!("custom_providers[{}]: `top_p` must be between 0.0 and 1.0", self.name));
+        }
+
+        if let Some(top_k) = self.top_k
+            && top_k < 0
+        {
+            return Err(format!("custom_providers[{}]: `top_k` must be >= 0", self.name));
+        }
+
+        for (field, value) in [
+            ("`presence_penalty`", self.presence_penalty),
+            ("`frequency_penalty`", self.frequency_penalty),
+        ] {
+            if let Some(value) = value
+                && !(-2.0..=2.0).contains(&value)
+            {
+                return Err(format!("custom_providers[{}]: {field} must be between -2.0 and 2.0", self.name));
+            }
+        }
+
+        if self.max_tokens == Some(0) {
+            return Err(format!("custom_providers[{}]: `max_tokens` must be greater than 0", self.name));
+        }
+
+        if self.reasoning_effort == Some(ReasoningEffortLevel::Unknown) {
+            return Err(format!(
+                "custom_providers[{}]: `reasoning_effort` is not a recognized level (use none, minimal, low, medium, high, xhigh, or max)",
+                self.name
+            ));
         }
 
         if let Some(auth) = &self.auth {
@@ -482,6 +650,13 @@ mod tests {
     #[test]
     fn validate_accepts_lowercase_provider_name() {
         let config = CustomProviderConfig {
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
+            reasoning_effort: None,
             name: "mycorp".to_string(),
             display_name: "MyCorp".to_string(),
             base_url: "https://llm.example/v1".to_string(),
@@ -510,6 +685,13 @@ mod tests {
     #[test]
     fn validate_rejects_invalid_provider_name() {
         let config = CustomProviderConfig {
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
+            reasoning_effort: None,
             name: "My Corp".to_string(),
             display_name: "My Corp".to_string(),
             base_url: "https://llm.example/v1".to_string(),
@@ -538,6 +720,13 @@ mod tests {
     #[test]
     fn validate_rejects_auth_and_api_key_env_together() {
         let config = CustomProviderConfig {
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
+            reasoning_effort: None,
             name: "mycorp".to_string(),
             display_name: "MyCorp".to_string(),
             base_url: "https://llm.example/v1".to_string(),
@@ -572,6 +761,13 @@ mod tests {
     #[test]
     fn validate_accepts_command_auth_without_static_env_key() {
         let config = CustomProviderConfig {
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
+            reasoning_effort: None,
             name: "mycorp".to_string(),
             display_name: "MyCorp".to_string(),
             base_url: "https://llm.example/v1".to_string(),
@@ -606,6 +802,13 @@ mod tests {
     #[test]
     fn validate_rejects_empty_model_entry_in_models_list() {
         let config = CustomProviderConfig {
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
+            reasoning_effort: None,
             name: "mycorp".to_string(),
             display_name: "MyCorp".to_string(),
             base_url: "https://llm.example/v1".to_string(),
@@ -634,6 +837,13 @@ mod tests {
     #[test]
     fn validate_rejects_zero_context_window() {
         let config = CustomProviderConfig {
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
+            reasoning_effort: None,
             name: "mycorp".to_string(),
             display_name: "MyCorp".to_string(),
             base_url: "https://llm.example/v1".to_string(),
@@ -665,6 +875,13 @@ mod tests {
         profiles.insert(
             " gpt-5-mini ".to_string(),
             CustomProviderProfileConfig {
+                temperature: None,
+                top_p: None,
+                top_k: None,
+                presence_penalty: None,
+                frequency_penalty: None,
+                max_tokens: None,
+                reasoning_effort: None,
                 api_format: CustomProviderApiFormat::Auto,
                 context_window: Some(128_000),
                 supports_tools: None,
@@ -680,6 +897,13 @@ mod tests {
         );
 
         let config = CustomProviderConfig {
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
+            reasoning_effort: None,
             name: "mycorp".to_string(),
             display_name: "MyCorp".to_string(),
             base_url: "https://llm.example/v1".to_string(),
@@ -708,6 +932,13 @@ mod tests {
     #[test]
     fn effective_models_uses_models_list_when_present() {
         let config = CustomProviderConfig {
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
+            reasoning_effort: None,
             name: "atlascloud".to_string(),
             display_name: "Atlas Cloud".to_string(),
             base_url: "https://api.atlascloud.ai/v1".to_string(),
@@ -756,6 +987,13 @@ mod tests {
     #[test]
     fn effective_models_falls_back_to_single_model_field() {
         let config = CustomProviderConfig {
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
+            reasoning_effort: None,
             model: "gpt-5-mini".to_string(),
             ..CustomProviderConfig::default()
         };
@@ -769,6 +1007,13 @@ mod tests {
         profiles.insert(
             "gpt-5-mini".to_string(),
             CustomProviderProfileConfig {
+                temperature: None,
+                top_p: None,
+                top_k: None,
+                presence_penalty: None,
+                frequency_penalty: None,
+                max_tokens: None,
+                reasoning_effort: None,
                 api_format: CustomProviderApiFormat::OpenAIResponses,
                 context_window: Some(128_000),
                 supports_tools: Some(true),
@@ -784,6 +1029,13 @@ mod tests {
         );
 
         let config = CustomProviderConfig {
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
+            reasoning_effort: None,
             name: "mycorp".to_string(),
             display_name: "MyCorp".to_string(),
             base_url: "https://llm.example/v1".to_string(),
@@ -811,6 +1063,13 @@ mod tests {
             ResolvedCustomProviderProfile {
                 api_format: Some(CustomProviderApiFormat::OpenAIResponses),
                 context_window: Some(128_000),
+                temperature: None,
+                top_p: None,
+                top_k: None,
+                presence_penalty: None,
+                frequency_penalty: None,
+                max_tokens: None,
+                reasoning_effort: None,
                 supports_tools: Some(true),
                 supports_reasoning: Some(true),
                 supports_reasoning_effort: None,
@@ -831,6 +1090,13 @@ mod tests {
         profiles.insert(
             "gpt-5-mini".to_string(),
             CustomProviderProfileConfig {
+                temperature: None,
+                top_p: None,
+                top_k: None,
+                presence_penalty: None,
+                frequency_penalty: None,
+                max_tokens: None,
+                reasoning_effort: None,
                 api_format: CustomProviderApiFormat::Auto,
                 context_window: None,
                 supports_tools: Some(false),
@@ -846,6 +1112,13 @@ mod tests {
         );
 
         let config = CustomProviderConfig {
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
+            reasoning_effort: None,
             name: "mycorp".to_string(),
             display_name: "MyCorp".to_string(),
             base_url: "https://llm.example/v1".to_string(),

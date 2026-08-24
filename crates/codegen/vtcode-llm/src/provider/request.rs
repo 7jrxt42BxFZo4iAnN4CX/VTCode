@@ -209,6 +209,44 @@ pub struct LLMRequest {
     pub anthropic_request_overrides: Option<AnthropicRequestOverrides>,
 }
 
+/// Per-model sampling parameter overrides resolved from a custom provider
+/// profile. Every field defaults to `None`, meaning the agent loop's global
+/// configuration value applies unchanged.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct SamplingOverrides {
+    /// Sampling temperature (0.0-2.0).
+    pub temperature: Option<f32>,
+    /// Nucleus sampling mass (0.0-1.0).
+    pub top_p: Option<f32>,
+    /// Top-k token cutoff (>= 0).
+    pub top_k: Option<i32>,
+    /// Presence penalty (-2.0-2.0).
+    pub presence_penalty: Option<f32>,
+    /// Frequency penalty (-2.0-2.0).
+    pub frequency_penalty: Option<f32>,
+    /// Maximum output tokens (> 0).
+    pub max_tokens: Option<u32>,
+    /// Reasoning effort for models that accept it.
+    pub reasoning_effort: Option<ReasoningEffortLevel>,
+    /// Whether this model's wire format rejects sampling parameters while
+    /// reasoning is active (e.g. custom endpoints speaking the Anthropic
+    /// Messages shape).
+    pub suppresses_sampling_with_reasoning: bool,
+    /// Set by providers that resolve overrides from an explicit user profile;
+    /// callers use it to trust these values over name-based heuristics.
+    pub profile_aware: bool,
+}
+
+impl SamplingOverrides {
+    /// Whether sampling parameters must be dropped for this request: either
+    /// the model's wire format rejects sampling while reasoning is active, or
+    /// a built-in Anthropic/MiniMax-shaped backend (`native_match`) enforces
+    /// the same rule outside of profile-aware routing.
+    pub fn suppresses_sampling(&self, native_match: bool, reasoning_active: bool) -> bool {
+        reasoning_active && (self.suppresses_sampling_with_reasoning || (!self.profile_aware && native_match))
+    }
+}
+
 /// Optional overrides for standalone Responses compaction requests.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct ResponsesCompactionOptions {

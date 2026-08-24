@@ -2983,6 +2983,17 @@ fn responses_payload_omits_sampling_parameters_for_gpt_5_4_high_reasoning() {
     );
 }
 
+#[test]
+fn responses_payload_omits_penalties_when_sampling_gate_closed() {
+    let provider = native_openai_provider(models::openai::GPT_5_4);
+    let mut request = sample_request(models::openai::GPT_5_4);
+    request.reasoning_effort = Some(vtcode_config::types::ReasoningEffortLevel::High);
+    request.presence_penalty = Some(0.1);
+    request.frequency_penalty = Some(-0.5);
+    let payload = provider.convert_to_openai_responses_format(&request).expect("should succeed");
+    assert_absent(&payload, "sampling_parameters");
+}
+
 // ─── Streaming Tests ─────────────────────────────────────────────────────────
 
 #[test]

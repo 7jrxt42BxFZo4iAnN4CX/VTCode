@@ -178,6 +178,10 @@ mod tests {
             model: "gpt-5".to_string(),
             max_tokens: Some(128),
             temperature: Some(0.7),
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
             stream: true,
             tool_choice: Some(ToolChoice::auto()),
             parallel_tool_config: None,
@@ -206,6 +210,10 @@ mod tests {
             model: "gpt-5".to_string(),
             max_tokens: Some(128),
             temperature: Some(0.7),
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
             stream: true,
             tool_choice: Some(ToolChoice::auto()),
             parallel_tool_config: None,
@@ -223,6 +231,41 @@ mod tests {
         assert!(!plan.has_tools);
         assert!(plan.request.tools.is_none());
         assert!(plan.tool_catalog_hash.is_none());
+    }
+
+    #[test]
+    fn request_plan_carries_sampling_overrides_into_request() {
+        let plan = build_harness_request_plan(HarnessRequestPlanInput {
+            messages: Arc::new(vec![Message::user("hello".to_string())]),
+            system_prompt: Arc::from("base"),
+            tools: None,
+            model: "gpt-5".to_string(),
+            max_tokens: Some(4_096),
+            temperature: Some(0.2),
+            top_p: Some(0.9),
+            top_k: Some(40),
+            presence_penalty: Some(0.1),
+            frequency_penalty: Some(-0.5),
+            stream: true,
+            tool_choice: None,
+            parallel_tool_config: None,
+            reasoning_effort: None,
+            verbosity: None,
+            metadata: None,
+            context_management: None,
+            previous_response_id: None,
+            prompt_cache_key: None,
+            prompt_cache_profile: None,
+            tool_catalog_hash: None,
+            system_prompt_prefix_hash: None,
+        });
+
+        assert_eq!(plan.request.temperature, Some(0.2));
+        assert_eq!(plan.request.top_p, Some(0.9));
+        assert_eq!(plan.request.top_k, Some(40));
+        assert_eq!(plan.request.presence_penalty, Some(0.1));
+        assert_eq!(plan.request.frequency_penalty, Some(-0.5));
+        assert_eq!(plan.request.max_tokens, Some(4_096));
     }
 
     #[test]

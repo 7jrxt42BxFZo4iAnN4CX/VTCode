@@ -194,14 +194,23 @@ Capability defaults and per-model profiles
 
 Custom providers may expose a small, conservative set of capability defaults to use when model metadata is absent. These are useful for gateways and aggregators that do not provide per-model descriptors. Set fields such as `supports_tools`, `supports_vision`, `supports_structured_output`, or `supports_parallel_tool_calls` directly on the provider entry.
 
-For fine-grained overrides you can declare sparse per-model profiles. Profiles live in `custom_providers.profiles."<model-id>"` and only modify runtime defaults for that specific model identifier. IMPORTANT: profiles do not add or enable models in the picker — `model` / `models` remain the allowlist/default. A profile only changes how VT Code treats an already-selected model at runtime (capabilities, context window, api_format, etc.).
+Providers and profiles can also pin sampling values. Available fields: `temperature` (0.0-2.0), `top_p` (0.0-1.0), `top_k` (>= 0), `presence_penalty` / `frequency_penalty` (-2.0-2.0), `max_tokens` (> 0; overrides the agent loop's built-in per-task limits), and `reasoning_effort`. Pinning `reasoning_effort` on a profile implies effort support for that model.
+
+For fine-grained overrides you can declare sparse per-model profiles. Profiles live in `custom_providers.profiles."<model-id>"` and only modify runtime defaults for that specific model identifier. IMPORTANT: profiles do not add or enable models in the picker — `model` / `models` remain the allowlist/default. A profile only changes how VT Code treats an already-selected model at runtime (capabilities, context window, api_format, sampling values, etc.).
 
 Example per-model profile:
 
 ```toml
-[custom_providers.profiles."gpt-5.4"]
+[custom_providers.profiles."corp-model"]
 api_format = "openai-responses"
 context_window = 131072
+temperature = 0.2            # sampling temperature (0.0-2.0)
+# top_p = 0.9                # nucleus sampling (0.0-1.0)
+# top_k = 40                 # top-k cutoff (>= 0)
+# presence_penalty = 0.1     # (-2.0-2.0)
+# frequency_penalty = -0.5   # (-2.0-2.0)
+# max_tokens = 8192          # overrides built-in per-task limits (800/2000)
+reasoning_effort = "low"     # implies effort support for this model
 supports_tools = true
 supports_vision = false
 supports_structured_output = true
@@ -220,10 +229,14 @@ When determining a model's runtime shape VT Code applies values in the following
 3. model metadata discovered from the provider (or autodetection)
 4. conservative built-in fallback defaults
 
+Sampling values resolve on the same chain, with one extra global layer beneath the provider: profile → provider default → `agent.temperature` / `agent.reasoning_effort` globals → built-in per-task limits (`max_tokens` only). Two built-in behaviors sit above the profile chain: simple sub-tasks force `reasoning_effort = "minimal"` regardless of a profile pin, and backends that reject sampling during reasoning (native Anthropic/MiniMax, or custom profiles with `api_format = "anthropic-messages"`) drop `temperature` while reasoning is active.
+
 Additional rules:
 - An explicit boolean `false` in any overriding layer is honored and prevents a higher-level implicit `true` from taking effect.
-- Omitting `api_format` preserves legacy autodetection behavior; explicitly setting `api_format` to a value instructs VT Code to use that API shape and not silently fall back.
+- Omitting `api_format` preserves legacy autodetection behavior; explicitly setting `api_format` to a value instructs VT Code to use this API shape and not silently fall back.
 - Profiles do not make a model available in the picker — use `model` or `models` to control availability.
+- Wire delivery depends on the backend's API format. The OpenAI Chat shape sends `temperature`, `top_p`, and both penalties; the OpenAI Responses shape sends them inside a nested `sampling_parameters` object that some compatible endpoints ignore, and currently does not emit `max_output_tokens` for non-native endpoints; `top_k` is accepted in configuration but not serialized for these shapes today (it applies only to backends whose own request builders expose it).
+- Name-based OpenAI sampling gates apply to custom endpoints too, by bare model-name match: models named `gpt`, `gpt-5.2`, `gpt-5.4`, `gpt-5.5*` accept sampling only while reasoning effort resolves to `none` (values are silently omitted otherwise), and `gpt-5`/`gpt-5-mini`/`gpt-5-nano` never receive sampling parameters. Prefer neutral model IDs on custom gateways if you need pinned values on such names.
 
 Store a custom provider key with the same explicit identity used by the
 configuration:

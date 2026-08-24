@@ -4,7 +4,9 @@ use vtcode_config::core::AnthropicConfig;
 use vtcode_config::core::{CustomProviderApiFormat, CustomProviderConfig, ResolvedCustomProviderProfile};
 use vtcode_config::{ModelConfig, OpenAIConfig, PromptCachingConfig, TimeoutsConfig};
 
-use crate::provider::{LLMError, LLMProvider, LLMRequest, LLMResponse, LLMStream, Message, ResponsesCompactionOptions};
+use crate::provider::{
+    LLMError, LLMProvider, LLMRequest, LLMResponse, LLMStream, Message, ResponsesCompactionOptions, SamplingOverrides,
+};
 use crate::providers::anthropic::{self, AnthropicProvider};
 use crate::providers::common::{resolve_model, validate_request_common};
 use crate::providers::openai::{CustomProviderAuthHandle, OpenAIProvider};
@@ -170,10 +172,35 @@ impl LLMProvider for CustomProviderBackendRouter {
     fn supports_reasoning_effort(&self, model: &str) -> bool {
         let resolved = self.resolved_model(model);
         let profile = self.profile_for_model(resolved);
+        // A pin in THIS model's own profile implies effort support unless the
+        // same profile explicitly disables it. Provider-level defaults — both
+        // the effort value and the capability flag — must not flip support for
+        // every model on the endpoint.
+        let own = self.custom_config.profiles.get(resolved);
+        let own_pin = own.and_then(|p| p.reasoning_effort).is_some();
+        if own_pin {
+            return own.and_then(|p| p.supports_reasoning_effort) != Some(false);
+        }
         Self::override_bool(
             profile.supports_reasoning_effort,
             self.backend_for_model(model).supports_reasoning_effort(resolved),
         )
+    }
+
+    fn sampling_overrides(&self, model: &str) -> SamplingOverrides {
+        let resolved = self.resolved_model(model);
+        let profile = self.profile_for_model(resolved);
+        SamplingOverrides {
+            temperature: profile.temperature,
+            top_p: profile.top_p,
+            top_k: profile.top_k,
+            presence_penalty: profile.presence_penalty,
+            frequency_penalty: profile.frequency_penalty,
+            max_tokens: profile.max_tokens,
+            reasoning_effort: profile.reasoning_effort,
+            suppresses_sampling_with_reasoning: profile.api_format == Some(CustomProviderApiFormat::AnthropicMessages),
+            profile_aware: true,
+        }
     }
 
     fn supports_tools(&self, model: &str) -> bool {
@@ -327,7 +354,7 @@ impl LLMProvider for CustomProviderBackendRouter {
 #[cfg(test)]
 mod tests {
     use super::CustomProviderBackendRouter;
-    use crate::provider::{LLMProvider, LLMRequest, Message};
+    use crate::provider::{LLMProvider, LLMRequest, Message, SamplingOverrides};
     use crate::providers::openai::CustomProviderAuthHandle;
     use serde_json::json;
     use std::path::Path;
@@ -337,8 +364,97 @@ mod tests {
         AnthropicConfig, CustomProviderApiFormat, CustomProviderCommandAuthConfig, CustomProviderConfig,
         CustomProviderProfileConfig,
     };
+    use vtcode_config::types::ReasoningEffortLevel;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn sampling_router() -> CustomProviderBackendRouter {
+        let mut profiles = std::collections::BTreeMap::new();
+        profiles.insert(
+            "cold-model".to_string(),
+            CustomProviderProfileConfig {
+                temperature: Some(0.0),
+                top_p: Some(0.9),
+                reasoning_effort: Some(ReasoningEffortLevel::Low),
+                ..Default::default()
+            },
+        );
+
+        CustomProviderBackendRouter::from_config(
+            CustomProviderConfig {
+                name: "sampling-test".to_string(),
+                display_name: "Sampling Test".to_string(),
+                base_url: "https://llm.example/v1".to_string(),
+                temperature: Some(0.5),
+                models: vec!["cold-model".to_string(), "warm-model".to_string()],
+                profiles,
+                ..Default::default()
+            },
+            None,
+            None,
+            "https://llm.example/v1".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
+    #[test]
+    fn sampling_overrides_resolve_per_model_with_provider_defaults() {
+        let router = sampling_router();
+
+        let cold = router.sampling_overrides("cold-model");
+        assert_eq!(
+            cold,
+            SamplingOverrides {
+                temperature: Some(0.0),
+                top_p: Some(0.9),
+                top_k: None,
+                presence_penalty: None,
+                frequency_penalty: None,
+                max_tokens: None,
+                reasoning_effort: Some(ReasoningEffortLevel::Low),
+                suppresses_sampling_with_reasoning: false,
+                profile_aware: true,
+            }
+        );
+        assert!(router.supports_reasoning_effort("cold-model"));
+
+        // Models without a profile fall back to provider-level defaults.
+        let warm = router.sampling_overrides("warm-model");
+        assert_eq!(warm.temperature, Some(0.5));
+        assert_eq!(warm.top_p, None);
+    }
+
+    #[test]
+    fn sampling_overrides_suppression_matrix_matches_native_semantics() {
+        let profile_openai = SamplingOverrides { profile_aware: true, ..Default::default() };
+        let profile_anthropic = SamplingOverrides {
+            suppresses_sampling_with_reasoning: true,
+            profile_aware: true,
+            ..Default::default()
+        };
+        let builtin_default = SamplingOverrides::default();
+
+        // Custom openai-shaped profile keeps pinned values during reasoning.
+        assert!(!profile_openai.suppresses_sampling(false, true));
+
+        // Custom anthropic-messages profile drops them.
+        assert!(profile_anthropic.suppresses_sampling(false, true));
+        assert!(!profile_anthropic.suppresses_sampling(false, false));
+
+        // Built-in Anthropic/MiniMax shape suppresses only via native match;
+        // built-in OpenAI shape never does through overrides alone.
+        assert!(builtin_default.suppresses_sampling(true, true));
+        assert!(!builtin_default.suppresses_sampling(true, false));
+        assert!(!builtin_default.suppresses_sampling(false, true));
+
+        // Level "none"/"unknown" is not active reasoning anywhere.
+        assert!(!profile_anthropic.suppresses_sampling(false, false));
+    }
 
     fn write_tokens_file(dir: &Path, tokens: &[&str]) {
         std::fs::write(dir.join("tokens.txt"), tokens.join("\n")).expect("write tokens file");
@@ -451,6 +567,13 @@ mod tests {
             base_url: server.uri(),
             api_format: CustomProviderApiFormat::AnthropicMessages,
             context_window: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
+            reasoning_effort: None,
             supports_tools: None,
             supports_reasoning: None,
             supports_reasoning_effort: None,
