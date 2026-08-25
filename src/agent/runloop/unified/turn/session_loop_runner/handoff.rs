@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::path::Path;
+use vtcode_core::core::agent::runtime::AgentRuntime;
 use vtcode_core::primary_agent::{ActivePrimaryAgent, ActivePrimaryAgentState};
 use vtcode_core::tools::registry::ToolRegistry;
 
@@ -11,6 +12,17 @@ use crate::agent::runloop::unified::turn::primary_agent_runtime::{
 pub(super) const PLAN_APPROVED_EXECUTION_DIRECTIVE: &str = "Execution handoff is active. Any earlier message saying tools are disabled or implementation is paused belongs to the completed planning/recovery turn and is stale. Tools are enabled now. Do not report that work is paused, ask to wait, or request another confirmation. Start implementation immediately: execute the approved plan step by step beginning with the first pending step. Before the first implementation action, use task_tracker with action=list and mark the first pending task in_progress; update each task as work and verification complete. Use cargo nextest run --locked for Rust verification; never emit a raw <tool_call> block as text. Finish with a concise execution summary covering the outcome, changed files, verification performed, and remaining blockers.";
 pub(super) const PLAN_APPROVED_FRESH_CONTEXT_HEADER: &str = "This is a fresh execution context. The persisted approved plan below is the source of user intent. Treat it as authoritative and implement it now.";
 pub(super) const PLAN_APPROVED_EXECUTION_INPUT: &str = "Implement the approved plan now.";
+
+/// Append the synthetic execution prompt using the same session-state path as
+/// a queued follow-up. Approved-plan execution is an internal turn, but it
+/// still needs a durable user message so the provider sees a complete prompt
+/// and checkpoint metadata points at the actual execution request.
+pub(super) fn append_approved_plan_execution_input(runtime: &mut AgentRuntime) -> (String, usize) {
+    let input = PLAN_APPROVED_EXECUTION_INPUT.to_string();
+    let prompt_message_index = runtime.state.messages.len();
+    runtime.state.add_user_message(input.clone());
+    (input, prompt_message_index)
+}
 
 pub(super) fn build_approved_plan_execution_prompt(
     execution_context: PlanExecutionContext,
@@ -121,5 +133,19 @@ mod tests {
 
         assert_eq!(prompt, PLAN_APPROVED_EXECUTION_DIRECTIVE);
         assert!(!prompt.contains("Approved plan context:"));
+    }
+
+    #[test]
+    fn approved_plan_execution_input_is_appended_as_a_single_user_message() {
+        let state = vtcode_core::core::agent::session::AgentSessionState::new("session".to_string(), 16, 4, 128_000);
+        let mut runtime = AgentRuntime::new(state, None, None);
+
+        let (input, prompt_message_index) = append_approved_plan_execution_input(&mut runtime);
+
+        assert_eq!(input, PLAN_APPROVED_EXECUTION_INPUT);
+        assert_eq!(prompt_message_index, 0);
+        assert_eq!(runtime.state.messages.len(), 1);
+        assert_eq!(runtime.state.messages[0].role, vtcode_core::llm::provider::MessageRole::User);
+        assert_eq!(runtime.state.messages[0].get_text_content(), PLAN_APPROVED_EXECUTION_INPUT);
     }
 }

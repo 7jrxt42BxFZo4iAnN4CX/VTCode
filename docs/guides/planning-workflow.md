@@ -161,6 +161,12 @@ loop extensions. A configured loop value of `0` remains unlimited. Current and
 fresh-context approved-plan handoffs each initialize their own implementation
 turn, so each gets the same one-time allowance.
 
+The implementation request is scheduled as an explicit internal next-turn
+trigger after the handoff directive is appended. It is not dependent on the
+bounded ordinary steering FIFO, and the synthetic user prompt is recorded once
+so an approved plan cannot switch to `build` and then wait for another
+`continue` input.
+
 ### Validated Approval Handoff
 
 Approval is accepted only for a persisted plan that passes the artifact validator and has a persisted task tracker. The canonical sections are `Summary`, `Implementation Steps`, `Test Cases and Validation`, and `Assumptions and Defaults`; the documented short aliases `Steps`, `Validation`, and `Assumptions` are accepted case-insensitively. Every numbered implementation step must name a concrete file, symbol, behavior, or other repository target and include a non-empty `verify:`/`verification:` command or check. Placeholder tokens and unresolved `Next open decision` or `Open question` entries block approval. Invalid candidates are rejected before persistence, so an existing valid draft is preserved. VT Code gives the model one bounded repair request; if the repaired artifact is still invalid, planning remains active with the validation reasons visible.

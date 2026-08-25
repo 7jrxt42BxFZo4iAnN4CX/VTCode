@@ -29,8 +29,8 @@ use super::blocked_handoff::{
     SessionCheckpointOutcome, persist_session_checkpoint, write_blocked_handoff_after_checkpoint,
 };
 use super::handoff::{
-    PLAN_APPROVED_EXECUTION_INPUT, apply_primary_agent_tool_policy_overrides, build_approved_plan_execution_prompt,
-    select_approved_plan_execution_agent,
+    append_approved_plan_execution_input, apply_primary_agent_tool_policy_overrides,
+    build_approved_plan_execution_prompt, select_approved_plan_execution_agent,
 };
 use super::metrics::{
     TurnExecutionMetrics, capture_code_change_snapshot, emit_turn_execution_metrics, estimate_history_bytes,
@@ -492,6 +492,7 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
 
         let mut cross_turn_tracker = crate::agent::runloop::unified::run_loop_context::CrossTurnTracker::new();
         let mut approved_plan_execution_turn = false;
+        let mut pending_approved_plan_execution_input = false;
         let mut last_approved_plan_summary_status: Option<ExecutionSummaryStatus> = None;
         let mut last_turn_result: Option<RunLoopTurnLoopResult> = None;
         let mut last_turn_response_was_fallback = false;
@@ -517,6 +518,7 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                         {
                             Ok(plan) => plan,
                             Err(error) => {
+                                pending_approved_plan_execution_input = false;
                                 harness_try!(renderer.line(
                                     MessageStyle::Error,
                                     &format!("Approved-plan execution is blocked: {error}"),
@@ -540,6 +542,7 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                                 renderer
                                     .line(MessageStyle::Error, &format!("Approved-plan execution is blocked: {error}"))
                             );
+                            pending_approved_plan_execution_input = false;
                             continue;
                         }
                     }
@@ -603,7 +606,20 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                     controller.set_parent_messages(&runtime.state.messages).await;
                 }
 
-                let interaction_outcome = if let Some(input) = runtime.run_until_idle() {
+                let interaction_outcome = if pending_approved_plan_execution_input {
+                    // An approved-plan handoff is an internal state transition,
+                    // not ordinary user steering. Consume it directly so a
+                    // full or reordered steering FIFO cannot leave the newly
+                    // selected build agent waiting for another `continue`.
+                    pending_approved_plan_execution_input = false;
+                    let (input, prompt_message_index) = append_approved_plan_execution_input(&mut runtime);
+                    let turn_id = SessionId::generate().into_inner();
+                    InteractionOutcome::Continue {
+                        input,
+                        prompt_message_index: Some(prompt_message_index),
+                        turn_id,
+                    }
+                } else if let Some(input) = runtime.run_until_idle() {
                     let turn_id = SessionId::generate().into_inner();
                     InteractionOutcome::Continue { input, prompt_message_index: None, turn_id }
                 } else {
@@ -908,7 +924,8 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                             .messages_mut()
                             .push(vtcode_core::llm::provider::Message::system(execution_directive));
                         handle.set_activity_state(ActivityState::Building);
-                        (PLAN_APPROVED_EXECUTION_INPUT.to_string(), None)
+                        let (input, prompt_message_index) = append_approved_plan_execution_input(&mut runtime);
+                        (input, Some(prompt_message_index))
                     }
                 };
                 if next_turn_input.trim().is_empty() {
@@ -1227,15 +1244,13 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                         handle.set_activity_state(ActivityState::StartingBuild);
                     }
                     approved_plan_execution_turn = true;
+                    pending_approved_plan_execution_input = true;
                     let execution_directive =
                         build_approved_plan_execution_prompt(plan_execution_context, plan_seed.as_deref());
                     runtime
                         .state
                         .messages_mut()
                         .push(vtcode_core::llm::provider::Message::system(execution_directive));
-                    if let Err(error) = runtime.try_queue_follow_up_input(PLAN_APPROVED_EXECUTION_INPUT.to_string()) {
-                        tracing::warn!(%error, "Unable to queue approved-plan execution directive");
-                    }
                     handle.set_activity_state(ActivityState::Building);
                 }
                 if executing_approved_plan {
