@@ -537,7 +537,16 @@ impl InputManager {
         if self.delete_selection() {
             return;
         }
+        let prefix_len = self.cursor();
+        let before_len = self.content().len();
         self.textarea.delete_next_word();
+        // Deleting a forward span preserves everything before the cursor, so
+        // the removed span is exactly [cursor, cursor + shrink). Track it like
+        // the other mutators so compact_paste_range stays aligned.
+        let after_len = self.content().len();
+        if after_len < before_len {
+            self.track_compact_paste_replace(prefix_len, prefix_len + (before_len - after_len), 0);
+        }
         self.refresh_content_cache();
     }
 

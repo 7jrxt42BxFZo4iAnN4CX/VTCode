@@ -377,16 +377,19 @@ fn spawn_clipboard_command(mut cmd: std::process::Command, text: &str) -> bool {
     // longer than this budget regardless of helper behavior.
     const WAIT_BUDGET: Duration = Duration::from_millis(300);
     const POLL_INTERVAL: Duration = Duration::from_millis(10);
+    // After the helper exits, its writer report is usually already delivered;
+    // this grace window only covers the rare in-flight race.
+    const WRITE_REPORT_GRACE: Duration = Duration::from_millis(25);
 
     let program = cmd.get_program().to_string_lossy().into_owned();
     let Ok(mut child) = cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() else {
         trace_clipboard(&format!("'{program}' unavailable: spawn failed"));
         return false;
     };
-    // std::process::Child is neither Send nor Sync, so move only the stdin pipe
-    // (plus a copy of the text) into the detached writer thread; the child
-    // itself is polled from this thread. The writer is never joined so a
-    // blocked write_all cannot stall the UI thread.
+    // The writer is detached and never joined so a blocked write_all cannot
+    // stall the UI thread; only the stdin pipe (plus a copy of the text) moves
+    // into it. `child` stays on this thread for try_wait polling and is handed
+    // to a detached reaper if the budget expires.
     let mut stdin = child.stdin.take();
     let text_owned = text.to_owned();
     let (write_tx, write_rx) = std::sync::mpsc::channel();
@@ -408,6 +411,22 @@ fn spawn_clipboard_command(mut cmd: std::process::Command, text: &str) -> bool {
         }
         match child.try_wait() {
             Ok(Some(status)) => {
+                // The helper has exited, so the writer will finish promptly;
+                // give its report a short grace window, otherwise a write
+                // failing concurrently with a clean exit would count as ok.
+                let flush_deadline = Instant::now() + WRITE_REPORT_GRACE;
+                while write_error.is_none() {
+                    match write_rx.try_recv() {
+                        Ok(report) => write_error = report,
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {
+                            if Instant::now() >= flush_deadline {
+                                break;
+                            }
+                            std::thread::sleep(POLL_INTERVAL);
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                    }
+                }
                 let ok = status.success() && write_error.is_none();
                 if !ok {
                     if let Some(err) = write_error {
@@ -428,12 +447,22 @@ fn spawn_clipboard_command(mut cmd: std::process::Command, text: &str) -> bool {
                         "'{program}' still running after {WAIT_BUDGET:?}; input {}",
                         if ok { "accepted" } else { "failed" }
                     ));
+                    // Fork-and-hold helpers legitimately outlive the copy call;
+                    // reap from a detached thread so no zombie accumulates.
+                    let _ = std::thread::spawn(move || {
+                        let mut child = child;
+                        let _ = child.wait();
+                    });
                     return ok;
                 }
                 std::thread::sleep(POLL_INTERVAL);
             }
             Err(err) => {
                 trace_clipboard(&format!("'{program}' wait failed: {err}"));
+                let _ = std::thread::spawn(move || {
+                    let mut child = child;
+                    let _ = child.wait();
+                });
                 return false;
             }
         }
