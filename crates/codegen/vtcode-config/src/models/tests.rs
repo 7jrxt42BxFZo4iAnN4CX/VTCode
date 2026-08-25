@@ -643,7 +643,9 @@ fn from_config_accepts_custom_provider_model() {
         ..crate::core::CustomProviderConfig::default()
     };
 
-    let parsed = ModelId::from_config("x-preview-f-free", "zen-free", &Default::default(), &[custom.clone()]).unwrap();
+    let parsed =
+        ModelId::from_config("x-preview-f-free", "zen-free", &Default::default(), std::slice::from_ref(&custom))
+            .unwrap();
     assert_eq!(parsed, ModelId::Custom("zen-free".to_string(), "x-preview-f-free".to_string()));
     assert_eq!(parsed.as_str(), "x-preview-f-free");
 
