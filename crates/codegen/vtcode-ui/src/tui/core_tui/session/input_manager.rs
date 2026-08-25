@@ -582,8 +582,11 @@ impl InputManager {
             // At start: swap first two chars
             chars.swap(0, 1);
             let new_content: String = chars.into_iter().collect();
+            // Move to just after the char now at index 0 (byte-correct for
+            // multi-byte UTF-8; cursor + 1 would panic on non-ASCII).
+            let new_cursor = new_content.chars().next().map_or(0, |c| c.len_utf8());
             self.set_content(new_content);
-            self.set_cursor(cursor + 1);
+            self.set_cursor(new_cursor);
         } else if char_pos >= chars.len() {
             // At end: swap last two chars
             let last = chars.len() - 1;
@@ -591,11 +594,17 @@ impl InputManager {
             let new_content: String = chars.into_iter().collect();
             self.set_content(new_content);
         } else {
-            // In middle: swap char at cursor with char before
+            // In middle: swap char at cursor with char before. The byte length
+            // of the string is unchanged, so the cursor stays at the boundary
+            // of the (now-swapped) character at char_pos.
             chars.swap(char_pos - 1, char_pos);
             let new_content: String = chars.into_iter().collect();
+            let new_cursor = new_content
+                .char_indices()
+                .nth(char_pos)
+                .map_or(new_content.len(), |(idx, c)| idx + c.len_utf8());
             self.set_content(new_content);
-            self.set_cursor(cursor + 1);
+            self.set_cursor(new_cursor);
         }
     }
 
@@ -648,9 +657,14 @@ impl InputManager {
         let curr_word: String = chars[word_start..word_end].iter().collect();
         let between: String = chars[prev_end..word_start].iter().collect();
 
-        // Reconstruct
-        let new_content =
-            format!("{}{}{}{}{}", &content[..prev_start], curr_word, between, prev_word, &content[word_end..]);
+        // Reconstruct purely from char slices; slicing the raw string with
+        // char indices would panic on non-ASCII content.
+        let mut new_content = String::new();
+        new_content.extend(chars[..prev_start].iter());
+        new_content.push_str(&curr_word);
+        new_content.push_str(&between);
+        new_content.push_str(&prev_word);
+        new_content.extend(chars[word_end..].iter());
 
         self.set_content(new_content);
         self.set_cursor(cursor);
@@ -709,7 +723,11 @@ impl InputManager {
         let word: String = chars[word_start..word_end].iter().collect();
         let transformed = transform(&word);
 
-        let new_content = format!("{}{}{}", &content[..word_start], transformed, &content[word_end..]);
+        // char indices must be translated to byte offsets before slicing the
+        // UTF-8 string; slicing with char indices panics on non-ASCII content.
+        let byte_start = chars[..word_start].iter().map(|c| c.len_utf8()).sum::<usize>();
+        let byte_end = byte_start + chars[word_start..word_end].iter().map(|c| c.len_utf8()).sum::<usize>();
+        let new_content = format!("{}{}{}", &content[..byte_start], transformed, &content[byte_end..]);
 
         self.set_content(new_content);
         self.set_cursor(cursor);

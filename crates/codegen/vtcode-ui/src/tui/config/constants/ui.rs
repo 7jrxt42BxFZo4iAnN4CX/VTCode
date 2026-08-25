@@ -154,6 +154,11 @@ pub const TUI_SHIMMER_SWEEP_DURATION_MS: u64 = 2000;
 /// Keep cursor steady for this duration after scroll events
 pub const TUI_SCROLL_CURSOR_STEADY_MS: u64 = 250;
 
+/// Minimum delay between auto-scroll steps while dragging at a transcript edge
+pub const DRAG_AUTO_SCROLL_INTERVAL_MS: u64 = 50;
+/// Rows revealed per auto-scroll step
+pub const DRAG_AUTO_SCROLL_STEP_LINES: usize = 2;
+
 // Viewport size limits to prevent pathological CPU usage with huge terminals
 // (e.g., 2000+ columns causes 100% CPU without these guards)
 // See: <https://github.com/anthropics/claude-code/issues/21567>

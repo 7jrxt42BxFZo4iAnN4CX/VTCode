@@ -88,7 +88,7 @@ use self::modal::{ModalState, WizardModalState};
 pub use self::action::{Action, BindingStore, parse_key_binding};
 use self::config::AppearanceConfig;
 pub(crate) use self::input::status_requires_shimmer;
-use self::mouse_selection::MouseSelectionState;
+use self::mouse_selection::{DragAutoScroll, DragAutoScrollDirection, MouseSelectionState};
 use self::queue::QueueOverlay;
 use self::scroll::ScrollManager;
 pub(crate) use self::spinner::pulse_spinner_frame_for_phase;
@@ -224,8 +224,9 @@ pub struct Session {
     placeholder_style: Option<InlineTextStyle>,
     pub(crate) input_status_left: Option<String>,
     pub(crate) input_status_right: Option<String>,
-    /// Transient "copied" confirmation shown in the input status row.
+    /// Transient "copied"/"copy failed" confirmation shown in the input status row.
     copy_notification_until: Option<Instant>,
+    copy_notification_failed: bool,
     input_compact_mode: bool,
 
     // --- UI State ---
@@ -317,6 +318,7 @@ pub struct Session {
     // --- Mouse Text Selection ---
     pub(crate) mouse_selection: MouseSelectionState,
     pub(crate) mouse_drag_target: MouseDragTarget,
+    pub(crate) drag_auto_scroll: Option<DragAutoScroll>,
     pub(crate) fullscreen: FullscreenSessionState,
 
     // --- Performance Caching ---

@@ -96,6 +96,8 @@ impl Session {
             input_status_left: None,
             input_status_right: None,
             copy_notification_until: None,
+            copy_notification_failed: false,
+            drag_auto_scroll: None,
             input_compact_mode: false,
 
             // --- UI State ---

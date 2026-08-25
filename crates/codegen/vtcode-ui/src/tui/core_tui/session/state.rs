@@ -271,6 +271,7 @@ impl Session {
     /// Advance animation state on tick and request redraw when a frame changes.
     pub(crate) fn handle_tick(&mut self) {
         let motion_reduced = self.appearance.motion_reduced();
+        self.step_drag_auto_scroll();
         let mut animation_updated = false;
         if !motion_reduced && self.thinking_spinner.is_active && self.thinking_spinner.update() {
             animation_updated = true;

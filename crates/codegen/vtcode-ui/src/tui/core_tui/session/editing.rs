@@ -235,6 +235,19 @@ impl Session {
 
     /// Delete the character before the cursor (backspace)
     pub(crate) fn delete_char(&mut self) {
+        // One Backspace right after a collapsed multi-line paste removes the
+        // whole inserted block instead of peeling single characters. When the
+        // user has an active selection, the selection must win (it removes
+        // exactly what the user highlighted).
+        if let Some(range) = self.input_manager.compact_paste_range()
+            && range.end > range.start
+            && self.input_manager.selection_range().is_none()
+            && self.input_manager.cursor() == range.end
+        {
+            self.input_manager.replace_range(range.start, range.end, "");
+            self.refresh_input_edit_state();
+            return;
+        }
         self.input_manager.backspace();
         self.refresh_input_edit_state();
     }

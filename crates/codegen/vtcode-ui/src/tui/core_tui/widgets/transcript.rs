@@ -308,6 +308,61 @@ mod tests {
     }
 
     #[test]
+    fn render_queue_overlay_orders_items_fifo_oldest_on_top() {
+        let area = Rect::new(0, 0, 30, 8);
+        let inner = Rect::new(1, 1, 28, 6);
+        let mut buf = Buffer::empty(area);
+        let mut session = Session::new(InlineTheme::default(), None, 12);
+        session.push_line(InlineMessageKind::Agent, vec![segment("alpha")]);
+        session.push_queued_input("first".to_string());
+        session.push_queued_input("second".to_string());
+        session.push_queued_input("third".to_string());
+
+        TranscriptWidget::new(&mut session).render(area, &mut buf);
+
+        // The queue is strict FIFO, so the overlay shows the oldest message at
+        // the top and the newest directly above the input field.
+        let overlay_rows: Vec<String> = (inner.y..inner.bottom())
+            .map(|row| row_text(&buf, inner, row))
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty())
+            .collect();
+        let first_row = overlay_rows.iter().position(|row| row.contains("first"));
+        let second_row = overlay_rows.iter().position(|row| row.contains("second"));
+        let third_row = overlay_rows.iter().position(|row| row.contains("third"));
+        assert!(
+            first_row.is_some() && second_row.is_some() && third_row.is_some(),
+            "all three queued items must be visible in the overlay, got: {overlay_rows:?}"
+        );
+        assert!(
+            first_row.unwrap() < second_row.unwrap() && second_row.unwrap() < third_row.unwrap(),
+            "expected FIFO order first < second < third, got: {overlay_rows:?}"
+        );
+    }
+
+    #[test]
+    fn render_queue_overlay_flattens_multiline_entries() {
+        let area = Rect::new(0, 0, 40, 8);
+        let inner = Rect::new(1, 1, 38, 6);
+        let mut buf = Buffer::empty(area);
+        let mut session = Session::new(InlineTheme::default(), None, 12);
+        session.push_line(InlineMessageKind::Agent, vec![segment("alpha")]);
+        session.push_queued_input("line one\nline two".to_string());
+
+        TranscriptWidget::new(&mut session).render(area, &mut buf);
+
+        let overlay_text: String = (inner.y..inner.bottom()).map(|row| row_text(&buf, inner, row)).collect();
+        assert!(
+            overlay_text.contains("line one") && overlay_text.contains("line two"),
+            "both lines of the queued entry must be visible, got: {overlay_text:?}"
+        );
+        assert!(
+            overlay_text.contains("⏎"),
+            "newlines must be flattened into a visible separator, got: {overlay_text:?}"
+        );
+    }
+
+    #[test]
     fn render_clears_stale_queue_overlay_rows_when_queue_is_removed() {
         let area = Rect::new(0, 0, 20, 6);
         let inner = Rect::new(1, 1, 18, 4);
