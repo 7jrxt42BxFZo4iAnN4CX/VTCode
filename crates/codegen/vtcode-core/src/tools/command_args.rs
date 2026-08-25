@@ -263,8 +263,8 @@ pub fn raw_command_text(args: &Value) -> Option<String> {
 ///
 /// Read-only classification and approval-family learning must only operate on
 /// static command shapes. Parameter expansion, command substitution, brace
-/// expansion, globbing, and backslash escapes can otherwise turn a harmless
-/// looking token into a different executable argument at runtime.
+/// expansion, globbing, and unquoted backslash escapes can otherwise turn a
+/// harmless-looking token into a different executable argument at runtime.
 pub fn contains_dynamic_shell_syntax(command: &str) -> bool {
     crate::command_safety::shell_parser::contains_dynamic_shell_syntax(command)
 }

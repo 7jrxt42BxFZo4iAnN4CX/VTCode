@@ -125,7 +125,9 @@ already-tokenized arguments.
 `find` commands containing dynamic shell syntax are not eligible for a learned
 read-only family and are rejected during command safety preflight. This includes
 parameter and command expansion (`$@`, `$*`, `$''`, `$()`), brace expansion,
-unquoted globbing, and backslash escapes that can splice or change an option.
+unquoted globbing, and unquoted backslash escapes that can splice or change an
+option. Literal backslash escapes inside double-quoted arguments remain static
+data, such as the `\[` in an `rg` regular-expression pattern.
 Static quoted globs such as `find src -name '*.rs'` remain valid, but destructive
 options such as `-delete`, `-exec`, `-execdir`, `-ok`, `-okdir`, and output actions
 never inherit a read-only approval family.

@@ -30,8 +30,10 @@ static BASH_PARSER: OnceLock<Result<Mutex<tree_sitter::Parser>, String>> = OnceL
 ///
 /// Safety-sensitive classification must only operate on static command
 /// shapes. Parameter expansion, command substitution, brace expansion,
-/// globbing, and backslash escapes can otherwise turn a harmless-looking token
-/// into a different executable argument at runtime.
+/// globbing, and unquoted backslash escapes can otherwise turn a
+/// harmless-looking token into a different executable argument at runtime.
+/// Backslash escapes inside double-quoted arguments are consumed as literal
+/// argument syntax so patterns such as `rg -n "\\[profile"` remain classifiable.
 pub fn contains_dynamic_shell_syntax(command: &str) -> bool {
     enum ShellQuote {
         Single,
@@ -39,8 +41,9 @@ pub fn contains_dynamic_shell_syntax(command: &str) -> bool {
     }
 
     let mut quote: Option<ShellQuote> = None;
+    let mut characters = command.chars();
 
-    for character in command.chars() {
+    while let Some(character) = characters.next() {
         match quote {
             Some(ShellQuote::Single) => {
                 if character == '\'' {
@@ -49,7 +52,17 @@ pub fn contains_dynamic_shell_syntax(command: &str) -> bool {
             }
             Some(ShellQuote::Double) => match character {
                 '"' => quote = None,
-                '\\' | '$' | '`' => return true,
+                '$' | '`' => return true,
+                '\\' => {
+                    // Backslash escapes inside double quotes are literal
+                    // argument syntax. Consume the escaped character so an
+                    // escaped quote cannot incorrectly end the quoted region;
+                    // unquoted escapes remain rejected below because they can
+                    // alter the command token or its shell structure.
+                    if characters.next().is_none() {
+                        return true;
+                    }
+                }
                 _ => {}
             },
             None => match character {
@@ -567,6 +580,19 @@ mod tests {
                 .any(|command| command.iter().any(|word| word.contains("--output=out.txt")))
         );
         assert!(commands.iter().any(|command| command.iter().any(|word| word.contains("\\n"))));
+    }
+
+    #[test]
+    fn dynamic_syntax_allows_literal_escapes_inside_double_quoted_arguments() {
+        assert!(!contains_dynamic_shell_syntax(r#"rg -n "\[profile|lto|codegen-units|strip" Cargo.toml"#));
+        assert!(!contains_dynamic_shell_syntax(r#"printf "\nTop-level:\n""#));
+        assert!(!contains_dynamic_shell_syntax(r#"printf "quoted: \"value\"""#));
+        assert!(contains_dynamic_shell_syntax(r#"echo "safe\"$(id)""#));
+    }
+
+    #[test]
+    fn dynamic_syntax_rejects_unquoted_escapes() {
+        assert!(contains_dynamic_shell_syntax(r"rg -n \[profile Cargo.toml"));
     }
 
     #[test]

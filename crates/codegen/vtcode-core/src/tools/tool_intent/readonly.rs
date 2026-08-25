@@ -277,6 +277,13 @@ mod tests {
     }
 
     #[test]
+    fn checkpoint_style_inspection_with_escaped_regex_is_readonly() {
+        let command = r#"sed -n '180,285p' src/main.rs; sed -n '60,285p' src/startup/mod.rs; sed -n '1,220p' src/main_helpers/bootstrap.rs; rg -n "\[profile|lto|codegen-units|strip" Cargo.toml"#;
+
+        assert!(is_readonly_command_session_command(&run_cmd(command)));
+    }
+
+    #[test]
     fn and_chain_rejects_destructive_segments() {
         assert!(!is_readonly_command_session_command(&run_cmd("ls -la && rm foo.txt")));
         assert!(!is_readonly_command_session_command(&run_cmd("cat x && mv a b")));

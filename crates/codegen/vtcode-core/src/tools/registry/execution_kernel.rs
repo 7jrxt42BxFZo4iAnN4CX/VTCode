@@ -1141,6 +1141,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn planning_preflight_allows_checkpoint_style_readonly_inspection() -> Result<()> {
+        let (_temp, registry) = new_test_registry().await;
+        registry.enable_planning();
+        let command = r#"sed -n '180,285p' src/main.rs; sed -n '60,285p' src/startup/mod.rs; sed -n '1,220p' src/main_helpers/bootstrap.rs; rg -n "\[profile|lto|codegen-units|strip" Cargo.toml"#;
+
+        let result = preflight_validate_call(
+            &registry,
+            tool_names::EXEC_COMMAND,
+            &json!({
+                "cmd": command,
+                "workdir": ".",
+                "yield_time_ms": 10000,
+                "max_output_tokens": 30000
+            }),
+        )?;
+
+        assert!(result.readonly_classification);
+        assert_eq!(result.effective_args["action"], "run");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn exec_command_preflight_rejects_dangerous_command() {
         let (_temp, registry) = new_test_registry().await;
 
