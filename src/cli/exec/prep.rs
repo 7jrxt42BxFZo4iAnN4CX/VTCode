@@ -1,7 +1,6 @@
 use anyhow::{Context, Result, bail};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use vtcode_core::cli::args::{ExecResumeArgs, ExecSubcommand};
 use vtcode_core::cli::input_hardening::validate_agent_safe_text;
 use vtcode_core::config::VTCodeConfig;
@@ -167,7 +166,13 @@ pub(super) async fn prepare_exec_run(
         bail!("Automation is disabled in configuration. Enable [automation.full_auto] to continue.");
     }
 
-    let model_id = ModelId::from_str(&run_config.model).with_context(|| {
+    let model_id = ModelId::from_config(
+        &run_config.model,
+        &run_config.provider,
+        &run_vt_cfg.provider_overrides,
+        &run_vt_cfg.custom_providers,
+    )
+    .with_context(|| {
         format!(
             "Model '{}' is not recognized for exec command. Update vtcode.toml to a supported identifier.",
             run_config.model

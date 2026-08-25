@@ -628,3 +628,66 @@ fn test_all_models_have_non_empty_metadata_and_parse() {
         assert_eq!(parsed.unwrap(), model);
     }
 }
+
+#[test]
+fn from_config_accepts_custom_provider_model() {
+    let custom = crate::core::CustomProviderConfig {
+        name: "zen-free".to_string(),
+        display_name: "Zen Free".to_string(),
+        base_url: "https://opencode.ai/zen/v1".to_string(),
+        context_window: None,
+        api_key_env: "OPENCODE_API_KEY".to_string(),
+        auth: None,
+        model: "".to_string(),
+        models: vec!["deepseek-v4-flash-free".to_string(), "x-preview-f-free".to_string()],
+        ..crate::core::CustomProviderConfig::default()
+    };
+
+    let parsed = ModelId::from_config("x-preview-f-free", "zen-free", &Default::default(), &[custom.clone()]).unwrap();
+    assert_eq!(parsed, ModelId::Custom("zen-free".to_string(), "x-preview-f-free".to_string()));
+    assert_eq!(parsed.as_str(), "x-preview-f-free");
+
+    // Case-insensitive provider matching.
+    let parsed = ModelId::from_config("x-preview-f-free", "Zen-Free", &Default::default(), &[custom]).unwrap();
+    assert_eq!(parsed, ModelId::Custom("zen-free".to_string(), "x-preview-f-free".to_string()));
+}
+
+#[test]
+fn from_config_accepts_provider_override_model() {
+    let mut overrides = std::collections::BTreeMap::new();
+    overrides.insert(
+        "opencode-zen".to_string(),
+        crate::core::ProviderOverrideConfig {
+            models: vec!["my-fine-tuned-gpt".to_string()],
+            base_url: None,
+            api_key_env: None,
+        },
+    );
+
+    let parsed = ModelId::from_config("my-fine-tuned-gpt", "opencode-zen", &overrides, &[]).unwrap();
+    assert_eq!(parsed, ModelId::Custom("opencode-zen".to_string(), "my-fine-tuned-gpt".to_string()));
+}
+
+#[test]
+fn from_config_rejects_custom_model_for_unrelated_provider() {
+    let custom = crate::core::CustomProviderConfig {
+        name: "zen-free".to_string(),
+        display_name: "Zen Free".to_string(),
+        base_url: "https://opencode.ai/zen/v1".to_string(),
+        context_window: None,
+        api_key_env: "OPENCODE_API_KEY".to_string(),
+        auth: None,
+        model: "".to_string(),
+        models: vec!["x-preview-f-free".to_string()],
+        ..crate::core::CustomProviderConfig::default()
+    };
+
+    // The model exists for zen-free but not for openai: standard parsing must fail.
+    assert!(ModelId::from_config("x-preview-f-free", "openai", &Default::default(), &[custom]).is_err());
+}
+
+#[test]
+fn from_config_falls_through_to_catalog_for_known_models() {
+    let parsed = ModelId::from_config("gpt-5.4", "openai", &Default::default(), &[]).unwrap();
+    assert_eq!(parsed, ModelId::GPT54);
+}
