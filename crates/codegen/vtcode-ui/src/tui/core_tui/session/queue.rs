@@ -33,6 +33,8 @@ impl Session {
             return Vec::new();
         }
 
+        const VISIBLE_ITEMS: usize = 5;
+
         let max_width = width as usize;
         let mut lines = Vec::new();
         let mut prefix_style = self.styles.accent_style();
@@ -43,16 +45,28 @@ impl Session {
         let prefix_width = UnicodeWidthStr::width(prefix);
         let available = max_width.saturating_sub(prefix_width);
 
-        for entry in self.queued_inputs.iter().rev().take(2) {
-            let trimmed = truncate_to_width(entry, available);
-            let spans = vec![
-                Span::styled(prefix.to_owned(), prefix_style),
-                Span::styled(trimmed, message_style),
-            ];
+        // The queue is strict FIFO (first queued = first dispatched), so the
+        // overlay renders in insertion order: oldest on top, newest directly
+        // above the input field. The oldest will be sent first. Multi-line
+        // items must be flattened so a raw newline/carriage-return cannot
+        // break the layout.
+        for entry in self.queued_inputs.iter().take(VISIBLE_ITEMS) {
+            let flattened = entry.replace(['\r', '\n'], " ⏎ ");
+            let trimmed = truncate_to_width(&flattened, available);
+            let mut spans = Vec::with_capacity(2);
+            // Skip the prefix when it does not fit (tiny terminal width).
+            if available > 0 {
+                spans.push(Span::styled(prefix.to_owned(), prefix_style));
+            }
+            spans.push(Span::styled(trimmed, message_style));
             lines.push(Line::from(spans));
         }
 
         let muted_style = self.styles.default_style().add_modifier(Modifier::DIM);
+        let hidden = self.queued_inputs.len().saturating_sub(VISIBLE_ITEMS);
+        if hidden > 0 {
+            lines.push(Line::from(vec![Span::styled(format!("+{hidden} more queued"), muted_style)]));
+        }
         lines.push(Line::from(vec![Span::styled(
             super::terminal_capabilities::queued_input_edit_hint().to_string(),
             muted_style,

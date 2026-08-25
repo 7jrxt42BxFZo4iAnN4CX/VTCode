@@ -16,21 +16,32 @@ pub use vtcode_commons::ui_protocol::InlineMessageKind;
 pub struct SubmittedInput {
     pub text: String,
     pub attachments: Vec<ContentPart>,
+    /// Whether this submission may be merged with other queued text-only
+    /// submissions of the same agent into a single model turn. Ctrl+Enter sets
+    /// this; a plain Enter queued while busy must stay a one-per-turn dispatch.
+    pub batchable: bool,
 }
 
 impl SubmittedInput {
     pub fn new(text: impl Into<String>, attachments: Vec<ContentPart>) -> Self {
-        Self { text: text.into(), attachments }
+        Self { text: text.into(), attachments, batchable: false }
     }
 
     fn text_only(text: impl Into<String>) -> Self {
         Self::new(text, Vec::new())
     }
 
+    /// Mark this submission as eligible for queue batching (Ctrl+Enter).
+    pub fn batchable(mut self) -> Self {
+        self.batchable = true;
+        self
+    }
+
     pub fn trim_text(self) -> Self {
         Self {
             text: self.text.trim().to_string(),
             attachments: self.attachments,
+            batchable: self.batchable,
         }
     }
 
