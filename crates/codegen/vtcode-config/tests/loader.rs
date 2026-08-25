@@ -336,6 +336,60 @@ fn use_root_config_from_file_discards_lower_precedence_layers() -> Result<()> {
 
 #[test]
 #[serial]
+fn load_from_file_merges_global_layers_regardless_of_override_basename() -> Result<()> {
+    let workspace = TempDir::new()?;
+    let workspace_root = workspace.path();
+    let config_dir = workspace_root.join(".vtcode");
+    fs::create_dir_all(&config_dir)?;
+
+    // Global user config defines a custom provider.
+    let home_config = workspace_root.join("home").join("vtcode.toml");
+    fs::create_dir_all(home_config.parent().expect("home config parent"))?;
+    fs::write(
+        &home_config,
+        r#"
+[agent]
+provider = "zen-free"
+default_model = "x-preview-f-free"
+
+[[custom_providers]]
+name = "zen-free"
+display_name = "Zen Free"
+base_url = "https://opencode.ai/zen/v1"
+api_key_env = "OPENCODE_API_KEY"
+model = ""
+models = ["x-preview-f-free"]
+"#,
+    )?;
+
+    // The explicit override file uses a non-canonical basename (e.g. a
+    // "night config"). Global layers must still be retained.
+    let override_config = workspace_root.join("night.toml");
+    fs::write(&override_config, "[debug]\nenable_tracing = true\n")?;
+
+    let manager = with_test_defaults(workspace_root, config_dir, vec![home_config.clone()], || {
+        ConfigManager::load_from_file(&override_config)
+    })?;
+
+    assert_eq!(
+        manager.config().agent.provider,
+        "zen-free",
+        "global provider must survive an explicit override file with a non-canonical basename"
+    );
+    assert!(
+        manager.config().custom_providers.iter().any(|p| p.name == "zen-free"),
+        "global custom providers must survive an explicit override file with a non-canonical basename"
+    );
+    assert!(
+        manager.config().debug.enable_tracing,
+        "override file settings must still apply on top of global layers"
+    );
+
+    Ok(())
+}
+
+#[test]
+#[serial]
 fn providers_whitelist_validation_rejects_unknown_provider() {
     let toml = r#"
 providers_whitelist = ["openai", "nonexistent-provider"]
