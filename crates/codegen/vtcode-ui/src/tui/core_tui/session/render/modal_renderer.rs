@@ -219,6 +219,26 @@ pub(crate) fn floating_modal_area(area: Rect) -> Rect {
     Rect::new(area.x, y, area.width, height)
 }
 
+pub(crate) fn clip_transcript_area(transcript_area: Rect, modal_area: Rect) -> Rect {
+    if transcript_area.width == 0 || transcript_area.height == 0 || modal_area.width == 0 || modal_area.height == 0 {
+        return transcript_area;
+    }
+
+    let transcript_right = transcript_area.x.saturating_add(transcript_area.width);
+    let transcript_bottom = transcript_area.y.saturating_add(transcript_area.height);
+    let modal_right = modal_area.x.saturating_add(modal_area.width);
+    let modal_bottom = modal_area.y.saturating_add(modal_area.height);
+    let overlaps_horizontally = transcript_area.x < modal_right && modal_area.x < transcript_right;
+    let overlaps_vertically = transcript_area.y < modal_bottom && modal_area.y < transcript_bottom;
+
+    if !overlaps_horizontally || !overlaps_vertically {
+        return transcript_area;
+    }
+
+    let clipped_height = modal_area.y.saturating_sub(transcript_area.y).min(transcript_area.height);
+    Rect::new(transcript_area.x, transcript_area.y, transcript_area.width, clipped_height)
+}
+
 pub fn render_modal(session: &mut Session, frame: &mut Frame<'_>, area: Rect) {
     if area.width == 0 || area.height == 0 {
         session.set_modal_list_area(None);
@@ -527,5 +547,37 @@ mod tests {
         let area = floating_modal_area(Rect::new(0, 0, 80, 1));
 
         assert_eq!(area, Rect::new(0, 0, 80, 1));
+    }
+
+    #[test]
+    fn clip_transcript_area_stops_at_overlapping_modal_top() {
+        let transcript = Rect::new(2, 5, 76, 18);
+        let modal = Rect::new(0, 14, 80, 10);
+
+        assert_eq!(clip_transcript_area(transcript, modal), Rect::new(2, 5, 76, 9));
+    }
+
+    #[test]
+    fn clip_transcript_area_preserves_non_overlapping_transcript() {
+        let transcript = Rect::new(2, 5, 76, 8);
+        let modal = Rect::new(0, 14, 80, 10);
+
+        assert_eq!(clip_transcript_area(transcript, modal), transcript);
+    }
+
+    #[test]
+    fn clip_transcript_area_handles_horizontal_non_overlap() {
+        let transcript = Rect::new(2, 5, 20, 18);
+        let modal = Rect::new(30, 14, 20, 10);
+
+        assert_eq!(clip_transcript_area(transcript, modal), transcript);
+    }
+
+    #[test]
+    fn clip_transcript_area_handles_zero_and_constrained_rectangles() {
+        assert_eq!(clip_transcript_area(Rect::new(0, 0, 0, 10), Rect::new(0, 0, 10, 10)), Rect::new(0, 0, 0, 10));
+        assert_eq!(clip_transcript_area(Rect::new(0, 0, 10, 0), Rect::new(0, 0, 10, 1)), Rect::new(0, 0, 10, 0));
+        assert_eq!(clip_transcript_area(Rect::new(0, 0, 10, 1), Rect::new(0, 0, 10, 1)), Rect::new(0, 0, 10, 0));
+        assert_eq!(clip_transcript_area(Rect::new(0, 0, 10, 1), Rect::new(0, 1, 10, 1)), Rect::new(0, 0, 10, 1));
     }
 }

@@ -767,17 +767,6 @@ impl Session {
         self.invalidate_transcript_viewport();
     }
 
-    /// Set the number of transcript rows obscured by a floating overlay.
-    /// When the inset changes, scroll metrics are invalidated so the viewport
-    /// recalculates with the reduced effective height, keeping the latest
-    /// lines visible above the overlay.
-    pub(crate) fn set_overlay_bottom_inset(&mut self, inset: u16) {
-        if self.overlay_bottom_inset != inset {
-            self.overlay_bottom_inset = inset;
-            self.invalidate_scroll_metrics();
-        }
-    }
-
     /// Invalidate the transcript cache
     pub(crate) fn invalidate_transcript_cache(&mut self) {
         let had_cache = if let Some(cache) = self.transcript_cache.as_mut() {

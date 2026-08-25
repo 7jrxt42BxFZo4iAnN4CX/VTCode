@@ -137,17 +137,20 @@ pub(crate) async fn initialize_session(
 
     let tool_documentation_mode = vt_cfg.map(|cfg| cfg.agent.tool_documentation_mode).unwrap_or_default();
     let async_mcp_manager = create_async_mcp_manager(vt_cfg, None, &config.workspace);
-    let mcp_error = determine_mcp_bootstrap_error(async_mcp_manager.as_ref()).await;
-
-    let mut session_bootstrap = prepare_session_bootstrap(config, vt_cfg, mcp_error).await;
+    // These operations are independent; overlap workspace inspection with the
+    // optional release-notes request instead of extending startup serially.
+    let (mcp_error, mut session_bootstrap, startup_update_check, release_highlights) = tokio::join!(
+        determine_mcp_bootstrap_error(async_mcp_manager.as_ref()),
+        prepare_session_bootstrap(config, vt_cfg, None),
+        async { load_startup_update_check() },
+        load_release_highlights_for_startup(),
+    );
+    session_bootstrap.mcp_error = mcp_error;
     session_bootstrap.search_tools_notice = take_search_tools_bundle_notice().await;
-    let startup_update_check = load_startup_update_check();
     if let Some(notice) = startup_update_check.cached_notice.as_ref() {
         append_notice_highlight(&mut session_bootstrap.header_highlights, notice);
     }
-
-    // Load release highlights for first-launch-after-update display
-    session_bootstrap.release_highlights = load_release_highlights_for_startup().await;
+    session_bootstrap.release_highlights = release_highlights;
 
     // Register custom OpenAI-compatible providers from config
     if let Some(cfg) = vt_cfg {
@@ -158,9 +161,9 @@ pub(crate) async fn initialize_session(
     let deferred_tool_policy = active_deferred_tool_policy(config, vt_cfg, &*provider_client);
     let mut full_auto_allowlist = None;
 
-    let skill_setup = discover_skills(config, resume).await;
+    let (skill_setup, mut conversation_history) =
+        tokio::join!(discover_skills(config, resume), build_conversation_history_from_resume(resume),);
     let decision_ledger = Arc::new(RwLock::new(DecisionTracker::new()));
-    let mut conversation_history = build_conversation_history_from_resume(resume).await;
     recover_history_from_crash(&mut conversation_history);
     let mcp_panel_state = if let Some(cfg) = vt_cfg {
         mcp_events::McpPanelState::new(cfg.mcp.ui.max_events, cfg.mcp.enabled)

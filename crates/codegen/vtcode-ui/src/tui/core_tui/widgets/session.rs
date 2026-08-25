@@ -203,6 +203,10 @@ impl Widget for &mut SessionWidget<'_> {
                 } else {
                     TranscriptWidget::new(self.session).render(transcript_area, buf);
                 }
+            } else {
+                // Clear the stored hit-test area when a constrained layout leaves
+                // no room for the transcript (for example, beneath a tiny modal).
+                TranscriptWidget::new(self.session).render(transcript_area, buf);
             }
 
             if let Some(sidebar_area) = self.navigation_area

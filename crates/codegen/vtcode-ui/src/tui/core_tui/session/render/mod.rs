@@ -5,8 +5,8 @@ use super::{Session, message::MessageLine, message_renderer, text_utils};
 
 mod modal_renderer;
 
-pub(crate) use modal_renderer::floating_modal_area;
 pub(crate) use modal_renderer::modal_render_styles;
+pub(crate) use modal_renderer::{clip_transcript_area, floating_modal_area};
 pub(crate) use modal_renderer::{render_modal, split_inline_modal_area};
 
 pub(super) fn render_message_spans(session: &Session, index: usize) -> Vec<Span<'static>> {

@@ -36,26 +36,11 @@ impl Session {
         }
         let layout = self.core.build_frame_layout(viewport, metrics, panel.height);
         self.core.set_modal_list_area(None);
-        let transcript_area = layout.main_area;
-        // Compute how many transcript rows are obscured by the floating modal
-        // overlay so the transcript widget can reduce its effective height and
-        // keep the latest lines visible above the overlay. Only set the inset
-        // when an overlay is actually active; otherwise clear it so the
-        // transcript uses the full viewport.
-        if self.has_active_overlay() {
-            let modal_area = core_render::floating_modal_area(layout.viewport);
-            // Overlap = rows where the modal's top is above the transcript's bottom
-            let transcript_bottom = transcript_area.y.saturating_add(transcript_area.height);
-            let modal_bottom = modal_area.y.saturating_add(modal_area.height);
-            let overlap_top = modal_area.y.max(transcript_area.y);
-            let overlap_bottom = modal_bottom.min(transcript_bottom);
-            let overlap_rows = overlap_bottom.saturating_sub(overlap_top);
-            // Cap the inset so at least one transcript row remains visible
-            let inset = overlap_rows.min(transcript_area.height.saturating_sub(1));
-            self.core.set_overlay_bottom_inset(inset);
-        } else {
-            self.core.set_overlay_bottom_inset(0);
-        }
+        let modal_area = self
+            .has_active_overlay()
+            .then(|| core_render::floating_modal_area(layout.viewport));
+        let transcript_area = modal_area
+            .map_or(layout.main_area, |modal_area| core_render::clip_transcript_area(layout.main_area, modal_area));
         let (input_area, bottom_panel_area) =
             if matches!(panel.kind, BottomPanelKind::LocalAgents | BottomPanelKind::SlashPalette) {
                 (
@@ -94,8 +79,8 @@ impl Session {
             }
         }
 
-        if self.has_active_overlay() {
-            core_render::render_modal(self, frame, core_render::floating_modal_area(layout.viewport));
+        if let Some(modal_area) = modal_area {
+            core_render::render_modal(self, frame, modal_area);
         }
 
         if self.diff_preview_state().is_some() {

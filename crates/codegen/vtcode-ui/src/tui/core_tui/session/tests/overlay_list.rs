@@ -109,6 +109,62 @@ fn show_list_modal_uses_bottom_half_of_terminal() {
 }
 
 #[test]
+fn floating_modal_clips_transcript_and_closing_restores_full_viewport() {
+    let marker = "transcript-visible-above-approval";
+    let mut session = AppSession::new(InlineTheme::default(), None, 30);
+    for index in 0..40 {
+        session
+            .core
+            .push_line(InlineMessageKind::Agent, vec![make_segment(&format!("transcript line {index}"))]);
+    }
+    session.core.push_line(InlineMessageKind::Agent, vec![make_segment(marker)]);
+
+    let mut terminal = render_session_to_terminal(&mut session, 30);
+    let full_transcript_area = session.core.transcript_area().expect("full transcript area");
+    let full_transcript_rows = session.core.transcript_rows;
+
+    show_list_modal(&mut session, "Approval", vec!["Ready to continue?"], vec![make_list_item("Yes", "yes")]);
+    terminal
+        .draw(|frame| session.render(frame))
+        .expect("failed to render floating modal");
+
+    let clipped_transcript_area = session.core.transcript_area().expect("clipped transcript area");
+    let modal_area = session.core.modal_list_area().expect("modal list area");
+    assert_eq!(clipped_transcript_area.x, full_transcript_area.x);
+    assert_eq!(clipped_transcript_area.width, full_transcript_area.width);
+    assert!(clipped_transcript_area.height < full_transcript_area.height);
+    assert!(clipped_transcript_area.y.saturating_add(clipped_transcript_area.height) <= modal_area.y);
+    assert!(session.core.transcript_rows < full_transcript_rows);
+
+    let marker_visible_above_modal = (0..modal_area.y).any(|row| {
+        (0..VIEW_WIDTH)
+            .filter_map(|column| terminal.backend().buffer().cell((column, row)))
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+            .contains(marker)
+    });
+    assert!(marker_visible_above_modal, "long transcript content should remain visible above the modal");
+
+    session.close_transient();
+    terminal
+        .draw(|frame| session.render(frame))
+        .expect("failed to render after closing modal");
+
+    assert_eq!(session.core.transcript_area(), Some(full_transcript_area));
+    assert_eq!(session.core.transcript_rows, full_transcript_rows);
+}
+
+#[test]
+fn floating_modal_render_handles_single_row_terminal() {
+    let mut session = AppSession::new(InlineTheme::default(), None, 30);
+    show_list_modal(&mut session, "Approval", vec!["Ready?"], vec![make_list_item("Yes", "yes")]);
+
+    let _terminal = render_session_to_terminal(&mut session, 1);
+
+    assert!(session.core.transcript_area().is_none());
+}
+
+#[test]
 fn titled_floating_modal_renders_matching_title_and_divider_chrome() {
     let mut session = AppSession::new(InlineTheme::default(), None, 30);
     show_list_modal(&mut session, "Pick one", vec!["Choose an option"], vec![make_list_item("Option A", "a")]);

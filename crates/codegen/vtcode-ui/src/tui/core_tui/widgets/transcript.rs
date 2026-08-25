@@ -79,10 +79,6 @@ impl<'a> Widget for TranscriptWidget<'a> {
         // Clamp effective dimensions to prevent pathological CPU usage with huge terminals
         // See: https://github.com/anthropics/claude-code/issues/21567
         let effective_height = inner.height.min(ui::TUI_MAX_VIEWPORT_HEIGHT);
-        // Reduce the effective height by the overlay inset so the latest
-        // transcript lines remain visible above a floating overlay (e.g. the
-        // plan-approval modal) instead of being hidden behind it.
-        let effective_height = effective_height.saturating_sub(self.session.overlay_bottom_inset).max(1);
         let effective_width = inner.width.min(ui::TUI_MAX_VIEWPORT_WIDTH);
 
         self.session.apply_transcript_rows(effective_height);

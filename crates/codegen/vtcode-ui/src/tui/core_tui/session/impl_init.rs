@@ -117,7 +117,6 @@ impl Session {
             input_height: Self::input_block_height_for_lines(1),
             transcript_rows: initial_transcript_rows,
             transcript_width: 0,
-            overlay_bottom_inset: 0,
             transcript_view_top: 0,
             transcript_area: None,
             input_area: None,

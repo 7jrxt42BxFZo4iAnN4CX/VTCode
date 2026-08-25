@@ -247,11 +247,6 @@ pub struct Session {
     pub(crate) input_height: u16,
     pub(crate) transcript_rows: u16,
     pub(crate) transcript_width: u16,
-    /// Number of rows at the bottom of the transcript that are obscured by a
-    /// floating overlay (e.g. the plan-approval modal). The transcript widget
-    /// subtracts this from its effective height so the latest lines remain
-    /// visible above the overlay instead of being hidden behind it.
-    pub(crate) overlay_bottom_inset: u16,
     pub(crate) transcript_view_top: usize,
     transcript_area: Option<Rect>,
     input_area: Option<Rect>,
