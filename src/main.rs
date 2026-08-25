@@ -258,6 +258,11 @@ fn bootstrap_main() -> Result<BootstrapOutcome> {
 
     let startup = runtime.block_on(resolve_startup_context(&args))?;
     vtcode_commons::startup_trace::record_phase("bootstrap", bootstrap_phase);
+    // For one-shot commands this is the last startup boundary before dispatch;
+    // interactive sessions publish the more useful first_ui_render milestone.
+    if !startup::command_runs_interactive_session(args.command.as_ref(), args.print.is_some()) {
+        vtcode_commons::startup_trace::record_milestone("short_lived_command_ready");
+    }
     tracing::debug!(
         target = "vtcode.startup",
         elapsed_ms = bootstrap_start.elapsed().as_millis() as u64,
@@ -312,12 +317,17 @@ async fn run(prepared: PreparedRun) -> Result<()> {
     // Preflight update check — always fetches from GitHub (force fetch).
     // Spawned as a background task so network I/O never blocks startup.
     // The result is consumed later (after dispatch) via get_preflight_notice().
-    tokio::spawn(updater::run_preflight_check());
+    // Updates are best-effort maintenance. Starting this only for interactive
+    // sessions avoids spawning work for metadata and one-shot commands.
+    if startup::command_uses_interactive_ui(&args) {
+        tokio::spawn(updater::run_preflight_check());
+    }
 
     // Clean up old spooled large output files (>24h) at startup to prevent
     // unbounded growth. Deferred to a blocking task so a cold cache does not
     // block first user I/O on the critical startup path.
-    if let Ok(paths) = VtCodePaths::resolve()
+    if startup::command_uses_interactive_ui(&args)
+        && let Ok(paths) = VtCodePaths::resolve()
         && let Ok(tmp_dir) = paths.cache_path("large-output")
     {
         tokio::task::spawn_blocking(move || {

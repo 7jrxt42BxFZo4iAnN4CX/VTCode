@@ -49,6 +49,17 @@ pub fn record_phase(phase: &str, started_at: Option<Instant>) {
     eprintln!("VTCODE_STARTUP_TRACE phase={phase} duration_ms={elapsed_ms:.3}");
 }
 
+/// Record a process-level startup milestone without requiring a phase timer.
+/// This is useful for short-lived commands whose output is the completion
+/// boundary rather than an interactive frame.
+pub fn record_milestone(name: &str) {
+    let state = state();
+    if state.enabled {
+        let elapsed_ms = state.started_at.elapsed().as_secs_f64() * 1_000.0;
+        eprintln!("VTCODE_STARTUP_TRACE phase={name} elapsed_ms={elapsed_ms:.3}");
+    }
+}
+
 /// Install work that should run after the first interactive frame is drawn.
 ///
 /// The hook is also installed when tracing is disabled because the startup

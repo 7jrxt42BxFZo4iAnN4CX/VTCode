@@ -13,6 +13,21 @@ VT Code includes a multi-layered test suite designed to ensure reliability and p
 
 ## **Running Tests**
 
+### Startup benchmark
+
+Use the repeatable launch benchmark to compare process startup across cold
+processes and warm filesystem caches:
+
+```bash
+VTCODE_STARTUP_TRACE=1 VTCODE_BENCH_RUNS=5 ./scripts/bench-startup.sh
+```
+
+The script measures `--version` and `--help` using the release binary. Set
+`VTCODE_BIN` to measure another binary. For an interactive first-frame run,
+use `VTCODE_BENCH_INTERACTIVE=1`; stop after the `first_ui_render` trace line.
+Startup tracing is opt-in and reports stable phase names, including
+`short_lived_command_ready` and `first_ui_render`.
+
 ### Basic Test Commands
 
 ```bash
