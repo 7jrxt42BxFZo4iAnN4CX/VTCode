@@ -106,7 +106,9 @@ pub(crate) async fn execute_direct_tool_call(
 
     let turn_modified_files = {
         let mut repeated_tool_attempts =
-            crate::agent::runloop::unified::turn::tool_outcomes::helpers::LoopTracker::new();
+            crate::agent::runloop::unified::turn::tool_outcomes::helpers::LoopTracker::with_verification_pending(
+                tp_ctx.session_stats.verification_pending(),
+            );
         let mut turn_modified_files = BTreeSet::new();
         let mut t_ctx = ToolOutcomeContext {
             ctx: &mut tp_ctx,
@@ -189,6 +191,8 @@ pub(crate) async fn execute_direct_tool_call(
                 .push(uni::Message::assistant(reply).with_phase(Some(uni::AssistantPhase::FinalAnswer)));
         }
 
+        let verification_pending = t_ctx.repeated_tool_attempts.verification_is_pending();
+        t_ctx.ctx.session_stats.set_verification_pending(verification_pending);
         turn_modified_files
     };
 

@@ -71,7 +71,7 @@ use vtcode_core::core::agent::error_recovery::ErrorType;
 use vtcode_core::primary_agent::ActivePrimaryAgentState;
 
 use crate::agent::runloop::mcp_events;
-use crate::agent::runloop::unified::turn::tool_outcomes::helpers::LoopTracker;
+use crate::agent::runloop::unified::turn::tool_outcomes::helpers::{ANTI_BLIND_EDITING_DIRECTIVE, LoopTracker};
 use crate::agent::runloop::unified::turn::turn_helpers::{display_error, error_message_for_user};
 
 /// Max completion tokens for the tool-free recovery synthesis pass.
@@ -682,7 +682,16 @@ pub(crate) async fn run_turn_loop(
     let mut plan_condense_attempts: u8 = 0;
     let mut turn_usage = HarnessUsage::default();
     // Optimization: Interned signatures with exponential backoff for loop detection
-    let mut repeated_tool_attempts = LoopTracker::new();
+    let mut repeated_tool_attempts = LoopTracker::with_verification_pending(ctx.session_stats.verification_pending());
+    if repeated_tool_attempts.verification_is_pending() {
+        repeated_tool_attempts.verification_warning_emitted = true;
+        let has_recent_verification_directive = working_history.iter().rev().take(8).any(|message| {
+            message.role == uni::MessageRole::System && message.content.as_text().contains(ANTI_BLIND_EDITING_DIRECTIVE)
+        });
+        if !has_recent_verification_directive {
+            working_history.push(uni::Message::system(ANTI_BLIND_EDITING_DIRECTIVE.to_string()));
+        }
+    }
 
     // Reset safety validator for a new turn
     {
@@ -1578,6 +1587,8 @@ pub(crate) async fn run_turn_loop(
     ctx.session_stats.record_turn_completed();
     let plan_approved_execution_pending =
         matches!(&result, TurnLoopResult::Completed { plan_approved_execution_pending: true });
+    ctx.session_stats
+        .set_verification_pending(repeated_tool_attempts.verification_is_pending());
     let turn_diagnostics = ctx
         .harness_state
         .snapshot_turn_diagnostics(turn_usage.clone(), repeated_tool_attempts.low_signal_tool_calls);

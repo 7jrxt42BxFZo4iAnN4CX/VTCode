@@ -226,6 +226,10 @@ async fn execute_parallel_group<'a, 'b>(
 
         let outcome = crate::agent::runloop::unified::tool_pipeline::ToolPipelineOutcome::from_status(status);
         update_repetition_tracker(t_ctx.repeated_tool_attempts, &outcome, &name, &args);
+        t_ctx
+            .ctx
+            .session_stats
+            .set_verification_pending(t_ctx.repeated_tool_attempts.verification_is_pending());
 
         if let Some(outcome) = handle_tool_execution_result(t_ctx, call_id, &name, &args, &outcome, start_time).await? {
             if matches!(
@@ -516,6 +520,8 @@ async fn execute_and_handle_tool_call_inner<'a>(
     record_circuit_transition(ctx, tool_name, circuit_before).await;
 
     update_repetition_tracker(repeated_tool_attempts, &pipeline_outcome, tool_name, &args_val);
+    ctx.session_stats
+        .set_verification_pending(repeated_tool_attempts.verification_is_pending());
 
     let mut t_ctx = ToolOutcomeContext { ctx, repeated_tool_attempts, turn_modified_files };
 

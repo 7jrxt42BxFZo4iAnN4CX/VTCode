@@ -74,6 +74,15 @@ impl LoopTracker {
         }
     }
 
+    /// Start a turn with the verification checkpoint carried from an earlier
+    /// turn in the same session. A resumed turn must not accept a text-only
+    /// completion until a successful verification command clears the state.
+    pub(crate) fn with_verification_pending(verification_pending: bool) -> Self {
+        let mut tracker = Self::new();
+        tracker.verification_pending = verification_pending;
+        tracker
+    }
+
     /// Record an attempt and return the count
     pub(crate) fn record(&mut self, signature: String) -> usize {
         let entry = self.attempts.entry(signature).or_insert((0, Instant::now()));
@@ -1143,6 +1152,26 @@ mod tests {
         update_repetition_tracker(&mut tracker, &edit, tools::EXEC_COMMAND, &json!({"cmd":"cargo nextest run"}));
         assert!(!tracker.verification_is_pending());
         assert_eq!(tracker.consecutive_mutations, 0);
+    }
+
+    #[test]
+    fn carried_verification_checkpoint_clears_after_successful_check() {
+        let mut tracker = LoopTracker::with_verification_pending(true);
+        let successful_check = ToolPipelineOutcome::from_status(ToolExecutionStatus::Success {
+            output: serde_json::json!({"exit_code": 0}),
+            stdout: None,
+            modified_files: vec![],
+            command_success: true,
+        });
+
+        update_repetition_tracker(
+            &mut tracker,
+            &successful_check,
+            tools::EXEC_COMMAND,
+            &json!({"cmd":"cargo check --locked"}),
+        );
+
+        assert!(!tracker.verification_is_pending());
     }
 
     #[test]

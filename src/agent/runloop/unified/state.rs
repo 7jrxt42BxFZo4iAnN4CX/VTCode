@@ -77,6 +77,10 @@ pub(crate) struct SessionStats {
     turn_stalled: bool,
     /// Reason associated with the last stalled turn, when available
     turn_stall_reason: Option<String>,
+    /// Whether successful mutations still require a verification command.
+    /// This survives a blocked turn so a later `continue` cannot claim
+    /// completion from inspection-only work.
+    verification_pending: bool,
     /// Responses-style continuation state keyed by normalized provider/model pairs.
     previous_response_chains: HashMap<(String, String), ResponsesContinuationState>,
     prompt_cache_profile: Option<PromptCacheProfile>,
@@ -477,6 +481,14 @@ impl SessionStats {
         } else {
             self.turn_stall_reason = reason;
         }
+    }
+
+    pub(crate) fn verification_pending(&self) -> bool {
+        self.verification_pending
+    }
+
+    pub(crate) fn set_verification_pending(&mut self, pending: bool) {
+        self.verification_pending = pending;
     }
 
     #[cfg(test)]
@@ -1113,6 +1125,18 @@ mod tests {
         assert_eq!(action, FollowUpPromptAction::RecoverFromStall { stall_reason: Some("turn blocked".to_string()) });
         assert!(stats.turn_stalled());
         assert_eq!(stats.turn_stall_reason(), Some("turn blocked"));
+    }
+
+    #[test]
+    fn verification_pending_survives_stall_recovery_until_explicitly_cleared() {
+        let mut stats = SessionStats::default();
+        stats.set_verification_pending(true);
+        stats.mark_turn_stalled(true, Some("verification pending".to_string()));
+        stats.mark_turn_stalled(false, None);
+
+        assert!(stats.verification_pending());
+        stats.set_verification_pending(false);
+        assert!(!stats.verification_pending());
     }
 
     #[test]

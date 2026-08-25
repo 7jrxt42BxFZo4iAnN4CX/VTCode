@@ -985,6 +985,79 @@ async fn turn_loop_preserves_legacy_loop_detector_state() {
 }
 
 #[tokio::test]
+async fn resumed_turn_cannot_complete_while_verification_is_pending() {
+    #[derive(Clone)]
+    struct TextOnlyProvider {
+        requests: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl uni::LLMProvider for TextOnlyProvider {
+        fn name(&self) -> &str {
+            "openai"
+        }
+
+        fn supports_streaming(&self) -> bool {
+            false
+        }
+
+        async fn generate(&self, request: uni::LLMRequest) -> Result<uni::LLMResponse, uni::LLMError> {
+            self.requests.fetch_add(1, Ordering::SeqCst);
+            Ok(uni::LLMResponse {
+                content: Some("The requested work is complete.".to_string()),
+                model: request.model.clone(),
+                tool_calls: None,
+                usage: None,
+                finish_reason: uni::FinishReason::Stop,
+                reasoning: None,
+                reasoning_details: None,
+                organization_id: None,
+                request_id: None,
+                tool_references: Vec::new(),
+                compaction: None,
+            })
+        }
+
+        fn supported_models(&self) -> Vec<String> {
+            vec!["noop-model".to_string()]
+        }
+
+        fn validate_request(&self, _request: &uni::LLMRequest) -> Result<(), uni::LLMError> {
+            Ok(())
+        }
+    }
+
+    let requests = Arc::new(AtomicUsize::new(0));
+    let mut backing = TestTurnProcessingBacking::new(4).await;
+    backing.set_provider(Box::new(TextOnlyProvider { requests: requests.clone() }));
+
+    let mut history = vec![uni::Message::user("continue the implementation".to_string())];
+    let turn_context = backing.turn_loop_context();
+    turn_context.session_stats.set_verification_pending(true);
+    let outcome = run_turn_loop(&mut history, turn_context)
+        .await
+        .expect("a resumed unverified turn should produce a blocked handoff");
+
+    assert!(matches!(
+        outcome.result,
+        TurnLoopResult::Blocked {
+            reason: Some(ref reason)
+        } if reason == PENDING_VERIFICATION_BLOCK_REASON
+    ));
+    assert_eq!(requests.load(Ordering::SeqCst), 2, "the gate must cap repeated unverified responses");
+    assert!(outcome.final_response_was_fallback);
+    assert!(history.iter().any(|message| {
+        message.role == uni::MessageRole::System
+            && message.content.as_text().contains("run `exec_command` to compile or test")
+    }));
+    assert!(
+        !history
+            .iter()
+            .any(|message| { message.content.as_text().contains("The requested work is complete.") })
+    );
+}
+
+#[tokio::test]
 async fn anti_blind_guard_stops_outer_loop_after_two_pending_stale_plan_pause_responses() {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
