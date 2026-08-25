@@ -2,6 +2,7 @@ use anyhow::Result;
 use serde_json::json;
 
 use crate::agent::runloop::unified::planning_workflow::detect_enter_planning_intent;
+use crate::agent::runloop::unified::run_loop_context::HarnessTurnState;
 use crate::agent::runloop::unified::turn::context::TurnLoopResult;
 use crate::agent::runloop::unified::turn::turn_helpers::{display_error, display_status};
 use crate::agent::runloop::unified::turn::turn_loop::TurnLoopContext;
@@ -28,6 +29,7 @@ pub(super) struct PrecomputedTurnConfig {
 }
 
 const UNLIMITED_TOOL_LOOPS: usize = usize::MAX;
+const TOOL_LOOP_LIMIT_RECOVERY_REASON: &str = "Tool loop budget exhausted before a final response. Tools are disabled for one bounded synthesis pass; answer from the completed tool outputs and state any incomplete work explicitly.";
 
 /// Initialize the loop allowance for a turn that is executing an approved
 /// plan. The allowance is applied at turn initialization only; later manual
@@ -231,6 +233,20 @@ fn emit_loop_hard_cap_break_metric(
         tool_calls = ctx.harness_state.tool_calls,
         "turn metric"
     );
+}
+
+/// Arm the single tool-free synthesis pass used when a turn reaches its loop
+/// allowance. The loop allowance is made unlimited only for the control loop
+/// itself; the recovery request disables tools at the provider boundary, so
+/// this does not weaken the ordinary hard cap or permit another tool batch.
+fn arm_tool_loop_synthesis_recovery(harness_state: &mut HarnessTurnState, current_max_tool_loops: &mut usize) -> bool {
+    if harness_state.is_recovery_active() || harness_state.recovery_pass_used() {
+        return false;
+    }
+
+    harness_state.activate_recovery(TOOL_LOOP_LIMIT_RECOVERY_REASON);
+    *current_max_tool_loops = UNLIMITED_TOOL_LOOPS;
+    true
 }
 
 pub(super) async fn handle_steering_messages(
@@ -561,14 +577,25 @@ pub(super) async fn maybe_handle_tool_loop_limit(
             )?;
             Ok(ToolLoopLimitAction::ContinueLoop)
         }
-        _ => Ok(ToolLoopLimitAction::BreakLoop),
+        _ => {
+            display_status(
+                ctx.renderer,
+                "Tool loop limit was not increased. Synthesizing from the tool results already collected.",
+            )?;
+            if arm_tool_loop_synthesis_recovery(ctx.harness_state, current_max_tool_loops) {
+                Ok(ToolLoopLimitAction::ContinueLoop)
+            } else {
+                Ok(ToolLoopLimitAction::BreakLoop)
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        UNLIMITED_TOOL_LOOPS, clamp_tool_loop_increment, effective_max_tool_calls_for_approved_plan_execution,
+        TOOL_LOOP_LIMIT_RECOVERY_REASON, UNLIMITED_TOOL_LOOPS, arm_tool_loop_synthesis_recovery,
+        clamp_tool_loop_increment, effective_max_tool_calls_for_approved_plan_execution,
         effective_max_tool_calls_for_turn, extract_turn_config, handle_steering_messages, initial_tool_loop_limit,
         is_stale_approved_plan_pause_response, resolve_safety_tool_call_limits, resolve_tool_loop_limit,
         tool_loop_hard_cap,
@@ -576,6 +603,7 @@ mod tests {
     use crate::agent::runloop::unified::planning_workflow::{
         PlanningIntent, detect_enter_planning_intent, detect_planning_intent,
     };
+    use crate::agent::runloop::unified::run_loop_context::{HarnessTurnState, TurnId, TurnRunId};
     use crate::agent::runloop::unified::turn::context::TurnLoopResult;
     use crate::agent::runloop::unified::turn::turn_processing::test_support::TestTurnProcessingBacking;
     use std::time::Duration;
@@ -788,6 +816,24 @@ mod tests {
         // The helper is an initialization transform; applying the allowance
         // to the already-initialized value is not part of the turn loop.
         assert_eq!(initial_tool_loop_limit(initial_tool_loop_limit(40, true), false), 90);
+    }
+
+    #[test]
+    fn exhausted_loop_limit_arms_one_tool_free_synthesis_pass() {
+        let mut state = HarnessTurnState::new(TurnRunId("run-1".to_string()), TurnId("turn-1".to_string()), 40, 0, 1);
+        let mut loop_limit = 40;
+
+        assert!(arm_tool_loop_synthesis_recovery(&mut state, &mut loop_limit));
+        assert_eq!(loop_limit, UNLIMITED_TOOL_LOOPS);
+        assert!(state.is_recovery_active());
+        assert!(state.recovery_is_tool_free());
+        assert_eq!(state.recovery_reason(), Some(TOOL_LOOP_LIMIT_RECOVERY_REASON));
+
+        // The recovery request is the only pass added by this transition.
+        assert!(!arm_tool_loop_synthesis_recovery(&mut state, &mut loop_limit));
+        assert!(state.consume_recovery_pass());
+        assert!(state.finish_recovery_pass());
+        assert!(!arm_tool_loop_synthesis_recovery(&mut state, &mut loop_limit));
     }
 
     #[test]
