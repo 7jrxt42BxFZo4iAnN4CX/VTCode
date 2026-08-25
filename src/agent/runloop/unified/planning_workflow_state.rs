@@ -38,7 +38,15 @@ pub(crate) struct PlanningWorkflowSessionState {
     /// from the research already gathered instead of ending with an approval
     /// hint that has no draft behind it.
     plan_synthesis_retry_used: bool,
-    plan_validation_repair_used: bool,
+    /// Counts automatic validation-repair prompts issued during the current
+    /// planning turn. The counter is deliberately turn-scoped so a failed
+    /// draft cannot consume the repair budget for every later user turn.
+    plan_validation_repair_reprompts: u8,
+    /// Number of validation-repair requests waiting to be admitted through
+    /// the turn loop. This is independent of the number of text responses
+    /// already emitted: a repair may be scheduled after an interview denial
+    /// or another ordinary planning response has used that budget.
+    plan_validation_repair_follow_ups_pending: u8,
     /// Counts re-prompts issued after the model emitted pseudo-tool-call
     /// markup (XML-ish tool-call text no parser could execute) as a plan-mode
     /// text response. Bounded so a checkpoint that keeps emitting the same
@@ -61,6 +69,10 @@ pub(crate) struct PlanningWorkflowSessionState {
 /// text so the user can steer.
 pub(crate) const MAX_PLAN_PSEUDO_TOOL_CALL_REPROMPTS: u32 = 2;
 
+/// Maximum number of automatic validation-repair prompts after the initial
+/// invalid plan candidate in one planning turn.
+pub(crate) const MAX_PLAN_VALIDATION_REPAIR_REPROMPTS: u8 = 2;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PendingPlanApproval {
     pub(crate) thread_id: String,
@@ -79,7 +91,8 @@ impl PlanningWorkflowSessionState {
         self.recovery_exhausted = false;
         self.interview_denied = false;
         self.plan_synthesis_retry_used = false;
-        self.plan_validation_repair_used = false;
+        self.plan_validation_repair_reprompts = 0;
+        self.plan_validation_repair_follow_ups_pending = 0;
         self.pseudo_tool_call_reprompts = 0;
         self.previous_primary_agent = None;
         self.fallback_primary_agent = None;
@@ -92,7 +105,8 @@ impl PlanningWorkflowSessionState {
         self.recovery_exhausted = false;
         self.interview_denied = false;
         self.plan_synthesis_retry_used = false;
-        self.plan_validation_repair_used = false;
+        self.plan_validation_repair_reprompts = 0;
+        self.plan_validation_repair_follow_ups_pending = 0;
         self.pseudo_tool_call_reprompts = 0;
         self.previous_primary_agent = None;
         self.fallback_primary_agent = None;
@@ -194,12 +208,29 @@ impl PlanningWorkflowSessionState {
         self.interview_pending = false;
     }
 
+    /// Reset the automatic validation-repair budget for a fresh planning turn.
+    pub(crate) fn start_turn(&mut self) {
+        self.plan_validation_repair_reprompts = 0;
+        self.plan_validation_repair_follow_ups_pending = 0;
+    }
+
     pub(crate) fn plan_validation_repair_allowed(&self) -> bool {
-        !self.plan_validation_repair_used
+        self.plan_validation_repair_reprompts < MAX_PLAN_VALIDATION_REPAIR_REPROMPTS
+    }
+
+    pub(crate) fn plan_validation_repair_follow_up_allowed(&self) -> bool {
+        self.plan_validation_repair_follow_ups_pending > 0
+    }
+
+    pub(crate) fn consume_plan_validation_repair_follow_up(&mut self) {
+        self.plan_validation_repair_follow_ups_pending =
+            self.plan_validation_repair_follow_ups_pending.saturating_sub(1);
     }
 
     pub(crate) fn mark_plan_validation_repair_used(&mut self) {
-        self.plan_validation_repair_used = true;
+        self.plan_validation_repair_reprompts = self.plan_validation_repair_reprompts.saturating_add(1);
+        self.plan_validation_repair_follow_ups_pending =
+            self.plan_validation_repair_follow_ups_pending.saturating_add(1);
     }
 
     pub(crate) fn plan_pseudo_tool_call_reprompt_allowed(&self) -> bool {
@@ -347,7 +378,9 @@ pub(crate) async fn finish_planning_workflow(
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_PLAN_PSEUDO_TOOL_CALL_REPROMPTS, PlanningWorkflowSessionState};
+    use super::{
+        MAX_PLAN_PSEUDO_TOOL_CALL_REPROMPTS, MAX_PLAN_VALIDATION_REPAIR_REPROMPTS, PlanningWorkflowSessionState,
+    };
     use vtcode_core::core::interfaces::session::PlanningEntrySource;
 
     #[test]
@@ -435,16 +468,39 @@ mod tests {
     }
 
     #[test]
-    fn plan_validation_repair_is_bounded_and_reset_on_reentry() {
+    fn plan_validation_repair_is_bounded_and_reset_at_turn_and_reentry() {
         let mut state = PlanningWorkflowSessionState::default();
         state.enter(PlanningEntrySource::UserRequest);
-        assert!(state.plan_validation_repair_allowed());
+        for attempt in 0..MAX_PLAN_VALIDATION_REPAIR_REPROMPTS {
+            assert!(
+                state.plan_validation_repair_allowed(),
+                "repair attempt {attempt} should be allowed before the bound is reached"
+            );
+            state.mark_plan_validation_repair_used();
+        }
+        assert!(
+            !state.plan_validation_repair_allowed(),
+            "validation repairs must stop after the bounded automatic passes"
+        );
+        assert!(state.plan_validation_repair_follow_up_allowed());
+        state.consume_plan_validation_repair_follow_up();
+        assert!(state.plan_validation_repair_follow_up_allowed());
+        state.consume_plan_validation_repair_follow_up();
+        assert!(!state.plan_validation_repair_follow_up_allowed());
+
+        state.start_turn();
+        assert!(state.plan_validation_repair_allowed(), "a fresh planning turn gets a fresh repair budget");
+        assert!(!state.plan_validation_repair_follow_up_allowed(), "a fresh turn has no stale repair request");
         state.mark_plan_validation_repair_used();
-        assert!(!state.plan_validation_repair_allowed());
+        assert!(
+            state.plan_validation_repair_follow_up_allowed(),
+            "a repair remains pending regardless of earlier text responses"
+        );
 
         state.exit();
         state.enter(PlanningEntrySource::UserRequest);
         assert!(state.plan_validation_repair_allowed());
+        assert!(!state.plan_validation_repair_follow_up_allowed(), "re-entry clears pending repair requests");
     }
 
     #[test]

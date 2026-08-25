@@ -95,32 +95,32 @@ pub(crate) use plan_approval::{
 pub(crate) use recovery::maybe_condense_truncated_plan;
 pub(crate) use task_tracker::{TaskTrackerHandoff, create_task_tracker_from_active_plan};
 
-/// Build a one-shot repair directive from validator-owned feedback. The
+/// Build a bounded repair directive from validator-owned feedback. The
 /// feedback (produced by `PlanValidationReport::repair_feedback()`) is bounded
 /// — no raw plan lines — and always includes the canonical step format so the
-/// model knows the exact contract. The policy prose (one repair, no tool calls,
-/// re-emit `<proposed_plan>`) is owned by this facade.
+/// model knows the exact contract. The policy prose (bounded repair, no tool
+/// calls, re-emit `<proposed_plan>`) is owned by this facade.
 ///
 /// Both the initial-plan rejection path (`response_handling.rs`) and the
 /// later-turn approval rejection path (`exit_trigger.rs`) use this helper so
 /// the model receives consistent format guidance from every repair surface.
 pub(crate) fn build_plan_repair_directive(feedback: &str) -> String {
     format!(
-        "Planning recovery: the proposed plan was rejected. Repair it once using concrete repository evidence. \
+        "Planning recovery: the proposed plan was rejected. Repair it in this bounded pass using concrete repository evidence. \
          {feedback}\n\n\
-         Re-emit exactly one compact `<proposed_plan>` with Summary, numbered Implementation Steps in the canonical \
+         Re-emit only one compact `<proposed_plan>` block with Summary, numbered Implementation Steps in the canonical \
          form, Test Cases and Validation, and Assumptions and Defaults. Resolve every open decision. Do not emit tool \
          calls or ask for approval until the artifact is complete."
     )
 }
 
 /// Resolve a [`PlanArtifactError`] into the bounded repair directive the model
-/// should receive on the single allowed repair pass. This is the single owner
+/// should receive on each bounded repair pass. This is the single owner
 /// of the error→feedback mapping so the initial-plan rejection path
 /// (`response_handling.rs`) and the later-turn approval rejection path
 /// (`exit_trigger.rs`) cannot diverge: invalid plans get their report-specific
 /// feedback, every other error variant gets the safe generic feedback, and the
-/// one-shot policy prose is always applied by [`build_plan_repair_directive`].
+/// bounded policy prose is always applied by [`build_plan_repair_directive`].
 pub(crate) fn plan_repair_directive_for_error(error: &PlanArtifactError) -> String {
     let feedback = match error {
         PlanArtifactError::Invalid { report, .. } => report.repair_feedback(),
@@ -315,7 +315,7 @@ Improve launch time.
         );
         assert!(
             directive.contains("Do not emit tool calls"),
-            "directive must enforce the no-tool-call one-shot policy: {directive}"
+            "directive must enforce the no-tool-call bounded-repair policy: {directive}"
         );
     }
 

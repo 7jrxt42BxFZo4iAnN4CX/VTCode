@@ -30,7 +30,7 @@ pub const PLANNING_WORKFLOW_READ_ONLY_NOTICE_LINE: &str = "Mutating file edits a
 /// Shared Planning workflow instruction line for transitioning to implementation.
 pub const PLANNING_WORKFLOW_EXIT_INSTRUCTION_LINE: &str = "Only a validated plan persisted under `.vtcode/plans/` is ready for user approval. Mutating tools stay disabled until the user approves.";
 /// Canonical contract for model-authored plan output and runtime-owned persistence.
-pub const PLANNING_WORKFLOW_PLAN_PERSISTENCE_POLICY_LINE: &str = "Emit exactly one final `<proposed_plan>` block. Do not use shell commands or file-writing tools to create or modify `.vtcode/plans/`; runtime owns plan/tracker persistence and validation, and exposes approval controls only after successful persistence.";
+pub const PLANNING_WORKFLOW_PLAN_PERSISTENCE_POLICY_LINE: &str = "Emit exactly one final `<proposed_plan>` block and no surrounding prose. Do not use shell commands or file-writing tools to create or modify `.vtcode/plans/`; runtime owns plan/tracker persistence and validation, and exposes approval controls only after successful persistence.";
 /// Compact, spec-like plan quality line. The previous wording ("summary,
 /// steps, test cases, assumptions") let the model emit verbosely large plans
 /// that blew the generation token budget and were cut off mid-`<proposed_plan>`
@@ -143,7 +143,7 @@ pub const SPECIALIZED_OPERATING_PROFILE_DELTA: &str = r#"## Operating Profile
 const STRUCTURED_REASONING_INSTRUCTIONS: &str = r#"
 ## Structured Reasoning
 
-Use tags when helpful: `<analysis>` facts/options, `<plan>` steps, `<uncertainty>` blockers, `<verification>` checks. When a decision must be consumed by code or tools, prefer JSON or function-call shaped output over prose.
+Use tags when helpful: `<analysis>` facts/options, `<reasoning_plan>` advisory steps, `<uncertainty>` blockers, `<verification>` checks. Reserve `<plan>` for the planning workflow's approval artifact. When a decision must be consumed by code or tools, prefer JSON or function-call shaped output over prose.
 "#;
 
 /// System instruction configuration
@@ -175,7 +175,7 @@ pub enum SectionKind {
     /// substitution already applied).
     /// Always present and never trimmed to satisfy the token budget.
     BaseContract,
-    /// Optional `<analysis>/<plan>/<uncertainty>/<verification>` tagging
+    /// Optional `<analysis>/<reasoning_plan>/<uncertainty>/<verification>` tagging
     /// guidance. Advisory; trimmed first when over budget.
     StructuredReasoning,
     /// Lean "## Skills" routing section rendered from available skill
@@ -748,6 +748,8 @@ mod tests {
             result.contains("## Structured Reasoning"),
             "Lightweight mode should include structured reasoning when explicitly enabled"
         );
+        assert!(result.contains("<reasoning_plan>"));
+        assert!(!result.contains("`<plan>` steps"), "<plan> is reserved for approval artifacts");
     }
 
     #[tokio::test]
@@ -837,6 +839,7 @@ mod tests {
     fn planning_workflow_persistence_policy_assigns_plan_lifecycle_to_runtime() {
         let line = PLANNING_WORKFLOW_PLAN_PERSISTENCE_POLICY_LINE;
         assert!(line.contains("Emit exactly one final `<proposed_plan>` block"));
+        assert!(line.contains("no surrounding prose"));
         assert!(line.contains("Do not use shell commands or file-writing tools to create or modify `.vtcode/plans/`"));
         assert!(line.contains("runtime owns plan/tracker persistence and validation"));
         assert!(line.contains("approval controls only after successful persistence"));
@@ -1848,7 +1851,7 @@ VT Code (Build mode). Be concise and safe.
 
 ## Structured Reasoning
 
-Use tags when helpful: `<analysis>` facts/options, `<plan>` steps, `<uncertainty>` blockers, `<verification>` checks. When a decision must be consumed by code or tools, prefer JSON or function-call shaped output over prose.
+Use tags when helpful: `<analysis>` facts/options, `<reasoning_plan>` advisory steps, `<uncertainty>` blockers, `<verification>` checks. Reserve `<plan>` for the planning workflow's approval artifact. When a decision must be consumed by code or tools, prefer JSON or function-call shaped output over prose.
 
 
 ## Shell Profile
@@ -1862,6 +1865,7 @@ Use tags when helpful: `<analysis>` facts/options, `<plan>` steps, `<uncertainty
 - Batch independent read-only calls; order dependent reads, and serialize mutations.
 - Use `exec_command.cmd` for build tools, test tools, `git diff -- <path>`, and shell-only tasks. In one-shot `exec_command` calls, do not use `!!`, `!$`, `!ssh`, or `fc`; write full command arguments explicitly from conversation or tool results. Interactive shells: suggest review-safe history expansion: Bash `histverify`, zsh `HIST_VERIFY`.
 - Completion is a checkpoint: keep verification resolved.
+- `code_search`: omit unused filters; no empty values (`path: ""`).
 - Advanced `code_search` takes `query`; filters `path`, `file_types`, `result_types`, `max_results`; results: definitions, exact syntactic usages. Queries use literal smart-case and `|`-separated literals. Truncated: narrow. Example: `{"query":"TurnLoop","path":"src","result_types":["definition"],"max_results":20}`. `result_types` is an array; `max_results` is an integer. Do not JSON-encode arrays or integers as strings. Use `exec_command` or a skill for syntax patterns.
 - If calls repeat, re-plan instead of retrying.
 - Run independent tools in parallel when their inputs do not depend on each other.

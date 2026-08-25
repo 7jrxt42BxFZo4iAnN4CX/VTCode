@@ -9,7 +9,9 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use tokio::sync::{Notify, mpsc};
 
-use crate::agent::runloop::unified::plan_blocks::{ProposedPlanStreamParser, extract_any_plan, extract_proposed_plan};
+use crate::agent::runloop::unified::plan_blocks::{
+    ProposedPlanStreamParser, extract_any_plan, strip_plan_persistence_policy_line,
+};
 use crate::agent::runloop::unified::stream_sanitization::StreamSanitizer;
 use vtcode_commons::formatting::compact_reasoning_text;
 use vtcode_core::copilot::CopilotRuntimeRequest;
@@ -950,8 +952,8 @@ pub(crate) async fn render_stream_with_options_and_copilot_runtime_impl(
         response
             .content
             .as_deref()
-            .map(extract_proposed_plan)
-            .map(|extraction| extraction.stripped_text)
+            .map(extract_any_plan)
+            .map(|extraction| strip_plan_persistence_policy_line(&extraction.stripped_text))
     } else {
         response.content.clone()
     };
@@ -1201,6 +1203,52 @@ mod tests {
             .expect("streamed plan should be merged into content");
         assert_eq!(count_plan_blocks(response_content), 1);
         assert!(response_content.contains("Intro"));
+        assert!(response_content.contains(STREAMED_PLAN));
+        assert!(response_content.contains("</proposed_plan>"));
+    }
+
+    #[tokio::test]
+    async fn split_streamed_alternate_plan_is_forwarded_as_canonical_plan() {
+        let spinner = build_spinner();
+        let mut renderer = AnsiRenderer::stdout();
+        let ctrl_c_state = Arc::new(CtrlCState::new());
+        let ctrl_c_notify = Arc::new(Notify::new());
+        let mut stream: uni::LLMStream = Box::pin(async_stream::stream! {
+            yield Ok(LLMStreamEvent::Token { delta: "Intro\n<pl".to_string() });
+            yield Ok(LLMStreamEvent::Token {
+                delta: "an>\n- Step 1\n</plan>\nOutro".to_string(),
+            });
+            yield Ok(LLMStreamEvent::Completed {
+                response: Box::new(completed_response_with_content(None)),
+            });
+        });
+
+        let (response, _) = render_stream_with_options_and_copilot_runtime_impl(
+            "mock",
+            &mut stream,
+            None,
+            None,
+            None,
+            None,
+            &spinner,
+            &mut renderer,
+            &ctrl_c_state,
+            &ctrl_c_notify,
+            StreamSpinnerOptions {
+                strip_proposed_plan_blocks: true,
+                ..StreamSpinnerOptions::default()
+            },
+            None,
+        )
+        .await
+        .expect("stream should return its completed response");
+
+        let response_content = response
+            .content
+            .as_deref()
+            .expect("alternate streamed plan should be merged into content");
+        assert_eq!(count_plan_blocks(response_content), 1);
+        assert!(!response_content.contains("<plan>"));
         assert!(response_content.contains(STREAMED_PLAN));
         assert!(response_content.contains("</proposed_plan>"));
     }

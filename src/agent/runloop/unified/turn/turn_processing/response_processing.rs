@@ -3,7 +3,7 @@ use vtcode_core::llm::providers::split_reasoning_from_text;
 use vtcode_core::utils::ansi::AnsiRenderer;
 use vtcode_core::utils::ansi::MessageStyle;
 
-use crate::agent::runloop::unified::plan_blocks::extract_any_plan;
+use crate::agent::runloop::unified::plan_blocks::{extract_any_plan, strip_plan_persistence_policy_line};
 use crate::agent::runloop::unified::planning_workflow::validate_plan_content;
 use crate::agent::runloop::unified::turn::context::{PreparedAssistantToolCall, TurnProcessingResult};
 use crate::agent::runloop::unified::turn::guards::validate_tool_args_security;
@@ -87,7 +87,12 @@ pub(crate) fn process_llm_response(
         // non-plan prose in the normal assistant response; retaining the plan
         // body here makes the transcript render it a second time before the
         // approval heading is emitted.
-        final_text = Some(extraction.stripped_text);
+        let stripped_text = if extraction.plan_text.is_some() {
+            strip_plan_persistence_policy_line(&extraction.stripped_text)
+        } else {
+            extraction.stripped_text
+        };
+        final_text = Some(stripped_text);
         proposed_plan = extraction.plan_text;
     }
 
@@ -831,6 +836,36 @@ mod tests {
                 assert!(!text.contains("</plan>"));
             }
             _ => panic!("Expected text response with extracted <plan> block"),
+        }
+    }
+
+    #[test]
+    fn process_llm_response_removes_echoed_plan_policy_text() {
+        let policy = vtcode_core::prompts::system::PLANNING_WORKFLOW_PLAN_PERSISTENCE_POLICY_LINE;
+        let response = LLMResponse {
+            content: Some(format!("{policy}\n\n<plan>\n- Step 1\n</plan>")),
+            tool_calls: None,
+            model: "test".to_string(),
+            usage: None,
+            finish_reason: FinishReason::Stop,
+            reasoning: None,
+            reasoning_details: None,
+            tool_references: Vec::new(),
+            compaction: None,
+            request_id: None,
+            organization_id: None,
+        };
+
+        let mut renderer = AnsiRenderer::stdout();
+        let result = process_llm_response(&response, &mut renderer, 0, true, false, true, true, None, None)
+            .expect("response processing should succeed");
+
+        match result {
+            TurnProcessingResult::TextResponse { text, proposed_plan, .. } => {
+                assert!(text.trim().is_empty(), "policy echo must not remain visible: {text:?}");
+                assert_eq!(proposed_plan.as_deref(), Some("- Step 1"));
+            }
+            _ => panic!("expected the alternate plan block to remain actionable"),
         }
     }
 

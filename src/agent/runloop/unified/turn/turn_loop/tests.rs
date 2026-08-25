@@ -74,6 +74,10 @@ This draft is missing concrete step evidence.
 enum StreamedPlanScript {
     Valid,
     InvalidThenProse,
+    InvalidThenValid,
+    InvalidThenInvalidThenProse,
+    ProseThenInvalidThenValid,
+    ThreeInvalid,
 }
 
 struct StreamedPlanProvider {
@@ -104,6 +108,14 @@ impl uni::LLMProvider for StreamedPlanProvider {
             StreamedPlanScript::Valid => Some(STREAMED_VALID_PLAN),
             StreamedPlanScript::InvalidThenProse if call_number == 0 => Some(STREAMED_INVALID_PLAN),
             StreamedPlanScript::InvalidThenProse => None,
+            StreamedPlanScript::InvalidThenValid if call_number == 0 => Some(STREAMED_INVALID_PLAN),
+            StreamedPlanScript::InvalidThenValid => Some(STREAMED_VALID_PLAN),
+            StreamedPlanScript::InvalidThenInvalidThenProse if call_number < 2 => Some(STREAMED_INVALID_PLAN),
+            StreamedPlanScript::InvalidThenInvalidThenProse => None,
+            StreamedPlanScript::ProseThenInvalidThenValid if call_number == 0 => None,
+            StreamedPlanScript::ProseThenInvalidThenValid if call_number == 1 => Some(STREAMED_INVALID_PLAN),
+            StreamedPlanScript::ProseThenInvalidThenValid => Some(STREAMED_VALID_PLAN),
+            StreamedPlanScript::ThreeInvalid => Some(STREAMED_INVALID_PLAN),
         };
         let completion_content = plan
             .is_none()
@@ -1661,7 +1673,7 @@ async fn tool_free_recovery_retries_on_contract_violation_then_salvages() {
 
 /// Regression test for the plan-mode "cut off mid-flight" bug: a planning
 /// synthesis truncated at the model's output token limit (unclosed
-/// `<proposed_plan>`) must be detected so the turn loop can condense and
+/// supported plan tag) must be detected so the turn loop can condense and
 /// re-emit instead of accepting a partial plan or looping.
 #[test]
 fn plan_synthesis_truncated_detects_unclosed_proposed_plan() {
@@ -1683,6 +1695,24 @@ fn plan_synthesis_truncated_detects_unclosed_proposed_plan() {
         "unclosed <proposed_plan> with Length finish must be detected as truncated"
     );
 
+    let alternate_truncated = uni::LLMResponse {
+        content: Some("<plan>\n# Improve launch time\n## Steps\n1. Fix warmup -> src/main.rs".to_string()),
+        model: "noop".to_string(),
+        tool_calls: None,
+        usage: None,
+        finish_reason: uni::FinishReason::Length,
+        reasoning: None,
+        reasoning_details: None,
+        organization_id: None,
+        request_id: None,
+        tool_references: Vec::new(),
+        compaction: None,
+    };
+    assert!(
+        plan_synthesis_was_truncated(&alternate_truncated),
+        "unclosed <plan> with Length finish must be detected as truncated"
+    );
+
     // A complete plan (closed tag) is not a truncation even with Length.
     let complete = uni::LLMResponse {
         content: Some("<proposed_plan>\n# Title\n## Steps\n1. x\n</proposed_plan>".to_string()),
@@ -1698,6 +1728,21 @@ fn plan_synthesis_truncated_detects_unclosed_proposed_plan() {
         compaction: None,
     };
     assert!(!plan_synthesis_was_truncated(&complete), "closed <proposed_plan> must not be flagged as truncated");
+
+    let alternate_complete = uni::LLMResponse {
+        content: Some("<plan>\n# Title\n## Steps\n1. x\n</plan>".to_string()),
+        model: "noop".to_string(),
+        tool_calls: None,
+        usage: None,
+        finish_reason: uni::FinishReason::Length,
+        reasoning: None,
+        reasoning_details: None,
+        organization_id: None,
+        request_id: None,
+        tool_references: Vec::new(),
+        compaction: None,
+    };
+    assert!(!plan_synthesis_was_truncated(&alternate_complete), "closed <plan> must not be flagged as truncated");
 
     // A normal (Stop) response that happens to mention the tag is not truncated.
     let normal = uni::LLMResponse {
@@ -1865,6 +1910,181 @@ async fn streamed_invalid_plan_uses_one_bounded_repair_without_approval_artifact
             .iter()
             .any(|event| matches!(event, ThreadEvent::PlanApprovalRequested(_))),
         "rejected streamed plans must not publish approval requests"
+    );
+}
+
+#[tokio::test]
+async fn streamed_invalid_plan_repairs_to_valid_plan_and_persists_it() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut backing = TestTurnProcessingBacking::new(4).await;
+    backing.activate_planning_for_test();
+    backing.set_provider(Box::new(StreamedPlanProvider {
+        script: StreamedPlanScript::InvalidThenValid,
+        calls: calls.clone(),
+    }));
+
+    let mut history = vec![uni::Message::user("make a plan for the streamed handoff".to_string())];
+    let outcome = run_turn_loop(&mut history, backing.turn_loop_context())
+        .await
+        .expect("a valid repair should reach the approval handoff");
+
+    assert_eq!(calls.load(Ordering::SeqCst), 2, "one invalid draft should get one repair request");
+    assert!(outcome.plan_approved_execution_pending, "the repaired plan should be approval-ready");
+    assert_eq!(
+        history
+            .iter()
+            .filter(|message| message.role == uni::MessageRole::System)
+            .filter(|message| message.content.as_text().contains("proposed plan was rejected"))
+            .count(),
+        1,
+        "exactly one bounded repair directive should be recorded"
+    );
+    assert!(
+        history.iter().any(|message| {
+            message.role == uni::MessageRole::Assistant
+                && message.content.as_text().contains("<proposed_plan>")
+                && message.content.as_text().contains("1. Do the thing")
+        }),
+        "the rejected draft must remain in assistant history for the repair request"
+    );
+    assert!(
+        history.iter().any(|message| {
+            message.role == uni::MessageRole::System
+                && message.content.as_text().contains("proposed plan was rejected")
+                && !message.content.as_text().contains("1. Do the thing")
+        }),
+        "repair directives must not elevate rejected draft text into the system role"
+    );
+
+    let plans_dir = backing.workspace_path().join(".vtcode").join("plans");
+    let plan_text = fs::read_dir(&plans_dir)
+        .expect("repaired plan should create the plans directory")
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .find(|path| {
+            path.extension().is_some_and(|extension| extension == "md")
+                && !path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with(".tasks.md"))
+        })
+        .map(|path| fs::read_to_string(path).expect("read repaired plan"))
+        .expect("repaired plan should be persisted");
+    assert!(plan_text.contains("Preserve the streamed planning handoff."));
+    assert!(
+        history
+            .iter()
+            .all(|message| !message.content.as_text().contains("Rejected plan draft:")),
+        "recoverable invalid drafts must not be rendered as user-facing warning text"
+    );
+}
+
+#[tokio::test]
+async fn streamed_invalid_plan_repair_is_admitted_after_prior_plain_response() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut backing = TestTurnProcessingBacking::new(4).await;
+    backing.activate_planning_for_test();
+    backing.mark_interview_denied_for_test();
+    backing.set_provider(Box::new(StreamedPlanProvider {
+        script: StreamedPlanScript::ProseThenInvalidThenValid,
+        calls: calls.clone(),
+    }));
+
+    let mut history = vec![uni::Message::user(
+        "make a plan after the interview fallback".to_string(),
+    )];
+    let outcome = run_turn_loop(&mut history, backing.turn_loop_context())
+        .await
+        .expect("a repair after an earlier plain response should reach the approval handoff");
+
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        3,
+        "the invalid plan must get a repair despite the earlier prose response"
+    );
+    assert!(outcome.plan_approved_execution_pending, "the repaired plan should be approval-ready");
+    let plans_dir = backing.workspace_path().join(".vtcode").join("plans");
+    assert!(
+        plans_dir.exists()
+            && fs::read_dir(&plans_dir)
+                .expect("repaired plan should create the plans directory")
+                .any(|entry| entry.ok().is_some_and(|entry| {
+                    entry.path().extension().is_some_and(|extension| extension == "md")
+                        && !entry
+                            .path()
+                            .file_name()
+                            .is_some_and(|name| name.to_string_lossy().ends_with(".tasks.md"))
+                })),
+        "the repair admitted after prior prose must persist its validated plan"
+    );
+}
+
+#[tokio::test]
+async fn streamed_invalid_plan_gets_a_second_repair_before_terminal_fallback() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut backing = TestTurnProcessingBacking::new(4).await;
+    backing.activate_planning_for_test();
+    backing.set_provider(Box::new(StreamedPlanProvider {
+        script: StreamedPlanScript::InvalidThenInvalidThenProse,
+        calls: calls.clone(),
+    }));
+
+    let mut history = vec![uni::Message::user("make a plan for the streamed handoff".to_string())];
+    run_turn_loop(&mut history, backing.turn_loop_context())
+        .await
+        .expect("the bounded second repair should finish the turn");
+
+    assert_eq!(calls.load(Ordering::SeqCst), 3, "two invalid drafts should receive two repair passes");
+    assert_eq!(
+        history
+            .iter()
+            .filter(|message| message.role == uni::MessageRole::System)
+            .filter(|message| message.content.as_text().contains("proposed plan was rejected"))
+            .count(),
+        2,
+        "the second invalid draft must schedule the second repair"
+    );
+    let plans_dir = backing.workspace_path().join(".vtcode").join("plans");
+    assert!(
+        !plans_dir.exists() || fs::read_dir(&plans_dir).expect("read plans directory").next().is_none(),
+        "recoverable invalid drafts must not create approval artifacts"
+    );
+}
+
+#[tokio::test]
+async fn streamed_third_invalid_plan_is_terminal_and_retains_each_rejected_draft_in_assistant_history() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut backing = TestTurnProcessingBacking::new(4).await;
+    backing.activate_planning_for_test();
+    backing.set_provider(Box::new(StreamedPlanProvider {
+        script: StreamedPlanScript::ThreeInvalid,
+        calls: calls.clone(),
+    }));
+
+    let mut history = vec![uni::Message::user("make a plan for the streamed handoff".to_string())];
+    run_turn_loop(&mut history, backing.turn_loop_context())
+        .await
+        .expect("the third invalid draft should terminate the bounded repair loop");
+
+    assert_eq!(calls.load(Ordering::SeqCst), 3, "the third invalid draft must not trigger a fourth request");
+    assert_eq!(
+        history
+            .iter()
+            .filter(|message| message.role == uni::MessageRole::System)
+            .filter(|message| message.content.as_text().contains("proposed plan was rejected"))
+            .count(),
+        2,
+        "only the first two invalid drafts should schedule repairs"
+    );
+    let rejected_drafts = history
+        .iter()
+        .filter(|message| message.role == uni::MessageRole::Assistant)
+        .map(|message| message.content.as_text())
+        .filter(|text| text.contains("<proposed_plan>"))
+        .count();
+    assert_eq!(rejected_drafts, 3, "each rejected draft must remain available in assistant history");
+    let plans_dir = backing.workspace_path().join(".vtcode").join("plans");
+    assert!(
+        !plans_dir.exists() || fs::read_dir(&plans_dir).expect("read plans directory").next().is_none(),
+        "terminally rejected plans must not create approval artifacts"
     );
 }
 

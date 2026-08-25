@@ -12,15 +12,38 @@ pub(crate) struct ProposedPlanExtraction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ParseMode {
     Normal,
-    InPlan,
+    InPlan { close_tag: &'static str },
 }
 
-/// Streaming parser that removes `<proposed_plan>...</proposed_plan>` content from
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlanTag {
+    Proposed,
+    Alternate,
+}
+
+impl PlanTag {
+    fn open_tag(self) -> &'static str {
+        match self {
+            Self::Proposed => OPEN_TAG,
+            Self::Alternate => ALT_OPEN_TAG,
+        }
+    }
+
+    fn close_tag(self) -> &'static str {
+        match self {
+            Self::Proposed => CLOSE_TAG,
+            Self::Alternate => ALT_CLOSE_TAG,
+        }
+    }
+}
+
+/// Streaming parser that removes either supported plan block form from
 /// assistant-visible text while collecting the plan body.
 #[derive(Debug, Default)]
 pub(crate) struct ProposedPlanStreamParser {
     mode: Option<ParseMode>,
     pending: String,
+    policy_pending: String,
     plan_buffer: String,
     saw_plan_block: bool,
 }
@@ -30,6 +53,7 @@ impl ProposedPlanStreamParser {
         Self {
             mode: Some(ParseMode::Normal),
             pending: String::new(),
+            policy_pending: String::new(),
             plan_buffer: String::new(),
             saw_plan_block: false,
         }
@@ -38,35 +62,40 @@ impl ProposedPlanStreamParser {
     /// Consume streamed text and return only content that should remain visible
     /// to the assistant transcript.
     pub(crate) fn consume(&mut self, chunk: &str) -> String {
+        let chunk = self.filter_policy_chunk(chunk, false);
+        self.consume_plan_markup(&chunk)
+    }
+
+    fn consume_plan_markup(&mut self, chunk: &str) -> String {
         self.pending.push_str(chunk);
         let mut visible = String::new();
 
         loop {
             match self.mode.unwrap_or(ParseMode::Normal) {
                 ParseMode::Normal => {
-                    if let Some(index) = self.pending.find(OPEN_TAG) {
+                    if let Some((index, tag)) = find_next_open_tag(&self.pending) {
                         visible.push_str(&self.pending[..index]);
-                        self.pending.drain(..index + OPEN_TAG.len());
-                        self.mode = Some(ParseMode::InPlan);
+                        self.pending.drain(..index + tag.open_tag().len());
+                        self.mode = Some(ParseMode::InPlan { close_tag: tag.close_tag() });
                         self.saw_plan_block = true;
                         continue;
                     }
 
-                    let keep_tail = OPEN_TAG.len().saturating_sub(1).min(self.pending.len());
+                    let keep_tail = OPEN_TAG.len().max(ALT_OPEN_TAG.len()).saturating_sub(1).min(self.pending.len());
                     let emit_len = safe_char_boundary(&self.pending, self.pending.len().saturating_sub(keep_tail));
                     visible.push_str(&self.pending[..emit_len]);
                     self.pending.drain(..emit_len);
                     break;
                 }
-                ParseMode::InPlan => {
-                    if let Some(index) = self.pending.find(CLOSE_TAG) {
+                ParseMode::InPlan { close_tag } => {
+                    if let Some(index) = self.pending.find(close_tag) {
                         self.plan_buffer.push_str(&self.pending[..index]);
-                        self.pending.drain(..index + CLOSE_TAG.len());
+                        self.pending.drain(..index + close_tag.len());
                         self.mode = Some(ParseMode::Normal);
                         continue;
                     }
 
-                    let keep_tail = CLOSE_TAG.len().saturating_sub(1).min(self.pending.len());
+                    let keep_tail = close_tag.len().saturating_sub(1).min(self.pending.len());
                     let append_len = safe_char_boundary(&self.pending, self.pending.len().saturating_sub(keep_tail));
                     self.plan_buffer.push_str(&self.pending[..append_len]);
                     self.pending.drain(..append_len);
@@ -80,12 +109,13 @@ impl ProposedPlanStreamParser {
 
     /// Finish parsing and return any remaining visible text plus optional plan.
     pub(crate) fn finish(&mut self) -> ProposedPlanExtraction {
-        let mut trailing_visible = String::new();
+        let policy_trailing = self.flush_policy_pending();
+        let mut trailing_visible = self.consume_plan_markup(&policy_trailing);
         match self.mode.unwrap_or(ParseMode::Normal) {
             ParseMode::Normal => {
                 trailing_visible.push_str(&self.pending);
             }
-            ParseMode::InPlan => {
+            ParseMode::InPlan { .. } => {
                 // Unterminated block: treat the remainder as plan content.
                 self.plan_buffer.push_str(&self.pending);
             }
@@ -97,6 +127,19 @@ impl ProposedPlanStreamParser {
             stripped_text: trailing_visible,
             plan_text: finalize_plan_text(self.saw_plan_block, &self.plan_buffer),
         }
+    }
+
+    pub(crate) fn has_unclosed_plan_block(&self) -> bool {
+        matches!(self.mode, Some(ParseMode::InPlan { .. })) || has_partial_open_tag(&self.pending)
+    }
+
+    fn filter_policy_chunk(&mut self, chunk: &str, flush: bool) -> String {
+        self.policy_pending.push_str(chunk);
+        filter_policy_text(&mut self.policy_pending, flush)
+    }
+
+    fn flush_policy_pending(&mut self) -> String {
+        self.filter_policy_chunk("", true)
     }
 }
 
@@ -113,36 +156,81 @@ pub(crate) fn extract_proposed_plan(text: &str) -> ProposedPlanExtraction {
 }
 
 pub(crate) fn extract_any_plan(text: &str) -> ProposedPlanExtraction {
-    let proposed = extract_proposed_plan(text);
-    if proposed.plan_text.is_some() {
-        return proposed;
-    }
-
-    extract_tagged_plan(text, ALT_OPEN_TAG, ALT_CLOSE_TAG)
+    extract_proposed_plan(text)
 }
 
-fn extract_tagged_plan(text: &str, open_tag: &str, close_tag: &str) -> ProposedPlanExtraction {
-    let Some(start) = text.find(open_tag) else {
-        return ProposedPlanExtraction { stripped_text: text.to_string(), plan_text: None };
-    };
+pub(crate) fn has_unclosed_plan_block(text: &str) -> bool {
+    let mut parser = ProposedPlanStreamParser::new();
+    parser.consume(text);
+    parser.has_unclosed_plan_block()
+}
 
-    let after_open = start + open_tag.len();
-    let (plan_body, end_idx) = if let Some(close_rel) = text[after_open..].find(close_tag) {
-        let end = after_open + close_rel;
-        (&text[after_open..end], Some(end + close_tag.len()))
+/// Remove the runtime-owned persistence policy when a provider repeats it as
+/// assistant prose around a plan block. The exact line is intentionally
+/// bounded and prompt-owned; arbitrary model text is left untouched.
+pub(crate) fn strip_plan_persistence_policy_line(text: &str) -> String {
+    let stripped = text.replace(vtcode_core::prompts::system::PLANNING_WORKFLOW_PLAN_PERSISTENCE_POLICY_LINE, "");
+    if stripped == text {
+        text.to_string()
     } else {
-        (&text[after_open..], None)
-    };
+        stripped.trim().to_string()
+    }
+}
 
-    let mut stripped = String::new();
-    stripped.push_str(&text[..start]);
-    if let Some(end_idx) = end_idx {
-        stripped.push_str(&text[end_idx..]);
+fn find_next_open_tag(text: &str) -> Option<(usize, PlanTag)> {
+    [PlanTag::Proposed, PlanTag::Alternate]
+        .into_iter()
+        .filter_map(|tag| text.find(tag.open_tag()).map(|index| (index, tag)))
+        .min_by_key(|(index, _)| *index)
+}
+
+fn has_partial_open_tag(text: &str) -> bool {
+    [OPEN_TAG, ALT_OPEN_TAG]
+        .into_iter()
+        .any(|tag| (1..tag.len()).any(|prefix_len| text.ends_with(&tag[..prefix_len])))
+}
+
+fn filter_policy_text(buffer: &mut String, flush: bool) -> String {
+    let policy = vtcode_core::prompts::system::PLANNING_WORKFLOW_PLAN_PERSISTENCE_POLICY_LINE;
+    let mut visible = String::new();
+
+    loop {
+        let Some(start) = find_policy_candidate_start(buffer, policy) else {
+            visible.push_str(buffer);
+            buffer.clear();
+            break;
+        };
+
+        visible.push_str(&buffer[..start]);
+        buffer.drain(..start);
+        if buffer.starts_with(policy) {
+            buffer.drain(..policy.len());
+            continue;
+        }
+        if !flush && policy.starts_with(buffer.as_str()) {
+            break;
+        }
+
+        visible.push_str(buffer);
+        buffer.clear();
+        break;
     }
 
-    ProposedPlanExtraction {
-        stripped_text: stripped,
-        plan_text: finalize_plan_text(true, plan_body),
+    visible
+}
+
+fn find_policy_candidate_start(text: &str, policy: &str) -> Option<usize> {
+    let mut line_start = 0;
+    loop {
+        let candidate = &text[line_start..];
+        if policy.starts_with(candidate) || candidate.starts_with(policy) {
+            return Some(line_start);
+        }
+        let newline = text[line_start..].find('\n')?;
+        line_start += newline + 1;
+        if line_start >= text.len() {
+            return None;
+        }
     }
 }
 
@@ -174,7 +262,10 @@ fn safe_char_boundary(text: &str, idx: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{ProposedPlanStreamParser, extract_proposed_plan};
+    use super::{
+        ProposedPlanStreamParser, extract_any_plan, extract_proposed_plan, has_unclosed_plan_block,
+        strip_plan_persistence_policy_line,
+    };
 
     #[test]
     fn extracts_single_proposed_plan_block() {
@@ -195,6 +286,24 @@ mod tests {
         let extraction = extract_proposed_plan("Before<proposed_plan>\n- Step 1\n- Step 2");
         assert_eq!(extraction.stripped_text, "Before");
         assert_eq!(extraction.plan_text.as_deref(), Some("- Step 1\n- Step 2"));
+        assert!(has_unclosed_plan_block("Before<proposed_plan>\n- Step 1\n- Step 2"));
+    }
+
+    #[test]
+    fn extracts_alternate_plan_block_through_shared_parser() {
+        let extraction = extract_any_plan("Intro\n<plan>\n- A\n- B\n</plan>\nOutro");
+        assert_eq!(extraction.stripped_text, "Intro\n\nOutro");
+        assert_eq!(extraction.plan_text.as_deref(), Some("- A\n- B"));
+        assert!(!has_unclosed_plan_block("Intro\n<plan>\n- A\n- B\n</plan>\nOutro"));
+    }
+
+    #[test]
+    fn handles_unterminated_alternate_plan_block() {
+        let extraction = extract_any_plan("Before<plan>\n- Step 1\n- Step 2");
+        assert_eq!(extraction.stripped_text, "Before");
+        assert_eq!(extraction.plan_text.as_deref(), Some("- Step 1\n- Step 2"));
+        assert!(has_unclosed_plan_block("Before<plan>\n- Step 1\n- Step 2"));
+        assert!(has_unclosed_plan_block("Before<plan"));
     }
 
     #[test]
@@ -212,6 +321,20 @@ mod tests {
     }
 
     #[test]
+    fn supports_streaming_chunks_with_split_alternate_tags() {
+        let mut parser = ProposedPlanStreamParser::new();
+        let mut visible = String::new();
+        visible.push_str(&parser.consume("Intro\n<pl"));
+        visible.push_str(&parser.consume("an>\n- Step"));
+        visible.push_str(&parser.consume(" 1\n</plan>\nOutro"));
+        let trailing = parser.finish();
+        visible.push_str(&trailing.stripped_text);
+
+        assert_eq!(visible, "Intro\n\nOutro");
+        assert_eq!(trailing.plan_text.as_deref(), Some("- Step 1"));
+    }
+
+    #[test]
     fn handles_multibyte_text_without_panicking() {
         let mut parser = ProposedPlanStreamParser::new();
         let mut visible = String::new();
@@ -221,5 +344,32 @@ mod tests {
 
         assert_eq!(visible, "an’t exit on my");
         assert!(trailing.plan_text.is_none());
+    }
+
+    #[test]
+    fn strips_only_the_known_plan_persistence_policy_line() {
+        let policy = vtcode_core::prompts::system::PLANNING_WORKFLOW_PLAN_PERSISTENCE_POLICY_LINE;
+        let text = format!("{policy}\n\nResearch summary");
+        assert_eq!(strip_plan_persistence_policy_line(&text), "Research summary");
+        assert_eq!(strip_plan_persistence_policy_line("unrelated prose"), "unrelated prose");
+    }
+
+    #[test]
+    fn policy_echo_does_not_look_like_an_unclosed_plan_block() {
+        let policy = vtcode_core::prompts::system::PLANNING_WORKFLOW_PLAN_PERSISTENCE_POLICY_LINE;
+        let response = format!("{policy}\n<plan>\n- Step 1\n</plan>");
+        let extraction = extract_any_plan(&response);
+        assert_eq!(extraction.plan_text.as_deref(), Some("- Step 1"));
+        assert!(!extraction.stripped_text.contains("Emit exactly one final"));
+
+        let split_at = policy.find("<proposed_plan>").expect("policy tag");
+        let mut parser = ProposedPlanStreamParser::new();
+        let mut visible = parser.consume(&policy[..split_at]);
+        visible.push_str(&parser.consume(&policy[split_at..]));
+        visible.push_str(&parser.consume("\n<plan>\n- Step 1\n</plan>"));
+        let trailing = parser.finish();
+        visible.push_str(&trailing.stripped_text);
+        assert!(!visible.contains("Emit exactly one final"));
+        assert_eq!(trailing.plan_text.as_deref(), Some("- Step 1"));
     }
 }

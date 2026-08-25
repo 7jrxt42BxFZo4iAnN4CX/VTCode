@@ -16,7 +16,7 @@ pub enum SectionKind {
     /// override/append and agent-identity substitution already applied).
     /// Always present and never trimmed to satisfy the token budget.
     BaseContract,
-    /// Optional `<analysis>/<plan>/<uncertainty>/<verification>` tagging
+    /// Optional `<analysis>/<reasoning_plan>/<uncertainty>/<verification>` tagging
     /// guidance. Advisory; trimmed first when over budget.
     StructuredReasoning,
     /// Lean "## Skills" routing section rendered from available skill

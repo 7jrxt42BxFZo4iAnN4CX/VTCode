@@ -658,6 +658,9 @@ pub(crate) async fn run_turn_loop(
 
     // Optimization: Extract all frequently accessed config values once
     let mut turn_config = extract_turn_config(ctx.vt_cfg, ctx.is_planning_active(), ctx.renderer.supports_inline_ui());
+    if ctx.is_planning_active() {
+        ctx.plan_session.start_turn();
+    }
     // After a permanent `request_user_input` denial, suppress the tool for the
     // rest of the session so the model stops retrying it across turns.
     if ctx.plan_session.is_interview_denied() {
@@ -719,6 +722,7 @@ pub(crate) async fn run_turn_loop(
         // build-mode limits that were computed at turn start.
         if !planning_limits_applied && ctx.is_planning_active() {
             planning_limits_applied = true;
+            ctx.plan_session.start_turn();
             turn_config = extract_turn_config(ctx.vt_cfg, true, ctx.renderer.supports_inline_ui());
             if ctx.plan_session.is_interview_denied() {
                 turn_config.request_user_input_enabled = false;
@@ -889,7 +893,13 @@ pub(crate) async fn run_turn_loop(
             turn_history_start_len,
             ctx.harness_state.assistant_text_responses_in_turn,
         );
-        if text_responses_so_far >= MAX_ASSISTANT_TEXT_RESPONSES_PER_TURN {
+        // A pending validation repair is a deliberate extra candidate, so
+        // allow the next request through the generic text-response cap. This
+        // allowance is queued independently of the response count because a
+        // repair can be scheduled after an ordinary planning response.
+        let plan_validation_repair_follow_up =
+            ctx.is_planning_active() && ctx.plan_session.plan_validation_repair_follow_up_allowed();
+        if text_responses_so_far >= MAX_ASSISTANT_TEXT_RESPONSES_PER_TURN && !plan_validation_repair_follow_up {
             tracing::warn!(
                 text_responses = text_responses_so_far,
                 cap = MAX_ASSISTANT_TEXT_RESPONSES_PER_TURN,
@@ -901,6 +911,9 @@ pub(crate) async fn run_turn_loop(
             );
             result = TurnLoopResult::Completed { plan_approved_execution_pending: false };
             break;
+        }
+        if plan_validation_repair_follow_up {
+            ctx.plan_session.consume_plan_validation_repair_follow_up();
         }
 
         // Prepare turn processing context

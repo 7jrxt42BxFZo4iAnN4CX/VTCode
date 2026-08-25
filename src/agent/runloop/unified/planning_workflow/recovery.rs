@@ -1,7 +1,7 @@
 //! Plan-mode synthesis truncation recovery.
 //!
 //! When a planning-mode synthesis is cut off at the model's output token limit
-//! (an unclosed `<proposed_plan>`), the emitted plan is incomplete ("cut off
+//! (an unclosed `<proposed_plan>` or `<plan>`), the emitted plan is incomplete ("cut off
 //! mid-flight"). The previous verbose plan format exceeded the limit and was
 //! truncated, which re-triggered the recovery loop forever.
 //!
@@ -14,6 +14,8 @@
 use vtcode_core::llm::provider as uni;
 use vtcode_core::utils::ansi::{AnsiRenderer, MessageStyle};
 
+use crate::agent::runloop::unified::plan_blocks::has_unclosed_plan_block;
+
 /// Injected when a planning synthesis is truncated, asking the model to emit a
 /// single compact spec that fits the limit.
 pub(crate) const PLANNING_SYNTHESIS_TRUNCATED_CONDENSE_DIRECTIVE: &str = "Your previous `<proposed_plan>` was cut off at the token limit. Re-emit ONE compact `<proposed_plan>` spec that fits within the limit: keep each step to a single line (`Action -> files: [path] -> verify: [command]`), drop prose, and prefer file:symbol references. Do not repeat the truncated draft.";
@@ -24,15 +26,12 @@ const MAX_PLAN_SYNTHESIS_CONDENSE_ATTEMPTS: u8 = 1;
 
 /// Detect a planning synthesis that was cut off at the model's output token
 /// limit: the response ended with `finish_reason == Length`, carried no tool
-/// calls, and left a `<proposed_plan>` block unclosed. Such a partial plan is
-/// what previously re-triggered the recovery loop forever.
+/// calls, and left either supported plan block form unclosed. Such a partial
+/// plan is what previously re-triggered the recovery loop forever.
 pub(crate) fn plan_synthesis_was_truncated(response: &uni::LLMResponse) -> bool {
     matches!(response.finish_reason, uni::FinishReason::Length)
         && response.tool_calls.as_ref().is_none_or(|calls| calls.is_empty())
-        && response
-            .content
-            .as_deref()
-            .is_some_and(|text| text.contains("<proposed_plan") && !text.contains("</proposed_plan>"))
+        && response.content.as_deref().is_some_and(has_unclosed_plan_block)
 }
 
 /// If the planning synthesis was truncated, inject the condense directive into

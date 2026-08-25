@@ -67,6 +67,7 @@ pub fn generate_tool_guidelines_for_profile(
         lines.push("- Completion is a checkpoint: keep verification resolved.".to_string());
     }
     if has_search {
+        lines.push("- `code_search`: omit unused filters; no empty values (`path: \"\"`).".to_string());
         lines.push(code_search_guidance(has_exec, shell_profile).to_string());
     }
     if has_apply_patch || has_exec {
@@ -210,6 +211,8 @@ fn generate_runtime_tool_guidelines_for_profile(
 
     let mut lines = vec!["- Planning workflow active: stay within the read-safe tool list.".to_string()];
     lines.push("- Monitor the available planning tool-loop budget; stop research when the plan is specified or the limit is near, then synthesize one compact decision-ready plan from existing evidence.".to_string());
+    lines.push("- Every implementation step in the final plan must name a concrete repository target and include a concrete verification command or observable check.".to_string());
+    lines.push("- When the plan is ready, emit only one `<proposed_plan>` block; do not repeat planning policy text or add surrounding prose.".to_string());
     if let Some(browse_guidance) =
         browse_tool_guidance(has_exec, has_search, has_list_files, has_read_file, shell_profile)
     {
@@ -217,6 +220,9 @@ fn generate_runtime_tool_guidelines_for_profile(
     }
     if has_exec {
         lines.push("- In Planning workflow, use `exec_command` only for read-only verification.".to_string());
+    }
+    if has_search {
+        lines.push("- `code_search`: omit unused filters; no empty values (`path: \"\"`).".to_string());
     }
     if has_task_tracker {
         lines.push("- Keep `task_tracker` updated as you refine the plan.".to_string());
@@ -382,6 +388,8 @@ mod tests {
         assert!(guidelines.contains("exact syntactic usages"));
         assert!(guidelines.contains("\"result_types\":[\"definition\"]"));
         assert!(guidelines.contains("Do not JSON-encode arrays or integers as strings"));
+        assert!(guidelines.contains("omit unused filters"));
+        assert!(guidelines.contains("path: \"\""));
         assert!(guidelines.contains("git diff -- <path>"));
         assert!(guidelines.contains("build tools"));
         assert!(guidelines.contains("test tools"));
@@ -462,6 +470,7 @@ mod tests {
         assert!(guidelines.contains("native PowerShell syntax"));
         assert!(guidelines.contains("Advanced `code_search` takes `query`"));
         assert!(guidelines.contains("literal smart-case"));
+        assert!(guidelines.contains("omit unused filters"));
         assert!(!guidelines.contains("`ls`, `rg`, `find`, `cat`, `sed`, and `awk`"));
         assert!(!guidelines.contains("shell history expansion"));
         assert!(!guidelines.contains("histverify"));
@@ -655,6 +664,9 @@ mod tests {
 
         assert!(guidelines.contains("Planning workflow active"));
         assert!(guidelines.contains("`exec_command` only for read-only verification"));
+        assert!(guidelines.contains("concrete repository target"));
+        assert!(guidelines.contains("emit only one `<proposed_plan>` block"));
+        assert!(guidelines.contains("omit unused filters"));
         assert!(!guidelines.contains("Inspect before edit"));
     }
 

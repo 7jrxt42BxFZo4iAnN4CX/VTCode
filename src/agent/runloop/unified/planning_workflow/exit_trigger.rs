@@ -152,7 +152,7 @@ pub(crate) async fn maybe_handle_planning_exit_trigger(
                     tracing::warn!(target: "vtcode.planning_workflow", error = %error, "persisted plan rejected before approval");
                     if plan_session.plan_validation_repair_allowed() {
                         plan_session.mark_plan_validation_repair_used();
-                        // The error→feedback mapping and one-shot policy prose
+                        // The error→feedback mapping and bounded repair policy
                         // live in the planning facade so this later-turn
                         // approval rejection path and the initial-plan
                         // rejection path share identical guidance.

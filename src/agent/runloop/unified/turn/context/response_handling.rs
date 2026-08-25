@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent::runloop::unified::plan_blocks::strip_plan_persistence_policy_line;
 use crate::agent::runloop::unified::planning_workflow::{
     PlanArtifactError, ValidatedPlanArtifact, emit_plan_ready_events, persist_plan_draft, persisted_plan_is_ready,
     plan_repair_directive_for_error, validate_plan_content,
@@ -38,21 +39,29 @@ impl<'a> TurnProcessingContext<'a> {
     ) -> anyhow::Result<TurnHandlerOutcome> {
         use vtcode_core::utils::ansi::MessageStyle;
 
+        if allow_repair && self.plan_session.plan_validation_repair_allowed() {
+            self.plan_session.mark_plan_validation_repair_used();
+            // The error→feedback mapping and bounded repair policy live in the
+            // planning facade so this initial-plan rejection path and the
+            // later-turn approval rejection path share identical guidance.
+            tracing::warn!(
+                target: "vtcode.planning_workflow",
+                error = %error,
+                repair_scheduled = true,
+                "plan artifact rejected before approval; scheduling bounded repair"
+            );
+            // Keep the rejected draft in assistant history so the repair
+            // request can inspect it without elevating model- or
+            // repository-controlled text into a system message.
+            append_rejected_plan_draft_to_last_assistant(self.working_history, plan_text);
+            let directive = plan_repair_directive_for_error(&error);
+            self.push_system_message(directive);
+            return Ok(TurnHandlerOutcome::Continue);
+        }
         let message = format!("Plan is not ready for approval: {error}");
         self.renderer.line(MessageStyle::Warning, &message)?;
         tracing::warn!(target: "vtcode.planning_workflow", error = %error, "plan artifact rejected before approval");
-        // Keep the rejected draft in history on BOTH paths: the repair retry
-        // must see what it is fixing, and a terminal rejection must leave the
-        // draft in checkpoints/events instead of the bare planning reminder.
         append_rejected_plan_draft_to_last_assistant(self.working_history, plan_text);
-        if allow_repair && self.plan_session.plan_validation_repair_allowed() {
-            self.plan_session.mark_plan_validation_repair_used();
-            // The error→feedback mapping and one-shot policy prose live in the
-            // planning facade so this initial-plan rejection path and the
-            // later-turn approval rejection path share identical guidance.
-            self.push_system_message(plan_repair_directive_for_error(&error));
-            return Ok(TurnHandlerOutcome::Continue);
-        }
         // Terminal rejection: the draft is never persisted or shown by the
         // approval flow, so render it here — otherwise the user cannot see
         // what was rejected or revise it manually (checkpoint turn_912).
@@ -237,6 +246,11 @@ impl<'a> TurnProcessingContext<'a> {
             crate::agent::runloop::unified::turn::provider_noise::sanitize_recovery_answer(text)
         } else {
             crate::agent::runloop::unified::turn::provider_noise::strip_provider_noise(&text)
+        };
+        let text = if proposed_plan.is_some() {
+            strip_plan_persistence_policy_line(&text)
+        } else {
+            text
         };
         // Plan-mode salvage: a model with no tool schemas on the wire (or a
         // confused checkpoint) sometimes answers with XML-ish tool-call markup
@@ -693,11 +707,19 @@ const REJECTED_PLAN_DRAFT_HISTORY_BUDGET: usize = 8 * 1024;
 /// from history on rejection: the repair retry cannot see what it is fixing,
 /// and terminal rejections leave checkpoints/events with no trace of the
 /// rejected plan (turn_912/913: the final assistant message degraded to the
-/// planning-workflow reminder bullet).
+/// planning-workflow reminder bullet). Keeping it as assistant content also
+/// prevents untrusted draft text from being interpreted as system guidance.
 fn append_rejected_plan_draft_to_last_assistant(working_history: &mut [uni::Message], plan_text: &str) {
+    let Some(draft) = bounded_rejected_plan_draft(plan_text) else {
+        return;
+    };
+    append_to_last_assistant_message(working_history, &draft);
+}
+
+fn bounded_rejected_plan_draft(plan_text: &str) -> Option<String> {
     let plan_text = plan_text.trim();
     if plan_text.is_empty() {
-        return;
+        return None;
     }
     let bounded = if plan_text.len() > REJECTED_PLAN_DRAFT_HISTORY_BUDGET {
         let mut end = REJECTED_PLAN_DRAFT_HISTORY_BUDGET;
@@ -708,7 +730,7 @@ fn append_rejected_plan_draft_to_last_assistant(working_history: &mut [uni::Mess
     } else {
         plan_text.to_string()
     };
-    append_to_last_assistant_message(working_history, &format!("<proposed_plan>\n{bounded}\n</proposed_plan>"));
+    Some(format!("<proposed_plan>\n{bounded}\n</proposed_plan>"))
 }
 
 fn append_to_last_assistant_message(working_history: &mut [uni::Message], addition: &str) {
@@ -1055,6 +1077,19 @@ mod tests {
         assert!(should_render_no_ready_plan_hint(false, "Here is a research summary."));
         assert!(!should_render_no_ready_plan_hint(true, "Here is a research summary."));
         assert!(!should_render_no_ready_plan_hint(false, "Which approach should I take?"));
+    }
+
+    #[test]
+    fn clarifying_question_detection_keeps_formatting_edge_cases_explicit() {
+        let structured_plan = "## Assumptions\n1. Preserve the quoted requirement: \"Should we keep this?\"";
+        assert!(!looks_like_clarifying_question(structured_plan));
+
+        let quoted_question = "The requirement is \"Should we keep this?\"";
+        assert!(!looks_like_clarifying_question(quoted_question));
+
+        // Keep the current terminal-line heuristic documented until a corpus
+        // of production false positives justifies a more semantic classifier.
+        assert!(looks_like_clarifying_question("This is rhetorical: why change it?"));
     }
 
     #[test]
