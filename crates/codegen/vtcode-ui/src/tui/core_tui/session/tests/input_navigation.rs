@@ -386,6 +386,29 @@ fn ctrl_t_transposes_characters() {
 }
 
 #[test]
+fn ctrl_t_transposes_cyrillic_characters_without_panicking() {
+    // Multi-byte UTF-8 must not hit a "byte index is not a char boundary" panic.
+    let mut session = session_with_input("яб", 0);
+
+    let event = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL);
+    let result = session.process_key(event);
+
+    assert!(result.is_none());
+    assert_eq!(session.input_manager.content(), "бя");
+}
+
+#[test]
+fn ctrl_t_transposes_cyrillic_in_middle_without_panicking() {
+    let mut session = session_with_input("абв", 2);
+
+    let event = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL);
+    let result = session.process_key(event);
+
+    assert!(result.is_none());
+    assert_eq!(session.input_manager.content(), "бав");
+}
+
+#[test]
 fn alt_t_toggles_tool_display_mode() {
     let mut session = session_with_input("hello world", 6);
 
@@ -405,6 +428,18 @@ fn alt_u_uppercases_word() {
 
     assert!(result.is_none());
     assert_eq!(session.input_manager.content(), "HELLO world");
+}
+
+#[test]
+fn alt_u_uppercases_cyrillic_word_without_panicking() {
+    // Byte-vs-char index confusion would panic on multi-byte UTF-8.
+    let mut session = session_with_input("привет мир", 0);
+
+    let event = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::ALT);
+    let result = session.process_key(event);
+
+    assert!(result.is_none());
+    assert_eq!(session.input_manager.content(), "ПРИВЕТ мир");
 }
 
 #[test]

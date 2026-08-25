@@ -128,8 +128,46 @@ impl<'a> InlineEventLoop<'a> {
             return Ok(action);
         }
 
+        // Consume every already-buffered event BEFORE taking a submission.
+        // Otherwise each queued message dispatched as its own turn because
+        // buffered events trickled in one per interaction cycle and the queue
+        // never held more than a single item at a boundary. Queue-affecting
+        // events return Continue so the drain keeps folding them into the
+        // queue; the first real action (direct submit, exit, …) dispatches
+        // immediately and stops the drain. A transient processing error is
+        // recorded but does not abandon the remaining buffered events; it is
+        // surfaced only after the drain finishes.
+        let mut drain_error = None;
+        while let Ok(event) = session.events.try_recv() {
+            match self.process_buffered_event(event).await {
+                Ok(InlineLoopAction::Continue) => {}
+                Ok(action) => {
+                    if let Some(err) = drain_error {
+                        tracing::error!(error = %err, "inline event processing failed earlier in the drain; dispatching action anyway");
+                    }
+                    return Ok(action);
+                }
+                Err(err) => {
+                    if drain_error.is_none() {
+                        tracing::warn!(error = %err, "inline event processing failed; draining remaining buffered events");
+                    }
+                    drain_error.get_or_insert(err);
+                }
+            }
+        }
+        if let Some(err) = drain_error {
+            return Err(err);
+        }
+
         if let Some(action) = self.take_queued_submission() {
             return Ok(action);
+        }
+
+        // If the TUI event stream has been dropped the session cannot produce
+        // further input; polling would spin a 100% CPU busy-loop because
+        // next_event() resolves to None instantly on a closed channel. Exit.
+        if session.events.is_closed() {
+            return Ok(InlineLoopAction::Exit(vtcode_core::hooks::SessionEndReason::Exit));
         }
 
         let maybe_event = tokio::select! {
@@ -166,6 +204,10 @@ impl<'a> InlineEventLoop<'a> {
             return Ok(InlineLoopAction::Continue);
         };
 
+        self.process_buffered_event(event).await
+    }
+
+    async fn process_buffered_event(&mut self, event: InlineEvent) -> Result<InlineLoopAction> {
         if let InlineEvent::Submit(ref input) = event {
             if !input.is_empty() {
                 self.emit_interjected(InterjectionSource::Direct, Self::count_images(input));
@@ -248,7 +290,7 @@ impl<'a> InlineEventLoop<'a> {
     }
 
     fn take_queued_submission(&mut self) -> Option<InlineLoopAction> {
-        let queued = self.queue.take_next_submission()?;
+        let queued = self.queue.take_batched_submission()?;
         if queued.input.is_empty() {
             return Some(InlineLoopAction::Continue);
         }
@@ -437,7 +479,7 @@ mod tests {
     #[tokio::test]
     async fn poll_inline_loop_action_respects_idle_wake_delay() {
         let (command_tx, _command_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel::<InlineEvent>();
+        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel::<InlineEvent>();
         let handle = InlineHandle::new_for_tests(command_tx);
         let mut session = InlineSession { handle: handle.clone(), events: event_rx };
         let mut renderer = AnsiRenderer::with_inline_ui(handle.clone(), Default::default());
@@ -499,5 +541,70 @@ mod tests {
         .expect("poll should succeed");
 
         assert!(matches!(action, InlineLoopAction::Continue));
+        drop(event_tx);
+    }
+
+    #[tokio::test]
+    async fn poll_inline_loop_action_exits_when_event_stream_is_closed() {
+        let (command_tx, _command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel::<InlineEvent>();
+        drop(event_tx); // drop the sender so the stream is closed from the start
+        let handle = InlineHandle::new_for_tests(command_tx);
+        let mut session = InlineSession { handle: handle.clone(), events: event_rx };
+        let mut renderer = AnsiRenderer::with_inline_ui(handle.clone(), Default::default());
+        let ctrl_c_state = Arc::new(CtrlCState::new());
+        let interrupts = InlineInterruptCoordinator::new(ctrl_c_state.as_ref());
+        let mut ctrl_c_notice_displayed = false;
+        let default_placeholder = None;
+        let mut queued_inputs = VecDeque::new();
+        let mut prefer_latest_queued_input_once = false;
+        let mut model_picker_state = None;
+        let mut palette_state = None;
+        let mut config = runtime_config();
+        let mut vt_cfg = None;
+        let mut provider_client: Box<dyn uni::LLMProvider> = Box::new(DummyProvider);
+        let session_bootstrap = SessionBootstrap::default();
+        let mut startup_update_notice_rx = None;
+        let mut header_context = InlineHeaderContext::default();
+        let ctrl_c_notify = Arc::new(Notify::new());
+        let (editor_open_sender, _editor_open_receiver) =
+            crate::agent::runloop::unified::session_setup::bounded_editor_open_requests();
+
+        let resources = InlineEventLoopResources {
+            renderer: &mut renderer,
+            handle: &handle,
+            interrupts,
+            ctrl_c_notice_displayed: &mut ctrl_c_notice_displayed,
+            default_placeholder: &default_placeholder,
+            queued_inputs: &mut queued_inputs,
+            prefer_latest_queued_input_once: &mut prefer_latest_queued_input_once,
+            model_picker_state: &mut model_picker_state,
+            palette_state: &mut palette_state,
+            config: &mut config,
+            vt_cfg: &mut vt_cfg,
+            provider_client: &mut provider_client,
+            session_bootstrap: &session_bootstrap,
+            full_auto: false,
+            startup_update_notice_rx: &mut startup_update_notice_rx,
+            header_context: &mut header_context,
+            use_unicode: true,
+            conversation_history: &mut Vec::new(),
+            session_stats: &mut SessionStats::default(),
+            context_manager: &mut ContextManager::default_for_test(),
+            session_id: "test-session",
+            thread_id: "test-thread",
+            lifecycle_hooks: None,
+            harness_emitter: None,
+            editor_open_sender: &editor_open_sender,
+            idle_wake_delay: Duration::from_millis(5),
+            ctrl_c_state: &ctrl_c_state,
+            ctrl_c_notify: &ctrl_c_notify,
+        };
+
+        let action = poll_inline_loop_action(&mut session, &ctrl_c_notify, resources)
+            .await
+            .expect("poll should succeed");
+
+        assert!(matches!(action, InlineLoopAction::Exit(_)), "a closed event stream must exit rather than spin");
     }
 }

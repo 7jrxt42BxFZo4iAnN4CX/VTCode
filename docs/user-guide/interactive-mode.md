@@ -32,7 +32,7 @@ The VT Code terminal UI includes an interactive mode that combines keyboard-firs
 | `Esc` + `Esc`                               | Open the rewind picker for checkpoint restore or summarize actions.             | Idle context only (while no task/PTY is running).                                                                                         |
 | `Enter`                                     | Queue the current input.                                                        | Plain input box only.                                                                                                                     |
 | `Tab`                                       | Accept the visible inline suggestion; on an empty idle composer, cycle primary agents; otherwise queue the current input. | Plain input box only. Disabled while a turn is processing (shows a notice). |
-| `Ctrl+Enter`                                | Process now or steer now.                                                       | Idle: runs the current draft, or the newest queued message if the draft is empty. Active: steers the current turn with the current draft. |
+| `Ctrl+Enter`                                | Queue the current draft (batchable).                                              | Idle: submits the current draft immediately (or the newest queued message if the draft is empty). Active: joins the visible queue; consecutive text-only messages are batched into one turn. `/stop`, `/pause`, and `/resume` are handled immediately instead of being queued. |
 | `Shift+Tab` or `Alt+M`                      | Cycle primary agents.                                                           | Switches between available main-session agents. Disabled while a turn is processing (shows a notice). |
 
 ### Multiline Input
@@ -102,6 +102,8 @@ Press `Alt+O` to open the fullscreen transcript review surface. It builds a plai
 
 - `ui.fullscreen.mouse_capture = false` keeps fullscreen rendering but returns click-and-drag selection to the terminal. This also disables in-app wheel scrolling, click-to-expand, click-to-position, and link activation.
 - `ui.fullscreen.copy_on_select = false` disables automatic clipboard copy after an in-app text selection. Manual copy shortcuts still work.
+- Copying prefers native clipboard helpers (`pbcopy` on macOS, `xclip`/`xsel`/`wl-copy` on Linux, `clip.exe` on Windows) and falls back to the OSC 52 escape sequence. When no strategy succeeds, the input status row shows a `Copy failed` notice instead of a false success.
+- Dragging a selection to the top or bottom edge of the transcript auto-scrolls it, extending the selection onto newly revealed lines.
 - `ui.fullscreen.scroll_speed` multiplies mouse-wheel scrolling without affecting `PgUp`/`PgDn`.
 - Inside tmux, enable mouse support with `set -g mouse on` if you want wheel scrolling and other mouse actions to reach VT Code.
 - Avoid fullscreen rendering in `tmux -CC` sessions. iTerm2's control-mode integration does not handle alternate-screen mouse capture reliably.
@@ -158,10 +160,11 @@ VT Code supports an optional Vim-style prompt editor.
 
 ## Active Run Steering
 
-When a task is already running, VT Code keeps the active turn alive and lets you steer it:
+When a task is already running, VT Code keeps the active turn alive and lets you queue or steer input:
 
-- `Enter` and `Tab` queue the current input for later processing.
-- `Ctrl+Enter` sends the current draft to the active run as steering text.
+- `Enter` and `Tab` queue the current input for later processing; queued messages dispatch one per turn in FIFO order.
+- `Ctrl+Enter` queues the current draft as a *batchable* message. Consecutive text-only Ctrl+Enter messages queued while a turn runs are joined into a single combined prompt for the next turn. Slash commands other than `/stop`, `/pause`, and `/resume` are queued non-batchable so their intent is preserved; `/stop`, `/pause`, and `/resume` take effect immediately instead of being queued.
+- Queued inputs appear in an overlay above the composer in FIFO order (oldest on top, newest directly above the input). `Shift+Left` (tmux) or `Alt+Up` pops the newest queued message back into the composer for editing. Up to five messages are shown, plus a `+N more queued` line when more are pending.
 - `/pause` pauses the active run at the next model/tool/approval boundary.
 - `/resume` resumes a paused run while it is active. When idle, `/resume` still opens archived sessions.
 - `/stop` still cancels the active run immediately.

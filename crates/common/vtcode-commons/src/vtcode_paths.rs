@@ -28,7 +28,14 @@ struct NativeRoots {
 }
 
 fn native_roots(
-    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(unused_variables))] home_dir: &Path,
+    #[cfg_attr(
+        not(any(target_os = "macos", target_os = "windows")),
+        allow(
+            unused_variables,
+            reason = "home_dir is only consumed by macOS/Windows root resolution"
+        )
+    )]
+    home_dir: &Path,
 ) -> Result<NativeRoots> {
     #[cfg(target_os = "macos")]
     {

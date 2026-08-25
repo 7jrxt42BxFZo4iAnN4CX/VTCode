@@ -140,9 +140,12 @@ pub(crate) async fn handle_copy_latest_assistant_reply(ctx: SlashCommandContext<
     });
 
     if let Some(reply) = latest_reply {
-        vtcode_ui::tui::core::MouseSelectionState::copy_to_clipboard(&reply);
-        ctx.renderer
-            .line(MessageStyle::Info, "Copied latest assistant reply to clipboard.")?;
+        if vtcode_ui::tui::core::MouseSelectionState::copy_to_clipboard(&reply) {
+            ctx.renderer
+                .line(MessageStyle::Info, "Copied latest assistant reply to clipboard.")?;
+        } else {
+            ctx.renderer.line(MessageStyle::Warning, "Failed to copy to clipboard.")?;
+        }
     } else {
         ctx.renderer
             .line(MessageStyle::Warning, "No complete assistant reply found to copy yet.")?;

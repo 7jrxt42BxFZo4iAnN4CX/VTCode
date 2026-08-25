@@ -29,6 +29,7 @@ use crate::tui::options::FullscreenInteractionSettings;
 
 const COPY_NOTIFICATION_DURATION: Duration = Duration::from_secs(5);
 const COPY_NOTIFICATION_TEXT: &str = "Copied to clipboard";
+const COPY_FAILURE_NOTIFICATION_TEXT: &str = "Copy failed";
 const ACTION_REQUIRED_STATUS_TEXT: &str = "Action required";
 const APPROVAL_REQUIRED_STATUS_TEXT: &str = "Approval required";
 const INPUT_REQUIRED_STATUS_TEXT: &str = "Input required";
@@ -48,12 +49,18 @@ impl Session {
     }
 
     pub(crate) fn copy_input_selection_to_clipboard(&mut self) -> bool {
+        if self.input_manager.selected_text().is_none() {
+            return false;
+        }
+
+        // Swallow the key even on hard failure so Ctrl+C never degrades into an
+        // interrupt while the user is trying to copy a selection.
         if self.input_manager.copy_selected_text_to_clipboard() {
             self.show_copy_notification();
-            true
         } else {
-            false
+            self.show_copy_failure_notification();
         }
+        true
     }
 
     pub(crate) fn copy_text_to_clipboard(&mut self, text: &str) {
@@ -61,8 +68,11 @@ impl Session {
             return;
         }
 
-        MouseSelectionState::copy_to_clipboard(text);
-        self.show_copy_notification();
+        if MouseSelectionState::copy_to_clipboard(text) {
+            self.show_copy_notification();
+        } else {
+            self.show_copy_failure_notification();
+        }
     }
 
     pub(crate) fn clear_suggested_prompt_state(&mut self) {
@@ -261,6 +271,7 @@ impl Session {
     /// Advance animation state on tick and request redraw when a frame changes.
     pub(crate) fn handle_tick(&mut self) {
         let motion_reduced = self.appearance.motion_reduced();
+        self.step_drag_auto_scroll();
         let mut animation_updated = false;
         if !motion_reduced && self.thinking_spinner.is_active && self.thinking_spinner.update() {
             animation_updated = true;
@@ -301,14 +312,26 @@ impl Session {
     }
 
     pub(crate) fn show_copy_notification(&mut self) {
+        self.show_copy_result_notification(false);
+    }
+
+    pub(crate) fn show_copy_failure_notification(&mut self) {
+        self.show_copy_result_notification(true);
+    }
+
+    fn show_copy_result_notification(&mut self, failed: bool) {
         self.copy_notification_until = Some(Instant::now() + COPY_NOTIFICATION_DURATION);
+        self.copy_notification_failed = failed;
         self.needs_redraw = true;
     }
 
     pub(crate) fn copy_notification_text(&self) -> Option<&'static str> {
-        self.copy_notification_until
-            .filter(|until| Instant::now() < *until)
-            .map(|_| COPY_NOTIFICATION_TEXT)
+        self.copy_notification_until.filter(|until| Instant::now() < *until)?;
+        Some(if self.copy_notification_failed {
+            COPY_FAILURE_NOTIFICATION_TEXT
+        } else {
+            COPY_NOTIFICATION_TEXT
+        })
     }
 
     fn overlay_attention_status_text(&self) -> Option<&'static str> {

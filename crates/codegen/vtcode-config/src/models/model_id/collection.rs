@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
+use std::str::FromStr;
 
-use crate::core::ProviderOverrideConfig;
+use crate::core::{CustomProviderConfig, ProviderOverrideConfig};
 use crate::models::Provider;
 use hashbrown::HashSet;
 
@@ -228,5 +229,45 @@ impl ModelId {
             .into_iter()
             .filter(|model| model.provider() == provider)
             .collect()
+    }
+
+    /// Resolve a model identifier against a configuration, falling back to
+    /// [`ModelId::from_str`].
+    ///
+    /// Models declared under the active provider in `[providers.<name>]`
+    /// overrides or by a `[[custom_providers]]` profile are not part of the
+    /// static catalog, so they are represented as [`ModelId::Custom`].
+    /// Matching is scoped to the active provider to avoid mis-routing a model
+    /// ID shared across providers, mirroring the catalog and custom-provider
+    /// branches of the subagent resolution path. Local-provider pass-through
+    /// (arbitrary Ollama/llama.cpp IDs) is intentionally not handled here.
+    pub fn from_config(
+        model: &str,
+        provider: &str,
+        provider_overrides: &BTreeMap<String, ProviderOverrideConfig>,
+        custom_providers: &[CustomProviderConfig],
+    ) -> Result<Self, crate::models::ModelParseError> {
+        let trimmed = model.trim();
+        if let Ok(parsed) = Self::from_str(trimmed) {
+            return Ok(parsed);
+        }
+        let hinted_provider = provider.trim().parse::<Provider>().ok();
+        for (provider_key, override_cfg) in provider_overrides {
+            let matches_hint = match hinted_provider {
+                Some(active) => provider_key.parse::<Provider>().ok() == Some(active),
+                None => provider_key.eq_ignore_ascii_case(provider.trim()),
+            };
+            if matches_hint && override_cfg.models.iter().any(|candidate| candidate.trim() == trimmed) {
+                return Ok(ModelId::Custom(provider_key.clone(), trimmed.to_owned()));
+            }
+        }
+        for custom in custom_providers {
+            if custom.name.eq_ignore_ascii_case(provider.trim())
+                && custom.effective_models().iter().any(|candidate| candidate == trimmed)
+            {
+                return Ok(ModelId::Custom(custom.name.to_lowercase(), trimmed.to_owned()));
+            }
+        }
+        Self::from_str(trimmed)
     }
 }

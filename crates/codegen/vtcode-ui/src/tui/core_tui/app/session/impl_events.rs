@@ -611,6 +611,7 @@ impl Session {
                         }
 
                         self.core.mouse_drag_target = MouseDragTarget::Transcript;
+                        self.core.cancel_drag_auto_scroll();
                         self.core.mouse_selection.start_selection(mouse_event.column, mouse_event.row);
                         self.mark_dirty();
                         self.handle_transcript_click(mouse_event);
@@ -629,6 +630,7 @@ impl Session {
                             }
                             MouseDragTarget::Transcript => {
                                 self.core.mouse_selection.update_selection(mouse_event.column, mouse_event.row);
+                                self.core.update_drag_auto_scroll(mouse_event.column, mouse_event.row);
                                 self.mark_dirty();
                             }
                             MouseDragTarget::ModalText => {
@@ -662,6 +664,7 @@ impl Session {
                             }
                             MouseDragTarget::Transcript => {
                                 self.core.mouse_selection.finish_selection(mouse_event.column, mouse_event.row);
+                                self.core.cancel_drag_auto_scroll();
                                 self.mark_dirty();
                             }
                             MouseDragTarget::ModalText => {

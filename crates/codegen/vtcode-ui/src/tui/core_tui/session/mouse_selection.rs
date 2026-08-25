@@ -1,5 +1,5 @@
 use ratatui::buffer::Buffer;
-use ratatui::crossterm::{clipboard::CopyToClipboard, execute};
+use ratatui::crossterm::{Command, clipboard::CopyToClipboard};
 use ratatui::layout::Rect;
 use std::io::Write;
 #[cfg(test)]
@@ -10,6 +10,24 @@ use std::time::{Duration, Instant};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(450);
+
+/// Edge direction for auto-scroll while dragging a transcript selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DragAutoScrollDirection {
+    Up,
+    Down,
+}
+
+/// Pending edge auto-scroll for an in-progress transcript drag.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DragAutoScroll {
+    pub(crate) direction: DragAutoScrollDirection,
+    /// Pointer position clamped into the transcript area so the selection end
+    /// keeps extending onto newly revealed rows.
+    pub(crate) column: u16,
+    pub(crate) row: u16,
+    pub(crate) last_step: Instant,
+}
 
 /// Tracks mouse-driven text selection state for the TUI transcript.
 #[derive(Debug, Default)]
@@ -276,21 +294,30 @@ impl MouseSelectionState {
 
     /// Copy the selected text to the system clipboard.
     ///
-    /// Tries native OS clipboard utilities first (`pbcopy` on macOS, `xclip`/`xsel`
-    /// on Linux, `clip.exe` on Windows/WSL) for maximum compatibility, then falls
-    /// back to the OSC 52 escape sequence.
-    pub fn copy_to_clipboard(text: &str) {
+    /// Tries native OS clipboard utilities first (`pbcopy` on macOS, `xclip`/`xsel`/`wl-copy`
+    /// on Linux, `clip.exe` on Windows/WSL) for maximum compatibility, then falls back to the
+    /// OSC 52 escape sequence. Returns whether any strategy reported success.
+    ///
+    /// OSC 52 delivery is best-effort: terminals never acknowledge the sequence, so a clean
+    /// stderr write counts as success even if the terminal silently drops it (unsupported,
+    /// disabled, or swallowed by a multiplexer). Every strategy attempt emits a
+    /// `tracing::debug!` event; enable `RUST_LOG=vtcode_ui=debug` when diagnosing.
+    pub fn copy_to_clipboard(text: &str) -> bool {
         if text.is_empty() {
-            return;
+            trace_clipboard("nothing to copy: empty text");
+            return false;
         }
 
         if Self::copy_via_native(text) {
-            return;
+            return true;
         }
 
-        // Fallback: OSC 52 escape sequence
-        let _ = execute!(std::io::stderr(), CopyToClipboard::to_clipboard_from(text.as_bytes()));
-        let _ = std::io::stderr().flush();
+        let copied = copy_via_osc52(text, inside_tmux());
+        trace_clipboard(&format!(
+            "native candidates exhausted; osc52 fallback result={copied} text_bytes={}",
+            text.len()
+        ));
+        copied
     }
 
     /// Attempt to copy text using native OS clipboard utilities.
@@ -306,7 +333,7 @@ impl MouseSelectionState {
         let candidates: &[&str] = if cfg!(target_os = "macos") {
             &["pbcopy"]
         } else if cfg!(target_os = "linux") {
-            &["xclip", "xsel"]
+            &["xclip", "xsel", "wl-copy"]
         } else if cfg!(target_os = "windows") {
             &["clip.exe"]
         } else {
@@ -325,28 +352,185 @@ impl MouseSelectionState {
                 _ => {}
             }
             if spawn_clipboard_command(cmd, text) {
+                trace_clipboard(&format!("native '{program}' succeeded ({} bytes)", text.len()));
                 return true;
             }
         }
+        trace_clipboard("all native clipboard candidates failed or missing");
         false
     }
+}
+
+/// Emits clipboard strategy diagnostics for support/debugging sessions.
+fn trace_clipboard(message: &str) {
+    tracing::debug!(target: "vtcode_ui::clipboard", "{message}");
 }
 
 fn spawn_clipboard_command(mut cmd: std::process::Command, text: &str) -> bool {
     use std::process::Stdio;
 
+    // Helpers such as xclip/wl-copy normally exit right away, but some builds
+    // fork-and-hold while serving the selection, and a helper that never reads
+    // stdin could block a synchronous write_all forever once the pipe buffer
+    // fills (>= 64KB). The input is therefore written on a detached writer
+    // thread and the result is read via try_recv, so the UI thread never blocks
+    // longer than this budget regardless of helper behavior.
+    const WAIT_BUDGET: Duration = Duration::from_millis(300);
+    const POLL_INTERVAL: Duration = Duration::from_millis(10);
+    // After the helper exits, its writer report is usually already delivered;
+    // this grace window only covers the rare in-flight race.
+    const WRITE_REPORT_GRACE: Duration = Duration::from_millis(25);
+
+    let program = cmd.get_program().to_string_lossy().into_owned();
     let Ok(mut child) = cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() else {
+        trace_clipboard(&format!("'{program}' unavailable: spawn failed"));
         return false;
     };
-    if let Some(stdin) = child.stdin.as_mut() {
-        let _ = stdin.write_all(text.as_bytes());
+    // The writer is detached and never joined so a blocked write_all cannot
+    // stall the UI thread; only the stdin pipe (plus a copy of the text) moves
+    // into it. `child` stays on this thread for try_wait polling and is handed
+    // to a detached reaper if the budget expires.
+    let mut stdin = child.stdin.take();
+    let text_owned = text.to_owned();
+    let (write_tx, write_rx) = std::sync::mpsc::channel();
+    let _ = std::thread::spawn(move || {
+        let result = match stdin.as_mut() {
+            Some(pipe) => pipe.write_all(text_owned.as_bytes()).err(),
+            None => None,
+        };
+        drop(stdin.take());
+        let _ = write_tx.send(result);
+    });
+    // Tracks the first observed write failure; None until the writer reports or
+    // a status/deadline path makes a decision.
+    let mut write_error = None;
+    let deadline = Instant::now() + WAIT_BUDGET;
+    loop {
+        if let Ok(report) = write_rx.try_recv() {
+            write_error = report;
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                // The helper has exited, so the writer will finish promptly;
+                // give its report a short grace window, otherwise a write
+                // failing concurrently with a clean exit would count as ok.
+                let flush_deadline = Instant::now() + WRITE_REPORT_GRACE;
+                while write_error.is_none() {
+                    match write_rx.try_recv() {
+                        Ok(report) => write_error = report,
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {
+                            if Instant::now() >= flush_deadline {
+                                break;
+                            }
+                            std::thread::sleep(POLL_INTERVAL);
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                    }
+                }
+                let ok = status.success() && write_error.is_none();
+                if !ok {
+                    if let Some(err) = write_error {
+                        trace_clipboard(&format!("'{program}' stdin write failed: {err}; status={status}"));
+                    } else {
+                        trace_clipboard(&format!("'{program}' failed: status={status}"));
+                    }
+                }
+                return ok;
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    // The writer may still be blocked; do NOT join it (that
+                    // would hang the UI thread). Input was at least accepted
+                    // into the pipe unless a write failure was already reported.
+                    let ok = write_error.is_none();
+                    trace_clipboard(&format!(
+                        "'{program}' still running after {WAIT_BUDGET:?}; input {}",
+                        if ok { "accepted" } else { "failed" }
+                    ));
+                    // Fork-and-hold helpers legitimately outlive the copy call;
+                    // reap from a detached thread so no zombie accumulates.
+                    let _ = std::thread::spawn(move || {
+                        let mut child = child;
+                        let _ = child.wait();
+                    });
+                    return ok;
+                }
+                std::thread::sleep(POLL_INTERVAL);
+            }
+            Err(err) => {
+                trace_clipboard(&format!("'{program}' wait failed: {err}"));
+                let _ = std::thread::spawn(move || {
+                    let mut child = child;
+                    let _ = child.wait();
+                });
+                return false;
+            }
+        }
     }
-    drop(child.stdin.take());
-    child.wait().is_ok()
+}
+
+/// Whether the session runs inside tmux; OSC 52 must then be DCS-wrapped or tmux
+/// consumes it without ever reaching the outer terminal.
+fn inside_tmux() -> bool {
+    std::env::var_os("TMUX").is_some_and(|value| !value.is_empty())
+}
+
+/// Wrap an escape sequence in tmux's DCS passthrough so tmux forwards it verbatim to
+/// the outer terminal. Every ESC inside the payload must be doubled.
+fn wrap_tmux_passthrough(sequence: &str) -> String {
+    format!("\x1bPtmux;\x1b{}\x1b\\", sequence.replace('\x1b', "\x1b\x1b"))
+}
+
+/// Build the OSC 52 payload for `text`, wrapped for tmux when requested.
+fn build_osc52_payload(text: &str, inside_tmux: bool) -> Option<String> {
+    let mut sequence = String::new();
+    CopyToClipboard::to_clipboard_from(text.as_bytes())
+        .write_ansi(&mut sequence)
+        .ok()?;
+    Some(if inside_tmux {
+        wrap_tmux_passthrough(&sequence)
+    } else {
+        sequence
+    })
+}
+
+/// Emit the OSC 52 clipboard sequence on stderr. Delivery cannot be confirmed —
+/// terminals never acknowledge it — so success means "written without IO error".
+fn copy_via_osc52(text: &str, inside_tmux: bool) -> bool {
+    #[cfg(test)]
+    if let Some(forced) = osc52_write_override() {
+        return forced;
+    }
+
+    let Some(payload) = build_osc52_payload(text, inside_tmux) else {
+        return false;
+    };
+
+    let mut stderr = std::io::stderr();
+    let written = stderr.write_all(payload.as_bytes()).is_ok() && stderr.flush().is_ok();
+    trace_clipboard(&format!("osc52 written={written} payload_bytes={} tmux_passthrough={inside_tmux}", payload.len()));
+    written
 }
 
 #[cfg(test)]
 static CLIPBOARD_COMMAND_OVERRIDE: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+
+#[cfg(test)]
+static OSC52_WRITE_OVERRIDE: OnceLock<Mutex<Option<bool>>> = OnceLock::new();
+
+#[cfg(test)]
+pub(crate) fn set_osc52_write_override(result: Option<bool>) {
+    let lock = OSC52_WRITE_OVERRIDE.get_or_init(|| Mutex::new(None));
+    if let Ok(mut guard) = lock.lock() {
+        *guard = result;
+    }
+}
+
+#[cfg(test)]
+fn osc52_write_override() -> Option<bool> {
+    let lock = OSC52_WRITE_OVERRIDE.get_or_init(|| Mutex::new(None));
+    lock.lock().ok().and_then(|guard| *guard)
+}
 
 #[cfg(test)]
 pub(crate) fn set_clipboard_command_override(path: Option<PathBuf>) {
@@ -512,5 +696,84 @@ mod tests {
         assert!(!selection.register_click(3, 7, now));
         assert!(selection.register_click(3, 7, now + Duration::from_millis(250)));
         assert!(!selection.register_click(4, 7, now + Duration::from_millis(250)));
+    }
+
+    #[test]
+    fn spawn_clipboard_command_requires_success_exit_status() {
+        let failing = {
+            let mut cmd = std::process::Command::new("sh");
+            cmd.arg("-c").arg("exit 1");
+            cmd
+        };
+        assert!(!spawn_clipboard_command(failing, "hello"));
+
+        let succeeding = {
+            let mut cmd = std::process::Command::new("sh");
+            cmd.arg("-c").arg("cat > /dev/null");
+            cmd
+        };
+        assert!(spawn_clipboard_command(succeeding, "hello"));
+    }
+
+    #[test]
+    fn spawn_clipboard_command_treats_hanging_helper_as_success() {
+        // A helper that holds stdin open and never exits must not block the
+        // UI thread forever: the bounded wait accepts the already-written
+        // input and returns without hanging.
+        let hanging = {
+            let mut cmd = std::process::Command::new("sh");
+            cmd.arg("-c").arg("cat > /dev/null & sleep 10");
+            cmd
+        };
+        let start = Instant::now();
+        assert!(spawn_clipboard_command(hanging, "hello"));
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "bounded wait must return promptly, took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
+    fn spawn_clipboard_command_large_write_to_non_reading_helper_returns_promptly() {
+        // A helper that never reads stdin would block a synchronous write_all
+        // forever once the 64KB pipe buffer fills. The detached writer must not
+        // stall the caller: the bounded poll returns without joining it.
+        let non_reading = {
+            let mut cmd = std::process::Command::new("sh");
+            cmd.arg("-c").arg("sleep 10");
+            cmd
+        };
+        let big: String = "x".repeat(128 * 1024);
+        let start = Instant::now();
+        let result = spawn_clipboard_command(non_reading, &big);
+        assert!(start.elapsed() < Duration::from_secs(2), "must not block on the writer, took {:?}", start.elapsed());
+        // No write failure was observed within the budget, so the input is
+        // treated as accepted even though the helper never reads.
+        assert!(result);
+    }
+
+    #[test]
+    fn build_osc52_payload_emits_base64_clipboard_sequence() {
+        let payload = build_osc52_payload("hi", false).expect("osc52 payload");
+        assert!(payload.starts_with("\x1b]52;c;"), "unexpected payload: {payload:?}");
+        assert!(payload.ends_with("\x1b\\"));
+        assert!(payload.contains("aGk="));
+    }
+
+    #[test]
+    fn build_osc52_payload_wraps_in_tmux_passthrough() {
+        let plain = build_osc52_payload("hi", false).expect("plain payload");
+        let wrapped = build_osc52_payload("hi", true).expect("wrapped payload");
+
+        // DCS introducer + doubled-ESC payload + ST terminator.
+        assert_eq!(wrapped, format!("\x1bPtmux;\x1b{}\x1b\\", plain.replace('\x1b', "\x1b\x1b")));
+        assert!(wrapped.starts_with("\x1bPtmux;\x1b\x1b\x1b]52;c;"));
+        assert!(wrapped.ends_with("\x1b\x1b\\\x1b\\"));
+    }
+
+    #[test]
+    fn wrap_tmux_passthrough_doubles_every_escape() {
+        assert_eq!(wrap_tmux_passthrough("\x1ba\x1bb"), "\x1bPtmux;\x1b\x1b\x1ba\x1b\x1bb\x1b\\");
     }
 }

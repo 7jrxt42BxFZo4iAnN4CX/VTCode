@@ -1,4 +1,3 @@
-use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -70,10 +69,16 @@ pub async fn handle_auto_task_command(
         return Ok(());
     }
 
-    let model_id = ModelId::from_str(&run_config.model).with_context(|| {
+    let model_id = ModelId::from_config(
+        &run_config.model,
+        &run_config.provider,
+        &run_vt_cfg.provider_overrides,
+        &run_vt_cfg.custom_providers,
+    )
+    .with_context(|| {
         format!(
             "Model '{}' is not recognized for autonomous execution. Update vtcode.toml to a \
-             supported identifier.",
+                     supported identifier.",
             run_config.model
         )
     })?;

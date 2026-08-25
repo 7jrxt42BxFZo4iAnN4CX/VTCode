@@ -1,5 +1,4 @@
 use anyhow::{Context, Result, anyhow, bail};
-use std::str::FromStr;
 use vtcode_core::config::VTCodeConfig;
 use vtcode_core::config::models::ModelId;
 use vtcode_core::config::types::AgentConfig as CoreAgentConfig;
@@ -50,7 +49,13 @@ pub async fn handle_benchmark_command(
         }
     }
 
-    let model_id = ModelId::from_str(&config.model).with_context(|| {
+    let model_id = ModelId::from_config(
+        &config.model,
+        &config.provider,
+        &vt_cfg.provider_overrides,
+        &vt_cfg.custom_providers,
+    )
+    .with_context(|| {
         format!(
             "Model '{}' is not recognized for benchmark execution. Update vtcode.toml to a supported identifier.",
             config.model

@@ -270,8 +270,10 @@ mod tests {
     #[test]
     fn queued_input_edit_binding_switches_for_tmux() {
         let _guard = TERMINAL_ENV_TEST_LOCK.lock().expect("terminal env test lock");
-        clear_var("TMUX");
-        clear_var("TERM");
+        // Shadow instead of clearing: clearing falls back to the host environment,
+        // which leaks when the suite itself runs inside tmux.
+        remove_var("TMUX");
+        remove_var("TERM");
         set_var("TERM", "xterm-256color");
         assert!(!queued_input_edit_uses_shift_left());
 

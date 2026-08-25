@@ -895,7 +895,31 @@ pub(super) fn process_key_with_clipboard_image_reader(
                 session.mark_dirty();
 
                 return if session.is_running_activity() {
-                    Some(InlineEvent::Steer(submitted))
+                    match extract_slash_command_name(&submitted.text) {
+                        Some("stop") => Some(InlineEvent::Interrupt),
+                        Some("pause") => Some(InlineEvent::Pause),
+                        Some("resume") => Some(InlineEvent::Resume),
+                        other => {
+                            // Match the reference agents: Ctrl+Enter while a
+                            // turn is running joins the visible queue, so the
+                            // message hangs above the composer, renders as the
+                            // user's own bubble when dispatched, and can be
+                            // edited via Shift+← before it sends. Plain messages
+                            // are marked batchable so several queued messages
+                            // coalesce into ONE turn (batching applies to plain
+                            // Ctrl+Enter only); slash commands and plain Enter
+                            // stay one per turn so command intent is preserved.
+                            if let Some(command_name) = other {
+                                tracing::debug!(target: "vtcode_ui::keys", %command_name, "ctrl+enter queued slash command");
+                                session.push_queued_input(submitted.text.clone());
+                                Some(InlineEvent::QueueSubmit(submitted))
+                            } else {
+                                tracing::debug!(target: "vtcode_ui::keys", "ctrl+enter queued message");
+                                session.push_queued_input(submitted.text.clone());
+                                Some(InlineEvent::QueueSubmit(submitted.batchable()))
+                            }
+                        }
+                    }
                 } else {
                     Some(InlineEvent::Submit(submitted))
                 };
@@ -1477,6 +1501,12 @@ fn handle_running_slash_command_block_for_input(session: &mut Session, input: &s
     let Some(command_name) = extract_slash_command_name(input) else {
         return false;
     };
+
+    // Read-only local commands are safe to defer: falling through lets the normal
+    // queueing path run them right after the current turn instead of dropping them.
+    if matches!(command_name, "copy") {
+        return false;
+    }
 
     // Mode switches (agent selection, planning workflow) are locked while a turn
     // is processing; surface the dedicated notice for those commands.

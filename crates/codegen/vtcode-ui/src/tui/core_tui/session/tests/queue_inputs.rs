@@ -4,6 +4,7 @@
 )]
 use super::super::*;
 use super::helpers::*;
+use crate::tui::core_tui::app::types::InlineEvent as AppInlineEvent;
 use crate::tui::core_tui::types::{ContentPart, SubmittedInput};
 
 #[test]
@@ -529,6 +530,45 @@ fn busy_control_enter_steers_active_run() {
 
     let event = session.process_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     assert!(matches!(event, Some(InlineEvent::Steer(value)) if value == "keep searching in docs/"));
+}
+
+#[test]
+fn app_busy_control_enter_queues_batchable_submission() {
+    let mut session = AppSession::new(InlineTheme::default(), None, VIEW_ROWS);
+    set_app_session_busy_status(&mut session);
+    session.core.set_input("batch me".to_string());
+
+    let event = session.process_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+    assert!(
+        matches!(&event, Some(AppInlineEvent::QueueSubmit(value)) if value.text == "batch me" && value.batchable),
+        "expected batchable QueueSubmit, got: {event:?}"
+    );
+}
+
+#[test]
+fn app_busy_plain_enter_queues_non_batchable_submission() {
+    let mut session = AppSession::new(InlineTheme::default(), None, VIEW_ROWS);
+    set_app_session_busy_status(&mut session);
+    session.core.set_input("one turn".to_string());
+
+    let event = session.process_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(
+        matches!(&event, Some(AppInlineEvent::QueueSubmit(value)) if value.text == "one turn" && !value.batchable),
+        "expected non-batchable QueueSubmit, got: {event:?}"
+    );
+}
+
+#[test]
+fn app_busy_control_enter_queues_slash_command_as_non_batchable() {
+    let mut session = AppSession::new(InlineTheme::default(), None, VIEW_ROWS);
+    set_app_session_busy_status(&mut session);
+    session.core.set_input("/model gpt-4o".to_string());
+
+    let event = session.process_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+    assert!(
+        matches!(&event, Some(AppInlineEvent::QueueSubmit(value)) if value.text == "/model gpt-4o" && !value.batchable),
+        "expected non-batchable QueueSubmit for a slash command, got: {event:?}"
+    );
 }
 
 #[test]

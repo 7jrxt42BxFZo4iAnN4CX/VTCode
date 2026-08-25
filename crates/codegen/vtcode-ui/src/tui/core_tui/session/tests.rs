@@ -1,5 +1,6 @@
 mod clipboard;
 mod diff_overlay;
+mod drag_autoscroll;
 mod file_palette;
 mod header_status;
 mod helpers;
