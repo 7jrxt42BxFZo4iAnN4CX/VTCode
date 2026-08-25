@@ -182,3 +182,132 @@ fn selecting_input_text_auto_copies_and_keeps_selection() {
     let clipboard_contents = fs::read_to_string(&clipboard_file).expect("read copied input text");
     assert_eq!(clipboard_contents, "world");
 }
+
+#[test]
+fn transcript_copy_failure_surfaces_copy_failed_status() {
+    use crate::tui::core_tui::session::mouse_selection::{
+        clipboard_command_override, set_clipboard_command_override, set_osc52_write_override,
+    };
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+
+    let _guard = CLIPBOARD_TEST_LOCK.lock().expect("clipboard test lock should not be poisoned");
+
+    struct OverrideGuard;
+    impl Drop for OverrideGuard {
+        fn drop(&mut self) {
+            set_clipboard_command_override(None);
+            set_osc52_write_override(None);
+        }
+    }
+    let _overrides = OverrideGuard;
+
+    let temp_dir = std::env::temp_dir().join(format!(
+        "vtcode-clipboard-fail-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock should be after UNIX_EPOCH")
+            .as_nanos()
+    ));
+    fs::create_dir_all(&temp_dir).expect("create temp dir for clipboard script");
+    struct TempDirGuard(PathBuf);
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    let _temp_guard = TempDirGuard(temp_dir.clone());
+
+    let script_path = temp_dir.join("xclip");
+    fs::write(&script_path, "#!/bin/sh\nexit 1\n").expect("write failing clipboard command");
+    let mut permissions = fs::metadata(&script_path)
+        .expect("read failing clipboard metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions).expect("make failing clipboard executable");
+
+    set_clipboard_command_override(Some(script_path.clone()));
+    set_osc52_write_override(Some(false));
+
+    let mut session = Session::new(InlineTheme::default(), None, VIEW_ROWS);
+    session.copy_text_to_clipboard("hello");
+
+    let rendered_status = session
+        .render_input_status_line(VIEW_WIDTH)
+        .expect("input status line")
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    assert!(
+        rendered_status.contains("Copy failed"),
+        "failed copy should surface a failure notice, got: {rendered_status}"
+    );
+}
+
+#[test]
+fn input_copy_failure_is_swallowed_without_interrupt_and_never_retries() {
+    use crate::tui::core_tui::session::mouse_selection::{
+        clipboard_command_override, set_clipboard_command_override, set_osc52_write_override,
+    };
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+
+    let _guard = CLIPBOARD_TEST_LOCK.lock().expect("clipboard test lock should not be poisoned");
+
+    struct OverrideGuard;
+    impl Drop for OverrideGuard {
+        fn drop(&mut self) {
+            set_clipboard_command_override(None);
+            set_osc52_write_override(None);
+        }
+    }
+    let _overrides = OverrideGuard;
+
+    let temp_dir = std::env::temp_dir().join(format!(
+        "vtcode-clipboard-fail-input-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock should be after UNIX_EPOCH")
+            .as_nanos()
+    ));
+    fs::create_dir_all(&temp_dir).expect("create temp dir for clipboard script");
+    struct TempDirGuard(PathBuf);
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    let _temp_guard = TempDirGuard(temp_dir.clone());
+
+    let script_path = temp_dir.join("xclip");
+    fs::write(&script_path, "#!/bin/sh\nexit 1\n").expect("write failing clipboard command");
+    let mut permissions = fs::metadata(&script_path)
+        .expect("read failing clipboard metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions).expect("make failing clipboard executable");
+
+    set_clipboard_command_override(Some(script_path.clone()));
+    set_osc52_write_override(Some(false));
+
+    let mut session = app_session_with_input("hello world", "hello world".len());
+    for _ in 0..5 {
+        let result = session.process_key(KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT));
+        assert!(result.is_none());
+    }
+
+    let _ = rendered_app_session_lines(&mut session, VIEW_ROWS);
+    assert!(
+        !session.core.input_manager.selection_needs_copy(),
+        "a failed auto-copy must not re-arm or every frame would retry it"
+    );
+
+    let result = session.process_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert!(result.is_none(), "Ctrl+C over a selection must stay a copy attempt even when copying fails");
+
+    let rendered = rendered_app_session_lines(&mut session, VIEW_ROWS);
+    assert!(rendered.iter().any(|line| line.contains("Copy failed")));
+}

@@ -316,9 +316,11 @@ impl InputManager {
         let Some(text) = self.selected_text() else {
             return false;
         };
-        MouseSelectionState::copy_to_clipboard(&text);
+        let copied = MouseSelectionState::copy_to_clipboard(&text);
+        // Mark attempted even on failure: render-driven copies call this every frame
+        // while selection_needs_copy() is true, and a false flag would retry forever.
         self.selection_copied = true;
-        true
+        copied
     }
 
     pub fn selection_needs_copy(&self) -> bool {
