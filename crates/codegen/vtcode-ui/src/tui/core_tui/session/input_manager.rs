@@ -540,6 +540,8 @@ impl InputManager {
         let prefix_len = self.cursor();
         let before_len = self.content().len();
         self.textarea.delete_next_word();
+        // Refresh before reading the new length: content() serves the cache.
+        self.refresh_content_cache();
         // Deleting a forward span preserves everything before the cursor, so
         // the removed span is exactly [cursor, cursor + shrink). Track it like
         // the other mutators so compact_paste_range stays aligned.
@@ -547,7 +549,6 @@ impl InputManager {
         if after_len < before_len {
             self.track_compact_paste_replace(prefix_len, prefix_len + (before_len - after_len), 0);
         }
-        self.refresh_content_cache();
     }
 
     pub fn delete_whitespace_around_cursor(&mut self) {

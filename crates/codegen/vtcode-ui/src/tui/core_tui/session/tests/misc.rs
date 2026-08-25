@@ -479,6 +479,56 @@ fn backspace_after_paste_deletes_whole_block_when_no_selection() {
 }
 
 #[test]
+fn delete_word_forward_before_paste_keeps_block_delete_aligned() {
+    let mut session = Session::new(InlineTheme::default(), None, VIEW_ROWS);
+    session.insert_char('x');
+    session.insert_char(' ');
+    let pasted: String = (0..12).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+    session.insert_paste_text(&pasted);
+
+    let range = session.input_manager.compact_paste_range().expect("collapsed paste range");
+    assert_eq!(range.start, 2);
+
+    // Delete the typed word sitting before the collapsed block.
+    session.input_manager.set_cursor(0);
+    session.input_manager.delete_word_forward();
+
+    // The range must shift by the removed bytes, not go stale.
+    let shifted = session
+        .input_manager
+        .compact_paste_range()
+        .expect("range survives edits entirely before it");
+    assert_eq!(shifted.start, 1);
+    assert_eq!(shifted.end, range.end - 1);
+
+    // The block-delete invariant holds: cursor at the new end coincides with
+    // the shifted range end, so Backspace removes the whole block.
+    session.input_manager.set_cursor(session.input_manager.content().len());
+    session.delete_char();
+
+    assert_eq!(session.input_manager.content(), " ");
+    assert!(session.input_manager.compact_paste_range().is_none());
+}
+
+#[test]
+fn delete_word_forward_overlapping_paste_clears_compact_range() {
+    let mut session = Session::new(InlineTheme::default(), None, VIEW_ROWS);
+    session.insert_char('x');
+    session.insert_char(' ');
+    let pasted: String = (0..12).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+    session.insert_paste_text(&pasted);
+
+    let range = session.input_manager.compact_paste_range().expect("collapsed paste range");
+
+    // Cursor inside the collapsed block: an overlapping delete invalidates it
+    // so a later Backspace never removes user-typed bytes.
+    session.input_manager.set_cursor(range.start + 1);
+    session.input_manager.delete_word_forward();
+
+    assert!(session.input_manager.compact_paste_range().is_none());
+}
+
+#[test]
 fn alt_backspace_deletes_previous_word() {
     let mut session = Session::new(InlineTheme::default(), None, VIEW_ROWS);
     session.input_manager.set_content("hello world".to_string());
