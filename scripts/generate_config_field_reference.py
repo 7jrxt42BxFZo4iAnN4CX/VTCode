@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import struct
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -143,11 +144,38 @@ def normalize_schema_node(
     return normalized
 
 
-def format_default(value: Any) -> str:
-    text = json.dumps(value, ensure_ascii=True)
+def format_default(value: Any, float_format: str | None = None) -> str:
+    if isinstance(value, float) and float_format == "float":
+        # schemars widens `f32` defaults to `f64`, leaving binary tails like
+        # 0.699999988079071 for 0.7. Render the shortest decimal that still
+        # round-trips to the same float32.
+        shortened = _shortest_f32_text(value)
+        if shortened is not None:
+            text = shortened
+        else:
+            text = json.dumps(value, ensure_ascii=True)
+    else:
+        text = json.dumps(value, ensure_ascii=True)
     if len(text) > 120:
         return f"{text[:117]}..."
     return text
+
+
+def _shortest_f32_text(value: float) -> str | None:
+    try:
+        packed = struct.pack("<f", value)
+    except OverflowError:
+        return None
+    for precision in range(1, 10):
+        text = f"{value:.{precision}g}"
+        try:
+            if struct.pack("<f", float(text)) == packed:
+                if "." not in text and "e" not in text and "E" not in text:
+                    text = f"{text}.0"
+                return text
+        except OverflowError:
+            return None
+    return None
 
 
 def format_type_name(node: dict[str, Any]) -> str:
@@ -219,10 +247,27 @@ def collect_fields(root_schema: dict[str, Any]) -> list[FieldEntry]:
             description=description,
         )
 
-    def walk(node: dict[str, Any], path: str, required: bool) -> None:
+    MAX_WALK_DEPTH = 32
+
+    def walk_properties(node: dict[str, Any], path: str, depth: int) -> None:
+        properties = node.get("properties", {})
+        required_set = set(node.get("required", []))
+        for prop_name in sorted(properties):
+            child_path = f"{path}.{prop_name}" if path else prop_name
+            walk(properties[prop_name], child_path, prop_name in required_set, depth)
+
+    def walk(node: dict[str, Any], path: str, required: bool, depth: int) -> None:
+        # Real config nesting stays under ~10 levels; the cap only guards
+        # against pathological self-referential `$ref` schemas.
+        if depth > MAX_WALK_DEPTH:
+            return
         normalized = normalize_schema_node(node, root_schema)
         description = normalize_description(normalized.get("description"))
-        default = format_default(normalized["default"]) if "default" in normalized else ""
+        default = (
+            format_default(normalized["default"], normalized.get("format"))
+            if "default" in normalized
+            else ""
+        )
         type_name = format_type_name(normalized)
 
         if "oneOf" in normalized or "anyOf" in normalized:
@@ -235,11 +280,20 @@ def collect_fields(root_schema: dict[str, Any]) -> list[FieldEntry]:
                     description=description,
                 )
             )
+            # Optional/enum-wrapped objects (`Option<T>`, untagged variants)
+            # still define concrete child fields; walk their object branches.
+            branches = [normalized] if "properties" in normalized else []
+            for key in ("oneOf", "anyOf"):
+                for option in normalized.get(key, []):
+                    resolved = normalize_schema_node(option, root_schema)
+                    if resolved.get("type") == "object" or "properties" in resolved:
+                        branches.append(resolved)
+            for branch in branches:
+                walk_properties(branch, path, depth + 1)
             return
 
         if normalized.get("type") == "object" or "properties" in normalized:
             properties = normalized.get("properties", {})
-            required_set = set(normalized.get("required", []))
             if not properties:
                 upsert(
                     FieldEntry(
@@ -250,14 +304,12 @@ def collect_fields(root_schema: dict[str, Any]) -> list[FieldEntry]:
                         description=description,
                     )
                 )
-            for prop_name in sorted(properties):
-                child_path = f"{path}.{prop_name}" if path else prop_name
-                walk(properties[prop_name], child_path, prop_name in required_set)
+            walk_properties(normalized, path, depth + 1)
 
             additional = normalized.get("additionalProperties")
             if isinstance(additional, dict):
                 map_path = f"{path}.*" if path else "*"
-                walk(additional, map_path, required=False)
+                walk(additional, map_path, required=False, depth=depth + 1)
             elif additional is True and path:
                 upsert(
                     FieldEntry(
@@ -282,7 +334,7 @@ def collect_fields(root_schema: dict[str, Any]) -> list[FieldEntry]:
             )
             items = normalized.get("items")
             if isinstance(items, dict):
-                walk(items, f"{path}[]", required=False)
+                walk(items, f"{path}[]", required=False, depth=depth + 1)
             return
 
         upsert(
@@ -295,7 +347,7 @@ def collect_fields(root_schema: dict[str, Any]) -> list[FieldEntry]:
             )
         )
 
-    walk(root_schema, "", required=False)
+    walk(root_schema, "", required=False, depth=0)
     entries = [entry for entry in field_map.values() if entry.path]
     entries.sort(key=lambda item: item.path)
     return entries
