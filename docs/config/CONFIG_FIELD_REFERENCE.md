@@ -8,26 +8,6 @@ Regenerate:
 python3 scripts/generate_config_field_reference.py
 ```
 
-Built-in providers include `merge-gateway`. Configure it with a Merge API key.
-Native Responses is the default; use an explicit `/v1/openai` base URL only for
-legacy Chat Completions compatibility:
-
-```toml
-[agent]
-provider = "merge-gateway"
-default_model = "default_routing"
-api_key_env = "MERGE_GATEWAY_API_KEY"
-
-[agent.provider_settings.merge-gateway]
-base_url = "https://api-gateway.merge.dev/v1"
-```
-
-Set `MERGE_GATEWAY_BASE_URL` to override the endpoint. Curated model IDs are
-`default_routing`, `openai/gpt-5.5`, `anthropic/claude-opus-5`, and
-`google/gemini-3.6-flash`; other valid Merge `provider/model` IDs are accepted
-through explicit provider configuration. With credentials available, the model
-picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
-
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `acp.enabled` | `boolean` | no | `false` | Globally enable the ACP bridge |
@@ -54,9 +34,9 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `agent.codex_app_server.command` | `string` | no | `"codex"` | Executable used to launch the official Codex app-server sidecar. |
 | `agent.codex_app_server.experimental_features` | `boolean` | no | `false` | Enable experimental Codex app-server sidecar features. |
 | `agent.codex_app_server.startup_timeout_secs` | `integer` | no | `10` | Maximum startup handshake time when launching the sidecar. |
-| `agent.credential_storage_mode` | `string` | no | `"keyring"` | Preferred storage backend for credentials (OAuth tokens, API keys, etc.) - `keyring`: Use OS-specific secure storage (macOS Keychain, Windows Credential Manager, Linux Secret Service). This is the default as it's the most secure. - `file`: Use AES-256-GCM encrypted file with machine-derived key - `auto`: Try keyring first, fall back to file if unavailable |
-| `agent.custom_api_keys` | `object` | no | `-` | Provider/key identities captured from interactive configuration flows. Keys use `<provider>/<environment-variable>` names (for example `mimo/MIMO_TOKEN_PLAN_KEY`). Actual API keys are stored securely; this map only tracks stored identities for UI and migration. |
-| `agent.custom_api_keys.*` | `string` | no | `-` | Empty marker for a stored provider/key identity; secret material is never serialized. |
+| `agent.credential_storage_mode` | `string` | no | `"auto"` | Preferred storage backend for credentials (OAuth tokens, API keys, etc.) - `keyring`: Use OS-specific secure storage (macOS Keychain, Windows Credential Manager, Linux Secret Service), with encrypted-file fallback when unavailable. - `file`: Use AES-256-GCM encrypted file with machine-derived key - `auto`: Try keyring first, fall back to file if unavailable |
+| `agent.custom_api_keys` | `object` | no | `-` | Provider/key identities captured from interactive configuration flows Note: Actual API keys are stored securely in the configured credential backend (OS keyring when available, otherwise encrypted file storage). Keys use `<provider>/<environment-variable>` identity keys and this field only tracks which identities have keys stored (for UI/migration purposes). The keys themselves are NOT serialized to the config file for security. |
+| `agent.custom_api_keys.*` | `string` | no | `-` | - |
 | `agent.default_model` | `string` | no | `"xiaomi/mimo-v2.5-pro"` | Default model to use |
 | `agent.enable_self_review` | `boolean` | no | `false` | Enable an extra self-review pass to refine final responses |
 | `agent.enable_split_tool_results` | `boolean` | no | `true` | Enable split tool results for massive token savings (Phase 4) When enabled, tools return dual-channel output: - llm_content: Concise summary sent to LLM (token-optimized, 53-95% reduction) - ui_content: Rich output displayed to user (full details preserved) Applies to: exec_command, code_search, apply_patch, and retained internal helpers Default: true (opt-out for compatibility), recommended for production use |
@@ -65,10 +45,10 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `agent.harness.async_approval.enabled` | `boolean` | no | `false` | Master switch. Default: false (opt-in). |
 | `agent.harness.async_approval.notify_command` | `null \| string` | no | `null` | Optional command invoked with the blocker file path as argument when an approval request is deferred (e.g. `/usr/local/bin/notify-approval`). |
 | `agent.harness.async_approval.timeout_secs` | `integer` | no | `3600` | Maximum time in seconds before a deferred approval is auto-denied. |
-| `agent.harness.auto_compaction_enabled` | `boolean` | no | `true` | Enable normal threshold-triggered context compaction. Enabled by default. When disabled, the bounded post-tool recovery path may still compact the older prefix as a safety fallback after a provider failure. |
+| `agent.harness.auto_compaction_enabled` | `boolean` | no | `true` | Enable automatic context compaction when token pressure crosses threshold. Enabled by default. When disabled, normal threshold-triggered automatic compaction is skipped; the bounded post-tool recovery path may still compact the older prefix as a safety fallback after a provider failure. |
 | `agent.harness.auto_compaction_instructions` | `null \| string` | no | `null` | Optional custom instructions for the compaction summarization prompt. When set, replaces the default Anthropic compaction prompt entirely. Useful for tool-use scenarios to prevent the model from calling tools during summarization. Only applies to Anthropic provider. |
 | `agent.harness.auto_compaction_pause_after` | `boolean` | no | `false` | Whether to pause after compaction (Anthropic only). When true and compaction triggers, the API returns early with `stop_reason: "compaction"` and only the compaction block. The caller can then insert additional messages before the model generates its text response. |
-| `agent.harness.auto_compaction_threshold_tokens` | `integer \| null` | no | `null` | Optional absolute compaction threshold (tokens). When set, it overrides the session budget but is capped at the provider's hard context capacity. When unset, VT Code derives a 90% trigger from the smaller of the provider capacity and `context.max_context_tokens`. |
+| `agent.harness.auto_compaction_threshold_tokens` | `integer \| null` | no | `null` | Optional absolute compaction threshold (tokens) for native and local compaction. When set, this overrides the session budget but remains capped by the provider's hard context capacity. When unset, VT Code derives a 90% trigger from the smaller of the provider capacity and `context.max_context_tokens`. |
 | `agent.harness.budget_warning_threshold` | `number` | no | `0.75` | Fraction of `max_budget_usd` at which VT Code emits a one-time near-budget warning. Ignored when `max_budget_usd` is unset. |
 | `agent.harness.compact_on_model_switch` | `boolean` | no | `true` | Automatically compact conversation context when the main session model or provider is switched mid-conversation, so the newly selected model starts from a summary instead of the outgoing model's raw trace. Default: true. Disable to keep the full history across a model switch. |
 | `agent.harness.confidence_escalation.always_escalate_tools` | `array` | no | `["delete_file", "remove", "rm"]` | Tool names that always trigger escalation regardless of confidence. These are matched against the tool call's function name. |
@@ -84,14 +64,17 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `agent.harness.context_reset_mode` | `string` | no | `"off"` | When to trigger a context reset — starting a clean session from external artifacts only, discarding conversation history. Distinct from compaction (which preserves conversational continuity). Default: `off` (carry forward history as before). |
 | `agent.harness.context_reset_stall_threshold` | `integer` | no | `2` | Number of consecutive stall turns before `on_stall` context reset triggers. Ignored unless `context_reset_mode = "on_stall"`. Default: 2. |
 | `agent.harness.continuation_policy` | `string` | no | `"all"` | Controls whether harness-managed continuation loops are enabled. |
-| `agent.harness.event_log_path` | `null \| string` | no | `null` | Optional compatibility/export JSONL path for harness events. The canonical log is always `<workspace>/.vtcode/sessions/<session_id>/events.jsonl`; no global harness file is created when this is unset. |
+| `agent.harness.event_log_path` | `null \| string` | no | `null` | Optional compatibility/export JSONL path for harness events. Canonical events are always stored under the workspace session store; unset configuration creates no global harness file. |
 | `agent.harness.max_budget_usd` | `null \| number` | no | `null` | Optional maximum estimated API cost in USD before VT Code stops the session. |
 | `agent.harness.max_parallel_tool_calls` | `integer` | no | `4` | Maximum number of tool calls that may execute concurrently within a single parallel batch. Set to `0` to disable the cap (unlimited concurrency). Default: 4. |
 | `agent.harness.max_revision_rounds` | `integer` | no | `2` | Maximum generator revision rounds after evaluator rejection. |
-| `agent.harness.max_tool_calls_per_turn` | `integer` | no | `120` | Maximum number of tool calls allowed per turn. Set to `0` to disable the cap. |
+| `agent.harness.max_tool_calls_per_turn` | `integer` | no | `120` | Maximum number of tool calls allowed per turn. Defaults to `120`. Set to `0` to disable the cap. |
 | `agent.harness.max_tool_retries` | `integer` | no | `2` | Maximum retries for retryable tool errors |
 | `agent.harness.max_tool_wall_clock_secs` | `integer` | no | `600` | Maximum wall clock time (seconds) for tool execution in a turn |
 | `agent.harness.orchestration_mode` | `string` | no | `"plan_build_evaluate"` | Select the exec/full-auto harness orchestration path. |
+| `agent.harness.skeptic_panel.enabled` | `boolean` | no | `false` | Master switch. Default: false (opt-in). |
+| `agent.harness.skeptic_panel.models` | `array` | no | `[]` | Model identifiers to run as skeptic evaluators (in addition to the primary evaluator). Empty when `enabled = false`. |
+| `agent.harness.skeptic_panel.models[]` | `string` | no | `-` | - |
 | `agent.harness.tool_result_clearing.clear_at_least_tokens` | `integer` | no | `30000` | - |
 | `agent.harness.tool_result_clearing.clear_tool_inputs` | `boolean` | no | `false` | - |
 | `agent.harness.tool_result_clearing.enabled` | `boolean` | no | `true` | - |
@@ -144,18 +127,18 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `agent.prompt_suggestions.enabled` | `boolean` | no | `true` | Enable inline prompt suggestions in the chat composer. |
 | `agent.prompt_suggestions.model` | `string` | no | `""` | Lightweight model to use for suggestions. Leave empty to auto-select an efficient sibling of the main model. |
 | `agent.prompt_suggestions.show_cost_notice` | `boolean` | no | `true` | Whether VT Code should remind users that LLM-backed suggestions consume tokens. |
-| `agent.prompt_suggestions.temperature` | `number` | no | `0.30000001192092896` | Temperature for inline prompt suggestion generation. |
-| `agent.provider` | `string` | no | `"openrouter"` | AI provider for single agent mode (including `merge-gateway`) |
-| `agent.reasoning_effort` | `string` | no | `"none"` | Reasoning effort level for models that support it (none, minimal, low, medium, high, xhigh, max) Applies to: Claude, GPT-5 family, Gemini, Qwen3, DeepSeek, and Meta Muse models with reasoning capability |
+| `agent.prompt_suggestions.temperature` | `number` | no | `0.3` | Temperature for inline prompt suggestion generation. |
+| `agent.provider` | `string` | no | `"openrouter"` | AI provider for single agent mode (gemini, openai, anthropic, meta, openrouter, zai) |
+| `agent.reasoning_effort` | `string` | no | `"none"` | Reasoning effort level for models that support it (none, minimal, low, medium, high, xhigh, max) Applies to: Claude, GPT-5 family, Gemini, Qwen3, DeepSeek with reasoning capability |
 | `agent.refine_prompts_enabled` | `boolean` | no | `false` | Enable prompt refinement pass before sending to LLM |
 | `agent.refine_prompts_max_passes` | `integer` | no | `1` | Max refinement passes for prompt writing |
 | `agent.refine_prompts_model` | `string` | no | `""` | Optional model override for the refiner (empty = auto pick efficient sibling) |
-| `agent.refine_temperature` | `number` | no | `0.30000001192092896` | Temperature for prompt refinement (0.0-1.0, default: 0.3) Lower values ensure prompt refinement is more deterministic/consistent Keep lower than main temperature for stable prompt improvement |
+| `agent.refine_temperature` | `number` | no | `0.3` | Temperature for prompt refinement (0.0-1.0, default: 0.3) Lower values ensure prompt refinement is more deterministic/consistent Keep lower than main temperature for stable prompt improvement |
 | `agent.require_plan_confirmation` | `boolean` | no | `true` | Require user confirmation before executing a plan generated in planning workflow When true, exiting planning workflow shows the implementation blueprint and requires explicit user approval before enabling edit tools. |
 | `agent.shell_prompt_profile` | `string` | no | `"auto"` | Shell syntax profile used in model-facing command examples. This controls prompt wording only; command policy remains in the runtime. Values: auto, unix_like, powershell. |
 | `agent.small_model.enabled` | `boolean` | no | `true` | Enable small model tier for efficient operations |
 | `agent.small_model.model` | `string` | no | `""` | Small model to use (e.g., claude-4-5-haiku, "gpt-4-mini", "gemini-2.0-flash") Leave empty to auto-select a lightweight sibling of the main model |
-| `agent.small_model.temperature` | `number` | no | `0.30000001192092896` | Temperature for small model responses |
+| `agent.small_model.temperature` | `number` | no | `0.3` | Temperature for small model responses |
 | `agent.small_model.use_for_git_history` | `boolean` | no | `true` | Enable small model for git history processing |
 | `agent.small_model.use_for_large_reads` | `boolean` | no | `true` | Enable small model for large file reads (>50KB) |
 | `agent.small_model.use_for_memory` | `boolean` | no | `true` | Enable small model for persistent memory classification and summary refresh |
@@ -249,55 +232,61 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `context.ledger.include_in_prompt` | `boolean` | no | `true` | Inject ledger into the system prompt each turn |
 | `context.ledger.max_entries` | `integer` | no | `12` | - |
 | `context.ledger.preserve_in_compression` | `boolean` | no | `true` | Preserve ledger entries during context compression |
-| `context.max_context_tokens` | `integer` | no | `160000` | Session prompt safety budget used by auto-compaction. When no explicit harness threshold is set, VT Code triggers at 90% of the smaller of this budget and the provider's hard context capacity. Set to `0` to preserve provider-only threshold resolution. |
+| `context.max_context_tokens` | `integer` | no | `160000` | Maximum prompt tokens allowed for the session safety budget. The effective auto-compaction boundary is 90% of the smaller of this value and the provider's hard context capacity. |
 | `context.preserve_recent_turns` | `integer` | no | `10` | Preserve recent turns during context management This field is maintained for compatibility but no longer used for trimming |
 | `context.trim_to_percent` | `integer` | no | `60` | Percentage to trim context to when it gets too large This field is maintained for compatibility but no longer used for trimming |
 | `custom_providers` | `array` | no | `[]` | User-defined OpenAI-compatible provider endpoints. These entries are editable in `/config` and appear in the model picker using each entry's `display_name`. |
+| `custom_providers[].api_format` | `string` | no | `-` | Typed API format for the provider's default profile. |
 | `custom_providers[].api_key_env` | `string` | no | `""` | Environment variable name that holds the API key for this endpoint (e.g., "MYCORP_API_KEY"). |
 | `custom_providers[].auth` | `CustomProviderCommandAuthConfig \| null` | no | `-` | Optional command-backed bearer token configuration. |
+| `custom_providers[].auth.args` | `array` | no | `[]` | Optional command arguments. |
+| `custom_providers[].auth.args[]` | `string` | no | `-` | - |
+| `custom_providers[].auth.command` | `string` | yes | `-` | Command to execute. Bare names are resolved via `PATH`. |
+| `custom_providers[].auth.cwd` | `null \| string` | no | `null` | Optional working directory for the token command. |
+| `custom_providers[].auth.refresh_interval_ms` | `integer` | no | `300000` | Maximum age for the cached token before rerunning the command. |
+| `custom_providers[].auth.timeout_ms` | `integer` | no | `5000` | Maximum time to wait for the command to complete successfully. |
 | `custom_providers[].base_url` | `string` | yes | `-` | Base URL of the OpenAI-compatible API endpoint (e.g., `<https://llm.corp.example/v1>`). |
 | `custom_providers[].context_window` | `integer \| null` | no | `-` | Optional context window size in tokens for models served by this endpoint. When omitted, the OpenAI-compatible provider uses its default context window size. |
-| `custom_providers[].api_format` | `string \| null` | no | `null` | Optional provider-level API format hint. Allowed values: `auto`, `openai-chat`, `openai-responses`, `anthropic-messages`. When omitted, VT Code preserves legacy autodetection behavior. An explicit value is honored and will not silently fallback. |
-| `custom_providers[].supports_tools` | `boolean \| null` | no | `null` | Provider-level default for tool calling when per-model metadata is unavailable. |
-| `custom_providers[].supports_reasoning` | `boolean \| null` | no | `null` | Provider-level default for reasoning support when per-model metadata is unavailable. |
-| `custom_providers[].supports_reasoning_effort` | `boolean \| null` | no | `null` | Provider-level default for reasoning-effort controls when per-model metadata is unavailable. |
-| `custom_providers[].supports_vision` | `boolean \| null` | no | `null` | Provider-level default for image/vision inputs when per-model metadata is unavailable. |
-| `custom_providers[].supports_structured_output` | `boolean \| null` | no | `null` | Provider-level default for structured output when per-model metadata is unavailable. |
-| `custom_providers[].supports_parallel_tool_calls` | `boolean \| null` | no | `null` | Provider-level default for parallel tool calls when per-model metadata is unavailable. |
-| `custom_providers[].supports_context_caching` | `boolean \| null` | no | `null` | Provider-level default for context caching when per-model metadata is unavailable. |
-| `custom_providers[].supports_responses_compaction` | `boolean \| null` | no | `null` | Provider-level default for Responses compaction when per-model metadata is unavailable. |
-| `custom_providers[].supports_context_edits` | `boolean \| null` | no | `null` | Provider-level default for context edits when per-model metadata is unavailable. |
-| `custom_providers[].temperature` | `number \| null` | no | `null` | Provider-level sampling temperature default (0.0-2.0) for models without a profile override. When omitted, the global `agent.temperature` applies. |
-| `custom_providers[].top_p` | `number \| null` | no | `null` | Provider-level nucleus-sampling default (0.0-1.0). |
-| `custom_providers[].top_k` | `integer \| null` | no | `null` | Provider-level top-k default (>= 0). |
-| `custom_providers[].presence_penalty` | `number \| null` | no | `null` | Provider-level presence penalty default (-2.0-2.0). |
-| `custom_providers[].frequency_penalty` | `number \| null` | no | `null` | Provider-level frequency penalty default (-2.0-2.0). |
-| `custom_providers[].max_tokens` | `integer \| null` | no | `null` | Provider-level max output tokens default (> 0); overrides the agent loop's built-in per-task limits. |
-| `custom_providers[].reasoning_effort` | `string \| null` | no | `null` | Provider-level reasoning effort default for models without a profile override. |
-| `custom_providers.profiles."<model-id>"` | `table` | no | `-` | Per-model sparse profile used to override runtime defaults for a specific model identifier. Profiles do NOT add models to the picker; they only alter runtime behavior (capabilities, api_format, context_window, etc.). |
-| `custom_providers.profiles."<model-id>".api_format` | `string \| null` | no | `null` | Per-model API format hint. Same allowed values as `custom_providers[].api_format`. Omitted preserves legacy/autodetect behavior for that model. |
-| `custom_providers.profiles."<model-id>".context_window` | `integer \| null` | no | `null` | Per-model context window in tokens. When omitted the provider or autodetected model metadata applies. |
-| `custom_providers.profiles."<model-id>".temperature` | `number \| null` | no | `null` | Per-model sampling temperature (0.0-2.0). Takes precedence over provider-level and global `agent.temperature` values. |
-| `custom_providers.profiles."<model-id>".top_p` | `number \| null` | no | `null` | Per-model nucleus sampling (0.0-1.0); overrides provider-level default. |
-| `custom_providers.profiles."<model-id>".top_k` | `integer \| null` | no | `null` | Per-model top-k cutoff (>= 0); overrides provider-level default. |
-| `custom_providers.profiles."<model-id>".presence_penalty` | `number \| null` | no | `null` | Per-model presence penalty (-2.0-2.0); overrides provider-level default. |
-| `custom_providers.profiles."<model-id>".frequency_penalty` | `number \| null` | no | `null` | Per-model frequency penalty (-2.0-2.0); overrides provider-level default. |
-| `custom_providers.profiles."<model-id>".max_tokens` | `integer \| null` | no | `null` | Per-model max output tokens (> 0); overrides the agent loop's built-in per-task limits (800/2000). |
-| `custom_providers.profiles."<model-id>".reasoning_effort` | `string \| null` | no | `null` | Per-model reasoning effort; implies effort support for this model and takes precedence over the global `agent.reasoning_effort`. |
-| `custom_providers.profiles."<model-id>".supports_tools` | `boolean \| null` | no | `null` | Whether the model supports external tool calls. Explicit `false` is honored. |
-| `custom_providers.profiles."<model-id>".supports_reasoning` | `boolean \| null` | no | `null` | Whether the model supports structured reasoning guidance and longer reasoning passes. |
-| `custom_providers.profiles."<model-id>".supports_reasoning_effort` | `boolean \| null` | no | `null` | Whether the model supports reasoning-effort controls. Explicit `false` is honored. |
-| `custom_providers.profiles."<model-id>".supports_vision` | `boolean \| null` | no | `null` | Whether the model accepts image/vision inputs. |
-| `custom_providers.profiles."<model-id>".supports_structured_output` | `boolean \| null` | no | `null` | Whether the model supports structured output sections (e.g., JSON/ATIF) natively. |
-| `custom_providers.profiles."<model-id>".supports_parallel_tool_calls` | `boolean \| null` | no | `null` | Whether the model reliably supports parallel/async tool call batches. |
-| `custom_providers.profiles."<model-id>".supports_context_caching` | `boolean \| null` | no | `null` | Whether the model benefits from context caching between turns. |
-| `custom_providers.profiles."<model-id>".supports_responses_compaction` | `boolean \| null` | no | `null` | Whether the model supports native Responses-style server compaction. |
-| `custom_providers.profiles."<model-id>".supports_context_edits` | `boolean \| null` | no | `null` | Whether the model supports context edit operations (insert/replace) when the provider API exposes them. |
 | `custom_providers[].display_name` | `string` | yes | `-` | Human-friendly label shown in the TUI header, footer, and model picker (e.g., "MyCorporateName"). |
+| `custom_providers[].frequency_penalty` | `null \| number` | no | `-` | Optional frequency penalty default (-2.0-2.0). |
+| `custom_providers[].max_tokens` | `integer \| null` | no | `-` | Optional max output tokens default (> 0). |
 | `custom_providers[].model` | `string` | no | `""` | Default model to use with this endpoint (e.g., "gpt-5-mini"). When [`models`](Self::models) is empty, this single model is what the `/model` picker offers for this provider. When [`models`](Self::models) is non-empty, this field is used as the default selection but the picker lists every entry in [`models`](Self::models). |
 | `custom_providers[].models` | `array` | no | `[]` | Optional list of additional model identifiers offered by the provider. Useful for OpenAI-compatible aggregators such as Atlas Cloud that expose many models behind a single endpoint. When set, the `/model` picker shows one entry per model. When empty, the picker falls back to the single [`model`](Self::model) field. |
 | `custom_providers[].models[]` | `string` | no | `-` | - |
 | `custom_providers[].name` | `string` | yes | `-` | Stable provider key used for routing and persistence (e.g., "mycorp"). Must be lowercase alphanumeric with optional hyphens/underscores. |
+| `custom_providers[].presence_penalty` | `null \| number` | no | `-` | Optional presence penalty default (-2.0-2.0). |
+| `custom_providers[].profiles` | `object` | no | `-` | Exact model-keyed sparse capability profiles. |
+| `custom_providers[].profiles.*.api_format` | `string` | no | `-` | Typed API format for this provider/profile. |
+| `custom_providers[].profiles.*.context_window` | `integer \| null` | no | `-` | Optional context window size in tokens. |
+| `custom_providers[].profiles.*.frequency_penalty` | `null \| number` | no | `-` | Optional frequency penalty override (-2.0-2.0). |
+| `custom_providers[].profiles.*.max_tokens` | `integer \| null` | no | `-` | Optional max output tokens override (> 0). |
+| `custom_providers[].profiles.*.presence_penalty` | `null \| number` | no | `-` | Optional presence penalty override (-2.0-2.0). |
+| `custom_providers[].profiles.*.reasoning_effort` | `ReasoningEffortLevel \| null` | no | `-` | Optional reasoning effort override sent with requests for this model. |
+| `custom_providers[].profiles.*.supports_context_caching` | `boolean \| null` | no | `-` | - |
+| `custom_providers[].profiles.*.supports_context_edits` | `boolean \| null` | no | `-` | - |
+| `custom_providers[].profiles.*.supports_parallel_tool_calls` | `boolean \| null` | no | `-` | - |
+| `custom_providers[].profiles.*.supports_reasoning` | `boolean \| null` | no | `-` | - |
+| `custom_providers[].profiles.*.supports_reasoning_effort` | `boolean \| null` | no | `-` | - |
+| `custom_providers[].profiles.*.supports_responses_compaction` | `boolean \| null` | no | `-` | - |
+| `custom_providers[].profiles.*.supports_structured_output` | `boolean \| null` | no | `-` | - |
+| `custom_providers[].profiles.*.supports_tools` | `boolean \| null` | no | `-` | - |
+| `custom_providers[].profiles.*.supports_vision` | `boolean \| null` | no | `-` | - |
+| `custom_providers[].profiles.*.temperature` | `null \| number` | no | `-` | Optional sampling temperature override (0.0-2.0) sent with requests. |
+| `custom_providers[].profiles.*.top_k` | `integer \| null` | no | `-` | Optional top-k override (>= 0). |
+| `custom_providers[].profiles.*.top_p` | `null \| number` | no | `-` | Optional nucleus-sampling override (0.0-1.0). |
+| `custom_providers[].reasoning_effort` | `ReasoningEffortLevel \| null` | no | `-` | Optional reasoning effort default for models without a profile override. |
+| `custom_providers[].supports_context_caching` | `boolean \| null` | no | `-` | Optional support for context caching. |
+| `custom_providers[].supports_context_edits` | `boolean \| null` | no | `-` | Optional support for context edits. |
+| `custom_providers[].supports_parallel_tool_calls` | `boolean \| null` | no | `-` | Optional support for parallel tool calls. |
+| `custom_providers[].supports_reasoning` | `boolean \| null` | no | `-` | Optional support for reasoning. |
+| `custom_providers[].supports_reasoning_effort` | `boolean \| null` | no | `-` | Optional support for reasoning effort. |
+| `custom_providers[].supports_responses_compaction` | `boolean \| null` | no | `-` | Optional support for responses compaction. |
+| `custom_providers[].supports_structured_output` | `boolean \| null` | no | `-` | Optional support for structured output. |
+| `custom_providers[].supports_tools` | `boolean \| null` | no | `-` | Optional support for tool calling. |
+| `custom_providers[].supports_vision` | `boolean \| null` | no | `-` | Optional support for vision inputs. |
+| `custom_providers[].temperature` | `null \| number` | no | `-` | Optional sampling temperature default (0.0-2.0) for models served by this endpoint unless a profile overrides it. |
+| `custom_providers[].top_k` | `integer \| null` | no | `-` | Optional top-k default (>= 0). |
+| `custom_providers[].top_p` | `null \| number` | no | `-` | Optional nucleus-sampling default (0.0-1.0). |
 | `debug.debug_log_dir` | `null \| string` | no | `null` | Directory for debug logs |
 | `debug.enable_tracing` | `boolean` | no | `false` | Enable structured logging for development and troubleshooting |
 | `debug.max_debug_log_age_days` | `integer` | no | `7` | Maximum age of debug logs to keep (in days) |
@@ -308,9 +297,9 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `default_primary_agent` | `string` | no | `"build"` | Primary agent selected at startup when no session override is active. |
 | `dotfile_protection.additional_protected_patterns` | `array` | no | `[]` | Additional dotfile patterns to protect (beyond defaults). |
 | `dotfile_protection.additional_protected_patterns[]` | `string` | no | `-` | - |
-| `dotfile_protection.audit_log_path` | `string` | no | `"<state>/audit/dotfiles.log"` | Path to the audit log file. Defaults under the user state directory. |
+| `dotfile_protection.audit_log_path` | `string` | no | `"/home/f2/.local/state/vtcode/audit/dotfiles.log"` | Path to the audit log file. |
 | `dotfile_protection.audit_logging_enabled` | `boolean` | no | `true` | Enable immutable audit logging of all dotfile access attempts. |
-| `dotfile_protection.backup_directory` | `string` | no | `"<state>/backups/dotfiles"` | Directory for storing dotfile backups. |
+| `dotfile_protection.backup_directory` | `string` | no | `"/home/f2/.local/state/vtcode/backups/dotfiles"` | Directory for storing dotfile backups. |
 | `dotfile_protection.block_during_automation` | `boolean` | no | `true` | Block modifications during automated operations. |
 | `dotfile_protection.blocked_operations` | `array` | no | `["dependency_installation", "code_formatting", "git_operations", "project_initialization", "build_operations", "test_...` | Operations that trigger extra protection. |
 | `dotfile_protection.blocked_operations[]` | `string` | no | `-` | - |
@@ -364,7 +353,7 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `hooks.lifecycle.session_end[].hooks[].timeout_seconds` | `integer \| null` | no | `null` | Optional execution timeout in seconds |
 | `hooks.lifecycle.session_end[].hooks[].type` | `string` | no | `"command"` | Type of hook command (currently only 'command' is supported) |
 | `hooks.lifecycle.session_end[].matcher` | `null \| string` | no | `null` | Optional regex matcher to filter when this group runs. Matched against context strings (e.g. tool name, project path). |
-| `hooks.lifecycle.session_start` | `array` | no | `[]` | Commands to run immediately when an agent session begins. When any lifecycle hook command originates from workspace-controlled content (workspace-root `vtcode.toml`, workspace `.vtcode/`, project profiles, or workspace agent-spec files), the whole lifecycle engine is gated: no hook runs until the user approves the exact command set for the workspace; canonical user-config hooks without workspace-controlled content run without approval |
+| `hooks.lifecycle.session_start` | `array` | no | `[]` | Commands to run immediately when an agent session begins |
 | `hooks.lifecycle.session_start[].hooks` | `array` | no | `[]` | List of hook commands to execute sequentially in this group |
 | `hooks.lifecycle.session_start[].hooks[].command` | `string` | no | `""` | The shell command string to execute |
 | `hooks.lifecycle.session_start[].hooks[].timeout_seconds` | `integer \| null` | no | `null` | Optional execution timeout in seconds |
@@ -442,6 +431,37 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `mcp.max_concurrent_connections` | `integer` | no | `5` | Maximum number of concurrent MCP connections |
 | `mcp.providers` | `array` | no | `[]` | Configured MCP providers |
 | `mcp.providers[]` | `object` | no | `-` | Configuration for a single MCP provider |
+| `mcp.providers[].api_key_env` | `null \| string` | no | `null` | API key environment variable name |
+| `mcp.providers[].args` | `array` | yes | `-` | Command arguments |
+| `mcp.providers[].args[]` | `string` | no | `-` | - |
+| `mcp.providers[].command` | `string` | yes | `-` | Command to execute |
+| `mcp.providers[].enabled` | `boolean` | no | `true` | Whether this provider is enabled |
+| `mcp.providers[].endpoint` | `string` | yes | `-` | Server endpoint URL |
+| `mcp.providers[].env` | `object` | no | `{}` | Provider-specific environment variables |
+| `mcp.providers[].env.*` | `string` | no | `-` | - |
+| `mcp.providers[].env_http_headers` | `object` | no | `{}` | Headers whose values are sourced from environment variables (`{ header-name = "ENV_VAR" }`). Empty values are ignored. |
+| `mcp.providers[].env_http_headers.*` | `string` | no | `-` | - |
+| `mcp.providers[].http_headers` | `object` | no | `{}` | Headers to include in requests |
+| `mcp.providers[].http_headers.*` | `string` | no | `-` | - |
+| `mcp.providers[].max_concurrent_requests` | `integer` | no | `3` | Maximum number of concurrent requests to this provider |
+| `mcp.providers[].name` | `string` | yes | `-` | Provider name (used for identification) |
+| `mcp.providers[].oauth` | `McpOAuthConfig \| null` | no | `null` | Optional OAuth configuration for providers that issue bearer tokens dynamically. |
+| `mcp.providers[].oauth.audience` | `null \| string` | no | `null` | Optional audience/resource hint sent with the auth and token requests. |
+| `mcp.providers[].oauth.authorization_url` | `string` | no | `""` | OAuth authorization endpoint. |
+| `mcp.providers[].oauth.callback_port` | `integer` | no | `8768` | Local callback server port. |
+| `mcp.providers[].oauth.client_id` | `string` | no | `""` | OAuth client identifier. |
+| `mcp.providers[].oauth.credentials_store_mode` | `string` | no | `"auto"` | Credential storage backend for this provider's token. |
+| `mcp.providers[].oauth.extra_auth_params` | `object` | no | `{}` | Extra query parameters appended to the authorization URL. |
+| `mcp.providers[].oauth.extra_auth_params.*` | `string` | no | `-` | - |
+| `mcp.providers[].oauth.extra_token_params` | `object` | no | `{}` | Extra form fields appended to token exchanges and refreshes. |
+| `mcp.providers[].oauth.extra_token_params.*` | `string` | no | `-` | - |
+| `mcp.providers[].oauth.flow_timeout_secs` | `integer` | no | `300` | Browser-flow timeout in seconds. |
+| `mcp.providers[].oauth.scopes` | `array` | no | `[]` | Requested scopes. |
+| `mcp.providers[].oauth.scopes[]` | `string` | no | `-` | - |
+| `mcp.providers[].oauth.token_url` | `string` | no | `""` | OAuth token endpoint. |
+| `mcp.providers[].protocol_version` | `string` | no | `"2024-11-05"` | Protocol version |
+| `mcp.providers[].startup_timeout_ms` | `integer \| null` | no | `null` | Startup timeout in milliseconds for this provider |
+| `mcp.providers[].working_directory` | `null \| string` | no | `null` | Working directory for the command |
 | `mcp.request_timeout_seconds` | `integer` | no | `30` | Request timeout in seconds |
 | `mcp.requirements.allowed_http_endpoints` | `array` | no | `[]` | Allowed HTTP endpoints when enforcement is enabled |
 | `mcp.requirements.allowed_http_endpoints[]` | `string` | no | `-` | - |
@@ -463,7 +483,7 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `mcp.server.name` | `string` | no | `"vtcode-mcp-server"` | Server identifier |
 | `mcp.server.port` | `integer` | no | `3000` | Port for the MCP server |
 | `mcp.server.transport` | `string` | no | `"sse"` | Server transport type |
-| `mcp.server.version` | `string` | no | `"0.135.11"` | Server version |
+| `mcp.server.version` | `string` | no | `"0.147.2"` | Server version |
 | `mcp.startup_timeout_seconds` | `integer \| null` | no | `null` | Optional timeout (seconds) when starting providers |
 | `mcp.tool_cache_capacity` | `integer` | no | `100` | Cache capacity for tool discovery results |
 | `mcp.tool_timeout_seconds` | `integer \| null` | no | `null` | Optional timeout (seconds) for tool execution |
@@ -479,63 +499,64 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `model.skip_loop_detection` | `boolean` | no | `false` | Enable loop hang detection to identify when model is stuck in repetitive behavior |
 | `notify` | `array` | no | `[]` | External notification command invoked for supported events. |
 | `notify[]` | `string` | no | `-` | - |
-| `optimization.agent_execution.enable_performance_prediction` | `boolean` | yes | `-` | Enable performance prediction |
-| `optimization.agent_execution.idle_backoff_ms` | `integer` | yes | `-` | Back-off duration in milliseconds when no work is pending This reduces CPU usage during idle periods |
-| `optimization.agent_execution.idle_timeout_ms` | `integer` | yes | `-` | Idle detection timeout in milliseconds (0 to disable) When the agent is idle for this duration, it will enter a low-power state |
-| `optimization.agent_execution.max_execution_time_secs` | `integer` | yes | `-` | Maximum execution time in seconds |
-| `optimization.agent_execution.max_idle_cycles` | `integer` | yes | `-` | Maximum consecutive idle cycles before entering deep sleep |
-| `optimization.agent_execution.max_memory_mb` | `integer` | yes | `-` | Maximum memory usage in MB |
-| `optimization.agent_execution.resource_monitor_interval_ms` | `integer` | yes | `-` | Resource monitoring interval in milliseconds |
-| `optimization.agent_execution.state_history_size` | `integer` | yes | `-` | State transition history size |
-| `optimization.agent_execution.use_optimized_loop` | `boolean` | yes | `-` | Enable optimized agent execution loop |
-| `optimization.async_pipeline.batch_timeout_ms` | `integer` | yes | `-` | Batch timeout in milliseconds |
-| `optimization.async_pipeline.cache_size` | `integer` | yes | `-` | Result cache size |
-| `optimization.async_pipeline.enable_batching` | `boolean` | yes | `-` | Enable request batching |
-| `optimization.async_pipeline.enable_caching` | `boolean` | yes | `-` | Enable result caching |
-| `optimization.async_pipeline.max_batch_size` | `integer` | yes | `-` | Maximum batch size for tool requests |
-| `optimization.command_cache.allowlist` | `array` | yes | `-` | Allowlist of command prefixes eligible for caching |
+| `optimization.agent_execution.enable_performance_prediction` | `boolean` | no | `false` | Enable performance prediction |
+| `optimization.agent_execution.idle_backoff_ms` | `integer` | no | `100` | Back-off duration in milliseconds when no work is pending This reduces CPU usage during idle periods |
+| `optimization.agent_execution.idle_timeout_ms` | `integer` | no | `5000` | Idle detection timeout in milliseconds (0 to disable) When the agent is idle for this duration, it will enter a low-power state |
+| `optimization.agent_execution.max_execution_time_secs` | `integer` | no | `600` | Maximum execution time in seconds |
+| `optimization.agent_execution.max_idle_cycles` | `integer` | no | `10` | Maximum consecutive idle cycles before entering deep sleep |
+| `optimization.agent_execution.max_memory_mb` | `integer` | no | `1024` | Maximum memory usage in MB |
+| `optimization.agent_execution.resource_monitor_interval_ms` | `integer` | no | `100` | Resource monitoring interval in milliseconds |
+| `optimization.agent_execution.state_history_size` | `integer` | no | `1000` | State transition history size |
+| `optimization.agent_execution.use_optimized_loop` | `boolean` | no | `true` | Enable optimized agent execution loop |
+| `optimization.async_pipeline.batch_timeout_ms` | `integer` | no | `100` | Batch timeout in milliseconds |
+| `optimization.async_pipeline.cache_size` | `integer` | no | `100` | Result cache size |
+| `optimization.async_pipeline.enable_batching` | `boolean` | no | `false` | Enable request batching |
+| `optimization.async_pipeline.enable_caching` | `boolean` | no | `true` | Enable result caching |
+| `optimization.async_pipeline.max_batch_size` | `integer` | no | `5` | Maximum batch size for tool requests |
+| `optimization.command_cache.allowlist` | `array` | no | `["rg", "ls", "git status", "git diff --stat"]` | Allowlist of command prefixes eligible for caching |
 | `optimization.command_cache.allowlist[]` | `string` | no | `-` | - |
-| `optimization.command_cache.enabled` | `boolean` | yes | `-` | Enable command caching |
-| `optimization.command_cache.max_entries` | `integer` | yes | `-` | Maximum number of cached entries |
-| `optimization.command_cache.ttl_ms` | `integer` | yes | `-` | Cache TTL in milliseconds |
-| `optimization.file_read_cache.enabled` | `boolean` | yes | `-` | Enable file read caching |
-| `optimization.file_read_cache.max_entries` | `integer` | yes | `-` | Maximum number of cached entries |
+| `optimization.command_cache.enabled` | `boolean` | no | `true` | Enable command caching |
+| `optimization.command_cache.max_entries` | `integer` | no | `128` | Maximum number of cached entries |
+| `optimization.command_cache.ttl_ms` | `integer` | no | `2000` | Cache TTL in milliseconds |
+| `optimization.file_read_cache.enabled` | `boolean` | no | `true` | Enable file read caching |
+| `optimization.file_read_cache.max_entries` | `integer` | no | `128` | Maximum number of cached entries |
 | `optimization.file_read_cache.max_read_lines` | `integer` | no | `400` | Absolute ceiling (in lines) for a single line-based `read_file` call. Any read requesting more lines is clamped to this value and the response exposes a `next_read_args` continuation to read the remainder. |
-| `optimization.file_read_cache.max_size_bytes` | `integer` | yes | `-` | Maximum cached file size (bytes) |
-| `optimization.file_read_cache.min_size_bytes` | `integer` | yes | `-` | Minimum file size (bytes) before caching |
-| `optimization.file_read_cache.ttl_secs` | `integer` | yes | `-` | Cache TTL in seconds |
-| `optimization.llm_client.cache_ttl_secs` | `integer` | yes | `-` | Response cache TTL in seconds |
-| `optimization.llm_client.connection_pool_size` | `integer` | yes | `-` | Connection pool size |
-| `optimization.llm_client.enable_connection_pooling` | `boolean` | yes | `-` | Enable connection pooling |
-| `optimization.llm_client.enable_request_batching` | `boolean` | yes | `-` | Enable request batching |
-| `optimization.llm_client.enable_response_caching` | `boolean` | yes | `-` | Enable response caching |
-| `optimization.llm_client.rate_limit_burst` | `integer` | yes | `-` | Rate limit burst capacity |
-| `optimization.llm_client.rate_limit_rps` | `number` | yes | `-` | Rate limit: requests per second |
-| `optimization.llm_client.response_cache_size` | `integer` | yes | `-` | Response cache size |
-| `optimization.memory_pool.enabled` | `boolean` | yes | `-` | Enable memory pool (can be disabled for debugging) |
-| `optimization.memory_pool.max_string_pool_size` | `integer` | yes | `-` | Maximum number of strings to pool |
-| `optimization.memory_pool.max_value_pool_size` | `integer` | yes | `-` | Maximum number of Values to pool |
-| `optimization.memory_pool.max_vec_pool_size` | `integer` | yes | `-` | Maximum number of `Vec<String>` to pool |
-| `optimization.profiling.auto_export_results` | `boolean` | yes | `-` | Auto-export results to file |
-| `optimization.profiling.enable_regression_testing` | `boolean` | yes | `-` | Enable regression testing |
-| `optimization.profiling.enabled` | `boolean` | yes | `-` | Enable performance profiling |
-| `optimization.profiling.export_file_path` | `string` | yes | `-` | Export file path |
-| `optimization.profiling.max_history_size` | `integer` | yes | `-` | Maximum benchmark history size |
-| `optimization.profiling.max_regression_percent` | `number` | yes | `-` | Maximum allowed performance regression percentage |
-| `optimization.profiling.monitor_interval_ms` | `integer` | yes | `-` | Resource monitoring interval in milliseconds |
+| `optimization.file_read_cache.max_size_bytes` | `integer` | no | `10485760` | Maximum cached file size (bytes) |
+| `optimization.file_read_cache.min_size_bytes` | `integer` | no | `262144` | Minimum file size (bytes) before caching |
+| `optimization.file_read_cache.ttl_secs` | `integer` | no | `300` | Cache TTL in seconds |
+| `optimization.llm_client.cache_ttl_secs` | `integer` | no | `300` | Response cache TTL in seconds |
+| `optimization.llm_client.connection_pool_size` | `integer` | no | `4` | Connection pool size |
+| `optimization.llm_client.enable_connection_pooling` | `boolean` | no | `false` | Enable connection pooling |
+| `optimization.llm_client.enable_request_batching` | `boolean` | no | `false` | Enable request batching |
+| `optimization.llm_client.enable_response_caching` | `boolean` | no | `true` | Enable response caching |
+| `optimization.llm_client.rate_limit_burst` | `integer` | no | `20` | Rate limit burst capacity |
+| `optimization.llm_client.rate_limit_rps` | `number` | no | `10.0` | Rate limit: requests per second |
+| `optimization.llm_client.response_cache_size` | `integer` | no | `50` | Response cache size |
+| `optimization.memory_pool.enabled` | `boolean` | no | `true` | Enable memory pool (can be disabled for debugging) |
+| `optimization.memory_pool.max_string_pool_size` | `integer` | no | `64` | Maximum number of strings to pool |
+| `optimization.memory_pool.max_value_pool_size` | `integer` | no | `32` | Maximum number of Values to pool |
+| `optimization.memory_pool.max_vec_pool_size` | `integer` | no | `16` | Maximum number of `Vec<String>` to pool |
+| `optimization.profiling.auto_export_results` | `boolean` | no | `false` | Auto-export results to file |
+| `optimization.profiling.enable_regression_testing` | `boolean` | no | `false` | Enable regression testing |
+| `optimization.profiling.enabled` | `boolean` | no | `false` | Enable performance profiling |
+| `optimization.profiling.export_file_path` | `string` | no | `"benchmark_results.json"` | Export file path |
+| `optimization.profiling.max_history_size` | `integer` | no | `1000` | Maximum benchmark history size |
+| `optimization.profiling.max_regression_percent` | `number` | no | `10.0` | Maximum allowed performance regression percentage |
+| `optimization.profiling.monitor_interval_ms` | `integer` | no | `100` | Resource monitoring interval in milliseconds |
 | `optimization.rl.epsilon` | `number` | no | `0.15` | Exploration constant for the bandit (higher = more exploration). |
 | `optimization.rl.latency_weight` | `number` | no | `0.5` | Reward shaping weight for latency vs success trade-off (`0.0..=1.0`). |
 | `optimization.rl.strategy` | `string` | no | `"bandit"` | Selection strategy: `bandit` (UCB / epsilon-greedy) or `actor_critic`. |
-| `optimization.tool_registry.default_timeout_secs` | `integer` | yes | `-` | Tool execution timeout in seconds |
-| `optimization.tool_registry.hot_cache_size` | `integer` | yes | `-` | Hot cache size for frequently used tools |
-| `optimization.tool_registry.max_concurrent_tools` | `integer` | yes | `-` | Maximum concurrent tool executions |
-| `optimization.tool_registry.use_optimized_registry` | `boolean` | yes | `-` | Enable optimized registry |
+| `optimization.tool_registry.default_timeout_secs` | `integer` | no | `180` | Tool execution timeout in seconds |
+| `optimization.tool_registry.hot_cache_size` | `integer` | no | `16` | Hot cache size for frequently used tools |
+| `optimization.tool_registry.max_concurrent_tools` | `integer` | no | `4` | Maximum concurrent tool executions |
+| `optimization.tool_registry.middleware_fail_open` | `boolean` | no | `false` | When `true`, middleware `before_execute` failures are logged but do not block the tool call (fail-open). When `false` (the default), middleware errors deny execution (fail-closed). |
+| `optimization.tool_registry.use_optimized_registry` | `boolean` | no | `true` | Enable optimized registry |
 | `output_style.active_style` | `string` | no | `"default"` | - |
 | `permissions.allow` | `array` | no | `[]` | Rules that allow matching tool calls without prompting. |
 | `permissions.allow[]` | `string` | no | `-` | - |
 | `permissions.ask` | `array` | no | `[]` | Rules that require an interactive prompt when they match. |
 | `permissions.ask[]` | `string` | no | `-` | - |
-| `permissions.audit_directory` | `string` | no | `"<state>/audit"` | Directory for audit logs (created if not exists), under the user state directory by default. |
+| `permissions.audit_directory` | `string` | no | `"/home/f2/.local/state/vtcode/audit"` | Directory for audit logs (created if not exists) Defaults to the VT Code state directory's `audit` subdirectory. |
 | `permissions.audit_enabled` | `boolean` | no | `true` | Enable audit logging of all permission decisions |
 | `permissions.auto.allow_exceptions` | `array` | no | `["Allow read-only tools and read-only browsing/search actions.", "Allow file edits and writes inside the current work...` | Narrow allow exceptions applied after block rules. |
 | `permissions.auto.allow_exceptions[]` | `string` | no | `-` | - |
@@ -565,7 +586,7 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `permissions.log_denied_commands` | `boolean` | no | `true` | Log denied commands to audit trail |
 | `permissions.log_permission_prompts` | `boolean` | no | `true` | Log permission prompts (when user is asked for confirmation) |
 | `permissions.resolve_commands` | `boolean` | no | `true` | Enable command resolution to actual paths (helps identify suspicious commands) |
-| `prompt_cache.cache_dir` | `string` | no | `"<cache>/prompts"` | Base directory for local prompt cache storage; defaults under the user cache directory. |
+| `prompt_cache.cache_dir` | `string` | no | `"/home/f2/.cache/vtcode/prompts"` | Base directory for local prompt cache storage (supports `~` expansion) |
 | `prompt_cache.cache_friendly_prompt_shaping` | `boolean` | no | `true` | Enable prompt-shaping optimizations that improve provider-side cache locality. When enabled, VT Code keeps volatile runtime context at the end of prompt text. |
 | `prompt_cache.enable_auto_cleanup` | `boolean` | no | `true` | Automatically evict stale entries on startup/shutdown |
 | `prompt_cache.enabled` | `boolean` | no | `true` | Enable prompt caching features globally |
@@ -601,6 +622,8 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `prompt_cache.providers.openrouter.report_savings` | `boolean` | no | `true` | Surface cache savings reported by OpenRouter |
 | `prompt_cache.providers.zai.enabled` | `boolean` | no | `false` | - |
 | `provider.anthropic.advisor.caching` | `AdvisorCachingConfig \| null` | no | `null` | Enables prompt caching for the advisor's own transcript across calls within a conversation. Only worthwhile for long agent loops (three or more expected advisor calls). |
+| `provider.anthropic.advisor.caching.enabled` | `boolean` | no | `false` | Whether advisor-side prompt caching is enabled. |
+| `provider.anthropic.advisor.caching.ttl` | `string` | no | `"5m"` | Cache lifetime for the advisor transcript. |
 | `provider.anthropic.advisor.enabled` | `boolean` | no | `false` | Master toggle for the Anthropic server-side advisor tool. |
 | `provider.anthropic.advisor.max_tokens` | `integer \| null` | no | `null` | Caps the advisor's total output (thinking plus text) per call. Minimum 1024. `None` lets the advisor model choose its own output cap. |
 | `provider.anthropic.advisor.max_uses` | `integer \| null` | no | `null` | Maximum number of advisor invocations per request. `None` means unlimited (the API default). Once the executor reaches this cap, further advisor calls return an `advisor_tool_result_error`. |
@@ -636,6 +659,11 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `provider.openai.hosted_shell.network_policy.type` | `string` | no | `"disabled"` | Hosted shell network access policy. |
 | `provider.openai.hosted_shell.skills` | `array` | no | `-` | Hosted skills to mount when using `container_auto`. |
 | `provider.openai.hosted_shell.skills[]` | `object` | no | `-` | Hosted skill reference mounted into an OpenAI hosted shell environment. |
+| `provider.openai.hosted_shell.skills[].bundle_b64` | `string` | yes | `-` | - |
+| `provider.openai.hosted_shell.skills[].sha256` | `null \| string` | no | `-` | - |
+| `provider.openai.hosted_shell.skills[].skill_id` | `string` | yes | `-` | - |
+| `provider.openai.hosted_shell.skills[].type` | `string` | yes | `-` | - |
+| `provider.openai.hosted_shell.skills[].version` | `OpenAIHostedSkillVersionKeyword \| integer \| string` | no | `"latest"` | Hosted skill version selector for OpenAI Responses hosted shell mounts. |
 | `provider.openai.manual_compaction.instructions` | `null \| string` | no | `-` | Optional custom instructions appended to manual `/compact` requests. |
 | `provider.openai.responses_include` | `array` | no | `-` | Optional Responses API `include` selectors. Example: `["reasoning.encrypted_content"]` for encrypted reasoning continuity. |
 | `provider.openai.responses_include[]` | `string` | no | `-` | - |
@@ -651,8 +679,8 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `provider_overrides.*.base_url` | `null \| string` | no | `-` | Optional base URL override for the provider endpoint. When set, custom models from this override are routed to the specified endpoint instead of the provider's default. |
 | `provider_overrides.*.models` | `array` | no | `[]` | Additional model identifiers to offer for this built-in provider. These models are appended to the provider's hardcoded model list and appear in the `/model` picker alongside built-in entries. |
 | `provider_overrides.*.models[]` | `string` | no | `-` | - |
-| `providers_whitelist` | `array` | no | `[]` | Restrict which providers may be used. When non-empty, only listed providers are visible in the model picker, selectable at first-run, and instantiable at runtime. Empty (default) allows all built-in and custom providers. |
-| `providers_whitelist[]` | `string` | no | `-` | Built-in provider key (e.g. "openai", "anthropic", "gemini", "opencode-zen") or a name from `[[custom_providers]]`. |
+| `providers_whitelist` | `array` | no | `[]` | Restrict which providers may be used. When non-empty, only providers listed here are visible in the model picker, selectable at first-run, and instantiable at runtime. Empty (the default) means all built-in and custom providers are available. |
+| `providers_whitelist[]` | `string` | no | `-` | - |
 | `pty.command_timeout_seconds` | `integer` | no | `300` | Command timeout in seconds (prevents hanging commands) |
 | `pty.default_cols` | `integer` | no | `80` | Default terminal columns for PTY sessions |
 | `pty.default_rows` | `integer` | no | `24` | Default terminal rows for PTY sessions |
@@ -698,7 +726,7 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `sandbox.sensitive_paths.use_defaults` | `boolean` | no | `true` | Use default sensitive paths (SSH, AWS, etc.) |
 | `security.auto_apply_detected_patches` | `boolean` | no | `false` | Automatically apply detected patch blocks in assistant replies when no write tool was executed. Defaults to false for safety. |
 | `security.encrypt_payloads` | `boolean` | no | `false` | Encrypt payloads passed across executors. |
-| `security.gatekeeper.auto_clear_paths` | `array` | no | `[".vtcode/bin", "<executable>", "<legacy>/bin"]` | Paths eligible for quarantine auto-clear. The default includes the workspace helper directory, canonical managed executable directory, and legacy compatibility bin directory. |
+| `security.gatekeeper.auto_clear_paths` | `array` | no | `[".vtcode/bin", "/home/f2/.local/bin", "/home/f2/.vtcode/bin"]` | Paths eligible for quarantine auto-clear |
 | `security.gatekeeper.auto_clear_paths[]` | `string` | no | `-` | - |
 | `security.gatekeeper.auto_clear_quarantine` | `boolean` | no | `false` | Attempt to clear quarantine automatically (opt-in) |
 | `security.gatekeeper.warn_on_quarantine` | `boolean` | no | `true` | Warn when a quarantined executable is detected |
@@ -731,7 +759,7 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `syntax_highlighting.highlight_timeout_ms` | `integer` | no | `5000` | Performance settings - highlight timeout in milliseconds |
 | `syntax_highlighting.max_file_size_mb` | `integer` | no | `10` | Maximum file size for syntax highlighting (in MB) |
 | `syntax_highlighting.theme` | `string` | no | `"base16-ocean.dark"` | Theme to use for syntax highlighting |
-| `telemetry.atif_enabled` | `boolean` | no | `false` | Enable ATIF (Agent Trajectory Interchange Format) trajectory export. When enabled by the interactive harness, the output is `<workspace>/.vtcode/sessions/<session_id>/derived/atif-trajectory.json`. |
+| `telemetry.atif_enabled` | `boolean` | no | `false` | Enable ATIF (Agent Trajectory Interchange Format) trajectory export. When enabled, sessions write an `atif-trajectory.json` alongside the existing `.jsonl` trajectory log. |
 | `telemetry.bottleneck_tracing` | `boolean` | no | `false` | Emit bottleneck traces for slow paths |
 | `telemetry.dashboards_enabled` | `boolean` | no | `true` | Enable real-time dashboards |
 | `telemetry.perf_events` | `boolean` | no | `true` | Emit performance events for file I/O, spawns, and UI latency |
@@ -745,22 +773,22 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `timeouts.adaptive_min_floor_ms` | `integer` | no | `1000` | Minimum timeout floor in milliseconds when applying adaptive clamps. |
 | `timeouts.adaptive_success_streak` | `integer` | no | `5` | Number of consecutive successes before relaxing adaptive ceiling. |
 | `timeouts.default_ceiling_seconds` | `integer` | no | `180` | Maximum duration (in seconds) for standard, non-PTY tools. |
-| `timeouts.long_running_command_ceiling_seconds` | `integer` | no | `3600` | Maximum duration (in seconds) for one explicit `write_stdin`/`unified_exec` command wait. A wait deadline below this ceiling returns an in-progress reusable session instead of terminating it. |
+| `timeouts.long_running_command_ceiling_seconds` | `integer` | no | `3600` | Maximum duration (in seconds) for an explicit long-running command wait. |
 | `timeouts.mcp_ceiling_seconds` | `integer` | no | `120` | Maximum duration (in seconds) for MCP calls. |
 | `timeouts.pty_ceiling_seconds` | `integer` | no | `300` | Maximum duration (in seconds) for PTY-backed commands. |
 | `timeouts.streaming_ceiling_seconds` | `integer` | no | `600` | Maximum duration (in seconds) for streaming API responses. |
 | `timeouts.warning_threshold_percent` | `integer` | no | `80` | Percentage (0-100) of the ceiling after which the UI should warn. |
-| `tools.client_tool_search` | `boolean` | no | `true` | Enables client-local deferred loading for providers without hosted tool search. The initial request keeps core execution/editing and `search_tools`; unused built-ins, MCP, skill, and plugin schemas are omitted until ranked discovery expands them in the next request segment. Set `false` to restore eager exposure. |
+| `tools.client_tool_search` | `boolean` | no | `true` | Enables client-local deferred tool loading for providers without a hosted tool search (e.g. Gemini). When enabled, tools flagged `defer_loading: true` are omitted from the request payload instead of being sent eagerly, and a compact summary of what is discoverable is appended to the system prompt; the model loads them via the local MCP discovery tools. Enabled by default because eager MCP schemas are the dominant source of token inflation. |
 | `tools.default_policy` | `string` | no | `"prompt"` | Default policy for tools not explicitly listed |
-| `tools.editor.enabled` | `boolean` | no | `true` | Enable external editor support for `/edit`, keyboard shortcuts, and TUI file links |
+| `tools.editor.enabled` | `boolean` | no | `true` | Enable external editor support for `/edit` and keyboard shortcuts |
 | `tools.editor.preferred_editor` | `string` | no | `""` | Preferred editor command override (supports arguments, e.g. "code --wait") |
 | `tools.editor.suspend_tui` | `boolean` | no | `true` | Suspend the TUI event loop while editor is running |
 | `tools.loop_thresholds` | `object` | no | `{}` | Tool-specific loop thresholds (Adaptive Loop Detection) Allows setting higher loop limits for read-only tools (e.g., ls, grep) and lower limits for mutating tools. |
 | `tools.loop_thresholds.*` | `integer` | no | `-` | - |
-| `tools.max_consecutive_blocked_tool_calls_per_turn` | `integer` | no | `8` | Maximum consecutive blocked tool calls allowed per turn before forcing a turn break. The total fuse is 2x this value in normal mode, 4x in Plan Mode, and this value in recovery mode; the consecutive streak resets after an allowed call. |
+| `tools.max_consecutive_blocked_tool_calls_per_turn` | `integer` | no | `8` | Maximum consecutive blocked tool calls allowed per turn before forcing a turn break. The total fuse is 2x this value in normal mode, 4x in Plan Mode, and this value in recovery mode. |
 | `tools.max_repeated_tool_calls` | `integer` | no | `2` | Maximum number of times the same tool invocation can be retried with the identical arguments within a single turn. |
 | `tools.max_sequential_spool_chunk_reads` | `integer` | no | `6` | Maximum sequential spool-chunk `read_file` calls allowed per turn before nudging the agent to switch to targeted extraction/summarization. |
-| `tools.max_tool_loops` | `integer` | no | `40` | Maximum inner tool-call loops per user turn. Ordinary default is `40`; Plan raises smaller nonzero values to a `60`-loop floor. Explicit `0` is unlimited. Prompt-approved planning extensions remain bounded by the `240`-loop planning cap. This is separate from per-call, per-turn, full-auto-turn, and conversation-turn limits. |
+| `tools.max_tool_loops` | `integer` | no | `40` | Maximum inner tool-call loops per user turn. Set to `0` to disable the limit. Prevents infinite tool-calling cycles in interactive chat. This limits how many back-and-forths the agent will perform executing tools and re-asking the model before returning a final answer. |
 | `tools.max_tool_rate_per_second` | `integer \| null` | no | `null` | Optional per-second rate limit for tool calls to smooth bursty retries. When unset, the runtime defaults apply. |
 | `tools.plugins.allow` | `array` | no | `[]` | Explicit allow-list of plugin identifiers permitted to load. |
 | `tools.plugins.allow[]` | `string` | no | `-` | - |
@@ -792,7 +820,7 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `tui.animations` | `boolean \| null` | no | `null` | - |
 | `tui.notification_condition` | `NotificationCondition \| null` | no | `null` | When to deliver desktop notifications relative to terminal focus. Defaults to `unfocused` (only deliver when terminal is not focused). Set to `always` to deliver notifications even when the terminal is focused. |
 | `tui.notification_method` | `TerminalNotificationMethod \| null` | no | `null` | - |
-| `tui.notifications` | `TuiNotificationsConfig \| null` | no | `null` | TUI notification filter. `true`/`false` toggles all terminal notifications, or an allowlist of event names: `agent-turn-complete`, `session-complete`, `approval-requested`. `session-complete` enables whole-session (task-finished) alerts without per-turn noise. |
+| `tui.notifications` | `TuiNotificationsConfig \| null` | no | `null` | - |
 | `tui.show_tooltips` | `boolean \| null` | no | `null` | - |
 | `ui.allow_tool_ansi` | `boolean` | no | `false` | Allow ANSI escape sequences in tool output (enables colors but may cause layout issues) |
 | `ui.bold_is_bright` | `boolean` | no | `false` | Compatibility mode for legacy terminals that map bold to bright colors. When enabled, avoids using bold styling on text that would become bright colors, preventing visibility issues in terminals with "bold is bright" behavior. |
@@ -843,12 +871,12 @@ picker also refreshes from Merge's authenticated paginated `/v1/models` catalog.
 | `ui.status_line.command_timeout_ms` | `integer` | no | `200` | - |
 | `ui.status_line.mode` | `string` | no | `"auto"` | - |
 | `ui.status_line.refresh_interval_ms` | `integer` | no | `1000` | - |
-| `ui.status_line.show_clock` | `boolean` | no | `true` | Show the current time (`HH:MM:SS`, 24-hour clock) at the right edge of the status line in `auto` mode |
+| `ui.status_line.show_clock` | `boolean` | no | `true` | Show the current system time (`HH:MM:SS`) on the status line (default: true). |
 | `ui.terminal_title.items` | `array \| null` | no | `null` | - |
 | `ui.terminal_title.items[]` | `string` | no | `-` | - |
 | `ui.thinking_display` | `string` | no | `"collapsed"` | Default collapse state of agent thinking/reasoning blocks ("collapsed" or "extended") |
+| `ui.tool_display_mode` | `string` | no | `"expanded"` | Tool transition summary display mode Options: "expanded" (each summary rendered separately) or "compact" (adjacent semantically equivalent successful summaries grouped) |
 | `ui.tool_output_max_lines` | `integer` | no | `30` | Maximum number of lines to display in tool output (prevents transcript flooding) |
-| `ui.tool_display_mode` | `string` | no | `"expanded"` | Tool transition summary mode. Options: "expanded" or "compact"; expanded renders each summary separately, while compact groups adjacent semantically equivalent successful summaries. |
 | `ui.tool_output_mode` | `string` | no | `"compact"` | Tool output display mode ("compact" or "full") |
 | `ui.tool_output_spool_bytes` | `integer` | no | `80000` | Maximum bytes of output to display before auto-spooling to disk |
 | `ui.tool_output_spool_dir` | `null \| string` | no | `null` | Optional custom directory for spooled tool output logs |

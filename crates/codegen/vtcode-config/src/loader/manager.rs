@@ -507,10 +507,13 @@ impl ConfigManager {
     fn load_from_file_impl(path: impl AsRef<Path>, write_global_config_to_canonical: bool) -> Result<Self> {
         let path = path.as_ref();
         let defaults_provider = defaults::current_config_defaults();
-        let config_file_name = path
-            .file_name()
-            .and_then(|name| name.to_str().map(ToOwned::to_owned))
-            .unwrap_or_else(|| defaults_provider.config_file_name().to_string());
+        // Global layer probing always uses the canonical config file name, never
+        // the basename of the explicit override file. Deriving it from the file
+        // previously caused global layers (e.g. `~/.config/vtcode/vtcode.toml`
+        // with `[[custom_providers]]`) to be skipped whenever the override file
+        // was named something else (e.g. `night.toml`), silently dropping
+        // custom providers and other user-global settings.
+        let config_file_name = defaults_provider.config_file_name().to_string();
         let canonical_user_config_path = defaults_provider.canonical_user_config_path(&config_file_name)?;
         let mut tracked_user_config_paths = defaults_provider.home_config_paths(&config_file_name);
         if let Some(path) = &canonical_user_config_path

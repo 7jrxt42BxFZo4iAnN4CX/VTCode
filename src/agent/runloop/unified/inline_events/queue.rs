@@ -90,18 +90,25 @@ impl<'a> InlineQueueState<'a> {
         // Cap the combined prompt so a user hammering Ctrl+Enter hundreds of
         // times cannot build one unbounded message.
         const MAX_BATCH_BYTES: usize = 64 * 1024;
-        while batched_count < MAX_BATCH_ITEMS && batch.input.text.len() < MAX_BATCH_BYTES {
+        while batched_count < MAX_BATCH_ITEMS {
             let Some(next) = self.queued_inputs.front() else {
                 break;
             };
             if !next.batchable || next.input.has_attachments() || next.primary_agent != primary_agent {
                 break;
             }
+            // Cap the COMBINED prompt: merging `next` must not exceed the
+            // budget, otherwise one large queued message could overshoot it.
+            let needs_separator = !batch.input.text.trim().is_empty() && !next.input.text.trim().is_empty();
+            let merged_len = batch.input.text.len() + usize::from(needs_separator) * 2 + next.input.text.len();
+            if merged_len > MAX_BATCH_BYTES {
+                break;
+            }
             let Some(next) = self.queued_inputs.pop_front() else {
                 break;
             };
             batched_count += 1;
-            if !batch.input.text.trim().is_empty() && !next.input.text.trim().is_empty() {
+            if needs_separator {
                 batch.input.text.push_str("\n\n");
             }
             batch.input.text.push_str(&next.input.text);

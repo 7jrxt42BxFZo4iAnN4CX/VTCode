@@ -244,9 +244,12 @@ impl Session {
             && self.input_manager.selection_range().is_none()
             && self.input_manager.cursor() == range.end
         {
-            self.input_manager.replace_range(range.start, range.end, "");
-            self.refresh_input_edit_state();
-            return;
+            let content = self.input_manager.content();
+            if content.is_char_boundary(range.start) && content.is_char_boundary(range.end) {
+                self.input_manager.replace_range(range.start, range.end, "");
+                self.refresh_input_edit_state();
+                return;
+            }
         }
         self.input_manager.backspace();
         self.refresh_input_edit_state();

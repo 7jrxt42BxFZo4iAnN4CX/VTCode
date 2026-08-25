@@ -8,7 +8,6 @@
 use crate::startup::require_full_auto_workspace_trust;
 use anyhow::{Context, Result, bail};
 use std::path::Path;
-use std::str::FromStr;
 use std::time::Instant;
 use vtcode_core::cli::input_hardening::validate_agent_safe_text;
 use vtcode_core::config::VTCodeConfig;
@@ -110,7 +109,12 @@ async fn run_eval_task(
         return eval_error(&eval_task.id, start, format!("Prompt validation failed: {e}"));
     }
 
-    let model_id = match ModelId::from_str(&config.model) {
+    let model_id = match ModelId::from_config(
+        &config.model,
+        &config.provider,
+        &vt_cfg.provider_overrides,
+        &vt_cfg.custom_providers,
+    ) {
         Ok(id) => id,
         Err(e) => return eval_error(&eval_task.id, start, format!("Model not recognized: {e}")),
     };
