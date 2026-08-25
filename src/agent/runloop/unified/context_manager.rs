@@ -305,13 +305,17 @@ impl ContextManager {
     /// This keeps request assembly deterministic and trims no-op artifacts while preserving
     /// tool-calling semantics.
     pub(crate) fn normalize_history_for_request<'a>(&self, history: &'a [uni::Message]) -> Cow<'a, [uni::Message]> {
-        let invariant_report = vtcode_core::core::agent::state::validate_history_invariants(history);
-        if invariant_report.is_valid() && !history_needs_message_cleanup(history) {
+        let request_history_needs_repair =
+            vtcode_core::core::agent::state::request_history_needs_normalization(history);
+        if !request_history_needs_repair && !history_needs_message_cleanup(history) {
             return Cow::Borrowed(history);
         }
 
-        let mut normalized = history.to_vec();
-        vtcode_core::core::agent::state::normalize_history(&mut normalized);
+        let mut normalized = if request_history_needs_repair {
+            vtcode_core::core::agent::state::normalize_history_for_request(history)
+        } else {
+            history.to_vec()
+        };
 
         // Filter and merge in-place to avoid a second full clone.
         let mut write = 0;

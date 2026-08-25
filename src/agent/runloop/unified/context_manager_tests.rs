@@ -128,6 +128,56 @@ fn normalize_history_for_request_removes_orphan_outputs() {
     assert!(normalized.is_empty());
 }
 
+#[test]
+fn normalize_history_for_request_moves_intervening_messages_after_all_batch_results() {
+    let manager = ContextManager::new("sys".into(), (), Arc::new(RwLock::new(HashMap::new())), None);
+    let history = vec![
+        uni::Message::assistant_with_tools(
+            String::new(),
+            vec![
+                uni::ToolCall::function("call_1".to_string(), "read_file".to_string(), "{}".to_string()),
+                uni::ToolCall::function("call_2".to_string(), "read_file".to_string(), "{}".to_string()),
+            ],
+        ),
+        uni::Message::system("intervening".to_string()),
+        uni::Message::tool_response("call_2".to_string(), "result two".to_string()),
+        uni::Message::user("later note".to_string()),
+        uni::Message::tool_response("call_1".to_string(), "result one".to_string()),
+    ];
+    let durable_before = history.clone();
+
+    let normalized = manager.normalize_history_for_request(&history);
+
+    assert_eq!(normalized[1].tool_call_id.as_deref(), Some("call_2"));
+    assert_eq!(normalized[2].tool_call_id.as_deref(), Some("call_1"));
+    assert_eq!(normalized[3].role, uni::MessageRole::System);
+    assert_eq!(normalized[4].role, uni::MessageRole::User);
+    assert_eq!(history, durable_before);
+}
+
+#[test]
+fn normalize_history_for_request_is_idempotent_after_request_repair() {
+    let manager = ContextManager::new("sys".into(), (), Arc::new(RwLock::new(HashMap::new())), None);
+    let history = vec![
+        uni::Message::assistant_with_tools(
+            String::new(),
+            vec![uni::ToolCall::function(
+                "call_1".to_string(),
+                "read_file".to_string(),
+                "{}".to_string(),
+            )],
+        ),
+        uni::Message::system("intervening".to_string()),
+        uni::Message::tool_response("call_1".to_string(), "result".to_string()),
+    ];
+
+    let first = manager.normalize_history_for_request(&history).into_owned();
+    let second = manager.normalize_history_for_request(&first);
+
+    assert!(matches!(second, Cow::Borrowed(_)));
+    assert_eq!(second, first);
+}
+
 #[tokio::test]
 async fn build_system_prompt_with_empty_base_prompt_fails() {
     let mut manager = ContextManager::new("".to_string(), (), Arc::new(RwLock::new(HashMap::new())), None);

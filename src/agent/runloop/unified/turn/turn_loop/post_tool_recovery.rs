@@ -22,6 +22,7 @@ use crate::agent::runloop::unified::planning_workflow_state::{
 };
 use crate::agent::runloop::unified::run_loop_context::HarnessTurnState;
 use crate::agent::runloop::unified::turn::context::TurnLoopResult;
+use crate::agent::runloop::unified::turn::turn_processing::is_unmatched_tool_result_error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PostToolFailureRecovery {
@@ -32,6 +33,7 @@ pub(super) enum PostToolFailureRecovery {
 }
 
 const POST_TOOL_TOOL_ENABLED_RETRY_FAILED_REASON: &str = "Post-tool recovery could not confirm the requested work after one bounded tool-enabled retry. The completed tool outputs and resume handoff were retained; retry from the pending step.";
+const UNMATCHED_TOOL_RESULT_BLOCK_REASON: &str = "Provider rejected an unmatched tool result after one bounded request-history repair. The turn is blocked with a resumable handoff.";
 pub(super) const POST_TOOL_CONTEXT_COMPACTION_FAILED_REASON: &str = "The provider rejected the follow-up because the context exceeded its capacity, and the bounded recovery compaction could not reduce the request. Completed tool outputs were retained; retry after reducing context or switching model.";
 const MAX_PLANNING_SYNTHESIS_RECOVERY_RETRIES: u8 = 1;
 
@@ -120,6 +122,19 @@ pub(super) fn maybe_recover_after_post_tool_llm_failure(
     allow_tool_enabled_retry: bool,
     planning_active: bool,
 ) -> Result<PostToolFailureRecovery> {
+    if is_unmatched_tool_result_error(&err.to_string()) {
+        // A repaired retry has already been attempted, or the request was
+        // already clean. Preserve the existing resume handoff and do not
+        // schedule another provider or tool-free retry with the same wire
+        // shape.
+        ensure_post_tool_resume_directive(working_history);
+        renderer.line(
+            MessageStyle::Info,
+            "The provider rejected an unmatched tool result after one bounded history repair; the turn is paused for resume.",
+        )?;
+        return Ok(PostToolFailureRecovery::StopAfterDirective);
+    }
+
     let has_partial_tool_progress = has_tool_response_since(working_history, turn_history_start_len);
     if !has_partial_tool_progress {
         return Ok(PostToolFailureRecovery::NotApplicable);
@@ -644,6 +659,16 @@ pub(super) async fn dispatch_post_tool_failure(ctx: PostToolRecoveryContext<'_>)
         thread_id: &event_thread_id,
         turn_id: &event_turn_id,
     };
+    if is_unmatched_tool_result_error(&err.to_string()) {
+        ensure_post_tool_resume_directive(working_history);
+        renderer.line(
+            MessageStyle::Info,
+            "The provider rejected an unmatched tool result after one bounded history repair; the turn is blocked for resume.",
+        )?;
+        return Ok(PostToolFailureAction::Break(TurnLoopResult::Blocked {
+            reason: Some(UNMATCHED_TOOL_RESULT_BLOCK_REASON.to_string()),
+        }));
+    }
     let planning_active = plan_session.is_some();
     let context_capacity_failure = is_provider_context_capacity_failure(stage, err);
     // Plan-mode: if this turn's tool wall-clock budget was exhausted, the

@@ -50,6 +50,10 @@ use crate::agent::runloop::unified::tool_output_handler::handle_pipeline_output_
 use crate::agent::runloop::unified::tool_pipeline::{ToolExecutionStatus, ToolPipelineOutcome};
 use crate::agent::runloop::unified::turn::context::{TurnHandlerOutcome, TurnLoopResult, TurnProcessingContext};
 
+pub(crate) fn flush_auto_permission_probe_warning(ctx: &mut TurnProcessingContext<'_>) {
+    auto_permission_probe::flush_auto_permission_probe_warning(ctx);
+}
+
 fn record_tool_execution(
     ctx: &mut TurnProcessingContext<'_>,
     tool_name: &str,

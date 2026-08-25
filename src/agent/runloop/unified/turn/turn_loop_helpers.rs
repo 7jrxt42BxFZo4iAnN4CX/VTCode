@@ -7,11 +7,11 @@ use crate::agent::runloop::unified::turn::turn_helpers::{display_error, display_
 use crate::agent::runloop::unified::turn::turn_loop::TurnLoopContext;
 use vtcode_core::config::constants::defaults::DEFAULT_MAX_REPEATED_TOOL_CALLS;
 use vtcode_core::config::constants::tool_limits::{
-    APPROVED_PLAN_MIN_TOOL_CALLS_PER_TURN, DEFAULT_MAX_CONVERSATION_TURNS, DEFAULT_MAX_TOOL_LOOPS,
-    MAX_TOOL_LOOP_CAP_MULTIPLIER, MAX_TOOL_LOOP_INCREMENT_PER_PROMPT, MAX_TOOL_LOOP_LIMIT_ABSOLUTE_CAP,
-    PLANNING_WORKFLOW_MAX_TOOL_LOOP_INCREMENT_PER_PROMPT, PLANNING_WORKFLOW_MAX_TOOL_LOOP_LIMIT_ABSOLUTE_CAP,
-    PLANNING_WORKFLOW_MIN_TOOL_CALLS_PER_TURN, PLANNING_WORKFLOW_MIN_TOOL_LOOPS,
-    PLANNING_WORKFLOW_TOOL_LOOP_CAP_MULTIPLIER,
+    APPROVED_PLAN_MIN_TOOL_CALLS_PER_TURN, APPROVED_PLAN_TOOL_LOOP_INCREMENT, DEFAULT_MAX_CONVERSATION_TURNS,
+    DEFAULT_MAX_TOOL_LOOPS, MAX_TOOL_LOOP_CAP_MULTIPLIER, MAX_TOOL_LOOP_INCREMENT_PER_PROMPT,
+    MAX_TOOL_LOOP_LIMIT_ABSOLUTE_CAP, PLANNING_WORKFLOW_MAX_TOOL_LOOP_INCREMENT_PER_PROMPT,
+    PLANNING_WORKFLOW_MAX_TOOL_LOOP_LIMIT_ABSOLUTE_CAP, PLANNING_WORKFLOW_MIN_TOOL_CALLS_PER_TURN,
+    PLANNING_WORKFLOW_MIN_TOOL_LOOPS, PLANNING_WORKFLOW_TOOL_LOOP_CAP_MULTIPLIER,
 };
 use vtcode_core::config::constants::tools as tool_names;
 use vtcode_core::config::loader::VTCodeConfig;
@@ -28,6 +28,22 @@ pub(super) struct PrecomputedTurnConfig {
 }
 
 const UNLIMITED_TOOL_LOOPS: usize = usize::MAX;
+
+/// Initialize the loop allowance for a turn that is executing an approved
+/// plan. The allowance is applied at turn initialization only; later manual
+/// extensions continue through the existing prompt-driven path.
+pub(super) fn initial_tool_loop_limit(configured_limit: usize, approved_plan_execution: bool) -> usize {
+    if configured_limit == 0 || configured_limit == UNLIMITED_TOOL_LOOPS {
+        return UNLIMITED_TOOL_LOOPS;
+    }
+    if !approved_plan_execution {
+        return configured_limit;
+    }
+
+    configured_limit
+        .saturating_add(APPROVED_PLAN_TOOL_LOOP_INCREMENT)
+        .min(tool_loop_hard_cap(configured_limit, false))
+}
 
 #[inline]
 pub(super) fn extract_turn_config(
@@ -553,7 +569,7 @@ pub(super) async fn maybe_handle_tool_loop_limit(
 mod tests {
     use super::{
         UNLIMITED_TOOL_LOOPS, clamp_tool_loop_increment, effective_max_tool_calls_for_approved_plan_execution,
-        effective_max_tool_calls_for_turn, extract_turn_config, handle_steering_messages,
+        effective_max_tool_calls_for_turn, extract_turn_config, handle_steering_messages, initial_tool_loop_limit,
         is_stale_approved_plan_pause_response, resolve_safety_tool_call_limits, resolve_tool_loop_limit,
         tool_loop_hard_cap,
     };
@@ -761,6 +777,17 @@ mod tests {
         assert_eq!(effective_max_tool_calls_for_approved_plan_execution(32), 120);
         assert_eq!(effective_max_tool_calls_for_approved_plan_execution(160), 160);
         assert_eq!(effective_max_tool_calls_for_approved_plan_execution(0), 0);
+    }
+
+    #[test]
+    fn approved_plan_execution_gets_one_bounded_loop_allowance() {
+        assert_eq!(initial_tool_loop_limit(40, true), 90);
+        assert_eq!(initial_tool_loop_limit(100, true), 120);
+        assert_eq!(initial_tool_loop_limit(0, true), UNLIMITED_TOOL_LOOPS);
+        assert_eq!(initial_tool_loop_limit(40, false), 40);
+        // The helper is an initialization transform; applying the allowance
+        // to the already-initialized value is not part of the turn loop.
+        assert_eq!(initial_tool_loop_limit(initial_tool_loop_limit(40, true), false), 90);
     }
 
     #[test]

@@ -26,6 +26,25 @@ The closest concept mapping is:
 `turn.started`, `turn.completed`, and `turn.failed` remain VT Code turn
 wrappers around the inner item lifecycle.
 
+### Tool-result ordering and bounded request repair
+
+An assistant message with tool calls is one protocol batch. Every matching tool
+result is sent immediately after that assistant message and before any
+intervening system, user, or assistant message; batch result order is retained.
+Deferred prompt-injection warnings and recovery directives are appended only
+after all results in the batch. The warning is rendered to the UI as soon as a
+probe flags output, but its model-facing message is queued and deduplicated so
+it cannot split the provider batch.
+
+Before a provider request, VT Code keeps a borrowed history view when this
+invariant already holds. Otherwise it builds an idempotent request-only view
+that drops orphaned, causally early, and duplicate results, adds bounded
+cancellation results for missing calls, and groups split results after their
+assistant call. Durable session history is unchanged. If the provider returns
+the specific unmatched-tool-result `400`, VT Code retries once only when this
+wire view changes; a no-op or repeated failure uses the existing resumable
+fail-closed handoff rather than issuing repeated identical requests.
+
 ### Turn reliability and diagnostics
 
 The runtime records the canonical `turn.*` lifecycle events exactly once for a

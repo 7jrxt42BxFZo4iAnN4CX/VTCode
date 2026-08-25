@@ -239,6 +239,49 @@ fn previous_response_chain_error_ignores_service_unavailable() {
 }
 
 #[test]
+fn unmatched_tool_result_error_requires_the_specific_bad_request_shape() {
+    assert!(is_unmatched_tool_result_error(
+        "Merge Gateway error (400 Bad Request): unmatched tool result for call_123"
+    ));
+    assert!(is_unmatched_tool_result_error("HTTP 400: tool_result is not associated with an earlier tool call"));
+    assert!(!is_unmatched_tool_result_error("Merge Gateway error (400 Bad Request): invalid model"));
+    assert!(!is_unmatched_tool_result_error("Merge Gateway error (500): unmatched tool result"));
+}
+
+#[tokio::test]
+async fn unmatched_tool_result_noop_repair_fails_closed_without_repeating_the_request() {
+    let recorded_previous_response_ids = Arc::new(Mutex::new(Vec::new()));
+    let provider = ScriptedProvider::new(
+        "merge_gateway",
+        false,
+        Arc::clone(&recorded_previous_response_ids),
+        vec![ScriptedProviderOutcome::Error(uni::LLMError::Provider {
+            message: "Merge Gateway error (400 Bad Request): unmatched tool result for call_1".to_string(),
+            metadata: None,
+        })],
+    );
+
+    let mut backing = TestTurnProcessingBacking::new(4).await;
+    let mut ctx = backing.turn_processing_context();
+    *ctx.provider_client = Box::new(provider);
+    ctx.working_history.push(uni::Message::assistant_with_tools(
+        String::new(),
+        vec![uni::ToolCall::function(
+            "call_1".to_string(),
+            "read_file".to_string(),
+            "{}".to_string(),
+        )],
+    ));
+    ctx.working_history
+        .push(uni::Message::tool_response("call_1".to_string(), "result".to_string()));
+
+    let result = execute_llm_request(&mut ctx, 1, "noop-model", Some(320), false, None).await;
+
+    assert!(result.is_err());
+    assert_eq!(recorded_previous_response_ids.lock().expect("provider calls").len(), 1);
+}
+
+#[test]
 fn retryable_llm_error_excludes_usage_limit_messages() {
     assert!(!is_retryable_llm_error("Provider error: you have reached your weekly usage limit"));
 }

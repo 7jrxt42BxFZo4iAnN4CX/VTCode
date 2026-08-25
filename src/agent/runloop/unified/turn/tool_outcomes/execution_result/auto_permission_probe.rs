@@ -39,13 +39,19 @@ fn append_probe_warning(
     probe_warning: ProbeWarning,
 ) -> Result<()> {
     tracing::trace!(tool = %tool_name, probe_hit = true, "auto permission review prompt probe flagged tool output");
-    ctx.working_history
-        .push(vtcode_core::llm::provider::Message::system(probe_warning.warning.clone()));
+    let queued = ctx.harness_state.queue_auto_permission_probe_warning(probe_warning.warning);
+    tracing::trace!(tool = %tool_name, queued, "queued auto permission review prompt probe warning");
     ctx.renderer.line(
         MessageStyle::Warning,
         "Auto permission review flagged the latest tool output as suspicious prompt injection.",
     )?;
     Ok(())
+}
+
+pub(super) fn flush_auto_permission_probe_warning(ctx: &mut TurnProcessingContext<'_>) {
+    if let Some(warning) = ctx.harness_state.take_auto_permission_probe_warning() {
+        ctx.push_system_message(warning);
+    }
 }
 
 pub(super) async fn push_tool_response_with_auto_permission_probe(

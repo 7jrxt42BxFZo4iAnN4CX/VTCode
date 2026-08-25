@@ -201,6 +201,161 @@ pub fn validate_history_invariants(messages: &[Message]) -> HistoryValidationRep
     HistoryValidationReport { missing_outputs, orphan_outputs }
 }
 
+const REQUEST_HISTORY_CANCELLATION_RESULT: &str =
+    "canceled: no tool result was recorded; this bounded placeholder preserves the tool-call protocol.";
+
+#[derive(Debug)]
+struct RequestToolBatch {
+    assistant_index: usize,
+    call_ids: Vec<String>,
+    matched_calls: Vec<bool>,
+    result_indices: Vec<usize>,
+}
+
+#[derive(Debug, Default)]
+struct RequestHistoryAnalysis {
+    batches: Vec<RequestToolBatch>,
+    batch_by_assistant_index: HashMap<usize, usize>,
+    result_batch_by_index: HashMap<usize, usize>,
+    invalid_result_indices: HashSet<usize>,
+}
+
+impl RequestHistoryAnalysis {
+    fn needs_repair(&self) -> bool {
+        if !self.invalid_result_indices.is_empty() {
+            return true;
+        }
+
+        self.batches.iter().any(|batch| {
+            batch.matched_calls.iter().any(|matched| !matched)
+                || batch
+                    .result_indices
+                    .iter()
+                    .enumerate()
+                    .any(|(offset, &result_index)| result_index != batch.assistant_index + offset + 1)
+        })
+    }
+}
+
+fn analyze_request_history(messages: &[Message]) -> RequestHistoryAnalysis {
+    let mut analysis = RequestHistoryAnalysis::default();
+    let mut calls_by_id: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
+
+    for (message_index, message) in messages.iter().enumerate() {
+        if message.role != crate::llm::provider::MessageRole::Assistant {
+            continue;
+        }
+
+        let Some(tool_calls) = message.tool_calls.as_ref().filter(|calls| !calls.is_empty()) else {
+            continue;
+        };
+
+        let batch_index = analysis.batches.len();
+        let call_ids = tool_calls.iter().map(|call| call.id.clone()).collect::<Vec<_>>();
+        let matched_calls = vec![false; call_ids.len()];
+        analysis.batch_by_assistant_index.insert(message_index, batch_index);
+        analysis.batches.push(RequestToolBatch {
+            assistant_index: message_index,
+            call_ids,
+            matched_calls,
+            result_indices: Vec::new(),
+        });
+
+        for (call_index, call) in tool_calls.iter().enumerate() {
+            calls_by_id.entry(call.id.clone()).or_default().push((batch_index, call_index));
+        }
+    }
+
+    for (message_index, message) in messages.iter().enumerate() {
+        let has_tool_call_id = message.tool_call_id.is_some();
+        let is_tool_result = message.role == crate::llm::provider::MessageRole::Tool;
+        if !is_tool_result && !has_tool_call_id {
+            continue;
+        }
+
+        let Some(tool_call_id) = message.tool_call_id.as_deref().filter(|id| !id.is_empty()) else {
+            analysis.invalid_result_indices.insert(message_index);
+            continue;
+        };
+
+        if !is_tool_result {
+            analysis.invalid_result_indices.insert(message_index);
+            continue;
+        }
+
+        let Some(candidates) = calls_by_id.get_mut(tool_call_id) else {
+            analysis.invalid_result_indices.insert(message_index);
+            continue;
+        };
+
+        let Some(&(batch_index, call_index)) = candidates.iter().rev().find(|&&(batch_index, call_index)| {
+            analysis.batches[batch_index].assistant_index < message_index
+                && !analysis.batches[batch_index].matched_calls[call_index]
+        }) else {
+            // This includes results that arrived before their call and duplicate
+            // results after the call has already been matched.
+            analysis.invalid_result_indices.insert(message_index);
+            continue;
+        };
+
+        analysis.batches[batch_index].matched_calls[call_index] = true;
+        analysis.batches[batch_index].result_indices.push(message_index);
+        analysis.result_batch_by_index.insert(message_index, batch_index);
+    }
+
+    analysis
+}
+
+/// Return whether the provider-facing message view needs tool-history repair.
+///
+/// This deliberately analyzes only the request view. Durable session history
+/// is repaired by its own crash-recovery path and is never changed here.
+pub fn request_history_needs_normalization(messages: &[Message]) -> bool {
+    analyze_request_history(messages).needs_repair()
+}
+
+/// Rebuild a provider-facing message view with each assistant tool-call batch
+/// followed immediately by its matching results.
+///
+/// The rebuild is request-scoped and idempotent: orphaned, causally early, and
+/// duplicate results are omitted; missing calls receive a bounded cancellation
+/// result; and messages interleaved between a call batch and its results move
+/// after the complete batch. The input slice is never mutated.
+pub fn normalize_history_for_request(messages: &[Message]) -> Vec<Message> {
+    let analysis = analyze_request_history(messages);
+    if !analysis.needs_repair() {
+        return messages.to_vec();
+    }
+
+    let mut normalized = Vec::with_capacity(messages.len());
+    for (message_index, message) in messages.iter().enumerate() {
+        if analysis.invalid_result_indices.contains(&message_index)
+            || analysis.result_batch_by_index.contains_key(&message_index)
+        {
+            continue;
+        }
+
+        let Some(&batch_index) = analysis.batch_by_assistant_index.get(&message_index) else {
+            normalized.push(message.clone());
+            continue;
+        };
+
+        let batch = &analysis.batches[batch_index];
+        normalized.push(message.clone());
+        for &result_index in &batch.result_indices {
+            normalized.push(messages[result_index].clone());
+        }
+        for (call_id, matched) in batch.call_ids.iter().zip(&batch.matched_calls) {
+            if !matched {
+                normalized
+                    .push(Message::tool_response(call_id.clone(), REQUEST_HISTORY_CANCELLATION_RESULT.to_owned()));
+            }
+        }
+    }
+
+    normalized
+}
+
 /// Find a split point that keeps tool-call outputs paired with their calls.
 pub fn safe_history_split_point(messages: &[Message], conversation_len: usize, preferred_split_at: usize) -> usize {
     if preferred_split_at == 0 || preferred_split_at >= conversation_len {
@@ -344,7 +499,7 @@ pub fn recover_history_from_crash(messages: &mut Vec<Message>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::provider::Message;
+    use crate::llm::provider::{Message, MessageRole};
     /// Helper: Create test messages
     fn make_tool_call(call_id: &str, tool_name: &str) -> Message {
         Message::assistant_with_tools(
@@ -472,6 +627,82 @@ mod tests {
                 .iter()
                 .any(|msg| msg.tool_call_id.as_ref().is_some_and(|id| id == "orphan"))
         );
+    }
+
+    #[test]
+    fn request_normalization_groups_split_results_after_intervening_messages() {
+        let messages = vec![
+            Message::assistant_with_tools(
+                "".to_string(),
+                vec![
+                    crate::llm::provider::ToolCall::function(
+                        "call_1".to_string(),
+                        "read_file".to_string(),
+                        "{}".to_string(),
+                    ),
+                    crate::llm::provider::ToolCall::function(
+                        "call_2".to_string(),
+                        "read_file".to_string(),
+                        "{}".to_string(),
+                    ),
+                ],
+            ),
+            Message::system("intervening system note".to_string()),
+            make_tool_response("call_2", "result two"),
+            Message::user("intervening user note".to_string()),
+            make_tool_response("call_1", "result one"),
+            Message::assistant("done".to_string()),
+        ];
+
+        let normalized = normalize_history_for_request(&messages);
+
+        assert_eq!(normalized[0].role, MessageRole::Assistant);
+        assert_eq!(normalized[1].tool_call_id.as_deref(), Some("call_2"));
+        assert_eq!(normalized[1].content.as_text(), "result two");
+        assert_eq!(normalized[2].tool_call_id.as_deref(), Some("call_1"));
+        assert_eq!(normalized[2].content.as_text(), "result one");
+        assert_eq!(normalized[3].role, MessageRole::System);
+        assert_eq!(normalized[4].role, MessageRole::User);
+        assert_eq!(normalized[5].role, MessageRole::Assistant);
+    }
+
+    #[test]
+    fn request_normalization_drops_early_orphan_duplicate_and_synthesizes_missing_results() {
+        let messages = vec![
+            make_tool_response("call_1", "causally early"),
+            make_tool_response("orphan", "orphaned"),
+            make_tool_call("call_1", "read_file"),
+            make_tool_call("call_2", "read_file"),
+            make_tool_response("call_1", "valid"),
+            make_tool_response("call_1", "duplicate"),
+        ];
+
+        let normalized = normalize_history_for_request(&messages);
+
+        assert_eq!(normalized.len(), 4);
+        assert_eq!(normalized[0].role, MessageRole::Assistant);
+        assert_eq!(normalized[0].tool_calls.as_ref().map(Vec::len), Some(1));
+        assert_eq!(normalized[1].tool_call_id.as_deref(), Some("call_1"));
+        assert_eq!(normalized[1].content.as_text(), "valid");
+        assert_eq!(normalized[2].role, MessageRole::Assistant);
+        assert_eq!(normalized[3].tool_call_id.as_deref(), Some("call_2"));
+        assert!(normalized[3].content.as_text().contains("bounded placeholder"));
+    }
+
+    #[test]
+    fn request_normalization_is_idempotent_and_does_not_mutate_durable_history() {
+        let messages = vec![
+            make_tool_call("call_1", "read_file"),
+            Message::system("intervening".to_string()),
+            make_tool_response("call_1", "result"),
+        ];
+        let durable_before = messages.clone();
+
+        assert!(request_history_needs_normalization(&messages));
+        let normalized = normalize_history_for_request(&messages);
+        assert!(!request_history_needs_normalization(&normalized));
+        assert_eq!(normalize_history_for_request(&normalized), normalized);
+        assert_eq!(messages, durable_before);
     }
 
     /// Test: recover_history_from_crash handles both missing and orphan outputs

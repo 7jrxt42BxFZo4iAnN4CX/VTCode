@@ -536,16 +536,6 @@ fn primary_agent_mcp_config(
     build_primary_agent_runtime_config(cfg, active_primary_agent).mcp
 }
 
-async fn determine_mcp_bootstrap_error(manager: Option<&Arc<AsyncMcpManager>>) -> Option<String> {
-    let manager = manager?;
-    match manager.get_status().await {
-        McpInitStatus::Error { message } => Some(message.clone()),
-        McpInitStatus::Initializing { .. } => None,
-        McpInitStatus::Disabled => None,
-        McpInitStatus::Ready { .. } => None,
-    }
-}
-
 pub(crate) fn create_provider_client(
     config: &CoreAgentConfig,
     vt_cfg: Option<&VTCodeConfig>,

@@ -21,6 +21,10 @@ pub const MAX_TOOL_LOOP_LIMIT_ABSOLUTE_CAP: usize = 120;
 pub const MAX_TOOL_LOOP_CAP_MULTIPLIER: usize = 3;
 /// Maximum ordinary tool-loop extension accepted from one prompt.
 pub const MAX_TOOL_LOOP_INCREMENT_PER_PROMPT: usize = 50;
+/// One-time internal allowance applied when an approved plan enters execution.
+/// This is not a user-facing configuration field and remains bounded by the
+/// ordinary tool-loop hard cap.
+pub const APPROVED_PLAN_TOOL_LOOP_INCREMENT: usize = 50;
 /// Minimum tool-loop budget while planning research is active.
 pub const PLANNING_WORKFLOW_MIN_TOOL_LOOPS: usize = 60;
 /// Hard cap for planning tool-loop extensions.
@@ -49,5 +53,6 @@ mod tests {
         assert_eq!(PLANNING_WORKFLOW_MIN_TOOL_LOOPS, 60);
         assert_eq!(MAX_TOOL_LOOP_LIMIT_ABSOLUTE_CAP, 120);
         assert_eq!(PLANNING_WORKFLOW_MAX_TOOL_LOOP_LIMIT_ABSOLUTE_CAP, 240);
+        assert_eq!(APPROVED_PLAN_TOOL_LOOP_INCREMENT, 50);
     }
 }

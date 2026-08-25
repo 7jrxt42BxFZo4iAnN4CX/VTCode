@@ -373,6 +373,10 @@ pub(crate) struct HarnessTurnState {
     /// exhaustion hard-broke the turn as `Blocked` with no synthesis pass, so
     /// plan mode never produced a plan (checkpoint turn_647 follow-up).
     pub tool_budget_directive_pending: bool,
+    /// Model-facing prompt-injection warning queued while a tool batch is
+    /// executing. It is flushed after every batch result so it cannot split
+    /// an assistant tool-call/result sequence on the provider wire.
+    pending_auto_permission_probe_warning: Option<String>,
     pub recovery_reason: Option<String>,
     recovery_phase: RecoveryPhase,
     recovery_mode: Option<RecoveryMode>,
@@ -489,6 +493,7 @@ impl HarnessTurnState {
             wall_clock_exhausted_emitted: false,
             wall_clock_directive_pending: false,
             tool_budget_directive_pending: false,
+            pending_auto_permission_probe_warning: None,
             recovery_reason: None,
             recovery_phase: RecoveryPhase::Inactive,
             recovery_mode: None,
@@ -909,6 +914,18 @@ impl HarnessTurnState {
     pub(crate) fn set_approved_plan_execution(&mut self, active: bool) {
         self.approved_plan_execution = active;
         self.approved_plan_recovery_retries = 0;
+    }
+
+    pub(crate) fn queue_auto_permission_probe_warning(&mut self, warning: String) -> bool {
+        if self.pending_auto_permission_probe_warning.is_some() {
+            return false;
+        }
+        self.pending_auto_permission_probe_warning = Some(warning);
+        true
+    }
+
+    pub(crate) fn take_auto_permission_probe_warning(&mut self) -> Option<String> {
+        self.pending_auto_permission_probe_warning.take()
     }
 
     pub(crate) fn final_response_rendered(&self) -> bool {
@@ -1393,6 +1410,16 @@ mod tests {
         // Second rejected call in the same turn must not re-arm the directive.
         assert!(state.record_tool_budget_exhaustion_notice().is_some());
         assert!(!state.take_tool_budget_directive_pending());
+    }
+
+    #[test]
+    fn auto_permission_probe_warning_is_queued_once_until_flushed() {
+        let mut state = HarnessTurnState::new(TurnRunId("run-1".to_string()), TurnId("turn-1".to_string()), 4, 10, 1);
+
+        assert!(state.queue_auto_permission_probe_warning("trusted warning".to_string()));
+        assert!(!state.queue_auto_permission_probe_warning("duplicate warning".to_string()));
+        assert_eq!(state.take_auto_permission_probe_warning().as_deref(), Some("trusted warning"));
+        assert!(state.take_auto_permission_probe_warning().is_none());
     }
 
     #[test]

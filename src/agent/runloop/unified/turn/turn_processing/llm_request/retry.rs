@@ -49,6 +49,29 @@ pub(super) fn is_previous_response_chain_error(message: &str) -> bool {
         || (msg.contains("previous_response_id") && msg.contains("not found"))
 }
 
+/// Detect the provider protocol failure raised when a tool result is not
+/// causally paired with an earlier assistant tool call. Keep this matcher
+/// narrow so ordinary 400 validation errors continue through their existing
+/// fail-fast path.
+pub(crate) fn is_unmatched_tool_result_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    let is_bad_request = lower.contains("400")
+        && (lower.contains("bad request")
+            || lower.contains("http 400")
+            || lower.contains("status: 400")
+            || lower.contains("status 400")
+            || lower.contains("400:")
+            || lower.contains("(400)"));
+    let mentions_tool_result = lower.contains("tool result") || lower.contains("tool_result");
+    let mentions_mismatch = lower.contains("unmatched")
+        || lower.contains("no matching")
+        || lower.contains("does not match")
+        || lower.contains("not associated")
+        || lower.contains("must be a response to");
+
+    is_bad_request && mentions_tool_result && mentions_mismatch
+}
+
 pub(super) fn has_recent_tool_responses(messages: &[uni::Message]) -> bool {
     messages
         .iter()

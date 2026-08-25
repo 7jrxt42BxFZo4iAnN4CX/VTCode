@@ -9,6 +9,7 @@ pub(crate) mod test_support;
 use vtcode_core::ActivePrimaryAgent;
 
 pub(crate) use llm_request::execute_llm_request;
+pub(crate) use llm_request::is_unmatched_tool_result_error;
 pub(crate) use planning_workflow::{maybe_force_planning_workflow_interview, planning_workflow_interview_ready};
 pub(crate) use response_processing::process_llm_response;
 pub(crate) use result_handler::{HandleTurnProcessingResultParams, handle_turn_processing_result};

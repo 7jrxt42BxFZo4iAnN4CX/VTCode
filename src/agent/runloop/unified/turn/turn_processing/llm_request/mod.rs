@@ -55,6 +55,7 @@ use request_builder::{build_turn_request, interrupted_provider_error};
 use response_chain::update_previous_response_chain_after_success_shared;
 #[cfg(test)]
 use retry::is_retryable_llm_error;
+pub(crate) use retry::is_unmatched_tool_result_error;
 #[cfg(test)]
 use retry::{DEFAULT_LLM_RETRY_ATTEMPTS, MAX_LLM_RETRY_ATTEMPTS};
 use retry::{
@@ -200,6 +201,7 @@ async fn execute_llm_request_with_options_impl(
     let mut stream_fallback_used = false;
     let mut compacted_tool_retry_used = false;
     let mut dropped_previous_response_id_for_retry = false;
+    let mut tool_history_repair_attempted = false;
     let mut last_error_retryable: Option<bool> = None;
     let mut last_error_preview: Option<String> = None;
     let mut last_error_category: Option<vtcode_commons::ErrorCategory> = None;
@@ -542,6 +544,39 @@ async fn execute_llm_request_with_options_impl(
                     llm_result = Err(err);
                     _spinner.finish();
                     break;
+                }
+
+                if is_unmatched_tool_result_error(&msg) {
+                    if tool_history_repair_attempted {
+                        tracing::warn!(
+                            target: "vtcode.llm.retry",
+                            "tool-history repair retry failed; refusing repeated unmatched-tool-result requests"
+                        );
+                        llm_result = Err(err);
+                        _spinner.finish();
+                        break;
+                    }
+
+                    tool_history_repair_attempted = true;
+                    let normalized = ctx.context_manager.normalize_history_for_request(request.messages.as_slice());
+                    if normalized.as_ref() == request.messages.as_slice() {
+                        tracing::warn!(
+                            target: "vtcode.llm.retry",
+                            "unmatched-tool-result request was already normalized; failing closed"
+                        );
+                        llm_result = Err(err);
+                        _spinner.finish();
+                        break;
+                    }
+
+                    request.messages = Arc::new(normalized.into_owned());
+                    attempts_made = attempts_made.saturating_add(1);
+                    tracing::warn!(
+                        target: "vtcode.llm.retry",
+                        "repaired provider-facing tool history; retrying unmatched-tool-result request once"
+                    );
+                    _spinner.finish();
+                    continue;
                 }
 
                 // Fail-fast for permanent errors: don't waste retry budget

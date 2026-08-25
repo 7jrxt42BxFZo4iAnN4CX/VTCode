@@ -34,8 +34,9 @@ use crate::agent::runloop::unified::run_loop_context::{HarnessTurnState, RunLoop
 use crate::agent::runloop::unified::tool_call_safety::ToolCallSafetyValidator;
 use crate::agent::runloop::unified::turn::context::TurnLoopResult;
 use crate::agent::runloop::unified::turn::turn_loop_helpers::{
-    ToolLoopLimitAction, extract_turn_config, handle_steering_messages, is_stale_approved_plan_pause_response,
-    maybe_handle_planning_enter_trigger, maybe_handle_tool_loop_limit, resolve_safety_tool_call_limits,
+    ToolLoopLimitAction, extract_turn_config, handle_steering_messages, initial_tool_loop_limit,
+    is_stale_approved_plan_pause_response, maybe_handle_planning_enter_trigger, maybe_handle_tool_loop_limit,
+    resolve_safety_tool_call_limits,
 };
 
 #[path = "turn_loop/notifications.rs"]
@@ -668,7 +669,8 @@ pub(crate) async fn run_turn_loop(
     }
 
     let mut step_count = 0;
-    let mut current_max_tool_loops = turn_config.max_tool_loops;
+    let mut current_max_tool_loops =
+        initial_tool_loop_limit(turn_config.max_tool_loops, ctx.harness_state.is_approved_plan_execution());
     let mut turn_history_start_len = working_history.len();
     // Bounded condense-retry counter for truncated planning syntheses (see
     // the re-prompt block after generation). Prevents an oversized plan from

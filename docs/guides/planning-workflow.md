@@ -153,6 +153,14 @@ Approved-plan execution receives a separate implementation safety budget so
 planning research does not leave the build phase with only the ordinary
 short-turn allowance.
 
+That implementation turn also receives one internal `+50` tool-loop allowance
+at initialization. The allowance is clamped by the ordinary loop hard cap
+(for example, the default `40` becomes `90`, while `100` remains capped at
+`120`), does not change the tool-call budget, and does not stack with manual
+loop extensions. A configured loop value of `0` remains unlimited. Current and
+fresh-context approved-plan handoffs each initialize their own implementation
+turn, so each gets the same one-time allowance.
+
 ### Validated Approval Handoff
 
 Approval is accepted only for a persisted plan that passes the artifact validator and has a persisted task tracker. The canonical sections are `Summary`, `Implementation Steps`, `Test Cases and Validation`, and `Assumptions and Defaults`; the documented short aliases `Steps`, `Validation`, and `Assumptions` are accepted case-insensitively. Every numbered implementation step must name a concrete file, symbol, behavior, or other repository target and include a non-empty `verify:`/`verification:` command or check. Placeholder tokens and unresolved `Next open decision` or `Open question` entries block approval. Invalid candidates are rejected before persistence, so an existing valid draft is preserved. VT Code gives the model one bounded repair request; if the repaired artifact is still invalid, planning remains active with the validation reasons visible.
@@ -317,6 +325,13 @@ only a loop-limit message. After synthesis, review the plan and choose the
 current-context implementation or the fresh-thread handoff. Session budget and
 wall-clock hard caps remain enforced; when those caps prevent synthesis, the
 draft and research are preserved for a later approval or revision command.
+
+During implementation, tool results remain causally attached to the assistant
+tool-call batch that produced them. Recovery and system directives are appended
+only after the complete batch, so a provider never receives a directive between
+the assistant call and its results. Request assembly may create a repaired,
+request-only view when older history contains split, orphaned, duplicate, or
+missing results; the durable session history is not rewritten by this repair.
 
 ## Plan File Persistence
 
