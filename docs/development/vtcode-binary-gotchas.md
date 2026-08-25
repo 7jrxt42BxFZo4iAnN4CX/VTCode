@@ -35,6 +35,6 @@ allocator, or request assembly.
 - Enter/exit phrase literals live in `vtcode_core::planning` and are shared by the runloop and Codex bridge; add a phrase once, never fork consumer-specific aliases.
 - Tool-summary renderers receive `ToolSummaryRenderContext` at their public render entry points; pure helpers may remain `Option<&Path>`-driven internally.
 - Compact tool-summary grouping is session-local and batch-scoped; expanded mode remains the default, and failures, warnings, PTY output, diffs, and result bodies stay ungrouped.
-- Completed turns publish a non-empty final assistant response through both renderer and `ThreadEvent` harness paths. Recovery fallbacks remain visible but produce a blocked outcome; approved-plan summaries retain changed files, verification, and blockers.
+- Ordinary completed turns publish a non-empty final assistant response through both renderer and `ThreadEvent` harness paths. The approved-plan handoff is the control-flow exception: its outer loop creates the implementation request, so it must remain `Completed { plan_approved_execution_pending: true }` without synthesizing a final response. Recovery fallbacks remain visible but produce a blocked outcome; approved-plan summaries retain changed files, verification, and blockers.
 
 For prompt/runtime source boundaries, see [runtime guidance](./runtime-guidance.md).

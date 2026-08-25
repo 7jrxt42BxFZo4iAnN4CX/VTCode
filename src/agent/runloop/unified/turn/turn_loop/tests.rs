@@ -6,9 +6,10 @@ use super::{
     POST_TOOL_CONTEXT_COMPACTION_FAILED_REASON, POST_TOOL_RECOVERY_REASON, POST_TOOL_RECOVERY_REASON_PLAN_MODE,
     POST_TOOL_RESUME_DIRECTIVE, POST_TOOL_TOOL_ENABLED_RETRY_DIRECTIVE, PostToolFailureRecovery,
     RECOVERY_CONTRACT_VIOLATION_REASON, RECOVERY_SYNTHESIS_FALLBACK_FINAL_ANSWER, accumulate_turn_usage,
-    blocked_turn_final_response, count_assistant_text_responses_for_guard, count_assistant_text_responses_in_turn,
-    current_turn_preserve_index, ensure_blocked_turn_response, finalize_turn, has_turn_usage,
-    maybe_recover_after_post_tool_llm_failure, normalize_tool_free_recovery_break_outcome, run_turn_loop,
+    blocked_turn_final_response, completed_turn_requires_final_response, count_assistant_text_responses_for_guard,
+    count_assistant_text_responses_in_turn, current_turn_preserve_index, ensure_blocked_turn_response, finalize_turn,
+    has_turn_usage, maybe_recover_after_post_tool_llm_failure, normalize_tool_free_recovery_break_outcome,
+    run_turn_loop,
 };
 use std::fs;
 use std::path::Path;
@@ -238,6 +239,60 @@ fn current_turn_preserve_index_keeps_user_request_before_transient_notes() {
 #[test]
 fn recovery_synthesis_fallback_says_no_tool_call_was_applied() {
     assert!(RECOVERY_SYNTHESIS_FALLBACK_FINAL_ANSWER.contains("no tool call applied"));
+}
+
+#[test]
+fn approved_plan_handoff_bypasses_final_response_guard() {
+    let approved_handoff = TurnLoopResult::Completed { plan_approved_execution_pending: true };
+    let ordinary_completion = TurnLoopResult::Completed { plan_approved_execution_pending: false };
+
+    assert!(!completed_turn_requires_final_response(&approved_handoff));
+    assert!(completed_turn_requires_final_response(&ordinary_completion));
+}
+
+#[tokio::test]
+async fn approved_plan_handoff_without_assistant_response_stays_completed() {
+    let mut backing = TestTurnProcessingBacking::new(4).await;
+    backing.activate_planning_for_test();
+    backing.persist_plan_for_test(STREAMED_VALID_PLAN).await;
+    let harness_path = backing.enable_harness_emitter();
+
+    let mut history = vec![uni::Message::user("yes".to_string())];
+    let outcome = run_turn_loop(&mut history, backing.turn_loop_context())
+        .await
+        .expect("approved plan should hand off without a synthesis response");
+
+    assert!(outcome.plan_approved_execution_pending);
+    assert!(matches!(outcome.result, TurnLoopResult::Completed { plan_approved_execution_pending: true }));
+    assert!(!outcome.final_response_was_fallback);
+
+    let harness = fs::read_to_string(harness_path).expect("read approved-plan handoff events");
+    let events = harness
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<VersionedThreadEvent>(line)
+                .expect("approved-plan handoff harness output should be versioned")
+                .into_event()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, ThreadEvent::TurnCompleted(_)))
+            .count(),
+        1,
+        "approved-plan handoff must emit exactly one control-flow completion"
+    );
+    assert!(
+        !events.iter().any(|event| matches!(event, ThreadEvent::TurnFailed(_))),
+        "approved-plan handoff must not be reported as blocked"
+    );
+    assert!(
+        !events.iter().any(|event| {
+            matches!(event, ThreadEvent::ItemCompleted(item) if matches!(item.item.details, ThreadItemDetails::AgentMessage(_)))
+        }),
+        "approved-plan handoff must not synthesize a final assistant item"
+    );
 }
 
 #[test]

@@ -361,6 +361,10 @@ fn ensure_completed_turn_response(
     Ok(response_was_fallback)
 }
 
+fn completed_turn_requires_final_response(result: &TurnLoopResult) -> bool {
+    matches!(result, TurnLoopResult::Completed { plan_approved_execution_pending: false })
+}
+
 pub(crate) struct TurnLoopOutcome {
     pub result: TurnLoopResult,
     pub turn_modified_files: BTreeSet<PathBuf>,
@@ -1542,12 +1546,16 @@ pub(crate) async fn run_turn_loop(
         )?;
     }
 
-    let final_response_was_fallback = if matches!(result, TurnLoopResult::Completed { .. }) {
+    // An approved-plan handoff is a completed control-flow turn, not a user-
+    // visible assistant turn. Its implementation request is constructed by
+    // the outer session loop, so requiring a final assistant response here
+    // would convert the handoff into `Blocked` before execution can start.
+    let final_response_was_fallback = if completed_turn_requires_final_response(&result) {
         ensure_completed_turn_response(&mut ctx, working_history, turn_history_start_len)?
     } else {
         ctx.harness_state.final_response_was_fallback()
     };
-    if matches!(result, TurnLoopResult::Completed { .. }) {
+    if completed_turn_requires_final_response(&result) {
         if final_response_was_fallback {
             result = TurnLoopResult::Blocked {
                 reason: Some(COMPLETED_TURN_FALLBACK_REASON.to_string()),

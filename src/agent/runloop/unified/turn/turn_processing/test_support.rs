@@ -246,6 +246,15 @@ impl TestTurnProcessingBacking {
         self.tool_registry.enable_planning();
     }
 
+    pub(crate) async fn persist_plan_for_test(&self, plan_text: &str) {
+        crate::agent::runloop::unified::planning_workflow::persist_plan_draft(
+            &self.tool_registry.planning_workflow_state(),
+            plan_text,
+        )
+        .await
+        .expect("test plan should persist");
+    }
+
     pub(crate) fn select_primary_agent_from_specs(&mut self, specs: &[vtcode_config::SubagentSpec], requested: &str) {
         self.active_primary_agent
             .select_from_specs(specs, requested)
