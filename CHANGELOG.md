@@ -2,6 +2,34 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.147.3 - 2026-08-25
+
+### Highlights
+#### Bug Fixes
+
+- Reliable clipboard, ctrl+enter queue batching, selection auto-scroll  (a6d912d2) (@7jrxt42BxFZo4iAnN4CX)
+- Recover invalid plan drafts (f9e800a0) 
+- Stabilize approved-plan tool recovery (26436765) 
+- Restore MCP bootstrap error reporting (73667e28) 
+- Synthesize after loop-limit refusal (20ef1b93) 
+- Improve modal layout and startup concurrency (39f210b1) 
+- Execute approved plans automatically (c443d412) 
+- Preserve approved plan handoffs (1975ccc0) 
+- Carry verification across resumed turns (78208c3d) 
+- Allow quoted readonly inspections (0160a010) 
+#### Documentation
+
+- Add latest contributor 7jrxt42BxFZo4iAnN4CX (caa67c65) (@vinhnx)
+- Regenerate field reference; close generator schema coverage gaps  (28357830) (@7jrxt42BxFZo4iAnN4CX)
+- Update 7jrxt42BxFZo4iAnN4CX to 5 commits (22703341) 
+### Other Changes
+#### Other
+
+- TUI UX improvements and custom-provider fixes for non-interactive commands  (88a1cdd6) (@7jrxt42BxFZo4iAnN4CX)
+- Update TODO (4aabc378) 
+#### Performance
+
+- Defer nonessential launch work (57916fe5) 
 ## 0.147.2 - 2026-08-24
 
 ### Highlights
