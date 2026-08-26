@@ -2,7 +2,8 @@ use super::post_tool_recovery::complete_turn_after_failed_tool_free_recovery;
 use super::post_tool_recovery::prepare_post_tool_tool_free_recovery;
 use super::post_tool_recovery::{ensure_post_tool_resume_directive, has_tool_response_since};
 use super::{
-    HarnessUsage, PENDING_VERIFICATION_BLOCK_REASON, PLANNING_RECOVERY_SYNTHESIS_FALLBACK,
+    ASSISTANT_TEXT_RESPONSE_CAP_REASON, COMPLETED_TURN_FALLBACK_RESPONSE, HarnessUsage,
+    PENDING_VERIFICATION_BLOCK_REASON, PLANNING_RECOVERY_SYNTHESIS_FALLBACK,
     POST_TOOL_CONTEXT_COMPACTION_FAILED_REASON, POST_TOOL_RECOVERY_REASON, POST_TOOL_RECOVERY_REASON_PLAN_MODE,
     POST_TOOL_RESUME_DIRECTIVE, POST_TOOL_TOOL_ENABLED_RETRY_DIRECTIVE, PostToolFailureRecovery,
     RECOVERY_CONTRACT_VIOLATION_REASON, RECOVERY_SYNTHESIS_FALLBACK_FINAL_ANSWER, accumulate_turn_usage,
@@ -1055,6 +1056,128 @@ async fn resumed_turn_cannot_complete_while_verification_is_pending() {
             .iter()
             .any(|message| { message.content.as_text().contains("The requested work is complete.") })
     );
+}
+
+#[tokio::test]
+async fn response_cap_preserves_commentary_as_one_blocked_final_harness_message() {
+    const FIRST_COMMENTARY: &str = "Let me continue analyzing the results from the first inspection.";
+    const SECOND_COMMENTARY: &str = "Let me continue analyzing the results from the second inspection.";
+
+    #[derive(Clone)]
+    struct RepeatedCommentaryProvider {
+        requests: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl uni::LLMProvider for RepeatedCommentaryProvider {
+        fn name(&self) -> &str {
+            "openai"
+        }
+
+        fn supports_streaming(&self) -> bool {
+            false
+        }
+
+        async fn generate(&self, request: uni::LLMRequest) -> Result<uni::LLMResponse, uni::LLMError> {
+            let response_text = match self.requests.fetch_add(1, Ordering::SeqCst) {
+                0 => FIRST_COMMENTARY,
+                1 => SECOND_COMMENTARY,
+                _ => "unexpected third response",
+            };
+            Ok(uni::LLMResponse {
+                content: Some(response_text.to_string()),
+                model: request.model,
+                tool_calls: None,
+                usage: None,
+                finish_reason: uni::FinishReason::Stop,
+                reasoning: None,
+                reasoning_details: None,
+                organization_id: None,
+                request_id: None,
+                tool_references: Vec::new(),
+                compaction: None,
+            })
+        }
+
+        fn supported_models(&self) -> Vec<String> {
+            vec!["noop-model".to_string()]
+        }
+
+        fn validate_request(&self, _request: &uni::LLMRequest) -> Result<(), uni::LLMError> {
+            Ok(())
+        }
+    }
+
+    let requests = Arc::new(AtomicUsize::new(0));
+    let mut backing = TestTurnProcessingBacking::new(4).await;
+    backing.set_provider(Box::new(RepeatedCommentaryProvider { requests: requests.clone() }));
+    let harness_path = backing.enable_harness_emitter();
+
+    let mut history = vec![
+        uni::Message::user("inspect the workspace and summarize the results".to_string()),
+        uni::Message::assistant(String::new()).with_tool_calls(vec![uni::ToolCall::function(
+            "call_1".to_string(),
+            "code_search".to_string(),
+            "{}".to_string(),
+        )]),
+        uni::Message::tool_response("call_1".to_string(), "inspection complete".to_string()),
+    ];
+    let outcome = run_turn_loop(&mut history, backing.turn_loop_context())
+        .await
+        .expect("the capped recovery loop should produce a blocked handoff");
+
+    assert!(matches!(
+        outcome.result,
+        TurnLoopResult::Blocked {
+            reason: Some(ref reason)
+        } if reason == ASSISTANT_TEXT_RESPONSE_CAP_REASON
+    ));
+    assert_eq!(requests.load(Ordering::SeqCst), 2, "the response cap must stop before a third request");
+    assert!(!outcome.final_response_was_fallback);
+    assert_eq!(final_answer_text(&history), SECOND_COMMENTARY);
+    assert_eq!(
+        history
+            .iter()
+            .filter(|message| message.phase == Some(uni::AssistantPhase::FinalAnswer))
+            .count(),
+        1,
+        "the preserved commentary must become the only final assistant message"
+    );
+    assert!(
+        !history
+            .iter()
+            .any(|message| message.content.as_text().contains(COMPLETED_TURN_FALLBACK_RESPONSE)),
+        "the cap must not replace substantive commentary with the generic fallback"
+    );
+
+    let rendered = backing.rendered_inline_output();
+    assert_eq!(rendered.matches(FIRST_COMMENTARY).count(), 1);
+    assert_eq!(rendered.matches(SECOND_COMMENTARY).count(), 1);
+
+    let harness = fs::read_to_string(harness_path).expect("read capped recovery harness events");
+    let events = harness
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<VersionedThreadEvent>(line)
+                .expect("capped recovery harness output should use the versioned event contract")
+                .into_event()
+        })
+        .collect::<Vec<_>>();
+    let agent_messages = events
+        .iter()
+        .filter_map(|event| {
+            let ThreadEvent::ItemCompleted(item) = event else {
+                return None;
+            };
+            let ThreadItemDetails::AgentMessage(message) = &item.item.details else {
+                return None;
+            };
+            Some(message.text.as_str())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(agent_messages, vec![SECOND_COMMENTARY]);
+    assert!(events.iter().any(|event| matches!(event, ThreadEvent::TurnFailed(_))));
+    assert!(!events.iter().any(|event| matches!(event, ThreadEvent::TurnCompleted(_))));
 }
 
 #[tokio::test]

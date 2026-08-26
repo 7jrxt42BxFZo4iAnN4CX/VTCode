@@ -103,6 +103,8 @@ const MAX_RECOVERY_RETRIES: u8 = 3;
 /// responses terminates the runaway loop while still allowing one retry
 /// for genuine recovery scenarios.
 pub(crate) const MAX_ASSISTANT_TEXT_RESPONSES_PER_TURN: u32 = 2;
+pub(crate) const ASSISTANT_TEXT_RESPONSE_CAP_REASON: &str =
+    "Turn blocked after repeated assistant responses reached the safety cap; the latest response was preserved.";
 pub(crate) const PENDING_VERIFICATION_BLOCK_REASON: &str =
     "Turn blocked after repeated unverified assistant responses; verification is still pending.";
 const PENDING_VERIFICATION_FINAL_RESPONSE: &str = "The turn is blocked because verification is still pending. \
@@ -261,6 +263,31 @@ fn latest_final_assistant_response(history: &[uni::Message], turn_history_start_
                 && !message.content.as_text().trim().is_empty()
         })
         .map(|message| message.content.as_text().trim().to_string())
+}
+
+/// Promote the latest substantive commentary response when the anti-runaway
+/// cap ends a turn without a final answer. The response was already rendered
+/// as commentary; changing its phase preserves that content for history and
+/// lets the normal blocked-turn publisher emit the canonical final item.
+fn promote_latest_commentary_to_final(history: &mut [uni::Message], turn_history_start_len: usize) -> bool {
+    if latest_final_assistant_response(history, turn_history_start_len).is_some() {
+        return false;
+    }
+
+    let Some(turn_history) = history.get_mut(turn_history_start_len..) else {
+        return false;
+    };
+    let Some(message) = turn_history.iter_mut().rev().find(|message| {
+        message.role == uni::MessageRole::Assistant
+            && message.tool_calls.is_none()
+            && message.phase == Some(uni::AssistantPhase::Commentary)
+            && !message.content.as_text().trim().is_empty()
+    }) else {
+        return false;
+    };
+
+    message.phase = Some(uni::AssistantPhase::FinalAnswer);
+    true
 }
 
 fn publish_final_assistant_response(ctx: &mut TurnLoopContext<'_>, text: &str) -> Result<bool> {
@@ -924,7 +951,20 @@ pub(crate) async fn run_turn_loop(
                 MessageStyle::Warning,
                 "Recovery loop detected: capping repeated assistant responses to avoid wasted context.",
             );
-            result = TurnLoopResult::Completed { plan_approved_execution_pending: false };
+            if promote_latest_commentary_to_final(working_history, turn_history_start_len) {
+                // Commentary has already crossed the renderer surface. Avoid
+                // rendering it a second time while still allowing the normal
+                // blocked-turn finalizer to publish the canonical event.
+                ctx.harness_state.mark_final_response_rendered();
+                if ctx.harness_state.streamed_response_event_emitted() {
+                    // The streaming lifecycle already emitted the assistant
+                    // item; publishing another AgentMessage would duplicate it.
+                    ctx.harness_state.mark_final_response_event_emitted();
+                }
+            }
+            result = TurnLoopResult::Blocked {
+                reason: Some(ASSISTANT_TEXT_RESPONSE_CAP_REASON.to_string()),
+            };
             break;
         }
         if plan_validation_repair_follow_up {
