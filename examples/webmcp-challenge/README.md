@@ -46,6 +46,6 @@ Tool handlers reject unknown paths, reject unexpected input keys, cap user-contr
 2. Search for `greeting`, open the matching source result, and explain that inspection tools cannot mutate state.
 3. Click **Stage greeting update**. Review the staged diff and the “Awaiting approval” state.
 4. Click **Approve patch** and confirm. The patch remains staged, and **Apply approved patch** is enabled.
-5. Click **Apply approved patch**, confirm the keyboard-friendly dialog, then run local checks. An agent can invoke the dynamically registered apply tool at this point as well.
+5. Click **Apply approved patch**, confirm the keyboard-friendly dialog, then open `src/greeting.js` to see the highlighted modified line and the “Modified in memory” editor state before running local checks. An agent can invoke the dynamically registered apply tool at this point as well.
 6. Click **Revert last change**, confirm, and show the original source restored.
 7. Click **Run self-check** to demonstrate the complete proposal → approval → apply → verify → revert path. In a WebMCP-capable browser, explain that the same bounded handlers are registered as tools.

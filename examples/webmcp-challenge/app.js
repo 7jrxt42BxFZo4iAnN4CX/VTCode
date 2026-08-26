@@ -124,6 +124,26 @@ function renderTree() {
   }
 }
 
+function renderCode(path) {
+  const viewer = element("codeViewer");
+  const source = files[path];
+  const changedLine = state.lastChange?.path === path
+    ? state.lastChange.after.split("\n").findIndex((line) => line.includes(PATCH_AFTER))
+    : -1;
+
+  viewer.replaceChildren();
+  source.split("\n").forEach((lineText, index, lines) => {
+    const line = document.createElement("span");
+    line.className = `code-line${index === changedLine ? " changed" : ""}`;
+    line.textContent = lineText || " ";
+    viewer.append(line);
+
+    if (index < lines.length - 1) {
+      viewer.append(document.createTextNode("\n"));
+    }
+  });
+}
+
 function selectFile(path, { record = true } = {}) {
   if (!isKnownFile(path)) {
     throw new Error("Unknown project file");
@@ -132,8 +152,12 @@ function selectFile(path, { record = true } = {}) {
   state.selectedPath = path;
   element("fileTitle").textContent = path;
   element("fileType").textContent = path.split(".").pop().toUpperCase();
-  element("codeViewer").textContent = files[path];
+  renderCode(path);
   element("lineCount").textContent = `${files[path].split("\n").length} lines`;
+  const editorState = element("editorState");
+  const changed = state.lastChange?.path === path;
+  editorState.textContent = changed ? "Modified in memory · revert available" : "Original snapshot · in-memory";
+  editorState.classList.toggle("changed", changed);
   renderTree();
 
   if (record) {
@@ -178,7 +202,13 @@ function renderDiff() {
   }
 
   if (state.lastChange) {
-    diff.append(renderDiffLine("✓ Patch applied to in-memory project.", "added"));
+    const beforeLine = state.lastChange.before.split("\n").find((line) => line.includes(PATCH_BEFORE)) ?? PATCH_BEFORE;
+    const afterLine = state.lastChange.after.split("\n").find((line) => line.includes(PATCH_AFTER)) ?? PATCH_AFTER;
+    diff.append(
+      renderDiffLine("✓ Applied to in-memory project · source viewer updated", "applied"),
+      renderDiffLine(`− ${beforeLine}`, "removed"),
+      renderDiffLine(`+ ${afterLine}`, "added"),
+    );
     return;
   }
 
