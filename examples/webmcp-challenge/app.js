@@ -21,6 +21,7 @@ const state = {
   uiApproval: false,
   revertConfirmation: false,
   webMcpRegistered: false,
+  registeredToolControllers: new Map(),
 };
 
 const element = (id) => document.getElementById(id);
@@ -91,7 +92,8 @@ function requireBoundedString(input, key, maxLength) {
 
 function updateChangeControls() {
   element("proposePatch").disabled = Boolean(state.proposal || state.lastChange);
-  element("applyPatch").disabled = !state.proposal;
+  element("approvePatch").disabled = !state.proposal || state.uiApproval;
+  element("applyPatch").disabled = !state.proposal || !state.uiApproval;
   element("revertPatch").disabled = !state.lastChange;
 }
 
@@ -140,7 +142,7 @@ function selectFile(path, { record = true } = {}) {
   }
 }
 
-function renderEmptyDiff(message = "Use “Propose greeting update” to preview a deterministic patch.") {
+function renderEmptyDiff(message = "Use “Stage greeting update” to preview a deterministic patch.") {
   const empty = document.createElement("div");
   empty.className = "empty-state";
 
@@ -261,6 +263,30 @@ function proposePatch(input = {}) {
   return { ...state.proposal, requiresApproval: true };
 }
 
+async function approvePatch(input = {}) {
+  const normalized = normalizeInput(input);
+  assertNoUnknownKeys(normalized, []);
+  if (!state.proposal) {
+    throw new Error("Stage a patch before approving it");
+  }
+  state.uiApproval = true;
+  state.patchStatus = "approved";
+  setPatchStatus("Approved · ready to apply", "approved");
+  element("approvalCopy").textContent =
+    "This patch is approved. Apply it from the UI or let an agent invoke the enabled apply tool.";
+  updateChangeControls();
+  log("Approved staged patch");
+  setStatus("Patch approved", "The sample project has not changed. Apply is now enabled.");
+  showToast("Patch approved — ready to apply");
+  try {
+    await registerMutationTool("apply_approved_patch");
+  } catch (error) {
+    setSupportStatus("WebMCP lifecycle error · UI fallback");
+    log(`WebMCP lifecycle error: ${errorMessage(error)}`);
+  }
+  return { approved: true, path: state.proposal.path };
+}
+
 function runChecks(input = {}) {
   const normalized = normalizeInput(input);
   assertNoUnknownKeys(normalized, []);
@@ -285,7 +311,7 @@ function runChecks(input = {}) {
   return { passed, checks: assertions.length, failures };
 }
 
-function applyApprovedPatch(input = {}) {
+async function applyApprovedPatch(input = {}) {
   const normalized = normalizeInput(input);
   assertNoUnknownKeys(normalized, []);
   if (!state.proposal) {
@@ -310,6 +336,7 @@ function applyApprovedPatch(input = {}) {
   log("Applied approved patch");
   setStatus("Change applied", "Only the in-memory sample project changed.");
   showToast("Approved patch applied");
+  await transitionMutationTool("apply_approved_patch", "revert_last_change");
   return { applied: true, path: change.path };
 }
 
@@ -337,13 +364,14 @@ function revertLastChange(input = {}) {
   log("Reverted last change");
   setStatus("Change reverted", "The original in-memory file content is restored.");
   showToast("Last change reverted");
+  unregisterTool("revert_last_change");
   return { reverted: true, path: change.path };
 }
 
-function withPermission(permission, action) {
+async function withPermission(permission, action) {
   state[permission] = true;
   try {
-    return action();
+    return await action();
   } finally {
     state[permission] = false;
   }
@@ -357,14 +385,14 @@ function showConfirmation({ title, copy, confirmLabel, action }) {
   element("dialogConfirm").onclick = (event) => {
     event.preventDefault();
     dialog.close("confirm");
-    action();
+    void action();
   };
   dialog.showModal();
 }
 
-function runUiAction(action) {
+async function runUiAction(action) {
   try {
-    return action();
+    return await action();
   } catch (error) {
     const message = errorMessage(error);
     log(`Action failed: ${message}`);
@@ -374,17 +402,18 @@ function runUiAction(action) {
   }
 }
 
-function runSelfCheck() {
+async function runSelfCheck() {
   if (state.proposal || state.lastChange) {
     throw new Error("Finish or revert the current change before running self-check");
   }
 
   const proposal = proposePatch();
-  const applied = withPermission("uiApproval", () => applyApprovedPatch());
+  const approval = await approvePatch();
+  const applied = await applyApprovedPatch();
   const checks = runChecks();
-  const reverted = withPermission("revertConfirmation", () => revertLastChange());
+  const reverted = await withPermission("revertConfirmation", () => revertLastChange());
   const passed = Boolean(
-    proposal.requiresApproval && applied.applied && checks.passed && reverted.reverted,
+    proposal.requiresApproval && approval.approved && applied.applied && checks.passed && reverted.reverted,
   );
   log(passed ? "Self-check passed: gate, apply, verify, revert" : "Self-check failed");
   setStatus(
@@ -503,6 +532,72 @@ const toolDefinitions = [
   },
 ];
 
+const toolDefinitionByName = new Map(toolDefinitions.map((tool) => [tool.name, tool]));
+const SAFE_TOOL_NAMES = [
+  "list_project_files",
+  "search_code",
+  "read_file",
+  "propose_patch",
+  "run_checks",
+];
+
+function unregisterTool(name) {
+  const controller = state.registeredToolControllers.get(name);
+  if (controller) {
+    controller.abort();
+    state.registeredToolControllers.delete(name);
+    log(`Unregistered ${name}`);
+  }
+}
+
+async function registerTools(names) {
+  let modelContext;
+  try {
+    modelContext = document.modelContext;
+  } catch (error) {
+    throw new Error(`WebMCP unavailable: ${errorMessage(error)}`);
+  }
+  if (!modelContext || typeof modelContext.registerTool !== "function") {
+    throw new Error("WebMCP unavailable");
+  }
+
+  const controllers = new Map();
+  try {
+    for (const name of names) {
+      if (state.registeredToolControllers.has(name)) continue;
+      const controller = new AbortController();
+      controllers.set(name, controller);
+      await modelContext.registerTool(toolDefinitionByName.get(name), {
+        signal: controller.signal,
+      });
+      state.registeredToolControllers.set(name, controller);
+    }
+  } catch (error) {
+    for (const [name, controller] of controllers) {
+      controller.abort();
+      state.registeredToolControllers.delete(name);
+    }
+    throw error;
+  }
+}
+
+async function registerMutationTool(name) {
+  if (!state.webMcpRegistered) return;
+  await registerTools([name]);
+  setSupportStatus(`WebMCP available · ${state.registeredToolControllers.size} tools`, true);
+  log(`Registered ${name}`);
+}
+
+async function transitionMutationTool(removeName, addName) {
+  unregisterTool(removeName);
+  try {
+    await registerMutationTool(addName);
+  } catch (error) {
+    setSupportStatus("WebMCP lifecycle error · UI fallback");
+    log(`WebMCP lifecycle error: ${errorMessage(error)}`);
+  }
+}
+
 function setSupportStatus(label, available = false) {
   const status = element("supportStatus");
   status.textContent = label;
@@ -524,19 +619,14 @@ async function registerWebMcp() {
     return false;
   }
 
-  const registrationController = new AbortController();
   try {
-    await Promise.all(
-      toolDefinitions.map((tool) =>
-        modelContext.registerTool(tool, { signal: registrationController.signal }),
-      ),
-    );
+    await registerTools(SAFE_TOOL_NAMES);
     state.webMcpRegistered = true;
-    setSupportStatus("WebMCP available", true);
-    log("Registered 7 WebMCP tools");
+    setSupportStatus(`WebMCP available · ${SAFE_TOOL_NAMES.length} tools`, true);
+    log(`Registered ${SAFE_TOOL_NAMES.length} safe WebMCP tools`);
     return true;
   } catch (error) {
-    registrationController.abort();
+    for (const name of [...state.registeredToolControllers.keys()]) unregisterTool(name);
     setSupportStatus("WebMCP registration failed · UI fallback");
     log(`WebMCP registration failed: ${errorMessage(error)}`);
     return false;
@@ -549,8 +639,16 @@ element("applyPatch").addEventListener("click", () => {
   showConfirmation({
     title: "Apply this patch?",
     copy: "Only the in-memory sample project will change.",
-    confirmLabel: "Approve & apply",
-    action: () => runUiAction(() => withPermission("uiApproval", applyApprovedPatch)),
+    confirmLabel: "Apply approved patch",
+    action: () => runUiAction(() => applyApprovedPatch()),
+  });
+});
+element("approvePatch").addEventListener("click", () => {
+  showConfirmation({
+    title: "Approve this patch?",
+    copy: "Approval enables the apply action but does not change the project yet.",
+    confirmLabel: "Approve patch",
+    action: () => runUiAction(() => approvePatch()),
   });
 });
 element("revertPatch").addEventListener("click", () => {
