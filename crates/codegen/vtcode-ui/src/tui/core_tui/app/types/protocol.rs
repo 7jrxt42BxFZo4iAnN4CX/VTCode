@@ -1,7 +1,11 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use unicode_width::UnicodeWidthStr;
 
 use super::overlay::{
     AgentPaletteItem, AgentPaletteTransientRequest, FilePaletteTransientRequest, ListOverlayRequest,
@@ -210,14 +214,27 @@ impl From<crate::tui::core_tui::types::InlineEvent> for InlineEvent {
     }
 }
 
+#[derive(Default)]
+struct InlineLayoutState {
+    agent_label_frame_width: AtomicUsize,
+}
+
 #[derive(Clone)]
 pub struct InlineHandle {
     pub(crate) sender: UnboundedSender<InlineCommand>,
+    message_layout: Arc<InlineLayoutState>,
 }
 
 impl InlineHandle {
     pub fn new_for_tests(sender: UnboundedSender<InlineCommand>) -> Self {
-        Self { sender }
+        Self::new(sender)
+    }
+
+    pub(crate) fn new(sender: UnboundedSender<InlineCommand>) -> Self {
+        Self {
+            sender,
+            message_layout: Arc::new(InlineLayoutState::default()),
+        }
     }
 
     fn send_command(&self, command: InlineCommand) {
@@ -286,7 +303,20 @@ impl InlineHandle {
     }
 
     pub fn set_message_labels(&self, agent: Option<String>, user: Option<String>) {
+        let agent_label_frame_width = agent
+            .as_deref()
+            .filter(|label| !label.is_empty())
+            .map(|label| UnicodeWidthStr::width(label) + 1)
+            .unwrap_or_default();
+        self.message_layout
+            .agent_label_frame_width
+            .store(agent_label_frame_width, Ordering::Relaxed);
         self.send_command(InlineCommand::SetMessageLabels { agent, user });
+    }
+
+    /// Return the display width of the current agent label and its separator.
+    pub fn agent_label_frame_width(&self) -> usize {
+        self.message_layout.agent_label_frame_width.load(Ordering::Relaxed)
     }
 
     pub fn set_header_context(&self, context: InlineHeaderContext) {
@@ -514,7 +544,7 @@ impl InlineSession {
     }
 
     pub fn clone_inline_handle(&self) -> InlineHandle {
-        InlineHandle { sender: self.handle.sender.clone() }
+        self.handle.clone()
     }
 }
 

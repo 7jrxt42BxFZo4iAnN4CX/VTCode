@@ -41,8 +41,16 @@ pub(crate) fn render_table(table: &TableBuffer, base_style: Style, max_width: Op
         }
     }
 
-    if let Some(mw) = max_width {
-        scale_columns_to_fit(&mut col_widths, mw);
+    // A header gives every value a stable label, so a table that cannot fit in
+    // its available content width is more legible as labeled blocks than as a
+    // table with squeezed columns. Headerless tables have no equivalent block
+    // representation and retain their existing scaling behavior.
+    if table.headers.is_empty() {
+        if let Some(available_width) = max_width {
+            scale_columns_to_fit(&mut col_widths, available_width);
+        }
+    } else if max_width.is_some_and(|available_width| total_table_width(&col_widths) > available_width) {
+        return render_table_blocks(table, base_style, max_width.unwrap_or_default());
     }
 
     let border_style = base_style.dimmed();
@@ -81,7 +89,8 @@ fn total_table_width(col_widths: &[usize]) -> usize {
     content + separators
 }
 
-/// Proportionally scale column widths so the table fits within `max_width`.
+/// Proportionally scale headerless table columns to preserve their existing
+/// layout when a caller supplies a constrained width.
 fn scale_columns_to_fit(col_widths: &mut [usize], max_width: usize) {
     if col_widths.is_empty() {
         return;
@@ -92,7 +101,6 @@ fn scale_columns_to_fit(col_widths: &mut [usize], max_width: usize) {
     }
 
     let n = col_widths.len();
-    // Fixed overhead: separators between columns (3 chars each: " │ ")
     let fixed = if n > 1 { (n - 1) * 3 } else { 0 };
     let available = max_width.saturating_sub(fixed);
     let total_content: usize = col_widths.iter().sum();
@@ -102,19 +110,71 @@ fn scale_columns_to_fit(col_widths: &mut [usize], max_width: usize) {
     }
 
     let scale = (available as f64) / (total_content as f64);
-    for w in col_widths.iter_mut() {
-        *w = ((*w as f64) * scale).max(1.0) as usize;
+    for width in col_widths.iter_mut() {
+        *width = ((*width as f64) * scale).max(1.0) as usize;
     }
 
     // Fix float rounding: trim widest columns until we fit.
     while total_table_width(col_widths) > max_width {
-        if let Some(w) = col_widths.iter_mut().max() {
-            if *w <= 1 {
+        if let Some(width) = col_widths.iter_mut().max() {
+            if *width <= 1 {
                 break;
             }
-            *w -= 1;
+            *width -= 1;
         }
     }
+}
+
+/// Render a headered table as one labeled block per data row.
+fn render_table_blocks(table: &TableBuffer, base_style: Style, max_width: usize) -> Vec<MarkdownLine> {
+    let mut lines = Vec::new();
+    let border_style = base_style.dimmed();
+    let wrap_width = max_width.max(1);
+    let row_count = table.rows.len().max(1);
+
+    for row_index in 0..row_count {
+        let row = table.rows.get(row_index).map(Vec::as_slice).unwrap_or(&[]);
+        let column_count = table.headers.len().max(row.len());
+
+        for column_index in 0..column_count {
+            let header = table.headers.get(column_index);
+            let value = row.get(column_index);
+            let mut line = MarkdownLine::default();
+
+            if let Some(header) = header {
+                append_cell_segments(&mut line, header, true);
+                line.push_segment(base_style.bold(), ":");
+                if value.is_some_and(|cell| !cell.is_empty()) {
+                    line.push_segment(base_style.bold(), " ");
+                }
+            }
+
+            if let Some(value) = value {
+                append_cell_segments(&mut line, value, false);
+            }
+
+            lines.extend(wrap_markdown_line(&line, wrap_width));
+        }
+
+        if row_index + 1 < row_count && max_width > 0 {
+            lines.push(single_style_line(border_style, &"─".repeat(max_width)));
+        }
+    }
+
+    lines
+}
+
+fn append_cell_segments(line: &mut MarkdownLine, cell: &MarkdownLine, bold: bool) {
+    for segment in &cell.segments {
+        let style = if bold { segment.style.bold() } else { segment.style };
+        line.push_segment_with_link(style, &segment.text, segment.link_target.clone());
+    }
+}
+
+fn single_style_line(style: Style, text: &str) -> MarkdownLine {
+    let mut line = MarkdownLine::default();
+    line.push_segment(style, text);
+    line
 }
 
 fn render_table_rows(
@@ -146,10 +206,7 @@ fn render_table_rows(
         for (col_idx, &width) in col_widths.iter().enumerate() {
             if let Some(cell_line) = wrapped_cells[col_idx].get(line_idx) {
                 let cell_text_width = cell_line.width();
-                for seg in &cell_line.segments {
-                    let style = if bold { seg.style.bold() } else { seg.style };
-                    line.push_segment(style, &seg.text);
-                }
+                append_cell_segments(&mut line, cell_line, bold);
                 let padding = width.saturating_sub(cell_text_width);
                 if padding > 0 {
                     line.push_segment(base_style, space_pad(padding));
@@ -202,6 +259,7 @@ fn wrap_markdown_line(line: &MarkdownLine, max_width: usize) -> Vec<MarkdownLine
 
     for seg in &line.segments {
         let style = seg.style;
+        let link_target = seg.link_target.clone();
         for token in seg.text.split_word_bounds() {
             if token.is_empty() {
                 continue;
@@ -209,7 +267,7 @@ fn wrap_markdown_line(line: &MarkdownLine, max_width: usize) -> Vec<MarkdownLine
 
             let token_width = UnicodeWidthStr::width(token);
             if token_width == 0 {
-                current.push_segment(style, token);
+                current.push_segment_with_link(style, token, link_target.clone());
                 continue;
             }
 
@@ -221,7 +279,7 @@ fn wrap_markdown_line(line: &MarkdownLine, max_width: usize) -> Vec<MarkdownLine
             }
 
             if current_width + token_width <= max_width {
-                current.push_segment(style, token);
+                current.push_segment_with_link(style, token, link_target.clone());
                 current_width += token_width;
                 continue;
             }
@@ -237,7 +295,7 @@ fn wrap_markdown_line(line: &MarkdownLine, max_width: usize) -> Vec<MarkdownLine
                 if has_content {
                     flush(&mut current, &mut rows, &mut current_width);
                 }
-                current.push_segment(style, token);
+                current.push_segment_with_link(style, token, link_target.clone());
                 current_width += token_width;
                 continue;
             }
@@ -248,13 +306,13 @@ fn wrap_markdown_line(line: &MarkdownLine, max_width: usize) -> Vec<MarkdownLine
                 }
                 let gw = UnicodeWidthStr::width(grapheme);
                 if gw == 0 {
-                    current.push_segment(style, grapheme);
+                    current.push_segment_with_link(style, grapheme, link_target.clone());
                     continue;
                 }
                 if current_width + gw > max_width && current_width > 0 {
                     flush(&mut current, &mut rows, &mut current_width);
                 }
-                current.push_segment(style, grapheme);
+                current.push_segment_with_link(style, grapheme, link_target.clone());
                 current_width += gw;
             }
         }
@@ -275,29 +333,6 @@ mod tests {
         let mut line = MarkdownLine::default();
         line.push_segment(Style::default(), text);
         line
-    }
-
-    #[test]
-    fn test_scale_columns_no_change_when_fits() {
-        let mut widths = vec![10, 10];
-        scale_columns_to_fit(&mut widths, 200);
-        assert_eq!(widths, vec![10, 10]);
-    }
-
-    #[test]
-    fn test_scale_columns_proportional_reduction() {
-        let mut widths = vec![40, 40];
-        scale_columns_to_fit(&mut widths, 60);
-        assert!(total_table_width(&widths) <= 60);
-        assert!(widths[0] >= 1);
-        assert!(widths[1] >= 1);
-    }
-
-    #[test]
-    fn test_scale_columns_respects_max_width() {
-        let mut widths = vec![7, 7, 7, 7, 7];
-        scale_columns_to_fit(&mut widths, 30);
-        assert!(total_table_width(&widths) <= 30, "total={} widths={:?}", total_table_width(&widths), widths);
     }
 
     #[test]
@@ -330,6 +365,102 @@ mod tests {
         assert!(!text_lines[0].ends_with("│"), "Should not end with │");
         // Inner separator present
         assert!(text_lines[0].contains("│"), "Header should have inner │");
+    }
+
+    #[test]
+    fn test_headered_table_uses_intrinsic_width_at_boundary() {
+        let table = TableBuffer {
+            headers: vec![ml("A"), ml("B")],
+            rows: vec![vec![ml("1"), ml("2")]],
+            current_row: vec![],
+            in_head: false,
+        };
+
+        let lines = render_table(&table, Style::default(), Some(5));
+        let header = lines[0]
+            .segments
+            .iter()
+            .map(|segment| segment.text.as_str())
+            .collect::<String>();
+        assert_eq!(header, "A │ B");
+    }
+
+    #[test]
+    fn test_headered_table_falls_back_when_one_column_too_wide() {
+        let table = TableBuffer {
+            headers: vec![ml("A"), ml("B")],
+            rows: vec![vec![ml("1"), ml("2")]],
+            current_row: vec![],
+            in_head: false,
+        };
+
+        let lines = render_table(&table, Style::default(), Some(4));
+        let text = lines
+            .iter()
+            .map(|line| line.segments.iter().map(|segment| segment.text.as_str()).collect::<String>())
+            .collect::<Vec<_>>();
+        assert_eq!(text, vec!["A: 1", "B: 2"]);
+        assert!(text.iter().all(|line| !line.contains('│')));
+    }
+
+    #[test]
+    fn test_headerless_table_preserves_scaled_table_layout() {
+        let table = TableBuffer {
+            headers: vec![],
+            rows: vec![vec![ml("headerless"), ml("value")]],
+            current_row: vec![],
+            in_head: false,
+        };
+
+        let lines = render_table(&table, Style::default(), Some(5));
+        let text: Vec<String> = lines
+            .iter()
+            .map(|line| line.segments.iter().map(|segment| segment.text.as_str()).collect())
+            .collect();
+        assert!(text.iter().all(|line| line.contains('│')));
+        assert!(text.iter().all(|line| !line.contains(':')));
+    }
+
+    #[test]
+    fn test_fallback_preserves_value_style_and_link() {
+        let mut value = MarkdownLine::default();
+        value.push_segment_with_link(
+            Style::default().underline(),
+            "documentation",
+            Some("https://example.com".to_owned()),
+        );
+        let table = TableBuffer {
+            headers: vec![ml("Reference")],
+            rows: vec![vec![value]],
+            current_row: vec![],
+            in_head: false,
+        };
+
+        let lines = render_table(&table, Style::default(), Some(5));
+        let linked_segments = lines
+            .iter()
+            .flat_map(|line| line.segments.iter())
+            .filter(|segment| segment.link_target.as_deref() == Some("https://example.com"))
+            .collect::<Vec<_>>();
+        assert_eq!(linked_segments.iter().map(|segment| segment.text.as_str()).collect::<String>(), "documentation");
+        assert!(
+            linked_segments
+                .iter()
+                .all(|segment| segment.style.get_effects().contains(anstyle::Effects::UNDERLINE))
+        );
+    }
+
+    #[test]
+    fn test_fallback_wraps_unicode_values_to_display_width() {
+        let table = TableBuffer {
+            headers: vec![ml("項目")],
+            rows: vec![vec![ml("表の説明")]],
+            current_row: vec![],
+            in_head: false,
+        };
+
+        let lines = render_table(&table, Style::default(), Some(7));
+        assert!(lines.iter().all(|line| line.width() <= 7), "fallback line exceeded width: {lines:?}");
     }
 
     #[test]
@@ -400,8 +531,15 @@ mod tests {
             in_head: false,
         };
         let lines = render_table(&table, Style::default(), Some(25));
-        // Header + separator + multiple data lines
-        assert!(lines.len() >= 4, "Expected wrapped rows, got {}", lines.len());
+        // Narrow headered tables use labeled blocks; the long value still wraps.
+        assert!(lines.len() >= 3, "Expected wrapped labeled rows, got {}", lines.len());
+        let text: String = lines
+            .iter()
+            .map(|line| line.segments.iter().map(|segment| segment.text.as_str()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("H2:"), "fallback should retain the header label: {text:?}");
+        assert!(!text.contains("│"), "fallback should not render table separators: {text:?}");
         // Each line should be within max_width
         for line in &lines {
             let text: String = line.segments.iter().map(|s| s.text.as_str()).collect();

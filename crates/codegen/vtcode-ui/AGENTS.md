@@ -14,7 +14,7 @@
 
 - `design` and `theme` are re-exported at crate root (`pub use design::*; pub use theme::*`) for backward compatibility with the old standalone crates.
 - `publish = false` — internal crate, not published to crates.io.
-- `tui/core_tui/` owns the full terminal session lifecycle; `tui/core_tui/app/session/task_panel.rs` owns compact TODO-panel wrapping/height/header helpers; `tui/ui/` has reusable widgets (markdown, interactive list).
+- `tui/core_tui/` owns the full terminal session lifecycle; `tui/core_tui/app/session/task_panel.rs` owns compact TODO-panel wrapping/height/header helpers; `tui/ui/` has reusable widgets (markdown, interactive list). Headered markdown tables use intrinsic width when available and labeled wrapped blocks below it, so callers must pass content width after transcript framing.
 - `tui/config/constants/` holds TUI-specific defaults — keep them here, not in `vtcode-config`; snapshot tests live in `tui/core_tui/widgets/snapshots/`.
 
 ## Gotchas
@@ -27,5 +27,4 @@
 - `ActivityState` is the authoritative global busy/idle signal for fresh-thread handoffs; use it for input and mode-switch guards even when animation is disabled.
 - PTY/tool reflow must preserve explicit status color on the `•` prefix; apply action/tool styling only to the verb so success, failure, and warning remain visually distinct.
 - Tool and PTY blocks reserve at least one blank line above and below; shell syntax highlighting is accepted only when it produces distinct token colors, otherwise semantic token styles are the fallback.
-- Task-panel tree rows use the shared hanging-prefix wrapper in `session/text_utils.rs`; keep panel row heights derived from wrapped content so transcript and docked panel stay aligned.
-- `toggle_tool_display_mode` is a rebindable session action (default `Alt+T`); dispatch it before the legacy `Alt+T` text-edit shortcut and invalidate transcript caches after toggling.
+- Task-panel tree rows use the shared hanging-prefix wrapper in `session/text_utils.rs`; keep panel row heights derived from wrapped content so transcript and docked panel stay aligned. `toggle_tool_display_mode` is a rebindable session action (default `Alt+T`); dispatch it before the legacy `Alt+T` text-edit shortcut and invalidate transcript caches after toggling.

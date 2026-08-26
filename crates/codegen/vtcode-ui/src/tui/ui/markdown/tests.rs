@@ -13,6 +13,20 @@ fn lines_to_text(lines: &[MarkdownLine]) -> Vec<String> {
         .collect()
 }
 
+fn render_markdown_with_table_width(markdown: &str, table_max_width: usize) -> Vec<MarkdownLine> {
+    render_markdown_to_lines_with_options(
+        markdown,
+        Style::default(),
+        &theme::active_styles(),
+        None,
+        RenderMarkdownOptions {
+            preserve_code_indentation: false,
+            disable_code_block_table_reparse: false,
+            table_max_width: Some(table_max_width),
+        },
+    )
+}
+
 #[test]
 fn test_markdown_heading_renders_prefixes() {
     let markdown = "# Heading\n\n## Subheading\n";
@@ -124,6 +138,43 @@ fn test_markdown_table_renders_header_separator_and_rows() {
 }
 
 #[test]
+fn test_narrow_markdown_table_renders_labeled_blocks() {
+    let markdown = "| Was | Now |\n|-----|-----|\n| old | [new](https://example.com/new) |\n| one | two |\n";
+    let lines = render_markdown_with_table_width(markdown, 8);
+    let output = lines_to_text(&lines).join("\n");
+
+    assert!(output.contains("Was:"), "fallback should retain the first header: {output}");
+    assert!(output.contains("Now:"), "fallback should retain the second header: {output}");
+    assert!(!output.contains("│"), "narrow table should not render column separators: {output}");
+    assert!(output.contains("─"), "rows should remain visually separated: {output}");
+
+    let was_segment = lines
+        .iter()
+        .flat_map(|line| line.segments.iter())
+        .find(|segment| segment.text.starts_with("Was:"))
+        .expect("fallback header segment exists");
+    assert!(was_segment.style.get_effects().contains(anstyle::Effects::BOLD));
+
+    let link_segment = lines
+        .iter()
+        .flat_map(|line| line.segments.iter())
+        .find(|segment| segment.text == "new")
+        .expect("fallback value link exists");
+    assert_eq!(link_segment.link_target.as_deref(), Some("https://example.com/new"));
+}
+
+#[test]
+fn test_markdown_table_boundary_uses_intrinsic_width() {
+    let markdown = "| A | B |\n|---|---|\n| 1 | 2 |\n";
+    let at_boundary = lines_to_text(&render_markdown_with_table_width(markdown, 5)).join("\n");
+    let below_boundary = lines_to_text(&render_markdown_with_table_width(markdown, 4)).join("\n");
+
+    assert!(at_boundary.contains("│"), "exact intrinsic width should keep table layout: {at_boundary}");
+    assert!(below_boundary.contains("A: 1"), "one cell below the boundary should use blocks: {below_boundary}");
+    assert!(!below_boundary.contains("│"), "fallback should remove table separators: {below_boundary}");
+}
+
+#[test]
 fn test_table_inside_markdown_code_block_renders_as_table() {
     let markdown = "```markdown\n\
         | Module | Purpose |\n\
@@ -158,6 +209,38 @@ fn test_table_inside_md_code_block_renders_as_table() {
     let output = lines_to_text(&lines).join("\n");
 
     assert!(output.contains("│"), "Table inside ```md code block should render as table: {output}");
+}
+
+#[test]
+fn test_narrow_markdown_and_md_fenced_tables_use_labeled_blocks() {
+    for language in ["markdown", "md"] {
+        let markdown = format!(
+            "```{language}\n| Name | Description |\n|------|-------------|\n| item | a long description that needs wrapping |\n```\n"
+        );
+        let output = lines_to_text(&render_markdown_with_table_width(&markdown, 18)).join("\n");
+
+        assert!(output.contains("Name:"), "{language} fence should retain the header label: {output}");
+        assert!(output.contains("Description:"), "{language} fence should retain all header labels: {output}");
+        assert!(!output.contains("│"), "narrow {language} table should use blocks: {output}");
+    }
+}
+
+#[test]
+fn test_non_markdown_fenced_table_remains_code() {
+    let markdown = "```text\n| Name | Value |\n|------|-------|\n| item | value |\n```\n";
+    let output = lines_to_text(&render_markdown_with_table_width(markdown, 8)).join("\n");
+
+    assert!(output.contains("| Name |"), "non-Markdown fence should retain source pipes: {output}");
+    assert!(!output.contains("│"), "non-Markdown fence should not be reparsed as a table: {output}");
+}
+
+#[test]
+fn test_unlabeled_fenced_table_remains_code() {
+    let markdown = "```\n| Name | Value |\n|------|-------|\n| item | value |\n```\n";
+    let output = lines_to_text(&render_markdown_with_table_width(markdown, 8)).join("\n");
+
+    assert!(output.contains("| Name |"), "unlabeled fence should retain source pipes: {output}");
+    assert!(!output.contains("│"), "unlabeled fence should not be reparsed as a table: {output}");
 }
 
 #[test]

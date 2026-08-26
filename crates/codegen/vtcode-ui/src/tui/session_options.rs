@@ -7,7 +7,8 @@ use hashbrown::HashMap;
 
 use crate::tui::core_tui::app::session::AppSession;
 use crate::tui::core_tui::app::types::{
-    FocusChangeCallback, InlineEventCallback, InlineSession, InlineTheme, PreviewCallback, SlashCommandItem,
+    FocusChangeCallback, InlineEventCallback, InlineHandle, InlineSession, InlineTheme, PreviewCallback,
+    SlashCommandItem,
 };
 use crate::tui::core_tui::log;
 use crate::tui::core_tui::runner::{TuiOptions, run_tui};
@@ -144,7 +145,7 @@ pub fn spawn_session_with_options(theme: InlineTheme, options: SessionOptions) -
     });
 
     Ok(InlineSession {
-        handle: crate::tui::core_tui::app::types::InlineHandle { sender: command_tx },
+        handle: InlineHandle::new(command_tx),
         events: event_rx,
     })
 }

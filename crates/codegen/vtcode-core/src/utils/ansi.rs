@@ -20,6 +20,7 @@ use anyhow::{Result, anyhow};
 use ratatui::style::{Color as RatColor, Modifier as RatModifier, Style as RatatuiStyle};
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex, OnceLock};
+use unicode_width::UnicodeWidthStr;
 use url::Url;
 use vtcode_commons::color_policy::{self, ColorOutputPolicySource};
 use vtcode_commons::diff_paths::looks_like_diff_content;
@@ -76,6 +77,28 @@ fn should_strip_inline_local_link_underline(target: &str) -> bool {
 
 fn is_remote_link_target(target: &str) -> bool {
     target.starts_with("http://") || target.starts_with("https://")
+}
+
+fn terminal_table_content_width(indent: &str) -> Option<usize> {
+    crossterm::terminal::size()
+        .ok()
+        .map(|(width, _)| usize::from(width).saturating_sub(UnicodeWidthStr::width(indent)))
+}
+
+fn transcript_table_frame_width(kind: InlineMessageKind, agent_label_frame_width: usize) -> usize {
+    match kind {
+        // Agent messages receive ` •` plus one content padding cell during
+        // transcript reflow. Other table-bearing paths use their block prefix;
+        // their rendered table lines are body/detail lines without a right edge.
+        InlineMessageKind::Agent => UnicodeWidthStr::width(" • ") + agent_label_frame_width,
+        InlineMessageKind::Tool => UnicodeWidthStr::width("    "),
+        InlineMessageKind::Pty => UnicodeWidthStr::width("  "),
+        InlineMessageKind::Policy
+        | InlineMessageKind::User
+        | InlineMessageKind::Info
+        | InlineMessageKind::Error
+        | InlineMessageKind::Warning => 0,
+    }
 }
 
 /// Renderer with deferred output buffering
@@ -242,11 +265,14 @@ impl AnsiRenderer {
         self.compact_tool_summary_batch.take().unwrap_or_default()
     }
 
-    /// Set the maximum width for markdown tables. When set, tables wider than
-    /// this will have their columns proportionally scaled and cell text wrapped.
+    /// Set an explicit terminal width used when deciding how to render markdown
+    /// tables. Passing `None` restores automatic terminal-size measurement. The
+    /// inline renderer subtracts message indentation and transcript framing
+    /// before passing the available content width to the markdown renderer.
     pub fn set_table_max_width(&mut self, max_width: Option<usize>) {
         if let Some(sink) = &mut self.sink {
             sink.table_max_width = max_width;
+            sink.table_max_width_override = max_width;
         }
     }
 
@@ -625,7 +651,9 @@ impl AnsiRenderer {
 
         if let Some(sink) = &mut self.sink {
             // Read terminal width fresh so tables adapt to resizes.
-            if let Ok((w, _)) = crossterm::terminal::size() {
+            if sink.table_max_width_override.is_none()
+                && let Ok((w, _)) = crossterm::terminal::size()
+            {
                 sink.table_max_width = Some(w as usize);
             }
             let last_empty =
@@ -646,7 +674,7 @@ impl AnsiRenderer {
             RenderMarkdownOptions {
                 preserve_code_indentation,
                 disable_code_block_table_reparse: false,
-                table_max_width: None,
+                table_max_width: terminal_table_content_width(indent),
             },
         );
         if lines.is_empty() {
@@ -679,10 +707,14 @@ impl AnsiRenderer {
         let indent = style.indent();
         if let Some(sink) = &mut self.sink {
             // Read terminal width fresh so tables adapt to resizes.
-            if let Ok((w, _)) = crossterm::terminal::size() {
+            if sink.table_max_width_override.is_none()
+                && let Ok((w, _)) = crossterm::terminal::size()
+            {
                 sink.table_max_width = Some(w as usize);
             }
-            let (prepared, plain_lines, last_empty) = sink.prepare_markdown_lines(text, indent, base_style, true, true);
+            let table_max_width = sink.table_content_width(Self::message_kind(style), indent);
+            let (prepared, plain_lines, last_empty) =
+                sink.prepare_markdown_lines_with_table_width(text, indent, base_style, true, true, table_max_width);
             let line_count = prepared.len();
             sink.replace_inline_lines(previous_line_count, prepared, &plain_lines, Self::message_kind(style));
             self.last_line_was_empty = last_empty;
@@ -781,9 +813,18 @@ struct InlineSink {
     handle: InlineHandle,
     highlight_config: SyntaxHighlightingConfig,
     table_max_width: Option<usize>,
+    table_max_width_override: Option<usize>,
 }
 
 impl InlineSink {
+    fn table_content_width(&self, kind: InlineMessageKind, indent: &str) -> Option<usize> {
+        self.table_max_width.map(|terminal_width| {
+            terminal_width
+                .saturating_sub(UnicodeWidthStr::width(indent))
+                .saturating_sub(transcript_table_frame_width(kind, self.handle.agent_label_frame_width()))
+        })
+    }
+
     fn should_record_transcript(kind: InlineMessageKind) -> bool {
         kind != InlineMessageKind::Pty
     }
@@ -922,6 +963,7 @@ impl InlineSink {
         resolved
     }
 
+    #[cfg(test)]
     fn prepare_markdown_lines(
         &self,
         text: &str,
@@ -929,6 +971,25 @@ impl InlineSink {
         base_style: Style,
         preserve_blank_lines: bool,
         preserve_code_indentation: bool,
+    ) -> (Vec<Vec<InlineSegment>>, Vec<String>, bool) {
+        self.prepare_markdown_lines_with_table_width(
+            text,
+            indent,
+            base_style,
+            preserve_blank_lines,
+            preserve_code_indentation,
+            self.table_max_width,
+        )
+    }
+
+    fn prepare_markdown_lines_with_table_width(
+        &self,
+        text: &str,
+        indent: &str,
+        base_style: Style,
+        preserve_blank_lines: bool,
+        preserve_code_indentation: bool,
+        table_max_width: Option<usize>,
     ) -> (Vec<Vec<InlineSegment>>, Vec<String>, bool) {
         let fallback = self.resolve_fallback_style(base_style);
         let fallback_arc = Arc::new(fallback.clone());
@@ -942,7 +1003,7 @@ impl InlineSink {
             RenderMarkdownOptions {
                 preserve_code_indentation,
                 disable_code_block_table_reparse: false,
-                table_max_width: self.table_max_width,
+                table_max_width,
             },
         );
         if preserve_blank_lines {
@@ -1044,8 +1105,15 @@ impl InlineSink {
             self.emit_large_json_payload(payload, indent, kind, record_transcript)?;
             return Ok(false);
         }
-        let (prepared, plain, last_empty) =
-            self.prepare_markdown_lines(text, indent, base_style, true, preserve_code_indentation);
+        let table_max_width = self.table_content_width(kind, indent);
+        let (prepared, plain, last_empty) = self.prepare_markdown_lines_with_table_width(
+            text,
+            indent,
+            base_style,
+            true,
+            preserve_code_indentation,
+            table_max_width,
+        );
         for (segments, line) in prepared.into_iter().zip(plain.iter()) {
             if segments.is_empty() {
                 self.handle.append_line(kind, Vec::new());
@@ -1073,7 +1141,12 @@ impl InlineSink {
     }
 
     fn new(handle: InlineHandle, highlight_config: SyntaxHighlightingConfig) -> Self {
-        Self { handle, highlight_config, table_max_width: None }
+        Self {
+            handle,
+            highlight_config,
+            table_max_width: None,
+            table_max_width_override: None,
+        }
     }
 
     fn set_highlight_config(&mut self, highlight_config: SyntaxHighlightingConfig) {
@@ -1547,6 +1620,88 @@ mod tests {
             docs_segment.style.effects.contains(Effects::UNDERLINE),
             "https markdown links should keep underline styling"
         );
+    }
+
+    #[test]
+    fn markdown_table_width_accounts_for_agent_frame_and_indent() {
+        use crate::ui::InlineCommand;
+
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let mut renderer = AnsiRenderer::with_inline_ui(InlineHandle::new_for_tests(sender), Default::default());
+        renderer.set_table_max_width(Some(18));
+
+        let markdown = "| Name | Description |\n|------|-------------|\n| item | a long value |\n";
+        renderer.render_markdown_output(MessageStyle::Response, markdown).unwrap();
+
+        let mut rendered = Vec::new();
+        while let Ok(command) = receiver.try_recv() {
+            if let InlineCommand::AppendLine { segments, .. } = command {
+                rendered.push(segments.into_iter().map(|segment| segment.text).collect::<String>());
+            }
+        }
+
+        let output = rendered.join("\n");
+        assert!(output.contains("Name:"), "agent frame should trigger labeled blocks: {output}");
+        assert!(output.contains("Description:"), "all labels should be retained: {output}");
+        assert!(!output.contains("│"), "table separators should not survive the narrow layout: {output}");
+        assert!(rendered.iter().all(|line| UnicodeWidthStr::width(line.as_str()) <= 18));
+    }
+
+    #[test]
+    fn markdown_table_width_accounts_for_agent_label() {
+        use crate::ui::InlineCommand;
+
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let handle = InlineHandle::new_for_tests(sender);
+        handle.set_message_labels(Some("Agent".to_owned()), None);
+        let mut renderer = AnsiRenderer::with_inline_ui(handle, Default::default());
+        renderer.set_table_max_width(Some(23));
+
+        let markdown = "| Name | Description |\n|------|-------------|\n| item | value |\n";
+        renderer.render_markdown_output(MessageStyle::Response, markdown).unwrap();
+
+        let mut rendered = Vec::new();
+        while let Ok(command) = receiver.try_recv() {
+            if let InlineCommand::AppendLine { segments, .. } = command {
+                rendered.push(segments.into_iter().map(|segment| segment.text).collect::<String>());
+            }
+        }
+
+        let output = rendered.join("\n");
+        assert!(output.contains("Name:"), "agent label should reserve its prefix width: {output}");
+        assert!(!output.contains("│"), "table columns should not be rewrapped after the label: {output}");
+    }
+
+    #[test]
+    fn streaming_markdown_table_uses_same_labeled_block_layout() {
+        use crate::ui::InlineCommand;
+
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let mut renderer = AnsiRenderer::with_inline_ui(InlineHandle::new_for_tests(sender), Default::default());
+        renderer.set_table_max_width(Some(18));
+
+        let markdown = "| Name | Description |\n|------|-------------|\n| item | a long value |\n";
+        let line_count = renderer.stream_markdown_response(markdown, 2).unwrap();
+
+        let mut replacement = None;
+        while let Ok(command) = receiver.try_recv() {
+            if let InlineCommand::ReplaceLast { count, lines, .. } = command {
+                replacement = Some((count, lines));
+            }
+        }
+
+        let (replaced_count, lines) = replacement.expect("streaming should replace rendered markdown lines");
+        let output = lines
+            .iter()
+            .map(|line| line.iter().map(|segment| segment.text.as_str()).collect::<String>())
+            .collect::<Vec<_>>();
+        assert_eq!(line_count, lines.len());
+        assert_eq!(replaced_count, 2);
+        assert!(
+            output.iter().any(|line| line.contains("Name:")),
+            "streamed output should contain labels: {output:?}"
+        );
+        assert!(!output.iter().any(|line| line.contains('│')), "streamed output should use blocks: {output:?}");
     }
 
     #[test]

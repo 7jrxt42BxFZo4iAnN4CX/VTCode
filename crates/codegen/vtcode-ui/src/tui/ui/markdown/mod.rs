@@ -81,8 +81,9 @@ impl MarkdownLine {
 pub struct RenderMarkdownOptions {
     pub preserve_code_indentation: bool,
     pub disable_code_block_table_reparse: bool,
-    /// Maximum width for tables. When set, tables wider than this will have
-    /// their column widths proportionally scaled down and cell text wrapped.
+    /// Available content width for tables. Headered tables render with their
+    /// intrinsic column widths when they fit; otherwise they fall back to
+    /// labeled, wrapped blocks. Headerless tables retain their table layout.
     pub table_max_width: Option<usize>,
 }
 

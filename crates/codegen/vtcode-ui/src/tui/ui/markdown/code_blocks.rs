@@ -467,11 +467,12 @@ fn parse_omitted_line_count(text: &str) -> Option<usize> {
 }
 
 fn code_block_contains_table(content: &str, language: Option<&str>) -> bool {
-    if let Some(lang) = language {
-        let lang_lower = lang.to_ascii_lowercase();
-        if !matches!(lang_lower.as_str(), "markdown" | "md" | "text" | "txt" | "plaintext" | "plain") {
-            return false;
-        }
+    let Some(lang) = language else {
+        return false;
+    };
+    let lang_lower = lang.to_ascii_lowercase();
+    if !matches!(lang_lower.as_str(), "markdown" | "md") {
+        return false;
     }
 
     let trimmed = content.trim();
