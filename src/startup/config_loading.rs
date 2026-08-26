@@ -53,7 +53,29 @@ pub(super) async fn load_startup_config(args: &Cli) -> Result<LoadedStartupConfi
         builder = builder.cli_override("agent.provider".to_owned(), toml::Value::String(provider.clone()));
     }
 
+    let config_phase = std::time::Instant::now();
     let manager = builder.build().context("Failed to load configuration")?;
+    let config_duration = config_phase.elapsed();
+    if let Some(timing) = manager.phase_timing() {
+        tracing::debug!(target = "vtcode.startup", ?timing, "configuration phases recorded");
+        vtcode_commons::startup_trace::record_duration(
+            "config_path_resolution",
+            std::time::Duration::from_micros(timing.path_resolution_us),
+        );
+        vtcode_commons::startup_trace::record_duration(
+            "config_layer_loading",
+            std::time::Duration::from_micros(timing.layer_loading_us),
+        );
+        vtcode_commons::startup_trace::record_duration(
+            "config_merge_and_parse",
+            std::time::Duration::from_micros(timing.merge_and_parse_us),
+        );
+        vtcode_commons::startup_trace::record_duration(
+            "config_validation",
+            std::time::Duration::from_micros(timing.validation_us),
+        );
+    }
+    vtcode_commons::startup_trace::record_duration("config_loading", config_duration);
     let primary_agent_explicitly_configured = has_explicit_default_primary_agent(&manager.effective_config());
     let mut config = manager.config().clone();
 

@@ -59,16 +59,7 @@ pub(crate) fn build_augmented_cli_command() -> clap::Command {
         cmd = cmd.color(choice);
     }
     cmd = cmd.styles(clap_help_styles());
-    // Only build the config-aware quick-start help text when --help/-h is
-    // actually requested.  The before_help string is only displayed on
-    // --help, so for all other invocations we use a static placeholder and
-    // skip the two TOML file reads + parses that build_quick_start_help()
-    // performs to decide which help variant to show.
-    if args_request_help() {
-        cmd = cmd.before_help(build_quick_start_help());
-    } else {
-        cmd = cmd.before_help(QUICK_START_HELP_CONFIGURED);
-    }
+    cmd = cmd.before_help(QUICK_START_HELP);
 
     let version_info = vtcode_core::cli::args::long_version();
     let version_leak: &'static str = Box::leak(version_info.into_boxed_str());
@@ -114,116 +105,12 @@ fn requested_help_color_choice() -> Option<CliColorChoice> {
     requested
 }
 
-fn build_quick_start_help() -> String {
-    if has_provider_or_model_configuration() {
-        QUICK_START_HELP_CONFIGURED.to_string()
-    } else {
-        QUICK_START_HELP_UNCONFIGURED.to_string()
-    }
-}
-
-/// Quick-start help shown when the user already has a provider/model configured.
-/// Used as the default `before_help` for non-`--help` invocations (where it is
-/// never displayed) and when config reads confirm a provider/model is set.
-const QUICK_START_HELP_CONFIGURED: &str = "\
+const QUICK_START_HELP: &str = "\
 Quick start:\n\
-  1. Start interactive chat: vtcode chat\n\
-  2. Run one prompt directly: vtcode --print \"summarize this repository\"\n\n\
+  1. Set a provider API key (for example OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY)\n\
+  2. Start interactive chat: vtcode chat --provider openai --model gpt-5\n\
+  3. Run one prompt directly: vtcode --print=\"summarize this repository\"\n\n\
 Use `vtcode <command> --help` for command-specific details.";
-
-/// Quick-start help shown when no provider/model is configured yet.
-const QUICK_START_HELP_UNCONFIGURED: &str = "\
-Quick start:\n\
-  1. Export your provider API key (examples: OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY)\n\
-  2. Start chat with a provider/model: vtcode chat --provider openai --model gpt-5\n\
-  3. Run one prompt directly: vtcode --provider anthropic --model claude-sonnet-4-6 --print \"summarize this repository\"\n\n\
-Use `vtcode <command> --help` for command-specific details.";
-
-/// Check whether the user passed `--help`, `-h`, or the `help` subcommand.
-/// Scans raw argv so we can decide before clap parses.
-fn args_request_help() -> bool {
-    std::env::args()
-        .skip(1)
-        .any(|arg| arg == "--help" || arg == "-h" || arg == "help")
-}
-
-fn has_provider_or_model_configuration() -> bool {
-    cli_args_include_provider_or_model() || config_includes_provider_or_model()
-}
-
-fn cli_args_include_provider_or_model() -> bool {
-    std::env::args().skip(1).any(|arg| {
-        arg == "--provider" || arg == "--model" || arg.starts_with("--provider=") || arg.starts_with("--model=")
-    })
-}
-
-/// Lightweight check: read only the user-home and workspace config files
-/// directly instead of doing a full 5-layer `ConfigManager::load()`.  This
-/// avoids the ~200-400ms cost of reading, parsing, merging, deserializing,
-/// and validating all config layers just to decide which `--help` text to
-/// show.
-fn config_includes_provider_or_model() -> bool {
-    // Check every global layer: a higher-precedence file may be valid while
-    // leaving provider/model unset, allowing the effective lower layer to
-    // supply it.
-    for path in global_config_paths() {
-        if check_toml_file(Some(path)).is_some_and(|found| found) {
-            return true;
-        }
-    }
-    // Fall back to workspace config in the current directory.
-    check_toml_file(workspace_config_path()).unwrap_or(false)
-}
-
-fn global_config_paths() -> Vec<std::path::PathBuf> {
-    let mut candidates = Vec::new();
-    if let Some(path) = std::env::var_os("VTCODE_CONFIG_PATH")
-        .filter(|value| !value.is_empty())
-        .map(std::path::PathBuf::from)
-    {
-        candidates.push(path);
-    }
-    let Ok(paths) = vtcode_commons::VtCodePaths::resolve() else {
-        return candidates;
-    };
-
-    // The resolver returns merge order (lowest precedence first); this probe
-    // checks the effective user-facing configuration from highest to lowest.
-    candidates.push(paths.config_file());
-    candidates.push(paths.legacy_dir().join("vtcode.toml"));
-    let mut system_paths = paths.system_config_paths("vtcode.toml").unwrap_or_default();
-    system_paths.reverse();
-    candidates.extend(system_paths);
-    candidates.dedup();
-    candidates
-}
-
-fn workspace_config_path() -> Option<std::path::PathBuf> {
-    std::env::current_dir().ok().map(|cwd| cwd.join("vtcode.toml"))
-}
-
-/// Read a single TOML file and check for provider/model keys.
-/// Returns `Some(true)` if found, `Some(false)` if not found, `None` if the
-/// file could not be read or parsed.
-fn check_toml_file(path: Option<std::path::PathBuf>) -> Option<bool> {
-    let path = path?;
-    let content = std::fs::read_to_string(&path).ok()?;
-    let value: toml::Value = toml::from_str(&content).ok()?;
-    Some(has_provider_or_model_keys(&value))
-}
-
-fn has_provider_or_model_keys(config: &toml::Value) -> bool {
-    let Some(root) = config.as_table() else {
-        return false;
-    };
-
-    root.contains_key("provider")
-        || root.contains_key("model")
-        || root.get("agent").and_then(toml::Value::as_table).is_some_and(|agent| {
-            agent.contains_key("provider") || agent.contains_key("model") || agent.contains_key("default_model")
-        })
-}
-
 fn parse_help_color_choice(value: &str) -> Option<CliColorChoice> {
     match value.trim().to_ascii_lowercase().as_str() {
         "always" => Some(CliColorChoice::Always),
@@ -235,11 +122,13 @@ fn parse_help_color_choice(value: &str) -> Option<CliColorChoice> {
 
 pub(crate) async fn resolve_startup_context(args: &Cli) -> Result<StartupContext> {
     let startup_start = Instant::now();
+    let startup_phase = vtcode_commons::startup_trace::phase_started();
     let startup = StartupContext::from_cli_args(args)
         .await
         .context("failed to initialize VT Code startup context")?;
     let startup_ms = startup_start.elapsed().as_millis() as u64;
     tracing::debug!(target = "vtcode.startup", startup_ms, "startup context resolved");
+    vtcode_commons::startup_trace::record_phase("startup_context_resolution", startup_phase);
     Ok(startup)
 }
 
@@ -460,76 +349,21 @@ fn extract_workspace_invalid_value(err_text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_augmented_cli_command, cached_candidates, extract_workspace_invalid_value, global_config_paths,
-        similarity_score, suggest_similar_commands, try_enhance_clap_error,
+        build_augmented_cli_command, cached_candidates, extract_workspace_invalid_value, similarity_score,
+        suggest_similar_commands, try_enhance_clap_error,
     };
     use clap::Parser;
-    use serial_test::serial;
-    use tempfile::TempDir;
-    use vtcode_commons::{VtCodePaths, env_lock};
     use vtcode_core::cli::args::Cli;
 
     #[test]
-    #[serial]
-    fn global_config_paths_use_canonical_and_legacy_resolver_candidates() {
-        let env = env_lock::lock();
-        let config = TempDir::new().expect("create config root");
-        let legacy = TempDir::new().expect("create legacy root");
-        let previous_config = std::env::var_os("VTCODE_CONFIG");
-        let previous_home = std::env::var_os("VTCODE_HOME");
-        env.set_var("VTCODE_CONFIG", config.path());
-        env.set_var("VTCODE_HOME", legacy.path());
-
-        let mut expected = vec![config.path().join("vtcode.toml"), legacy.path().join("vtcode.toml")];
-        let mut system_paths = VtCodePaths::resolve()
-            .expect("resolve test VT Code paths")
-            .system_config_paths("vtcode.toml")
-            .expect("resolve system config candidates");
-        system_paths.reverse();
-        expected.extend(system_paths);
-        expected.dedup();
-        assert_eq!(global_config_paths(), expected);
-
-        env.restore_var("VTCODE_CONFIG", previous_config);
-        env.restore_var("VTCODE_HOME", previous_home);
-    }
-
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd",
-        target_os = "dragonfly"
-    ))]
-    #[test]
-    #[serial]
-    fn global_config_paths_put_user_layers_ahead_of_xdg_system_layers() {
-        let env = env_lock::lock();
-        let config = TempDir::new().expect("create config root");
-        let legacy = TempDir::new().expect("create legacy root");
-        let first_system = TempDir::new().expect("create first system root");
-        let second_system = TempDir::new().expect("create second system root");
-        let previous_config = std::env::var_os("VTCODE_CONFIG");
-        let previous_home = std::env::var_os("VTCODE_HOME");
-        let previous_system = std::env::var_os("XDG_CONFIG_DIRS");
-        let system_dirs =
-            std::env::join_paths([first_system.path(), second_system.path()]).expect("join XDG config directories");
-        env.set_var("VTCODE_CONFIG", config.path());
-        env.set_var("VTCODE_HOME", legacy.path());
-        env.set_var("XDG_CONFIG_DIRS", system_dirs);
-
-        let expected = vec![
-            config.path().join("vtcode.toml"),
-            legacy.path().join("vtcode.toml"),
-            first_system.path().join("vtcode/vtcode.toml"),
-            second_system.path().join("vtcode/vtcode.toml"),
-            std::path::PathBuf::from("/etc/vtcode/vtcode.toml"),
-        ];
-        assert_eq!(global_config_paths(), expected);
-
-        env.restore_var("VTCODE_CONFIG", previous_config);
-        env.restore_var("VTCODE_HOME", previous_home);
-        env.restore_var("XDG_CONFIG_DIRS", previous_system);
+    fn help_uses_static_quick_start_text() {
+        let mut command = build_augmented_cli_command();
+        let error = command
+            .try_get_matches_from_mut(["vtcode", "--help"])
+            .expect_err("help should exit through clap");
+        let help = error.to_string();
+        assert!(help.contains("Set a provider API key"));
+        assert!(!help.contains("already configured"));
     }
 
     #[test]

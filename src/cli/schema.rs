@@ -71,7 +71,7 @@ async fn collect_tools_schema(
     config: &VTCodeConfig,
 ) -> Result<Vec<ToolSchemaEntry>> {
     let workspace = env::current_dir().context("failed to resolve current working directory")?;
-    let registry = ToolRegistry::new(workspace).await;
+    let registry = ToolRegistry::new_for_schema(workspace).await;
     let mut tools: Vec<ToolSchemaEntry> = registry
         .schema_entries(
             SessionToolsConfig::full_public(

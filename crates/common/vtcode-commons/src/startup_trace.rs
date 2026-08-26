@@ -60,6 +60,14 @@ pub fn record_milestone(name: &str) {
     }
 }
 
+/// Record a phase using an elapsed duration supplied by a caller that already
+/// owns a timer. This keeps startup tracing usable across crate boundaries.
+pub fn record_duration(name: &str, duration: std::time::Duration) {
+    if state().enabled {
+        eprintln!("VTCODE_STARTUP_TRACE phase={name} duration_ms={:.3}", duration.as_secs_f64() * 1_000.0);
+    }
+}
+
 /// Install work that should run after the first interactive frame is drawn.
 ///
 /// The hook is also installed when tracing is disabled because the startup

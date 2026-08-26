@@ -175,6 +175,7 @@ fn bootstrap_main() -> Result<BootstrapOutcome> {
         Some(env!("CARGO_PKG_REPOSITORY")),
     );
     panic_hook::init_panic_hook();
+    vtcode_commons::startup_trace::record_milestone("hardening_ready");
 
     if vtcode_core::maybe_run_zsh_exec_wrapper_mode()? {
         return Ok(BootstrapOutcome::ExitEarly);
@@ -196,18 +197,28 @@ fn bootstrap_main() -> Result<BootstrapOutcome> {
     tracing::debug!(target = "vtcode.startup", elapsed_ms = cli_start.elapsed().as_millis() as u64, "cli parsed");
     let args = Cli::from_arg_matches(&matches)?;
     vtcode_commons::startup_trace::record_phase("cli_parsing", cli_phase);
+    let startup_policy = startup::command_startup_policy(&args);
     panic_hook::set_debug_mode(args.debug);
     let color_eyre_enabled = debug_runtime_flag_enabled(args.debug, "VTCODE_COLOR_EYRE");
     panic_hook::set_color_eyre_enabled(color_eyre_enabled);
     let tui_log_capture_enabled = debug_runtime_flag_enabled(args.debug, "VTCODE_TUI_LOGS");
     vtcode_ui::tui::log::set_tui_log_capture_enabled(tui_log_capture_enabled);
 
-    // Load .env (non-fatal if missing)
-    if let Err(_err) = load_dotenv()
-        && !args.quiet
-    {}
+    // Load .env and migrate legacy paths only for commands whose startup
+    // policy needs provider credentials or the normal user runtime. Offline
+    // metadata must remain read-only and independent of user state.
+    if startup_policy.load_dotenv() || startup_policy.migrate_legacy_paths() {
+        let environment_phase = vtcode_commons::startup_trace::phase_started();
+        if startup_policy.load_dotenv()
+            && let Err(_err) = load_dotenv()
+            && !args.quiet
+        {}
 
-    migrate_legacy_global_paths(args.quiet);
+        if startup_policy.migrate_legacy_paths() {
+            migrate_legacy_global_paths(args.quiet);
+        }
+        vtcode_commons::startup_trace::record_phase("dotenv_and_migration", environment_phase);
+    }
 
     if args.print.is_some() && args.command.is_some() {
         anyhow::bail!("The --print/-p flag cannot be combined with subcommands. Use print mode without a subcommand.");
@@ -252,15 +263,16 @@ fn bootstrap_main() -> Result<BootstrapOutcome> {
     // one-shot commands (`ask`, `exec`, `schema`, `--print`, …) would
     // otherwise pay ~200 ms at exit while the runtime drop waits for the
     // unused blocking task to finish.
-    if startup::command_runs_interactive_session(args.command.as_ref(), args.print.is_some()) {
+    if startup_policy.run_terminal_probe() {
         agent::probe::start_terminal_palette_probe(runtime.handle());
     }
 
     let startup = runtime.block_on(resolve_startup_context(&args))?;
+    vtcode_commons::startup_trace::record_milestone("dispatch_ready");
     vtcode_commons::startup_trace::record_phase("bootstrap", bootstrap_phase);
     // For one-shot commands this is the last startup boundary before dispatch;
     // interactive sessions publish the more useful first_ui_render milestone.
-    if !startup::command_runs_interactive_session(args.command.as_ref(), args.print.is_some()) {
+    if !startup_policy.runs_interactive_session() {
         vtcode_commons::startup_trace::record_milestone("short_lived_command_ready");
     }
     tracing::debug!(
@@ -293,6 +305,7 @@ fn migrate_legacy_global_paths(quiet: bool) {
 
 async fn run(prepared: PreparedRun) -> Result<()> {
     let PreparedRun { args, startup, print_mode } = prepared;
+    let startup_policy = startup::command_startup_policy(&args);
 
     configure_debug_session_routing(&args, &startup, &print_mode).await;
 
@@ -319,14 +332,14 @@ async fn run(prepared: PreparedRun) -> Result<()> {
     // The result is consumed later (after dispatch) via get_preflight_notice().
     // Updates are best-effort maintenance. Starting this only for interactive
     // sessions avoids spawning work for metadata and one-shot commands.
-    if startup::command_uses_interactive_ui(&args) {
+    if startup_policy.run_interactive_maintenance() {
         tokio::spawn(updater::run_preflight_check());
     }
 
     // Clean up old spooled large output files (>24h) at startup to prevent
     // unbounded growth. Deferred to a blocking task so a cold cache does not
     // block first user I/O on the critical startup path.
-    if startup::command_uses_interactive_ui(&args)
+    if startup_policy.run_interactive_maintenance()
         && let Ok(paths) = VtCodePaths::resolve()
         && let Ok(tmp_dir) = paths.cache_path("large-output")
     {

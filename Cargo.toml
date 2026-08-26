@@ -356,6 +356,10 @@ desktop-notifications = ["vtcode-core/desktop-notifications"]
 name = "allocator_throughput"
 harness = false
 
+[[bench]]
+name = "startup"
+harness = false
+
 [profile.dev]
 debug = 0
 lto = false

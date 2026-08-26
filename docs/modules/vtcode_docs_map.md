@@ -135,7 +135,7 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/development/performance.md`
   - **Content**: Performance Optimization
-  - **Topics**: Goals, Performance & Simplicity Rules, Local Workflow, Startup budget, Profiling Build
+  - **Topics**: Goals, Performance & Simplicity Rules, Local Workflow, Standalone startup benchmark, Profiling Build
   - **User Questions**: "What can you tell me about Performance Optimization?", "How does Goals work?", "How does Performance & Simplicity Rules work?"
 
 - **File**: `docs/development/PROCESS_HARDENING.md`
@@ -197,7 +197,7 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/development/vtcode-binary-gotchas.md`
   - **Content**: vtcode Binary Gotchas
-  - **Topics**: Startup, updates, and allocation, Tool-budget and recovery contracts, Request assembly and planning
+  - **Topics**: Startup, updates, and allocation, Tool-budget and recovery contracts, Request assembly and planning, Startup benchmark guidance
   - **User Questions**: "What can you tell me about vtcode Binary Gotchas?", "How does Startup, updates, and allocation work?", "How does Tool-budget and recovery contracts work?"
 
 - **File**: `docs/development/vtcode-crate-audit.md`

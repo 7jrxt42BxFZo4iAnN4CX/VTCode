@@ -18,7 +18,7 @@ Two pathways: **OpenRouter** (code-generated) — edit `ModelId`, `Provider::Ope
 
 ## Gotchas
 
-- `VTCodeConfig::load()` resolves layers — do not use `ConfigManager::load_from_workspace()` directly in production code. Global system paths are supplied low-to-high; `ConfigManager` snapshots the canonical write path during load.
+- `VTCodeConfig::load()` resolves layers — do not use `ConfigManager::load_from_workspace()` directly in production code. Global system paths are supplied low-to-high; `ConfigManager` snapshots the canonical write path during load and exposes loader component timings through `phase_timing()` for startup diagnostics.
 - `models/model_id/table.rs` (`model_id_table!`) is the single source for as_str/parse/display/description/provider per variant — add new models as one table row, never a new match arm in the wrapper files.
 - `parse.rs` keeps an order-sensitive hand-written preamble (opencode/evolink prefix routing, ZAI shadow guards, dated-haiku remap) before the table lookup — never move prefix rules into the table; NVIDIA's `z-ai/glm-5.2` picker variant intentionally has no bare parse entry because OpenRouter owns bare parsing.
 - Loop/harness config: `core/automation.rs` holds `LoopEngineConfig` (gated by `loop_engine_enabled()`, override `VTCODE_DISABLE_LOOP_ENGINE`) and `verify_mutations` on `FullAutoConfig` (**default off**); `AgentHarnessConfig.context_reset_mode` (`off`/`on_stall`/`on_compaction`) and `context_reset_stall_threshold` are distinct from compaction config. `event_log_path` is an explicit compatibility export; canonical events live in the workspace session store. Approved-plan execution's internal +50 loop allowance is a constant, not a config field.

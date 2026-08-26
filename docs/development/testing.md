@@ -13,20 +13,52 @@ VT Code includes a multi-layered test suite designed to ensure reliability and p
 
 ## **Running Tests**
 
-### Startup benchmark
+### Standalone startup benchmark
 
-Use the repeatable launch benchmark to compare process startup across cold
-processes and warm filesystem caches:
+Startup measurements use the release executable directly. Build it once, then
+run the standalone harness with an explicit executable path:
 
 ```bash
-VTCODE_STARTUP_TRACE=1 VTCODE_BENCH_RUNS=5 ./scripts/bench-startup.sh
+cargo build --release --locked --bin vtcode
+VTCODE_BIN="$PWD/target/release/vtcode" \
+  VTCODE_BENCH_RUNS=10 \
+  cargo bench --locked --bench startup -- --noplot
 ```
 
-The script measures `--version` and `--help` using the release binary. Set
-`VTCODE_BIN` to measure another binary. For an interactive first-frame run,
-use `VTCODE_BENCH_INTERACTIVE=1`; stop after the `first_ui_render` trace line.
-Startup tracing is opt-in and reports stable phase names, including
-`short_lived_command_ready` and `first_ui_render`.
+The case matrix is intentionally limited to short-lived, provider-free
+commands:
+
+```text
+vtcode --version
+vtcode --help
+vtcode schema tools --format ndjson --name code_search
+```
+
+Each case is measured in two modes. A cold sample launches a freshly copied
+executable (a new copy for every sample); a warm sample launches the same
+executable repeatedly after warm-up. Both modes run with isolated temporary
+`HOME`, `VTCODE_CONFIG`, `VTCODE_DATA`, `VTCODE_CONFIG_PATH`, and workspace
+directories, so the benchmark cannot read or modify the developer's normal
+configuration, credentials, data, or repository. The workspace is also
+explicitly selected for each child process.
+
+The harness writes the raw duration samples and reports a stable median and
+p95 for every case/mode. Keep the raw samples with the result so regressions
+can be reproduced and distributions can be inspected; do not compare a lone
+best-case launch. Fresh executable copies are a process/loader cold proxy,
+not an operating-system cache flush: the benchmark deliberately does not
+flush or evict OS page caches. `VTCODE_STARTUP_TRACE=1` may be enabled for
+phase diagnostics, but should remain disabled for timing samples.
+
+For the broader local performance capture (which also includes cargo-check,
+first-user-I/O, and PTY first-render measurements), use:
+
+```bash
+./scripts/perf/baseline.sh baseline
+./scripts/perf/baseline.sh latest
+./scripts/perf/compare.sh \
+  .vtcode/perf/baseline.json .vtcode/perf/latest.json
+```
 
 ### Basic Test Commands
 

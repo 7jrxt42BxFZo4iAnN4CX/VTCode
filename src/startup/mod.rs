@@ -65,9 +65,196 @@ pub(crate) enum SessionResumeMode {
     Fork(String), // Fork from specific session ID
 }
 
+/// Startup work selected by the command being launched.
+///
+/// The policy is intentionally centralized because startup has several
+/// independent side effects: environment loading, legacy migration, provider
+/// authentication, theme preference access, runtime security initialization,
+/// update checks, and spool cleanup. A command that does not need one of those
+/// services must not pay for it or accidentally create user state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StartupCommandKind {
+    /// Offline command metadata such as schemas, model information, and man pages.
+    Metadata,
+    /// A provider-backed, tool-free one-shot request (`ask` or `--print`).
+    Ask,
+    /// Interactive chat or session continuation.
+    Interactive,
+    /// A path that can execute agent tools or otherwise needs the full runtime.
+    ToolCapable,
+    /// The Codex app-server proxy, which owns authentication but still executes tools.
+    AppServer,
+    /// Existing command-owned paths that intentionally do not use the LLM runtime.
+    CommandOwned,
+    /// Unknown commands retain the conservative historical startup behavior.
+    Conservative,
+}
+
+/// Central startup policy for one parsed CLI invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StartupPolicy {
+    kind: StartupCommandKind,
+    allow_missing_provider_auth: bool,
+}
+
+impl StartupPolicy {
+    /// Classify parsed arguments before any command-specific startup side effects run.
+    #[must_use]
+    pub(crate) fn for_args(args: &Cli) -> Self {
+        let kind = if args.print.is_some() {
+            StartupCommandKind::Ask
+        } else {
+            match args.command.as_ref() {
+                Some(Commands::Ask { .. }) => StartupCommandKind::Ask,
+                Some(Commands::Schema { .. } | Commands::Models { .. } | Commands::Man { .. }) => {
+                    StartupCommandKind::Metadata
+                }
+                Some(Commands::AppServer { .. }) => StartupCommandKind::AppServer,
+                Some(
+                    Commands::Chat
+                    | Commands::ChatVerbose
+                    | Commands::Continue
+                    | Commands::AgentClientProtocol { .. }
+                    | Commands::Exec { .. }
+                    | Commands::Review(_)
+                    | Commands::Analyze { .. }
+                    | Commands::Benchmark { .. }
+                    | Commands::BackgroundSubagent(_)
+                    | Commands::AnthropicApi { .. },
+                ) => {
+                    if args.full_auto.as_ref().is_some_and(|prompt| !prompt.trim().is_empty()) {
+                        StartupCommandKind::ToolCapable
+                    } else if matches!(args.command, Some(Commands::Chat | Commands::ChatVerbose | Commands::Continue))
+                    {
+                        StartupCommandKind::Interactive
+                    } else {
+                        StartupCommandKind::ToolCapable
+                    }
+                }
+                Some(
+                    Commands::ToolPolicy { .. }
+                    | Commands::Login { .. }
+                    | Commands::Logout { .. }
+                    | Commands::Auth { .. }
+                    | Commands::Notify { .. }
+                    | Commands::Pods { .. }
+                    | Commands::Schedule { .. }
+                    | Commands::Update { .. }
+                    | Commands::Dependencies { .. }
+                    | Commands::Secret { .. },
+                ) => StartupCommandKind::CommandOwned,
+                None if args.full_auto.as_ref().is_some_and(|prompt| !prompt.trim().is_empty()) => {
+                    StartupCommandKind::ToolCapable
+                }
+                None => StartupCommandKind::Interactive,
+                Some(_) => StartupCommandKind::Conservative,
+            }
+        };
+
+        let allow_missing_provider_auth = args.print.is_none()
+            && (args.command.is_none() || matches!(args.command, Some(Commands::AgentClientProtocol { .. })));
+
+        Self { kind, allow_missing_provider_auth }
+    }
+
+    /// Whether `.env` loading is needed before this command starts.
+    #[must_use]
+    pub(crate) const fn load_dotenv(self) -> bool {
+        !matches!(self.kind, StartupCommandKind::Metadata)
+    }
+
+    /// Whether legacy global paths should be migrated during startup.
+    #[must_use]
+    pub(crate) const fn migrate_legacy_paths(self) -> bool {
+        !matches!(self.kind, StartupCommandKind::Metadata)
+    }
+
+    /// Whether startup should resolve provider credentials and perform auth preflight.
+    #[must_use]
+    pub(crate) const fn resolve_provider_auth(self) -> bool {
+        matches!(
+            self.kind,
+            StartupCommandKind::Ask
+                | StartupCommandKind::Interactive
+                | StartupCommandKind::ToolCapable
+                | StartupCommandKind::Conservative
+        )
+    }
+
+    /// Whether a missing credential may be handed to the command to resolve later.
+    #[must_use]
+    pub(crate) const fn allow_missing_provider_auth(self) -> bool {
+        self.allow_missing_provider_auth
+    }
+
+    /// Whether the selected provider must be known before dispatch.
+    #[must_use]
+    pub(crate) const fn validate_provider(self) -> bool {
+        matches!(
+            self.kind,
+            StartupCommandKind::Ask | StartupCommandKind::Interactive | StartupCommandKind::ToolCapable
+        )
+    }
+
+    /// Whether provider/model startup diagnostics should run for this command.
+    #[must_use]
+    pub(crate) const fn validate_startup_configuration(self) -> bool {
+        !matches!(self.kind, StartupCommandKind::Metadata)
+    }
+
+    /// Whether the agent-tool runtime (guardian, gatekeeper, caches, and archive settings) is required.
+    #[must_use]
+    pub(crate) const fn initialize_runtime(self) -> bool {
+        !matches!(self.kind, StartupCommandKind::Metadata | StartupCommandKind::Ask | StartupCommandKind::CommandOwned)
+    }
+
+    /// Whether the process-wide user dot-folder should be initialized.
+    #[must_use]
+    pub(crate) const fn initialize_dot_folder(self) -> bool {
+        !matches!(self.kind, StartupCommandKind::Metadata)
+    }
+
+    /// Whether the user's persisted theme preference may be read.
+    #[must_use]
+    pub(crate) const fn read_theme_preference(self) -> bool {
+        matches!(self.kind, StartupCommandKind::Interactive)
+    }
+
+    /// Whether the selected theme may be persisted after activation.
+    #[must_use]
+    pub(crate) const fn persist_theme_preference(self) -> bool {
+        self.read_theme_preference()
+    }
+
+    /// Whether the terminal palette probe should be started before startup context resolution.
+    #[must_use]
+    pub(crate) const fn run_terminal_probe(self) -> bool {
+        matches!(self.kind, StartupCommandKind::Interactive)
+    }
+
+    /// Whether background update checks and spool cleanup belong to this launch.
+    #[must_use]
+    pub(crate) const fn run_interactive_maintenance(self) -> bool {
+        matches!(self.kind, StartupCommandKind::Interactive)
+    }
+
+    /// Whether this command enters the interactive agent session.
+    #[must_use]
+    pub(crate) const fn runs_interactive_session(self) -> bool {
+        matches!(self.kind, StartupCommandKind::Interactive)
+    }
+}
+
+/// Return the one startup policy for a parsed invocation.
+#[must_use]
+pub(crate) fn command_startup_policy(args: &Cli) -> StartupPolicy {
+    StartupPolicy::for_args(args)
+}
+
 impl StartupContext {
     pub(crate) async fn from_cli_args(args: &Cli) -> Result<Self> {
         let startup_start = std::time::Instant::now();
+        let startup_policy = command_startup_policy(args);
         let config_phase = vtcode_commons::startup_trace::phase_started();
         let loaded = load_startup_config(args).await?;
         vtcode_commons::startup_trace::record_phase("config", config_phase);
@@ -92,14 +279,16 @@ impl StartupContext {
 
         let mut config = loaded.config;
         apply_codex_experimental_override(&mut config, args.codex_experimental_override());
-        let uses_interactive_ui = command_uses_interactive_ui(args);
+        let uses_interactive_ui = startup_policy.runs_interactive_session();
 
         let planning_entry_source = PlanningEntrySource::None;
         apply_cli_permission_overrides(&mut config, &args.allowed_tools, &args.disallowed_tools);
 
         // Validate configuration against models database
         let validation_phase = vtcode_commons::startup_trace::phase_started();
-        validate_startup_configuration(&config, &loaded.workspace, args.quiet, uses_interactive_ui).await?;
+        if startup_policy.validate_startup_configuration() {
+            validate_startup_configuration(&config, &loaded.workspace, args.quiet, uses_interactive_ui).await?;
+        }
 
         let (custom_session_id, session_resume) = resolve_session_resume(args)?;
         validate_resume_all_usage(args, session_resume.as_ref())?;
@@ -112,8 +301,12 @@ impl StartupContext {
         }
 
         let mut selection = resolve_runtime_model_selection(args, &config);
-        let auth_phase = vtcode_commons::startup_trace::phase_started();
-        let codex_fallback_notice = if command_skips_provider_auth(args.command.as_ref()) {
+        let auth_phase = if startup_policy.resolve_provider_auth() {
+            vtcode_commons::startup_trace::phase_started()
+        } else {
+            None
+        };
+        let codex_fallback_notice = if !startup_policy.resolve_provider_auth() {
             None
         } else {
             maybe_apply_codex_sidecar_fallback(
@@ -128,7 +321,7 @@ impl StartupContext {
         // Fail fast on an unknown provider before the terminal probe / TUI
         // starts, so an invalid `--provider` or broken `[agent].provider` yields
         // a clean, actionable error instead of an opaque mid-session failure.
-        if command_uses_llm_provider(args.command.as_ref()) {
+        if startup_policy.validate_provider() {
             validate_runtime_provider(&config, &selection.provider)?;
         }
 
@@ -137,23 +330,20 @@ impl StartupContext {
         // resolved above) and is mutually independent. Join the futures so the
         // disk I/O (dotfolder creation, guardian audit-log read, theme/config
         // load, provider auth probe) overlaps instead of running serially.
-        // Inits irrelevant to auth-skipping commands (Login, Logout, Auth,
-        // ToolPolicy, AppServer, Notify, Pods, Schedule) are gated behind
-        // `!skip_auth` to skip their work entirely on short-lived commands.
-        let skip_auth = command_skips_provider_auth(args.command.as_ref());
         // The tool-runtime initializers (gatekeeper, file/command caches, file
-        // opener, session-archive, perf telemetry) may only be skipped for
-        // auth-skipping commands that never execute tools. `AppServer` (the
-        // codex app-server proxy) is auth-skipping but DOES run tools on the
-        // user's behalf via `pty/manager.rs` / `exec/async_command.rs`, which
-        // call `check_quarantine_for_program`. If the gatekeeper is left
-        // uninitialized, that check silently no-ops (gatekeeper.rs), so app
-        // server tool execution would bypass quarantine checks. Keep the
-        // runtime inits for AppServer even though it skips provider auth.
-        let skip_runtime_init = command_skips_runtime_init(args.command.as_ref());
+        // opener, session-archive, perf telemetry) remain enabled for every
+        // path that can execute agent tools. AppServer intentionally skips
+        // provider authentication but still needs these checks because its
+        // proxy executes tools on the user's behalf.
+        let skip_auth = !startup_policy.resolve_provider_auth();
+        let skip_runtime_init = !startup_policy.initialize_runtime();
 
-        let theme_fut = determine_theme(args, &config);
-        let dot_folder_fut = initialize_dot_folder();
+        let theme_fut = determine_theme(args, &config, startup_policy.read_theme_preference());
+        let dot_folder_fut = async {
+            if startup_policy.initialize_dot_folder() {
+                initialize_dot_folder().await.ok();
+            }
+        };
         let guardian_fut = async {
             if skip_runtime_init {
                 return;
@@ -188,7 +378,7 @@ impl StartupContext {
             .await
             {
                 Ok(auth) => Ok(auth),
-                Err(err) if can_start_without_provider_auth(args.command.as_ref()) => {
+                Err(err) if startup_policy.allow_missing_provider_auth() => {
                     tracing::warn!("starting VT Code without provider auth: {err}");
                     Ok((String::new(), None))
                 }
@@ -202,18 +392,20 @@ impl StartupContext {
         let theme_resolution = theme_res?;
         let theme_selection = theme_resolution.theme;
 
-        // Only persist the theme preference when it actually changed. The loaded
-        // dot-config from determine_theme() is reused to avoid a second
-        // load_user_config() call.
-        let theme_changed = theme_resolution
-            .loaded_dot_config
-            .as_ref()
-            .map(|dot| dot.preferences.theme.trim() != theme_selection.as_str())
-            .unwrap_or(true);
-        if theme_changed {
-            update_theme_preference(&theme_selection).await.ok();
+        // Only interactive sessions read or persist the user's theme
+        // preference. Other commands use CLI/config/terminal/default values
+        // without creating or changing user dot-config state.
+        if startup_policy.persist_theme_preference() {
+            let theme_changed = theme_resolution
+                .loaded_dot_config
+                .as_ref()
+                .map(|dot| dot.preferences.theme.trim() != theme_selection.as_str())
+                .unwrap_or(true);
+            if theme_changed {
+                update_theme_preference(&theme_selection).await.ok();
+            }
         }
-        vtcode_core::utils::dot_config::set_startup_user_config(if uses_interactive_ui {
+        vtcode_core::utils::dot_config::set_startup_user_config(if startup_policy.read_theme_preference() {
             theme_resolution.loaded_dot_config
         } else {
             None
@@ -609,109 +801,6 @@ fn command_launches_tui(command: Option<&Commands>) -> bool {
     )
 }
 
-/// Whether the command will reach the interactive agent run loop
-/// ([`run_single_agent_loop`]) and therefore needs the terminal palette
-/// probe pre-started for overlap.
-///
-/// This is narrower than [`command_launches_tui`]: one-shot commands like
-/// `ask`, `exec`, `review`, `schema`, and `--print` mode never enter the
-/// agent loop, so starting the probe for them would only add ~200 ms to
-/// their exit (the runtime drop waits for the blocking task to finish).
-///
-/// `None` (no subcommand) is included because the default action resolves
-/// to `Chat`, `Resume`, or `FullAuto` — all of which either enter the agent
-/// loop or run long enough that the probe completes in the background
-/// before exit.
-///
-/// [`run_single_agent_loop`]: crate::agent::agents::run_single_agent_loop
-pub(crate) fn command_runs_interactive_session(command: Option<&Commands>, has_print: bool) -> bool {
-    if has_print {
-        // `--print` mode resolves to a one-shot `Ask`, not the agent loop.
-        return false;
-    }
-    matches!(command, None | Some(Commands::Chat | Commands::ChatVerbose | Commands::Continue))
-}
-
-/// Whether startup validation can defer warning-only work until the first TUI
-/// frame. Full-auto prompts are dispatched through a non-interactive runner,
-/// even though they share the no-subcommand shape with interactive chat.
-pub(crate) fn command_uses_interactive_ui(args: &Cli) -> bool {
-    if args.print.is_some() || args.full_auto.as_ref().is_some_and(|prompt| !prompt.trim().is_empty()) {
-        return false;
-    }
-
-    command_runs_interactive_session(args.command.as_ref(), false)
-}
-
-fn command_skips_provider_auth(command: Option<&Commands>) -> bool {
-    matches!(
-        command,
-        Some(
-            Commands::ToolPolicy { .. }
-                | Commands::Login { .. }
-                | Commands::Logout { .. }
-                | Commands::Auth { .. }
-                | Commands::AppServer { .. }
-                | Commands::Notify { .. }
-                | Commands::Pods { .. }
-                | Commands::Schedule { .. }
-                | Commands::Update { .. }
-                | Commands::Dependencies { .. }
-                | Commands::Secret { .. }
-        )
-    )
-}
-
-/// Whether the command will initialize an LLM provider client, in which case
-/// the resolved provider must be validated during startup. Commands outside
-/// this set (e.g. `models`, `schema`, `man`) never build a provider client and
-/// must not be blocked by a stale invalid `[agent].provider`.
-fn command_uses_llm_provider(command: Option<&Commands>) -> bool {
-    matches!(
-        command,
-        None | Some(
-            Commands::Chat
-                | Commands::ChatVerbose
-                | Commands::Ask { .. }
-                | Commands::Exec { .. }
-                | Commands::Review(_)
-                | Commands::Benchmark { .. }
-                | Commands::Analyze { .. }
-                | Commands::Continue
-                | Commands::BackgroundSubagent(_)
-                | Commands::AgentClientProtocol { .. }
-                | Commands::AnthropicApi { .. }
-        )
-    )
-}
-
-/// Whether the tool-runtime initializers (gatekeeper, file/command caches, file
-/// opener, session-archive, perf telemetry) may be skipped. This is a subset of
-/// `command_skips_provider_auth`: every auth-skipping command qualifies except
-/// `AppServer`, because the codex app-server proxy executes tools on the user's
-/// behalf and therefore still needs the gatekeeper quarantine checks and the
-/// file/command caches initialized.
-fn command_skips_runtime_init(command: Option<&Commands>) -> bool {
-    command_skips_provider_auth(command) && !matches!(command, Some(Commands::AppServer { .. }))
-}
-
-fn can_start_without_provider_auth(command: Option<&Commands>) -> bool {
-    matches!(
-        command,
-        None | Some(
-            Commands::ToolPolicy { .. }
-                | Commands::AgentClientProtocol { .. }
-                | Commands::AppServer { .. }
-                | Commands::Notify { .. }
-                | Commands::Pods { .. }
-                | Commands::Schedule { .. }
-                | Commands::Update { .. }
-                | Commands::Dependencies { .. }
-                | Commands::Secret { .. }
-        )
-    )
-}
-
 #[cfg(test)]
 mod validation_tests {
     use super::*;
@@ -765,126 +854,162 @@ mod validation_tests {
         assert!(check_prompt_cache_retention_compat(&cfg, model, provider).is_none());
     }
 
-    #[test]
-    fn interactive_sessions_can_start_without_provider_auth() {
-        assert!(can_start_without_provider_auth(None));
-        assert!(!can_start_without_provider_auth(Some(&Commands::Login {
-            provider: "openai".to_string(),
-            device_code: false,
-            from_codex: false,
-        })));
+    fn assert_policy(
+        args: Cli,
+        kind: StartupCommandKind,
+        loads_dotenv: bool,
+        resolves_auth: bool,
+        initializes_runtime: bool,
+        reads_theme: bool,
+        maintains: bool,
+    ) {
+        let policy = command_startup_policy(&args);
+        assert_eq!(policy.kind, kind, "unexpected policy for {args:?}");
+        assert_eq!(policy.load_dotenv(), loads_dotenv, "dotenv policy for {args:?}");
+        assert_eq!(policy.migrate_legacy_paths(), loads_dotenv, "migration policy for {args:?}");
+        assert_eq!(policy.resolve_provider_auth(), resolves_auth, "auth policy for {args:?}");
+        assert_eq!(
+            policy.validate_startup_configuration(),
+            kind != StartupCommandKind::Metadata,
+            "startup validation policy for {args:?}"
+        );
+        assert_eq!(policy.initialize_runtime(), initializes_runtime, "runtime policy for {args:?}");
+        assert_eq!(
+            policy.initialize_dot_folder(),
+            kind != StartupCommandKind::Metadata,
+            "dot folder policy for {args:?}"
+        );
+        assert_eq!(policy.read_theme_preference(), reads_theme, "theme read policy for {args:?}");
+        assert_eq!(policy.persist_theme_preference(), reads_theme, "theme write policy for {args:?}");
+        assert_eq!(policy.run_interactive_maintenance(), maintains, "maintenance policy for {args:?}");
     }
 
     #[test]
-    fn acp_can_start_without_provider_auth() {
-        assert!(can_start_without_provider_auth(Some(&Commands::AgentClientProtocol {
-            target: vtcode_core::cli::args::AgentClientProtocolTarget::Zed,
-        },)));
+    fn startup_policy_matrix_covers_metadata_ask_interactive_and_tool_paths() {
+        assert_policy(
+            Cli::parse_from(["vtcode", "schema", "tools"]),
+            StartupCommandKind::Metadata,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+        assert_policy(
+            Cli::parse_from(["vtcode", "models", "list"]),
+            StartupCommandKind::Metadata,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+        assert_policy(
+            Cli::parse_from(["vtcode", "man"]),
+            StartupCommandKind::Metadata,
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+        assert_policy(
+            Cli::parse_from(["vtcode", "ask", "hello"]),
+            StartupCommandKind::Ask,
+            true,
+            true,
+            false,
+            false,
+            false,
+        );
+        assert_policy(
+            Cli::parse_from(["vtcode", "--print", "hello"]),
+            StartupCommandKind::Ask,
+            true,
+            true,
+            false,
+            false,
+            false,
+        );
+        assert_policy(Cli::parse_from(["vtcode"]), StartupCommandKind::Interactive, true, true, true, true, true);
+        assert_policy(
+            Cli::parse_from(["vtcode", "--continue"]),
+            StartupCommandKind::Interactive,
+            true,
+            true,
+            true,
+            true,
+            true,
+        );
+        assert_policy(
+            Cli::parse_from(["vtcode", "exec", "inspect the workspace"]),
+            StartupCommandKind::ToolCapable,
+            true,
+            true,
+            true,
+            false,
+            false,
+        );
+        assert_policy(
+            Cli::parse_from(["vtcode", "acp", "zed"]),
+            StartupCommandKind::ToolCapable,
+            true,
+            true,
+            true,
+            false,
+            false,
+        );
     }
 
     #[test]
-    fn app_server_can_start_without_provider_auth() {
-        assert!(can_start_without_provider_auth(Some(&Commands::AppServer { listen: "stdio://".to_string() })));
+    fn startup_policy_preserves_app_server_auth_exception_and_runtime_security() {
+        assert_policy(
+            Cli::parse_from(["vtcode", "app-server"]),
+            StartupCommandKind::AppServer,
+            true,
+            false,
+            true,
+            false,
+            false,
+        );
     }
 
     #[test]
-    fn app_server_keeps_runtime_init_despite_skipping_provider_auth() {
-        // AppServer skips provider auth but must NOT skip the tool-runtime
-        // inits (gatekeeper/caches) — its codex proxy executes tools through
-        // check_quarantine_for_program, which is a silent no-op when the
-        // gatekeeper is uninitialized.
-        assert!(command_skips_provider_auth(Some(&Commands::AppServer { listen: "stdio://".to_string() })));
-        assert!(!command_skips_runtime_init(Some(&Commands::AppServer { listen: "stdio://".to_string() })));
+    fn startup_policy_keeps_known_command_owned_paths_off_provider_runtime() {
+        assert_policy(
+            Cli::parse_from(["vtcode", "tool-policy", "status"]),
+            StartupCommandKind::CommandOwned,
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
     }
 
     #[test]
-    fn non_tool_auth_skip_commands_skip_runtime_init() {
-        for command in [
-            Commands::Login {
-                provider: "openai".to_string(),
-                device_code: false,
-                from_codex: false,
-            },
-            Commands::Logout { provider: "openai".to_string() },
-            Commands::Auth { provider: Some("openai".to_string()) },
-            Commands::ToolPolicy {
-                command: vtcode_core::cli::tool_policy_commands::ToolPolicyCommands::Status,
-            },
-            Commands::Notify { title: None, message: "x".to_string() },
-            Commands::Pods {
-                command: vtcode_core::cli::args::PodsCommands::List,
-            },
-        ] {
-            assert!(command_skips_runtime_init(Some(&command)));
-        }
+    fn startup_policy_leaves_unclassified_commands_conservative() {
+        assert_policy(
+            Cli::parse_from(["vtcode", "config"]),
+            StartupCommandKind::Conservative,
+            true,
+            true,
+            true,
+            false,
+            false,
+        );
     }
 
     #[test]
-    fn tool_policy_can_start_without_provider_auth() {
-        let command = Commands::ToolPolicy {
-            command: vtcode_core::cli::tool_policy_commands::ToolPolicyCommands::Status,
-        };
+    fn startup_policy_allows_interactive_and_acp_auth_to_be_resolved_later() {
+        let interactive = command_startup_policy(&Cli::parse_from(["vtcode"]));
+        assert!(interactive.allow_missing_provider_auth());
 
-        assert!(command_skips_provider_auth(Some(&command)));
-        assert!(can_start_without_provider_auth(Some(&command)));
-    }
+        let acp = command_startup_policy(&Cli::parse_from(["vtcode", "acp", "zed"]));
+        assert!(acp.allow_missing_provider_auth());
 
-    #[test]
-    fn notify_can_start_without_provider_auth() {
-        let command = Commands::Notify {
-            title: Some("VT Code".to_string()),
-            message: "Session started".to_string(),
-        };
-
-        assert!(command_skips_provider_auth(Some(&command)));
-        assert!(can_start_without_provider_auth(Some(&command)));
-    }
-
-    #[test]
-    fn pods_can_start_without_provider_auth() {
-        let command = Commands::Pods {
-            command: vtcode_core::cli::args::PodsCommands::List,
-        };
-
-        assert!(command_skips_provider_auth(Some(&command)));
-        assert!(can_start_without_provider_auth(Some(&command)));
-    }
-
-    #[test]
-    fn update_can_start_without_provider_auth() {
-        let command = Commands::Update {
-            check: false,
-            force: false,
-            list: false,
-            limit: 10,
-            pin: None,
-            unpin: false,
-            channel: None,
-            show_config: false,
-        };
-
-        assert!(command_skips_provider_auth(Some(&command)));
-        assert!(can_start_without_provider_auth(Some(&command)));
-    }
-
-    #[test]
-    fn dependencies_can_start_without_provider_auth() {
-        let command = Commands::Dependencies(vtcode_core::cli::args::DependenciesSubcommand::Install {
-            dependency: vtcode_core::cli::args::ManagedDependency::SearchTools,
-        });
-
-        assert!(command_skips_provider_auth(Some(&command)));
-        assert!(can_start_without_provider_auth(Some(&command)));
-    }
-
-    #[test]
-    fn secret_can_start_without_provider_auth() {
-        let command = Commands::Secret(vtcode_core::cli::args::SecretArgs {
-            command: Some(vtcode_core::cli::args::SecretSubcommand::List),
-        });
-
-        assert!(command_skips_provider_auth(Some(&command)));
-        assert!(can_start_without_provider_auth(Some(&command)));
+        let ask = command_startup_policy(&Cli::parse_from(["vtcode", "ask", "hello"]));
+        assert!(!ask.allow_missing_provider_auth());
     }
 
     #[test]
@@ -1262,51 +1387,5 @@ mod validation_tests {
         assert!(message.contains("`$PATH`"));
         assert!(message.contains("[agent.codex_app_server].command"));
         assert!(message.contains("No authenticated fallback provider is available"));
-    }
-
-    #[test]
-    fn interactive_session_predicate_includes_chat_and_continue() {
-        assert!(command_runs_interactive_session(None, false));
-        let chat = Cli::parse_from(["vtcode", "chat"]).command.unwrap();
-        let chat_verbose = Cli::parse_from(["vtcode", "chat-verbose"]).command.unwrap();
-        let continue_cmd = Cli::parse_from(["vtcode", "continue"]).command.unwrap();
-        assert!(command_runs_interactive_session(Some(&chat), false));
-        assert!(command_runs_interactive_session(Some(&chat_verbose), false));
-        assert!(command_runs_interactive_session(Some(&continue_cmd), false));
-    }
-
-    #[test]
-    fn interactive_session_predicate_excludes_one_shot_commands() {
-        // One-shot commands that never enter the agent run loop — starting
-        // the probe for them would add ~200 ms at exit (runtime drop waits
-        // for the unused blocking task).
-        let ask = Cli::parse_from(["vtcode", "ask", "hello"]).command.unwrap();
-        let exec = Cli::parse_from(["vtcode", "exec", "hello"]).command.unwrap();
-        let schema = Cli::parse_from(["vtcode", "schema", "tools"]).command.unwrap();
-        let review = Cli::parse_from(["vtcode", "review"]).command.unwrap();
-        for cmd in [&ask, &exec, &schema, &review] {
-            assert!(
-                !command_runs_interactive_session(Some(cmd), false),
-                "one-shot command should not start the probe: {cmd:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn print_mode_excluded_from_interactive_session_predicate() {
-        // `--print` with no subcommand resolves to a one-shot Ask.
-        assert!(!command_runs_interactive_session(None, true));
-    }
-
-    #[test]
-    fn full_auto_prompt_keeps_validation_synchronous() {
-        let args = Cli::parse_from(["vtcode", "--full-auto", "inspect the workspace"]);
-        assert!(!command_uses_interactive_ui(&args));
-    }
-
-    #[test]
-    fn empty_full_auto_option_still_uses_interactive_chat() {
-        let args = Cli::parse_from(["vtcode", "--full-auto"]);
-        assert!(command_uses_interactive_ui(&args));
     }
 }

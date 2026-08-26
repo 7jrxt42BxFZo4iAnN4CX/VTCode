@@ -126,15 +126,7 @@ impl Clone for ToolPolicyGateway {
 }
 
 impl ToolPolicyGateway {
-    pub async fn new(workspace_root: &Path) -> Self {
-        let tool_policy = match ToolPolicyManager::new_with_workspace(workspace_root).await {
-            Ok(manager) => Some(manager),
-            Err(err) => {
-                tracing::warn!(%err, "Failed to initialize tool policy manager");
-                None
-            }
-        };
-
+    fn from_policy_manager(tool_policy: Option<ToolPolicyManager>) -> Self {
         Self {
             tool_policy: Arc::new(Mutex::new(tool_policy)),
             preapproved_tools: Arc::new(Mutex::new(FxHashSet::default())),
@@ -147,17 +139,25 @@ impl ToolPolicyGateway {
         }
     }
 
+    pub async fn new(workspace_root: &Path) -> Self {
+        let tool_policy = match ToolPolicyManager::new_with_workspace(workspace_root).await {
+            Ok(manager) => Some(manager),
+            Err(err) => {
+                tracing::warn!(%err, "Failed to initialize tool policy manager");
+                None
+            }
+        };
+
+        Self::from_policy_manager(tool_policy)
+    }
+
+    /// Build a gateway for metadata-only registries without creating policy files.
+    pub(super) fn without_persistence() -> Self {
+        Self::from_policy_manager(None)
+    }
+
     pub fn with_policy_manager(manager: ToolPolicyManager) -> Self {
-        Self {
-            tool_policy: Arc::new(Mutex::new(Some(manager))),
-            preapproved_tools: Arc::new(Mutex::new(FxHashSet::default())),
-            full_auto_allowlist: Arc::new(Mutex::new(None)),
-            full_auto_catalogue_config: Arc::new(Mutex::new(None)),
-            full_auto_catalogue_lifecycle: Arc::new(Mutex::new(())),
-            #[cfg(test)]
-            full_auto_catalogue_test_hooks: Arc::new(PolicyCatalogueTestHooks::default()),
-            enforce_safe_mode_prompts: AtomicBool::new(false),
-        }
+        Self::from_policy_manager(Some(manager))
     }
 
     pub fn set_enforce_safe_mode_prompts(&self, enabled: bool) {

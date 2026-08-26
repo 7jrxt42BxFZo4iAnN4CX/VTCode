@@ -527,7 +527,7 @@ Keep the launch check descriptive while still embedding a real command.
     #[test]
     fn validate_plan_content_accepts_env_prefixed_verification_commands() {
         for verify in [
-            "VTCODE_STARTUP_TRACE=1 ./scripts/bench-startup.sh",
+            "VTCODE_STARTUP_TRACE=1 cargo bench --locked --bench startup -- --noplot",
             "VTCODE_STARTUP_TRACE=1 cargo run --quiet -- --version",
         ] {
             let plan = format!(

@@ -89,11 +89,16 @@ impl ToolRegistry {
         Self::build(workspace_root, pty_config)
     }
 
+    /// Build a registry for offline metadata without creating a workspace policy file.
+    pub fn new_for_schema(workspace_root: PathBuf) -> impl Future<Output = Self> {
+        Self::build_with_policy(workspace_root, PtyConfig::default(), None, false)
+    }
+
     pub fn new_with_custom_policy(
         workspace_root: PathBuf,
         policy_manager: ToolPolicyManager,
     ) -> impl Future<Output = Self> {
-        Self::build_with_policy(workspace_root, PtyConfig::default(), Some(policy_manager))
+        Self::build_with_policy(workspace_root, PtyConfig::default(), Some(policy_manager), true)
     }
 
     pub fn new_with_custom_policy_and_config(
@@ -101,17 +106,18 @@ impl ToolRegistry {
         pty_config: PtyConfig,
         policy_manager: ToolPolicyManager,
     ) -> impl Future<Output = Self> {
-        Self::build_with_policy(workspace_root, pty_config, Some(policy_manager))
+        Self::build_with_policy(workspace_root, pty_config, Some(policy_manager), true)
     }
 
     async fn build(workspace_root: PathBuf, pty_config: PtyConfig) -> Self {
-        Self::build_with_policy(workspace_root, pty_config, None).await
+        Self::build_with_policy(workspace_root, pty_config, None, true).await
     }
 
     async fn build_with_policy(
         workspace_root: PathBuf,
         pty_config: PtyConfig,
         policy_manager: Option<ToolPolicyManager>,
+        initialize_policy: bool,
     ) -> Self {
         // Load the user-config snapshot *before* constructing the inventory so
         // `WebFetchTool`/`WebSearchTool` are built with the user's allow/block
@@ -143,9 +149,10 @@ impl ToolRegistry {
         let exec_sessions =
             crate::tools::exec_session::ExecSessionManager::new(workspace_root.clone(), pty_sessions.clone());
 
-        let policy_gateway = match policy_manager {
-            Some(pm) => ToolPolicyGateway::with_policy_manager(pm),
-            None => ToolPolicyGateway::new(&workspace_root).await,
+        let policy_gateway = match (policy_manager, initialize_policy) {
+            (Some(pm), _) => ToolPolicyGateway::with_policy_manager(pm),
+            (None, true) => ToolPolicyGateway::new(&workspace_root).await,
+            (None, false) => ToolPolicyGateway::without_persistence(),
         };
 
         let optimization_config = vtcode_config::OptimizationConfig::default();
@@ -282,5 +289,14 @@ tool_output_threshold = "oops"
         let registry = ToolRegistry::new(temp.path().to_path_buf()).await;
         assert!(registry.persistent_memory_enabled);
         assert!(registry.persistent_memory_config.enabled);
+    }
+
+    #[tokio::test]
+    async fn schema_registry_does_not_create_workspace_policy() {
+        let temp = tempdir().expect("workspace");
+
+        let _registry = ToolRegistry::new_for_schema(temp.path().to_path_buf()).await;
+
+        assert!(!temp.path().join(".vtcode").exists());
     }
 }

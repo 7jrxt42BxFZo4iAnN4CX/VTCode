@@ -125,30 +125,60 @@ measurements still work when `sccache` is configured but unavailable. Set
 
 Use this loop for any non-trivial performance change. Change one thing at a time so the comparison stays attributable.
 
-## Startup budget
+## Standalone startup benchmark
 
-`vtcode`'s startup-critical work lives in `StartupContext::from_cli_args`
-(`src/startup/mod.rs`). The perf harness captures separate process and
-interactive metrics:
+Startup policy is defined by the command case and launch state, not by one
+generic `startup_ms` number. Measure the release executable directly:
 
-- **`cold_startup_ms`** — three `--version` launches from fresh copies in
-  `/tmp`. This measures a fresh-copy loader/process path; it does not evict the
-  operating system's page cache.
-- **`warm_startup_ms`** (also reported as `startup_ms`) — eight warm release
-  `--version` runs. This is the stable binary/loader signal and does not enter
-  `StartupContext::from_cli_args`.
-- **`first_user_io_ms`** — eight credential-free release
-  `tool-policy status` runs using temporary `HOME`, config, and data paths. It
-  exercises the non-interactive startup path without a provider request or
-  real user credentials.
-- **`interactive_first_render_ms`** — three interactive release runs through a
-  PTY. The harness answers terminal capability queries and stops timing when
-  the first `Type a request` prompt is rendered; provider response time is not
-  included.
+```bash
+cargo build --release --locked --bin vtcode
+VTCODE_BIN="$PWD/target/release/vtcode" \
+  VTCODE_BENCH_RUNS=10 \
+  cargo bench --locked --bench startup -- --noplot
+```
 
-`baseline.sh` writes raw samples for each metric and `compare.sh` reports
-before/after deltas. Use the same machine and workload configuration for both
-runs.
+The standalone case matrix is:
+
+```text
+vtcode --version
+vtcode --help
+vtcode schema tools --format ndjson --name code_search
+```
+
+Run every case as both a cold and warm sample. Cold means copying the
+executable to a new temporary path for each launch, then timing that copy;
+this approximates fresh executable loader/relocation work. Warm means timing
+repeated launches of the same executable after warm-up. Cold does not mean
+flushing the operating system's page cache: the harness never flushes or
+evicts OS page caches, so label and compare the result as a fresh-copy cold
+proxy.
+
+Every child receives an isolated temporary `HOME`, config root, data root,
+explicit config-file path, and workspace. This prevents credentials, user
+configuration, persistent data, and repository contents from affecting the
+startup result. The schema case is still useful because it exercises tool
+registry construction while remaining standalone and provider-free.
+
+For each case and launch mode, retain the raw millisecond samples and report
+the median and p95. The median is the primary central result; p95 exposes
+startup tail behavior. Use the same binary, machine, environment, sample
+count, and isolation layout for before/after comparisons. Keep
+`VTCODE_STARTUP_TRACE=0` (or unset) during timed runs; enable
+`VTCODE_STARTUP_TRACE=1` only for a separate diagnostic run.
+
+The broader capture remains available when its additional workloads are
+needed:
+
+```bash
+./scripts/perf/baseline.sh baseline
+./scripts/perf/baseline.sh latest
+./scripts/perf/compare.sh \
+  .vtcode/perf/baseline.json .vtcode/perf/latest.json
+```
+
+It records separate cold fresh-copy, warm, first-user-I/O, and interactive
+first-render artifacts. Those metrics must not be treated as substitutes for
+the three-case standalone matrix above.
 
 For phase-level diagnostics, set the opt-in trace before launching the binary:
 

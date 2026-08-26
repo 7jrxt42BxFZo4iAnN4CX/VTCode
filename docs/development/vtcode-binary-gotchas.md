@@ -39,3 +39,35 @@ allocator, or request assembly.
 - Ordinary completed turns publish a non-empty final assistant response through both renderer and `ThreadEvent` harness paths. The approved-plan handoff is the control-flow exception: its outer loop creates the implementation request, so it must remain `Completed { plan_approved_execution_pending: true }` without synthesizing a final response. Recovery fallbacks remain visible but produce a blocked outcome; approved-plan summaries retain changed files, verification, and blockers.
 
 For prompt/runtime source boundaries, see [runtime guidance](./runtime-guidance.md).
+
+## Startup benchmark guidance
+
+The standalone startup matrix is deliberately provider-free:
+
+```text
+vtcode --version
+vtcode --help
+vtcode schema tools --format ndjson --name code_search
+```
+
+Build and invoke it with the release executable:
+
+```bash
+cargo build --release --locked --bin vtcode
+VTCODE_BIN="$PWD/target/release/vtcode" \
+  VTCODE_BENCH_RUNS=10 cargo bench --locked --bench startup -- --noplot
+```
+
+Measure both warm launches and cold fresh-executable-copy launches. A cold
+sample copies the executable to a new temporary path for each process; it is a
+loader/process cold proxy, not an OS page-cache benchmark. The harness does
+not flush or evict OS page caches. Isolate each child with temporary `HOME`,
+config, data, explicit config-file, and workspace paths so credentials and
+developer state cannot influence startup.
+
+Results must retain raw samples and report median and p95 per case and mode.
+Keep the benchmark environment, binary, and sample count fixed when comparing
+changes. `VTCODE_STARTUP_TRACE=1` is for a separate diagnostic run only; it
+emits bootstrap phase durations to stderr without changing normal CLI output.
+Metadata commands report `dispatch_ready`, while the interactive path reports
+its first rendered frame separately.
