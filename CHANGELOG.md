@@ -2,6 +2,21 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.148.0 - 2026-08-27
+
+### Highlights
+#### Bug Fixes
+
+- Complete metadata startup harness (cdad0ab7) 
+- Preserve responses at recovery cap (d16e468e) 
+- Make markdown table sizing responsive (18e2378c) 
+#### Features
+
+- Add GLM-5.3 Flash across providers; prune obsolete model variants (01ecd193) 
+### Other Changes
+#### Other
+
+- Update TODO (1ede031c) 
 ## 0.147.4 - 2026-08-25
 
 ### Highlights
