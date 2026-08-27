@@ -107,62 +107,7 @@
         "doc_comment": "Mistral Large 3 2512 - Mistral Large 3 2512 model via OpenRouter"
       }
     },
-    "google/gemini-3.1-pro-preview": {
-      "id": "google/gemini-3.1-pro-preview",
-      "name": "Google: Gemini 3.1 Pro Preview",
-      "reasoning": true,
-      "tool_call": true,
-      "modalities": {
-        "input": [
-          "text",
-          "image",
-          "file"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "context": 1048576,
-      "vtcode": {
-        "variant": "OpenRouterGoogleGemini31ProPreview",
-        "constant": "GOOGLE_GEMINI_3_1_PRO_PREVIEW",
-        "vendor": "google",
-        "display": "Gemini 3.1 Pro Preview",
-        "description": "Google Gemini 3.1 Pro model via OpenRouter",
-        "efficient": false,
-        "top_tier": true,
-        "generation": "3.1",
-        "doc_comment": "Gemini 3.1 Pro Preview - Google Gemini 3.1 Pro model via OpenRouter"
-      }
-    },
-    "google/gemini-3.5-flash-lite": {
-      "id": "google/gemini-3.5-flash-lite",
-      "name": "Google: Gemini 3.5 Flash Lite",
-      "reasoning": true,
-      "tool_call": true,
-      "modalities": {
-        "input": [
-          "text",
-          "image",
-          "file"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "context": 1048576,
-      "vtcode": {
-        "variant": "OpenRouterGoogleGemini35FlashLite",
-        "constant": "GOOGLE_GEMINI_3_5_FLASH_LITE",
-        "vendor": "google",
-        "display": "Gemini 3.5 Flash Lite",
-        "description": "Cost-optimized lightweight Gemini model for efficient inference via OpenRouter",
-        "efficient": true,
-        "top_tier": false,
-        "generation": "3.5",
-        "doc_comment": "Gemini 3.5 Flash Lite - Cost-optimized lightweight Gemini model for efficient inference via OpenRouter"
-      }
-    },
+
     "google/gemini-3.6-flash": {
       "id": "google/gemini-3.6-flash",
       "name": "Google: Gemini 3.6 Flash",
@@ -246,32 +191,7 @@
         "doc_comment": "Step 3.5 Flash (free) - StepFun's most capable open-source reasoning model via OpenRouter"
       }
     },
-    "anthropic/claude-haiku-4.5": {
-      "id": "anthropic/claude-haiku-4.5",
-      "name": "Anthropic: Claude Haiku 4.5",
-      "reasoning": true,
-      "tool_call": true,
-      "modalities": {
-        "input": [
-          "text"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "context": 200000,
-      "vtcode": {
-        "variant": "OpenRouterAnthropicClaudeHaiku45",
-        "constant": "ANTHROPIC_CLAUDE_HAIKU_4_5",
-        "vendor": "anthropic",
-        "display": "Claude Haiku 4.5",
-        "description": "Anthropic Claude Haiku 4.5 listing",
-        "efficient": true,
-        "top_tier": false,
-        "generation": "2025-10-15",
-        "doc_comment": "Claude Haiku 4.5 - Anthropic Claude Haiku 4.5 listing"
-      }
-    },
+
     "nex-agi/deepseek-v3.1-nex-n1": {
       "id": "nex-agi/deepseek-v3.1-nex-n1",
       "name": "Nex AGI: DeepSeek V3.1 Nex N1",
@@ -429,33 +349,7 @@
         "doc_comment": "OpenAI GPT-5 - OpenAI GPT-5 model accessed through OpenRouter"
       }
     },
-    "openai/gpt-5.5": {
-      "id": "openai/gpt-5.5",
-      "name": "OpenAI: GPT-5.5",
-      "reasoning": true,
-      "tool_call": true,
-      "modalities": {
-        "input": [
-          "text",
-          "image"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "context": 1050000,
-      "vtcode": {
-        "variant": "OpenRouterOpenAIGpt55",
-        "constant": "OPENAI_GPT_5_5",
-        "vendor": "openai",
-        "display": "OpenAI GPT-5.5",
-        "description": "OpenAI GPT-5.5 model accessed through OpenRouter",
-        "efficient": false,
-        "top_tier": true,
-        "generation": "2026-04-23",
-        "doc_comment": "OpenAI GPT-5.5 - OpenAI GPT-5.5 model accessed through OpenRouter"
-      }
-    },
+
     "z-ai/glm-5.3-flash": {
       "id": "z-ai/glm-5.3-flash",
       "name": "Z.AI: GLM-5.3 Flash",
