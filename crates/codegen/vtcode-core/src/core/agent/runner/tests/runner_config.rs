@@ -67,11 +67,11 @@ async fn runner_uses_configured_provider_for_huggingface_repo_models() {
 
     let mut vt_cfg = VTCodeConfig::default();
     vt_cfg.agent.provider = "huggingface".to_string();
-    vt_cfg.agent.default_model = crate::config::constants::models::huggingface::ZAI_GLM_5_1_ZAI_ORG.to_string();
+    vt_cfg.agent.default_model = crate::config::constants::models::huggingface::ZAI_GLM_5_2_NOVITA.to_string();
 
     let runner = Box::pin(AgentRunner::new_with_bootstrap(
         AgentType::Single,
-        ModelId::HuggingFaceGlm51ZaiOrg,
+        ModelId::HuggingFaceGlm52Novita,
         "test-key".to_string(),
         temp.path().to_path_buf(),
         "thread-huggingface-provider".to_string(),

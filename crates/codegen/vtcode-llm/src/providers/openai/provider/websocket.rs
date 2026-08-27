@@ -605,7 +605,7 @@ mod tests {
     #[test]
     fn websocket_prepare_event_starts_new_chain_without_continuation() {
         let payload = json!({
-            "model": "gpt-5.2",
+            "model": "gpt-5.6",
             "input": [{"role": "user", "content": "hello"}],
             "previous_response_id": "resp_prev",
             "store": true,
@@ -634,12 +634,12 @@ mod tests {
         let continuation = OpenAIResponsesWebSocketContinuationCache {
             response_id: "resp_prev".to_string(),
             full_input: vec![full_input[0].clone()],
-            model: "gpt-5.2".to_string(),
+            model: "gpt-5.6".to_string(),
             instructions: None,
             tools: None,
         };
         let payload = json!({
-            "model": "gpt-5.2",
+            "model": "gpt-5.6",
             "input": full_input,
         });
 
@@ -658,12 +658,12 @@ mod tests {
         let continuation = OpenAIResponsesWebSocketContinuationCache {
             response_id: "resp_prev".to_string(),
             full_input: vec![json!({"role": "user", "content": "hello"})],
-            model: "gpt-5.2".to_string(),
+            model: "gpt-5.6".to_string(),
             instructions: None,
             tools: None,
         };
         let payload = json!({
-            "model": "gpt-5.2",
+            "model": "gpt-5.6",
             "input": [json!({"role": "user", "content": "different"})],
             "previous_response_id": "resp_prev",
         });
@@ -779,7 +779,7 @@ mod tests {
         OpenAIProvider::from_config(
             Some("test-key".to_string()),
             None,
-            Some("gpt-5.2".to_string()),
+            Some("gpt-5.6".to_string()),
             Some(base_url),
             None,
             None,
@@ -794,7 +794,7 @@ mod tests {
             "mycorp".to_string(),
             "MyCorp".to_string(),
             Some("test-key".to_string()),
-            Some("gpt-5.2".to_string()),
+            Some("gpt-5.6".to_string()),
             Some(base_url),
             None,
             None,
@@ -807,7 +807,7 @@ mod tests {
 
     fn websocket_test_request() -> LLMRequest {
         LLMRequest {
-            model: "gpt-5.2".to_string(),
+            model: "gpt-5.6".to_string(),
             messages: vec![ProviderMessage::user("hello".to_string())].into(),
             ..Default::default()
         }
@@ -829,7 +829,7 @@ mod tests {
                 full_input,
                 used_previous_response_id: false,
             },
-            "gpt-5.2",
+            "gpt-5.6",
         );
     }
 

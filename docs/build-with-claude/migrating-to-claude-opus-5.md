@@ -31,7 +31,7 @@ Quick reference for Claude models in VT Code.
 
 | Feature | Claude Fable 5 | Claude Mythos 5 | Claude Opus 5 | Claude Sonnet 5 | Claude Haiku 4.5 |
 |---|---|---|---|---|---|
-| `ModelId` variant | `ClaudeFable5` | `ClaudeMythos5` | `ClaudeOpus5` | `ClaudeSonnet5` | `ClaudeHaiku45` |
+| `ModelId` variant | `ClaudeFable5` | `ClaudeMythos5` | `ClaudeOpus5` | `ClaudeSonnet5` | `ClaudeSonnet5` |
 | Default model | No | No | No | **Yes** (`[default]`) | No |
 | Context window | 1M | 1M | 1M | 1M | 200k |
 | Max output | 128k | 128k | 128k | 128k | 64k |
@@ -199,7 +199,7 @@ thinking_display = "summarized"
 
 ```toml
 # Before
-agent.default_model = "claude-opus-4-8"
+agent.default_model = "claude-opus-5"
 
 [provider.anthropic]
 effort = "xhigh"
@@ -254,7 +254,7 @@ Claude Opus 5 is a drop-in upgrade for Claude Opus 4.8 at the same $5/$25 pricin
 
 ```toml
 # Before
-agent.default_model = "claude-opus-4-8"
+agent.default_model = "claude-opus-5"
 
 [provider.anthropic]
 effort = "xhigh"
@@ -468,7 +468,7 @@ Claude Sonnet 5 is VT Code's default model (`[default]`). It uses a new tokenize
 
 ```toml
 # Before
-agent.default_model = "claude-sonnet-4-6"
+agent.default_model = "claude-sonnet-5"
 
 [provider.anthropic]
 effort = "high"
@@ -544,7 +544,7 @@ Haiku 4.5 uses manual extended thinking; Sonnet 5 uses adaptive thinking on by d
 
 ```toml
 # Before
-agent.default_model = "claude-haiku-4-5-20251001"
+agent.default_model = "claude-sonnet-5"
 
 [provider.anthropic]
 effort = "high"                          # not available on Haiku 4.5; ignored
@@ -607,7 +607,7 @@ effort = "high"
 
 ```toml
 # After
-agent.default_model = "claude-haiku-4-5-20251001"
+agent.default_model = "claude-sonnet-5"
 
 [provider.anthropic]
 extended_thinking_enabled = true

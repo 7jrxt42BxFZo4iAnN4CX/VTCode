@@ -106,23 +106,6 @@ pub(crate) fn openrouter_presets() -> Vec<ModelPreset> {
             context_window: Some(1_048_576),
         },
         ModelPreset {
-            id: "openrouter/moonshotai/kimi-k2.6".to_string(),
-            model: "moonshotai/kimi-k2.6".to_string(),
-            display_name: "Kimi K2.6 (OpenRouter)".to_string(),
-            description: "Kimi K2.6 multimodal agentic model via OpenRouter".to_string(),
-            provider: Provider::OpenRouter,
-            default_reasoning_effort: ReasoningEffortLevel::Medium,
-            supported_reasoning_efforts: vec![ReasoningEffortPreset {
-                effort: ReasoningEffortLevel::Medium,
-                description: "Balanced".to_string(),
-            }],
-            is_default: false,
-            upgrade: None,
-            show_in_picker: true,
-            supported_in_api: true,
-            context_window: Some(262_144),
-        },
-        ModelPreset {
             id: "openrouter/moonshotai/kimi-k2.7-code".to_string(),
             model: "moonshotai/kimi-k2.7-code".to_string(),
             display_name: "Kimi K2.7 Code (OpenRouter)".to_string(),

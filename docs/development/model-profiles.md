@@ -22,7 +22,7 @@ Profiles live under a top-level table keyed by the literal path `custom_provider
 
 Example:
 
-[custom_providers.profiles."gpt-5.4"]
+[custom_providers.profiles."gpt-5.6-sol"]
 api_format = "openai-responses"
 context_window = 131072
 supports_tools = true

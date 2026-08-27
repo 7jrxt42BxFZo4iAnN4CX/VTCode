@@ -303,39 +303,6 @@
         "doc_comment": "DeepSeek V3.1 Nex N1 - Nex AGI DeepSeek V3.1 Nex N1 model via OpenRouter"
       }
     },
-    "anthropic/claude-sonnet-4.6": {
-      "id": "anthropic/claude-sonnet-4.6",
-      "name": "Anthropic: Claude Sonnet 4.6",
-      "reasoning": true,
-      "tool_call": true,
-      "modalities": {
-        "input": [
-          "text",
-          "image",
-          "file"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "context": 1000000,
-      "max_output_tokens": 128000,
-      "cost": {
-        "input": 3e-06,
-        "output": 1.5e-05
-      },
-      "vtcode": {
-        "variant": "OpenRouterAnthropicClaudeSonnet46",
-        "constant": "ANTHROPIC_CLAUDE_SONNET_4_6",
-        "vendor": "anthropic",
-        "display": "Claude Sonnet 4.6",
-        "description": "Anthropic Claude Sonnet 4.6 listing",
-        "efficient": false,
-        "top_tier": true,
-        "generation": "2026-02-20",
-        "doc_comment": "Claude Sonnet 4.6 - Anthropic Claude Sonnet 4.6 listing"
-      }
-    },
     "deepseek/deepseek-chat": {
       "id": "deepseek/deepseek-chat",
       "name": "DeepSeek: DeepSeek V3.2 Chat",
@@ -489,6 +456,40 @@
         "doc_comment": "OpenAI GPT-5.5 - OpenAI GPT-5.5 model accessed through OpenRouter"
       }
     },
+    "z-ai/glm-5.3-flash": {
+      "id": "z-ai/glm-5.3-flash",
+      "name": "Z.AI: GLM-5.3 Flash",
+      "description": "Z.AI efficient multimodal model with hybrid sparse+linear attention (320B total / 18B active, 3.01x less attention compute, 4.44x smaller KV cache), 1M context and native vision for efficient coding and long-horizon agent tasks.",
+      "reasoning": true,
+      "tool_call": true,
+      "modalities": {
+        "input": [
+          "text",
+          "image"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "context": 1310720,
+      "max_output_tokens": 131072,
+      "cost": {
+        "input": 1.5e-07,
+        "output": 5e-07,
+        "cache_read": 3e-08
+      },
+      "vtcode": {
+        "variant": "OpenRouterZaiGlm53Flash",
+        "constant": "ZAI_GLM_5_3_FLASH",
+        "vendor": "z-ai",
+        "display": "GLM-5.3 Flash",
+        "description": "Z.AI GLM-5.3 Flash efficient multimodal model via OpenRouter",
+        "efficient": true,
+        "top_tier": true,
+        "generation": "5.3",
+        "doc_comment": "GLM-5.3 Flash - Z.AI efficient multimodal model with hybrid sparse+linear attention via OpenRouter"
+      }
+    },
     "openai/gpt-5-chat": {
       "id": "openai/gpt-5-chat",
       "name": "OpenAI: GPT-5 Chat",
@@ -616,39 +617,6 @@
         "top_tier": true,
         "generation": "K3",
         "doc_comment": "Kimi K3 - Moonshot AI's 2.8T parameter flagship model via OpenRouter"
-      }
-    },
-    "moonshotai/kimi-k2.6": {
-      "id": "moonshotai/kimi-k2.6",
-      "name": "MoonshotAI: Kimi K2.6",
-      "description": "Kimi K2.6 is Moonshot AI's next-generation multimodal model, designed for long-horizon coding, coding-driven UI/UX generation, and multi-agent orchestration. Handles complex end-to-end coding tasks across Python, Rust, and Go, and can convert prompts and visual inputs into production-ready interfaces.",
-      "reasoning": true,
-      "tool_call": true,
-      "modalities": {
-        "input": [
-          "text",
-          "image"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "context": 262144,
-      "max_output_tokens": 8192,
-      "cost": {
-        "input": 9.5e-07,
-        "output": 4e-06
-      },
-      "vtcode": {
-        "variant": "OpenRouterMoonshotaiKimiK26",
-        "constant": "MOONSHOTAI_KIMI_K2_6",
-        "vendor": "moonshotai",
-        "display": "Kimi K2.6",
-        "description": "Kimi K2.6 multimodal agentic model for long-horizon coding and design via OpenRouter",
-        "efficient": false,
-        "top_tier": true,
-        "generation": "K2.6",
-        "doc_comment": "Kimi K2.6 - Moonshot AI's next-generation multimodal model for long-horizon coding and design via OpenRouter"
       }
     },
     "moonshotai/kimi-k2.7-code": {

@@ -1827,7 +1827,7 @@ mode = "primary"
 tools = ["code_search", "exec_command"]
 disallowed_tools = ["exec_command"]
 permissions = { default = "allow" }
-model = "gpt-5.4"
+model = "gpt-5.6-sol"
 reasoning_effort = "medium"
 "#,
         )?;
@@ -1841,7 +1841,7 @@ reasoning_effort = "medium"
         assert!(spec.permissions.ask.is_empty());
         assert!(spec.permissions.auto.is_empty());
         assert!(spec.permissions.deny.is_empty());
-        assert_eq!(spec.model.as_deref(), Some("gpt-5.4"));
+        assert_eq!(spec.model.as_deref(), Some("gpt-5.6-sol"));
         assert_eq!(spec.reasoning_effort, Some(ReasoningEffortLevel::Medium));
         assert_eq!(spec.prompt, "Baseline prompt");
         assert!(spec.warnings.is_empty());
@@ -1968,7 +1968,7 @@ Run shell commands."#,
             r##"name = "worker"
 description = "Write-capable implementation agent"
 developer_instructions = "Implement the assigned change."
-model = "gpt-5.4"
+model = "gpt-5.6-sol"
 color = "#4f8fd8"
 model_reasoning_effort = "high"
 nickname_candidates = ["builder"]
@@ -1980,7 +1980,7 @@ permissions = { default = "ask" }
         assert_eq!(spec.name, "worker");
         assert_eq!(spec.description, "Write-capable implementation agent");
         assert_eq!(spec.prompt, "Implement the assigned change.");
-        assert_eq!(spec.model.as_deref(), Some("gpt-5.4"));
+        assert_eq!(spec.model.as_deref(), Some("gpt-5.6-sol"));
         assert_eq!(spec.color.as_deref(), Some("#4f8fd8"));
         assert_eq!(spec.reasoning_effort, Some(ReasoningEffortLevel::High));
         assert_eq!(spec.nickname_candidates, vec!["builder".to_string()]);

@@ -255,7 +255,7 @@ mod theme_sync_tests {
 
     fn runtime_config(theme: &str) -> CoreAgentConfig {
         CoreAgentConfig {
-            model: "gpt-5.4".to_string(),
+            model: "gpt-5.6-sol".to_string(),
             api_key: String::new(),
             provider: "openai".to_string(),
             api_key_env: "OPENAI_API_KEY".to_string(),

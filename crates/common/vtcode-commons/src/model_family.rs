@@ -383,7 +383,7 @@ mod tests {
 
     #[test]
     fn test_gpt5_family_detection() {
-        let family = find_family_for_model("gpt-5.3-codex");
+        let family = find_family_for_model("gpt-5-codex");
         assert_eq!(family.family, "gpt-5");
         assert_eq!(family.provider, Provider::OpenAI);
         assert!(family.supports_thinking);

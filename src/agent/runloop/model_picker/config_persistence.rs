@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn non_ollama_providers_keep_provider_api_key_state() {
-        assert!(uses_provider_api_key(&selection(Some(Provider::OpenAI), "openai", "gpt-5.2")));
+        assert!(uses_provider_api_key(&selection(Some(Provider::OpenAI), "openai", "gpt-5.6")));
     }
 
     #[test]
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn synced_openai_service_tier_tracks_supported_openai_selection() {
-        let mut selected = selection(Some(Provider::OpenAI), "openai", "gpt-5.4");
+        let mut selected = selection(Some(Provider::OpenAI), "openai", "gpt-5.6-sol");
         selected.service_tier_supported = true;
         selected.service_tier = Some(OpenAIServiceTier::Priority);
 
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn synced_openai_service_tier_tracks_flex_selection() {
-        let mut selected = selection(Some(Provider::OpenAI), "openai", "gpt-5.4");
+        let mut selected = selection(Some(Provider::OpenAI), "openai", "gpt-5.6-sol");
         selected.service_tier_supported = true;
         selected.service_tier = Some(OpenAIServiceTier::Flex);
 

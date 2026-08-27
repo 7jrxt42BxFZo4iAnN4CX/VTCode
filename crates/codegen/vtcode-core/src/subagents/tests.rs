@@ -31,7 +31,7 @@ fn test_controller_config(workspace_root: PathBuf, vt_cfg: VTCodeConfig) -> Suba
     SubagentControllerConfig {
         workspace_root,
         parent_session_id: "parent-session".to_string(),
-        parent_model: models::openai::GPT_5_4.to_string(),
+        parent_model: models::openai::GPT_5_6_SOL.to_string(),
         parent_provider: "openai".to_string(),
         parent_reasoning_effort: ReasoningEffortLevel::Medium,
         api_key: "test-key".to_string(),
@@ -162,9 +162,9 @@ fn delegated_task_requires_clarification_for_vague_prompt() {
 fn resolve_subagent_model_maps_aliases() {
     let cfg = VTCodeConfig::default();
     let resolved =
-        resolve_subagent_model(&cfg, models::anthropic::CLAUDE_SONNET_4_6, "anthropic", Some("haiku"), "explorer")
+        resolve_subagent_model(&cfg, models::anthropic::CLAUDE_SONNET_5, "anthropic", Some("haiku"), "explorer")
             .expect("resolve model");
-    assert_eq!(resolved.as_str(), models::anthropic::CLAUDE_HAIKU_4_5);
+    assert_eq!(resolved.as_str(), models::anthropic::CLAUDE_SONNET_5);
 }
 
 #[test]
@@ -180,7 +180,7 @@ fn resolve_subagent_model_accepts_dotted_claude_aliases_for_anthropic() {
     let cfg = VTCodeConfig::default();
     let resolved =
         resolve_subagent_model(&cfg, "claude-haiku-4.5", "anthropic", None, "worker").expect("resolve model");
-    assert_eq!(resolved.as_str(), models::anthropic::CLAUDE_HAIKU_4_5);
+    assert_eq!(resolved.as_str(), models::anthropic::CLAUDE_SONNET_5);
 }
 
 #[test]
@@ -195,14 +195,14 @@ fn resolve_effective_subagent_model_uses_explicit_inherit_override() {
     let cfg = VTCodeConfig::default();
     let resolved = resolve_effective_subagent_model(
         &cfg,
-        models::anthropic::CLAUDE_SONNET_4_6,
+        models::anthropic::CLAUDE_SONNET_5,
         "anthropic",
         Some("inherit"),
         Some("haiku"),
         "worker",
     )
     .expect("resolve model");
-    assert_eq!(resolved.as_str(), models::anthropic::CLAUDE_SONNET_4_6);
+    assert_eq!(resolved.as_str(), models::anthropic::CLAUDE_SONNET_5);
 }
 
 #[test]
@@ -212,14 +212,14 @@ fn resolve_effective_subagent_model_falls_back_to_parent_on_invalid_override() {
     let cfg = VTCodeConfig::default();
     let resolved = resolve_effective_subagent_model(
         &cfg,
-        models::openai::GPT_5_4,
+        models::openai::GPT_5_6_SOL,
         "openai",
         Some("not-a-real-model"),
         None,
         "rust-engineer",
     )
     .expect("resolve model");
-    assert_eq!(resolved.as_str(), models::openai::GPT_5_4);
+    assert_eq!(resolved.as_str(), models::openai::GPT_5_6_SOL);
 }
 
 #[test]
@@ -256,7 +256,7 @@ fn resolve_subagent_model_honors_provider_override_model() {
         },
     );
     let resolved =
-        resolve_subagent_model(&cfg, models::openai::GPT_5_4, "openai", Some("my-fine-tuned-gpt"), "reviewer")
+        resolve_subagent_model(&cfg, models::openai::GPT_5_6_SOL, "openai", Some("my-fine-tuned-gpt"), "reviewer")
             .expect("resolve override model");
     assert_eq!(resolved.as_str(), "my-fine-tuned-gpt");
 }
@@ -277,14 +277,14 @@ fn resolve_effective_subagent_model_ignores_cross_provider_override_model() {
     );
     let resolved = resolve_effective_subagent_model(
         &cfg,
-        models::openai::GPT_5_4,
+        models::openai::GPT_5_6_SOL,
         "openai",
         Some("not-a-real-model"),
         None,
         "reviewer",
     )
     .expect("resolve model");
-    assert_eq!(resolved.as_str(), models::openai::GPT_5_4);
+    assert_eq!(resolved.as_str(), models::openai::GPT_5_6_SOL);
 }
 
 #[test]
@@ -307,12 +307,12 @@ fn resolve_subagent_model_honors_custom_provider_model() {
 #[test]
 fn resolve_subagent_small_model_rejects_cross_provider_configured_lightweight_model() {
     let mut cfg = VTCodeConfig::default();
-    cfg.agent.small_model.model = models::anthropic::CLAUDE_HAIKU_4_5.to_string();
+    cfg.agent.small_model.model = models::anthropic::CLAUDE_SONNET_5.to_string();
 
-    let resolved = resolve_subagent_model(&cfg, models::openai::GPT_5_4, "openai", Some("small"), "worker")
+    let resolved = resolve_subagent_model(&cfg, models::openai::GPT_5_6_SOL, "openai", Some("small"), "worker")
         .expect("resolve model");
 
-    assert_eq!(resolved, ModelId::GPT54Mini);
+    assert_eq!(resolved, ModelId::GPT56Terra);
 }
 
 #[test]
@@ -320,14 +320,14 @@ fn resolve_effective_subagent_model_falls_back_to_spec_model_on_invalid_override
     let cfg = VTCodeConfig::default();
     let resolved = resolve_effective_subagent_model(
         &cfg,
-        models::anthropic::CLAUDE_SONNET_4_6,
+        models::anthropic::CLAUDE_SONNET_5,
         "anthropic",
         Some("not-a-real-model"),
         Some("haiku"),
         "reviewer",
     )
     .expect("resolve model");
-    assert_eq!(resolved.as_str(), models::anthropic::CLAUDE_HAIKU_4_5);
+    assert_eq!(resolved.as_str(), models::anthropic::CLAUDE_SONNET_5);
 }
 
 #[test]
@@ -346,7 +346,7 @@ fn background_subagent_command_includes_expected_flags() {
         "session-child",
         "Inspect the repo",
         Some(7),
-        Some("gpt-5.4-mini"),
+        Some("gpt-5.6-luna"),
         Some("high"),
     )
     .expect("background command");
@@ -358,7 +358,7 @@ fn background_subagent_command_includes_expected_flags() {
     assert!(command.windows(2).any(|pair| pair == ["--session-id", "session-child"]));
     assert!(command.windows(2).any(|pair| pair == ["--prompt", "Inspect the repo"]));
     assert!(command.windows(2).any(|pair| pair == ["--max-turns", "7"]));
-    assert!(command.windows(2).any(|pair| pair == ["--model-override", "gpt-5.4-mini"]));
+    assert!(command.windows(2).any(|pair| pair == ["--model-override", "gpt-5.6-luna"]));
     assert!(command.windows(2).any(|pair| pair == ["--reasoning-override", "high"]));
 }
 
@@ -367,7 +367,7 @@ fn resolve_effective_subagent_model_still_errors_on_invalid_spec_model() {
     let cfg = VTCodeConfig::default();
     let err = resolve_effective_subagent_model(
         &cfg,
-        models::anthropic::CLAUDE_SONNET_4_6,
+        models::anthropic::CLAUDE_SONNET_5,
         "anthropic",
         None,
         Some("not-a-real-model"),
@@ -527,7 +527,7 @@ fn build_child_config_intersects_allowed_tools_and_preserves_global_denies() {
         tools::READ_FILE.to_string(),
     ]);
 
-    let child = build_child_config(&parent, &spec, models::openai::GPT_5_4, None);
+    let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None);
     assert_eq!(child.runtime_agent_permissions.as_ref(), Some(&spec.permissions));
     assert_eq!(child.permissions.allow, vec![tools::READ_FILE.to_string(), tools::CODE_SEARCH.to_string()]);
     assert!(child.permissions.deny.contains(&tools::UNIFIED_EXEC.to_string()));
@@ -558,7 +558,7 @@ fn build_child_config_preserves_subagent_lifecycle_stripping_and_hook_merging() 
     });
     spec.hooks = Some(hooks);
 
-    let child = build_child_config(&parent, &spec, models::openai::GPT_5_4, None);
+    let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None);
 
     assert_eq!(child.permissions.allow, vec![tools::CODE_SEARCH.to_string(), tools::UNIFIED_EXEC.to_string()]);
     assert!(child.permissions.deny.contains(&tools::SPAWN_AGENT.to_string()));
@@ -573,31 +573,31 @@ fn prepare_child_runtime_config_uses_shared_view_for_model_and_reasoning() {
         .into_iter()
         .find(|spec| spec.name == "worker")
         .expect("worker");
-    spec.model = Some(models::openai::GPT_5_4_MINI.to_string());
+    spec.model = Some(models::openai::GPT_5_6_LUNA.to_string());
     spec.reasoning_effort = Some(ReasoningEffortLevel::High);
 
     let (resolved_model, child_reasoning_effort, child_cfg) = prepare_child_runtime_config(
         &parent,
         &spec,
-        models::openai::GPT_5_4,
+        models::openai::GPT_5_6_SOL,
         "openai",
         ReasoningEffortLevel::Low,
         None,
         None,
         None,
         |_, parent_model, parent_provider, model_override, spec_model, agent_name| {
-            assert_eq!(parent_model, models::openai::GPT_5_4);
+            assert_eq!(parent_model, models::openai::GPT_5_6_SOL);
             assert_eq!(parent_provider, "openai");
             assert_eq!(model_override, None);
-            assert_eq!(spec_model, Some(models::openai::GPT_5_4_MINI));
+            assert_eq!(spec_model, Some(models::openai::GPT_5_6_LUNA));
             assert_eq!(agent_name, "worker");
-            Ok(models::openai::GPT_5_4_MINI.parse::<ModelId>().expect("valid model"))
+            Ok(models::openai::GPT_5_6_LUNA.parse::<ModelId>().expect("valid model"))
         },
     )
     .expect("prepared child runtime config");
 
-    assert_eq!(resolved_model.as_str(), models::openai::GPT_5_4_MINI);
-    assert_eq!(child_cfg.agent.default_model, models::openai::GPT_5_4_MINI);
+    assert_eq!(resolved_model.as_str(), models::openai::GPT_5_6_LUNA);
+    assert_eq!(child_cfg.agent.default_model, models::openai::GPT_5_6_LUNA);
     assert_eq!(child_reasoning_effort, ReasoningEffortLevel::High);
     assert_eq!(child_cfg.agent.reasoning_effort, ReasoningEffortLevel::High);
 }
@@ -638,7 +638,7 @@ fn build_child_config_preserves_matching_rule_and_exact_tool_ids() {
         tools::READ_FILE.to_string(),
     ]);
 
-    let child = build_child_config(&parent, &spec, models::openai::GPT_5_4, None);
+    let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None);
 
     assert_eq!(
         child.permissions.allow,
@@ -665,7 +665,7 @@ fn build_child_config_preserves_parent_rule_shaped_allowlist() {
         tools::UNIFIED_EXEC.to_string(),
     ]);
 
-    let child = build_child_config(&parent, &spec, models::openai::GPT_5_4, None);
+    let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None);
 
     assert_eq!(child.permissions.allow, vec!["Read".to_string()]);
 }
@@ -678,7 +678,7 @@ fn build_child_config_promotes_single_turn_budget_to_recovery_budget() {
         .find(|spec| spec.name == "worker")
         .expect("worker");
 
-    let child = build_child_config(&parent, &spec, models::openai::GPT_5_4, Some(1));
+    let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, Some(1));
 
     assert_eq!(child.automation.full_auto.max_turns, SUBAGENT_MIN_MAX_TURNS);
 }
@@ -713,7 +713,7 @@ fn build_child_config_merges_inline_mcp_provider() {
         }),
     )]))];
 
-    let child = build_child_config(&parent, &spec, models::openai::GPT_5_4, None);
+    let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None);
     let provider = child
         .mcp
         .providers
@@ -777,11 +777,11 @@ fn explicit_agent_mentions_ignore_primary_only_agents() {
 
 #[test]
 fn explicit_model_request_detects_aliases_and_full_ids() {
-    assert!(contains_explicit_model_request("delegate this using gpt-5.4-mini", "gpt-5.4-mini"));
+    assert!(contains_explicit_model_request("delegate this using gpt-5.6-luna", "gpt-5.6-luna"));
     assert!(contains_explicit_model_request("use the worker subagent with haiku", "haiku"));
     assert!(contains_explicit_model_request("run this with the small model", "small"));
     assert!(!contains_explicit_model_request("delegate this small cleanup task", "small"));
-    assert!(!contains_explicit_model_request("delegate this task", "gpt-5.4-mini"));
+    assert!(!contains_explicit_model_request("delegate this task", "gpt-5.6-luna"));
 }
 
 #[test]
@@ -1192,7 +1192,7 @@ async fn spawn_honors_model_override_when_user_explicitly_requests_it() {
         .spawn(SpawnAgentRequest {
             agent_type: Some("worker".to_string()),
             message: Some("Implement the change.".to_string()),
-            model: Some(models::openai::GPT_5_4_MINI.to_string()),
+            model: Some(models::openai::GPT_5_6_LUNA.to_string()),
             ..SpawnAgentRequest::default()
         })
         .await
@@ -1201,7 +1201,7 @@ async fn spawn_honors_model_override_when_user_explicitly_requests_it() {
     let effective_model = wait_for_effective_model(&controller, &spawned.id)
         .await
         .expect("effective model");
-    assert_eq!(effective_model, models::openai::GPT_5_4_MINI);
+    assert_eq!(effective_model, models::openai::GPT_5_6_LUNA);
     controller.close(&spawned.id).await.expect("close");
 }
 
@@ -1367,7 +1367,7 @@ async fn resume_preserves_captured_runtime_overrides() {
         .spawn(SpawnAgentRequest {
             agent_type: Some("worker".to_string()),
             message: Some("Implement the change.".to_string()),
-            model: Some(models::openai::GPT_5_4_MINI.to_string()),
+            model: Some(models::openai::GPT_5_6_LUNA.to_string()),
             max_turns: Some(2),
             ..SpawnAgentRequest::default()
         })
@@ -1377,7 +1377,7 @@ async fn resume_preserves_captured_runtime_overrides() {
     let initial_model = wait_for_effective_model(&controller, &spawned.id)
         .await
         .expect("initial effective model");
-    assert_eq!(initial_model, models::openai::GPT_5_4_MINI);
+    assert_eq!(initial_model, models::openai::GPT_5_6_LUNA);
 
     let closed = controller.close(&spawned.id).await.expect("close");
     assert_eq!(closed.status, SubagentStatus::Closed);
@@ -1388,7 +1388,7 @@ async fn resume_preserves_captured_runtime_overrides() {
         let status = controller.status_for(&spawned.id).await.expect("status");
         if status.updated_at > closed.updated_at && status.status != SubagentStatus::Closed {
             let snapshot = controller.snapshot_for_thread(&spawned.id).await.expect("snapshot");
-            assert_eq!(snapshot.effective_config.agent.default_model, models::openai::GPT_5_4_MINI);
+            assert_eq!(snapshot.effective_config.agent.default_model, models::openai::GPT_5_6_LUNA);
             controller.close(&spawned.id).await.expect("final close");
             return;
         }

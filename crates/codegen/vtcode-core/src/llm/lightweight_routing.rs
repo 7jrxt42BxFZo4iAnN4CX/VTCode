@@ -375,30 +375,30 @@ fn preferred_lightweight_model_slug(provider: Provider, active_model: &str) -> O
     match provider {
         Provider::Anthropic => {
             if lower.contains("haiku") {
-                return Some(ModelId::ClaudeHaiku45.as_str().to_string());
+                return Some(ModelId::ClaudeSonnet5.as_str().to_string());
             }
             if lower.contains("sonnet") || lower.contains("opus") {
-                return Some(ModelId::ClaudeHaiku45.as_str().to_string());
+                return Some(ModelId::ClaudeSonnet5.as_str().to_string());
             }
             None
         }
         Provider::OpenAI => {
-            if lower.contains("gpt-5.4-mini") || lower.contains("gpt-5.4-nano") {
+            if lower.contains("gpt-5.6-luna") || lower.contains("gpt-5.6-luna") {
                 return Some(trimmed_model.to_string());
             }
-            if lower.contains("gpt-5.4") {
-                return Some(ModelId::GPT54Mini.as_str().to_string());
+            if lower.contains("gpt-5.6-sol") {
+                return Some(ModelId::GPT56Luna.as_str().to_string());
             }
             if lower.contains("gpt-5-mini") || lower.contains("gpt-5-nano") {
                 return Some(trimmed_model.to_string());
             }
             if lower.contains("gpt-5.") || lower == "gpt-5" || lower.contains("gpt-5-codex") {
-                return Some(ModelId::GPT54Mini.as_str().to_string());
+                return Some(ModelId::GPT56Luna.as_str().to_string());
             }
             None
         }
         Provider::Copilot => {
-            if lower.contains("gpt-5.4-mini") {
+            if lower.contains("gpt-5.6-luna") {
                 return Some(trimmed_model.to_string());
             }
             if lower.contains("gpt-5") || lower.contains("claude") {
@@ -427,16 +427,16 @@ fn preferred_lightweight_model_slug(provider: Provider, active_model: &str) -> O
                 return Some(trimmed_model.to_string());
             }
             if lower.contains("3.1") {
-                return Some(ModelId::Gemini35Flash.as_str().to_string());
+                return Some(ModelId::Gemini37Flash.as_str().to_string());
             }
             if lower.contains("gemini-3") || lower.contains("gemini 3") {
-                return Some(ModelId::Gemini35Flash.as_str().to_string());
+                return Some(ModelId::Gemini37Flash.as_str().to_string());
             }
             None
         }
         Provider::ZAI => {
             if lower.contains("glm-5.1") {
-                return Some(ModelId::ZaiGlm51.as_str().to_string());
+                return Some(ModelId::ZaiGlm52.as_str().to_string());
             }
             None
         }
@@ -456,13 +456,13 @@ fn preferred_lightweight_model_slug(provider: Provider, active_model: &str) -> O
 
 fn provider_default_lightweight_model(provider: Provider) -> Option<std::borrow::Cow<'static, str>> {
     match provider {
-        Provider::OpenAI => Some(ModelId::GPT54Mini.as_str()),
-        Provider::Anthropic => Some(ModelId::ClaudeHaiku45.as_str()),
+        Provider::OpenAI => Some(ModelId::GPT56Luna.as_str()),
+        Provider::Anthropic => Some(ModelId::ClaudeSonnet5.as_str()),
         Provider::Copilot => Some(ModelId::CopilotGPT54Mini.as_str()),
         Provider::DeepSeek => Some(ModelId::DeepSeekV4Flash.as_str()),
         Provider::Meta => Some(ModelId::MetaMuseSpark11.as_str()),
-        Provider::Gemini => Some(ModelId::Gemini35Flash.as_str()),
-        Provider::ZAI => Some(ModelId::ZaiGlm51.as_str()),
+        Provider::Gemini => Some(ModelId::Gemini37Flash.as_str()),
+        Provider::ZAI => Some(ModelId::ZaiGlm52.as_str()),
         Provider::Minimax => Some(ModelId::MinimaxM3.as_str()),
         Provider::StepFun => Some(ModelId::StepFun37Flash.as_str()),
         Provider::Evolink => Some(ModelId::EvolinkGpt52.as_str()),
@@ -478,7 +478,7 @@ mod tests {
 
     fn runtime_config() -> RuntimeAgentConfig {
         RuntimeAgentConfig {
-            model: ModelId::GPT54.as_str().to_string(),
+            model: ModelId::GPT56Sol.as_str().to_string(),
             api_key: "test-key".to_string(),
             provider: "openai".to_string(),
             openai_chatgpt_auth: None,
@@ -525,7 +525,7 @@ mod tests {
         let route = resolve_lightweight_route(&runtime, Some(&vt_cfg), LightweightFeature::PromptSuggestions, None);
 
         assert_eq!(route.primary.provider_name, "openai");
-        assert_eq!(route.primary.model, ModelId::GPT54Mini.as_str());
+        assert_eq!(route.primary.model, ModelId::GPT56Terra.as_str());
         assert_eq!(route.source, LightweightRouteSource::SharedAutomatic);
         assert!(route.warning.is_some());
     }
@@ -592,34 +592,31 @@ mod tests {
 
     #[test]
     fn auto_lightweight_model_prefers_same_generation_openai_sibling() {
-        assert_eq!(auto_lightweight_model("openai", &ModelId::GPT54.as_str()), ModelId::GPT54Mini.as_str());
+        assert_eq!(auto_lightweight_model("openai", &ModelId::GPT56Sol.as_str()), ModelId::GPT56Terra.as_str());
     }
 
     #[test]
     fn auto_lightweight_model_uses_closest_anthropic_haiku_pair() {
         assert_eq!(
-            auto_lightweight_model("anthropic", &ModelId::ClaudeSonnet46.as_str()),
-            ModelId::ClaudeHaiku45.as_str()
+            auto_lightweight_model("anthropic", &ModelId::ClaudeSonnet5.as_str()),
+            ModelId::ClaudeSonnet5.as_str()
         );
-        assert_eq!(auto_lightweight_model("anthropic", "claude-sonnet-4.5"), ModelId::ClaudeHaiku45.as_str());
+        assert_eq!(auto_lightweight_model("anthropic", "claude-sonnet-4.5"), ModelId::ClaudeSonnet5.as_str());
     }
 
     #[test]
     fn auto_lightweight_model_uses_lower_generation_glm_pair() {
-        assert_eq!(auto_lightweight_model("zai", &ModelId::ZaiGlm51.as_str()), ModelId::ZaiGlm51.as_str());
+        assert_eq!(auto_lightweight_model("zai", &ModelId::ZaiGlm52.as_str()), ModelId::ZaiGlm52.as_str());
     }
 
     #[test]
     fn auto_lightweight_model_prefers_same_generation_gemini_flash_lite() {
-        assert_eq!(
-            auto_lightweight_model("gemini", &ModelId::Gemini31ProPreview.as_str()),
-            ModelId::Gemini35Flash.as_str()
-        );
+        assert_eq!(auto_lightweight_model("gemini", &ModelId::Gemini37Flash.as_str()), ModelId::Gemini37Flash.as_str());
     }
 
     #[test]
     fn auto_lightweight_model_infers_family_for_custom_provider() {
-        assert_eq!(auto_lightweight_model("mycorp", &ModelId::GPT54.as_str()), ModelId::GPT54Mini.as_str());
+        assert_eq!(auto_lightweight_model("mycorp", &ModelId::GPT56Sol.as_str()), ModelId::GPT56Terra.as_str());
     }
 
     #[test]
@@ -630,7 +627,7 @@ mod tests {
 
         let route = resolve_lightweight_route(&runtime, Some(&vt_cfg), LightweightFeature::Memory, None);
 
-        assert_eq!(route.primary.model, ModelId::GPT54.as_str());
+        assert_eq!(route.primary.model, ModelId::GPT56Sol.as_str());
         assert_eq!(route.source, LightweightRouteSource::MainModel);
         assert!(route.fallback.is_none());
     }

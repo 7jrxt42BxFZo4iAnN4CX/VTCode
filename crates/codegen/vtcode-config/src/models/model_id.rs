@@ -21,14 +21,6 @@ pub use capabilities::{
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ModelId {
     // Gemini models
-    /// Gemini 3.1 Pro Preview - Latest Gemini 3.1 Pro flagship
-    Gemini31ProPreview,
-    /// Gemini 3.1 Pro Preview Custom Tools - Optimized for custom tools & bash
-    Gemini31ProPreviewCustomTools,
-    /// Gemini 3.5 Flash - High-efficiency frontier model for fast inference
-    Gemini35Flash,
-    /// Gemini 3.5 Flash Lite - Cost-optimized lightweight model for efficient inference
-    Gemini35FlashLite,
     /// Gemini 3.6 Flash - Latest flash model with improved capabilities
     Gemini36Flash,
     /// Gemini 3.7 Flash - Flash model with 1M context and tunable thinking levels
@@ -41,18 +33,6 @@ pub enum ModelId {
     GPT56Terra,
     /// GPT-5.6 Luna - GPT-5.6 model optimized for cost-sensitive workloads
     GPT56Luna,
-    /// GPT-5.5 - Next-gen OpenAI model dated release (2026-04-23)
-    GPT55,
-    /// GPT-5.4 - Mainline frontier GPT model for general-purpose and coding work
-    GPT54,
-    /// GPT-5.4 Pro - Higher-compute GPT-5.4 variant for difficult problems
-    GPT54Pro,
-    /// GPT-5.4 Nano - Lightweight GPT-5.4 variant optimized for speed and cost-efficiency
-    GPT54Nano,
-    /// GPT-5.4 Mini - Compact GPT-5.4 variant for cost-effective tasks with reduced reasoning overhead
-    GPT54Mini,
-    /// GPT-5.3 Codex - Code-focused GPT-5.3 variant optimized for agentic coding with reasoning effort support (low, medium, high, xhigh)
-    GPT53Codex,
     /// GPT-OSS 20B - OpenAI's open-source 20B parameter model using harmony
     OpenAIGptOss20b,
     /// GPT-OSS 120B - OpenAI's open-source 120B parameter model using harmony
@@ -68,12 +48,6 @@ pub enum ModelId {
     ClaudeMythos5,
     /// Claude Opus 5 - Anthropic's newest Opus-tier model with 1M context, thinking on by default
     ClaudeOpus5,
-    /// Claude Opus 4.8 - Anthropic's most capable model for complex reasoning and agentic coding
-    ClaudeOpus48,
-    /// Claude Sonnet 4.6 - Balanced flagship Anthropic model in VT Code's conservative rollout
-    ClaudeSonnet46,
-    /// Claude Haiku 4.5 - Latest efficient Anthropic model (2025-10-15)
-    ClaudeHaiku45,
     /// GitHub Copilot auto model selection
     CopilotAuto,
     /// GitHub Copilot GPT-5.2 Codex
@@ -142,6 +116,8 @@ pub enum ModelId {
     MergeGatewayThinkingMachinesInkling,
     /// Meta Muse Spark 1.1 through Merge Gateway
     MergeGatewayMetaMuseSpark11,
+    /// Z.AI GLM-5.3 Flash through Merge Gateway
+    MergeGatewayZaiGlm53Flash,
     /// OpenAI GPT-5.6 Luna through Merge Gateway
     MergeGatewayOpenAIGpt56Luna,
     /// OpenAI GPT-5.6 Sol through Merge Gateway
@@ -157,12 +133,10 @@ pub enum ModelId {
     HuggingFaceOpenAIGptOss20b,
     /// OpenAI GPT-OSS 120B via Hugging Face router
     HuggingFaceOpenAIGptOss120b,
-    /// Z.AI GLM-5.1 via zai-org provider on Hugging Face router
-    HuggingFaceGlm51ZaiOrg,
     /// Z.AI GLM-5.2 via Novita inference provider on Hugging Face router
     HuggingFaceGlm52Novita,
-    /// Kimi K2.6 via Novita on Hugging Face router
-    HuggingFaceKimiK26Novita,
+    /// Z.AI GLM-5.3 Flash via Together inference provider on Hugging Face router
+    HuggingFaceGlm53FlashTogether,
     /// Kimi K3 via Together on Hugging Face router
     HuggingFaceKimiK3Together,
     /// DeepSeek V4 Flash via Novita on Hugging Face router
@@ -171,10 +145,6 @@ pub enum ModelId {
     HuggingFaceDeepseekV4ProTogether,
     /// Step 3.5 Flash via Hugging Face router
     HuggingFaceStep35Flash,
-    /// Z.AI GLM-5.1 via DeepInfra inference provider on Hugging Face router
-    HuggingFaceGlm51Deepinfra,
-    /// MiniMax M2.7 via Novita on Hugging Face router
-    HuggingFaceMinimaxM27Novita,
     /// MiniMax M3 via Novita on Hugging Face router
     HuggingFaceMinimaxM3Novita,
     /// DeepSeek V4 Pro via Novita on Hugging Face router
@@ -210,10 +180,10 @@ pub enum ModelId {
 
     /// GLM-5.3 - Z.ai flagship coding model with frontier long-horizon agentic performance
     ZaiGlm53,
+    /// GLM-5.3 Flash - Z.ai efficient multimodal model with hybrid sparse+linear attention, 320B total / 18B active, 1M context, native vision
+    ZaiGlm53Flash,
     /// GLM-5.2 - Z.ai flagship model for long-horizon tasks with 1M context
     ZaiGlm52,
-    /// GLM-5.1 - Next-gen Z.ai foundation model with improved reasoning
-    ZaiGlm51,
 
     // MiMo models
     /// MiMo V2.5 Pro - Xiaomi's flagship reasoning model with 1M context
@@ -226,44 +196,26 @@ pub enum ModelId {
     MoonshotKimiK3,
     /// Kimi K2.7 Code - Moonshot.ai's most capable coding model with long-horizon coding breakthrough
     MoonshotKimiK27Code,
-    /// Kimi K2.6 - Moonshot.ai's 1T MoE flagship (32B active, MLA, MoonViT vision)
-    MoonshotKimiK26,
 
     // OpenCode Zen models
-    /// GPT-5.4 - OpenCode Zen default flagship model
-    OpenCodeZenGPT54,
-    /// GPT-5.4 Mini - Lower-cost OpenCode Zen GPT option
-    OpenCodeZenGPT54Mini,
-    /// Claude Sonnet 4.6 - Anthropic-backed OpenCode Zen coding model
-    OpenCodeZenClaudeSonnet46,
-    /// GLM-5.1 - Z.AI model served through OpenCode Zen
-    OpenCodeZenGlm51,
 
     // OpenCode Go models (20 models - https://opencode.ai/docs/go)
-    /// Grok 4.5 - xAI flagship reasoning model on OpenCode Go
-    OpenCodeGoGrok45,
     /// GLM-5.3 - Z.AI flagship for frontier long-horizon coding on OpenCode Go
     OpenCodeGoGlm53,
     /// GLM-5.2 - Z.AI flagship model included with OpenCode Go
     OpenCodeGoGlm52,
-    /// GLM-5.1 - Z.AI model included with OpenCode Go
-    OpenCodeGoGlm51,
     /// GPT-5.6 Luna - OpenAI cost-efficient frontier model on OpenCode Go
     OpenCodeGoGpt56Luna,
     /// Kimi K3 - Moonshot flagship 2.8T agentic model on OpenCode Go
     OpenCodeGoKimiK3,
     /// Kimi K2.7 Code - Moonshot.ai's most capable coding model on OpenCode Go
     OpenCodeGoKimiK27Code,
-    /// Kimi K2.6 - Moonshot.ai's 1T MoE model on OpenCode Go
-    OpenCodeGoKimiK26,
     /// MiMo-V2.5 - Xiaomi's omnimodal model on OpenCode Go
     OpenCodeGoMimoV25,
     /// MiMo-V2.5-Pro - Xiaomi's flagship reasoning model on OpenCode Go
     OpenCodeGoMimoV25Pro,
     /// MiniMax M3 - Frontier multimodal coding model on OpenCode Go
     OpenCodeGoMinimaxM3,
-    /// MiniMax M2.7 - Higher-tier OpenCode Go subscription model
-    OpenCodeGoMinimaxM27,
     /// Muse Spark 1.2 Contributor - Meta long-context reasoning on OpenCode Go (limited regions)
     OpenCodeGoMuseSpark12Contributor,
     /// Qwen3.8 Max - Qwen 3.8 flagship on OpenCode Go
@@ -286,8 +238,6 @@ pub enum ModelId {
     QwenDeepSeekV4Flash,
     /// DeepSeek V4 Pro via Qwen Cloud API
     QwenDeepSeekV4Pro,
-    /// GLM-5.1 via Qwen Cloud API
-    QwenGlm51,
 
     // Ollama models
     /// GPT-OSS 20B - Open-weight GPT-OSS 20B model served via Ollama locally
@@ -300,16 +250,10 @@ pub enum ModelId {
     OllamaDeepseekV4FlashCloud,
     /// DeepSeek V4 Pro Cloud - High-performance DeepSeek V4 Pro model via Ollama Cloud
     OllamaDeepseekV4ProCloud,
-    /// MiniMax-M2.7 Cloud - Cloud-hosted MiniMax-M2.7 model served via Ollama Cloud
-    OllamaMinimaxM27Cloud,
     /// MiniMax-M3 Cloud - Cloud-hosted MiniMax-M3 model served via Ollama Cloud
     OllamaMinimaxM3Cloud,
-    /// GLM-5.1 Cloud - Cloud-hosted GLM-5.1 model served via Ollama Cloud
-    OllamaGlm51Cloud,
     /// GLM-5.2 Cloud - Cloud-hosted GLM-5.2 flagship model served via Ollama Cloud
     OllamaGlm52Cloud,
-    /// Kimi K2.6 Cloud - Moonshot Kimi K2.6 via Ollama Cloud
-    OllamaKimiK26Cloud,
     /// Kimi K2.7 Code Cloud - Moonshot Kimi K2.7 Code via Ollama Cloud
     OllamaKimiK27CodeCloud,
     /// Kimi K3 Cloud - Moonshot Kimi K3 via Ollama Cloud
@@ -332,8 +276,6 @@ pub enum ModelId {
     // MiniMax models
     /// MiniMax-M3 - Frontier multimodal coding model with 1M context
     MinimaxM3,
-    /// MiniMax-M2.7 - Recursive self-improvement flagship with 204.8K context
-    MinimaxM27,
 
     // OpenRouter models
     /// DeepSeek V4 Pro - High-performance reasoning model via OpenRouter
@@ -350,8 +292,6 @@ pub enum ModelId {
     OpenRouterOpenAIGptOss20b,
     /// OpenAI GPT-5 - OpenAI GPT-5 model accessed through OpenRouter
     OpenRouterOpenAIGpt5,
-    /// OpenAI GPT-5.5 - OpenAI GPT-5.5 model accessed through OpenRouter
-    OpenRouterOpenAIGpt55,
     /// OpenAI GPT-5 Chat - Chat optimised GPT-5 endpoint without tool use
     OpenRouterOpenAIGpt5Chat,
 
@@ -360,35 +300,25 @@ pub enum ModelId {
     /// Meta Muse Spark 1.2 via OpenRouter
     OpenRouterMetaMuseSpark12,
 
-    /// Gemini 3.1 Pro Preview - Google's latest Gemini 3.1 Pro model via OpenRouter
-    OpenRouterGoogleGemini31ProPreview,
-    /// Gemini 3.5 Flash Lite - Cost-optimized lightweight Gemini model via OpenRouter
-    OpenRouterGoogleGemini35FlashLite,
     /// Gemini 3.6 Flash - Latest Gemini flash model with improved capabilities via OpenRouter
     OpenRouterGoogleGemini36Flash,
     /// Gemini 3.7 Flash - Flash model with 1M context and tunable thinking levels via OpenRouter
     OpenRouterGoogleGemini37Flash,
 
-    /// Claude Sonnet 4.6 - Anthropic Claude Sonnet 4.6 listing
-    OpenRouterAnthropicClaudeSonnet46,
     /// Claude Sonnet 5 - Anthropic Claude Sonnet 5 listing
     OpenRouterAnthropicClaudeSonnet5,
-    /// Claude Haiku 4.5 - Anthropic Claude Haiku 4.5 listing
-    OpenRouterAnthropicClaudeHaiku45,
     /// Mistral Large 3 2512 - Mistral Large 3 2512 model via OpenRouter
     OpenRouterMistralaiMistralLarge2512,
     /// DeepSeek V3.1 Nex N1 - Nex AGI DeepSeek V3.1 Nex N1 model via OpenRouter
     OpenRouterNexAgiDeepseekV31NexN1,
     /// Step 3.5 Flash (free) - StepFun's most capable open-source reasoning model via OpenRouter
     OpenRouterStepfunStep35FlashFree,
-    /// GLM-5.1 - Z.AI GLM-5.1 next-gen foundation model via OpenRouter
-    OpenRouterZaiGlm51,
     /// GLM-5.2 - Z.AI GLM-5.2 flagship model for long-horizon tasks via OpenRouter
     OpenRouterZaiGlm52,
+    /// GLM-5.3 Flash - Z.AI efficient multimodal model with hybrid sparse+linear attention via OpenRouter
+    OpenRouterZaiGlm53Flash,
     /// Kimi K3 - Moonshot AI's 2.8T parameter flagship via OpenRouter
     OpenRouterMoonshotaiKimiK3,
-    /// Kimi K2.6 - Moonshot AI's next-generation multimodal model via OpenRouter
-    OpenRouterMoonshotaiKimiK26,
     /// Kimi K2.7 Code - Moonshot AI's most capable coding model via OpenRouter
     OpenRouterMoonshotaiKimiK27Code,
     /// Hy3 Preview - Tencent's high-efficiency MoE model for agentic workflows via OpenRouter
@@ -423,10 +353,6 @@ pub enum ModelId {
     XaiGrokBuild01,
     /// Grok 4.6 - xAI's flagship reasoning model with reasoning_effort support (500k context)
     XaiGrok46,
-    /// Grok 4.5 - xAI's flagship reasoning model with reasoning_effort support (500k context)
-    XaiGrok45,
-    /// Grok 4.3 - xAI's balanced model with 1M context
-    XaiGrok43,
     /// Grok 4.20 0309 Reasoning - xAI's reasoning-optimized model with chain-of-thought
     XaiGrok420Reasoning,
 

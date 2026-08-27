@@ -81,11 +81,11 @@ mod tests {
             &mut session_stats,
             "openai",
             true,
-            "gpt-5.4",
+            "gpt-5.6-sol",
             Some("resp_123"),
             Arc::new(messages),
         );
 
-        assert_eq!(session_stats.previous_response_chain_for("openai", "gpt-5.4"), None);
+        assert_eq!(session_stats.previous_response_chain_for("openai", "gpt-5.6-sol"), None);
     }
 }

@@ -65,7 +65,7 @@ The AI provider that VT Code should use.
 ```toml
 [agent]
 provider = "anthropic"  # available: openai, anthropic, google, deepseek, copilot, openrouter, mimo, huggingface, zai, moonshot, minimax, mistral, qwen, stepfun, evolink, poolside, xai, nvidia, merge-gateway, meta, ollama, lmstudio, llamacpp
-default_model = "claude-sonnet-4-6"  # overrides the default model for the selected provider
+default_model = "claude-sonnet-5"  # overrides the default model for the selected provider
 ```
 
 ### agent.provider_settings
@@ -369,7 +369,7 @@ default_participants = ["@workspace", "@code", "@git"]
 [profiles.research]
 [profiles.research.agent]
 provider = "anthropic"
-default_model = "claude-haiku-4-5"
+default_model = "claude-sonnet-5"
 
 [profiles.research.tools.policies]
 web_search = "allow"
@@ -412,7 +412,7 @@ default_participants = ["@workspace", "@code", "@terminal"]
 # Settings for any workspace containing a Cargo.toml
 [workspace.rust]
 [workspace.rust.agent]
-default_model = "claude-haiku-4-5"
+default_model = "claude-sonnet-5"
 
 [workspace.rust.participants]
 default_participants = ["@workspace", "@code", "@terminal", "@git"]

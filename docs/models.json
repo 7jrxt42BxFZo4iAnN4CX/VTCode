@@ -8,70 +8,8 @@
     "api": "https://generativelanguage.googleapis.com/v1beta",
     "name": "Google Gemini",
     "doc": "https://ai.google.dev/gemini-api/docs/models",
-    "default_model": "gemini-3-flash-preview",
+    "default_model": "gemini-3.7-flash",
     "models": {
-      "gemini-3.1-pro-preview": {
-        "id": "gemini-3.1-pro-preview",
-        "name": "Gemini 3.1 Pro Preview",
-        "description": "Latest Gemini 3.1 Pro flagship model with improved thinking, efficiency, and factual consistency",
-        "version": "preview",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image",
-            "video",
-            "audio",
-            "pdf"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1048576,
-        "output_tokens": 65536,
-        "capabilities": {
-          "caching": true,
-          "code_execution": true,
-          "batch_api": true,
-          "structured_output": true,
-          "search_grounding": true,
-          "url_context": true,
-          "thinking": true
-        }
-      },
-      "gemini-3.1-pro-preview-customtools": {
-        "id": "gemini-3.1-pro-preview-customtools",
-        "name": "Gemini 3.1 Pro Preview (Custom Tools)",
-        "description": "Gemini 3.1 Pro variant optimized for agentic workflows using custom tools and bash",
-        "version": "preview",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image",
-            "video",
-            "audio",
-            "pdf"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1048576,
-        "output_tokens": 65536,
-        "capabilities": {
-          "caching": true,
-          "code_execution": true,
-          "batch_api": true,
-          "structured_output": true,
-          "search_grounding": true,
-          "url_context": true,
-          "thinking": true
-        }
-      },
       "gemini-3.1-flash-lite-preview": {
         "id": "gemini-3.1-flash-lite-preview",
         "name": "Gemini 3.1 Flash-Lite Preview",
@@ -103,73 +41,11 @@
           "thinking": true
         }
       },
-      "gemini-3.5-flash": {
-        "id": "gemini-3.5-flash",
-        "name": "Gemini 3.5 Flash",
-        "description": "High-efficiency frontier model for fast inference with excellent quality-to-speed balance",
-        "version": "stable",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image",
-            "video",
-            "audio",
-            "pdf"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1048576,
-        "output_tokens": 65536,
-        "capabilities": {
-          "caching": true,
-          "code_execution": true,
-          "batch_api": true,
-          "structured_output": true,
-          "search_grounding": true,
-          "url_context": true,
-          "thinking": true
-        }
-      },
       "gemini-3.7-flash": {
         "id": "gemini-3.7-flash",
         "name": "Gemini 3.7 Flash",
         "description": "Flash model with 1M context and tunable thinking levels (low, medium, high)",
         "version": "stable",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image",
-            "video",
-            "audio",
-            "pdf"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1048576,
-        "output_tokens": 65536,
-        "capabilities": {
-          "caching": true,
-          "code_execution": true,
-          "batch_api": true,
-          "structured_output": true,
-          "search_grounding": true,
-          "url_context": true,
-          "thinking": true
-        }
-      },
-      "gemini-3-flash-preview": {
-        "id": "gemini-3-flash-preview",
-        "name": "Gemini 3 Flash",
-        "description": "Our most intelligent model built for speed, combining frontier intelligence with superior search and grounding",
-        "version": "preview",
         "reasoning": true,
         "tool_call": true,
         "modalities": {
@@ -236,39 +112,6 @@
     "name": "OpenAI",
     "doc": "https://developers.openai.com/api/docs/models",
     "models": {
-      "gpt": {
-        "id": "gpt",
-        "name": "GPT",
-        "description": "Rolling alias for the latest GPT flagship model.",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1050000
-      },
-      "gpt-5.2": {
-        "id": "gpt-5.2",
-        "name": "GPT-5.2",
-        "description": "Preferred GPT-5.2 identifier with improved reasoning and coding capabilities.",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 400000
-      },
       "gpt-5.1": {
         "id": "gpt-5.1",
         "name": "GPT-5.1",
@@ -289,72 +132,6 @@
         "id": "gpt-5.1-mini",
         "name": "GPT-5.1 Mini",
         "description": "Lightweight GPT-5.1 variant optimized for fast responses and cost-efficiency.",
-        "reasoning": false,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 200000
-      },
-      "gpt-5.4": {
-        "id": "gpt-5.4",
-        "name": "GPT-5.4",
-        "description": "Frontier model for complex professional work with long context and image input.",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1050000
-      },
-      "gpt-5.4-pro": {
-        "id": "gpt-5.4-pro",
-        "name": "GPT-5.4 Pro",
-        "description": "Higher-compute GPT-5.4 variant for harder problems and more precise responses.",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1050000
-      },
-      "gpt-5.4-nano": {
-        "id": "gpt-5.4-nano",
-        "name": "GPT-5.4 Nano",
-        "description": "Lightweight GPT-5.4 variant optimized for speed and cost-efficiency.",
-        "reasoning": false,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 100000
-      },
-      "gpt-5.4-mini": {
-        "id": "gpt-5.4-mini",
-        "name": "GPT-5.4 Mini",
-        "description": "Compact GPT-5.4 variant for cost-effective tasks with reduced reasoning overhead.",
         "reasoning": false,
         "tool_call": true,
         "modalities": {
@@ -448,10 +225,10 @@
         },
         "context": 1050000
       },
-      "gpt-5.5": {
-        "id": "gpt-5.5",
-        "name": "GPT-5.5",
-        "description": "Next-gen OpenAI model with frontier reasoning and long context.",
+      "gpt": {
+        "id": "gpt",
+        "name": "GPT",
+        "description": "Rolling alias for the latest GPT flagship model.",
         "reasoning": true,
         "tool_call": true,
         "modalities": {
@@ -464,26 +241,9 @@
           ]
         },
         "context": 1050000
-      },
-      "gpt-5.3-codex": {
-        "id": "gpt-5.3-codex",
-        "name": "GPT-5.3 Codex",
-        "description": "GPT-5.3 Codex model for agentic software engineering with higher reasoning support.",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 400000
       }
     },
-    "default_model": "gpt-5.4"
+    "default_model": "gpt"
   },
   "llamacpp": {
     "id": "llamacpp",
@@ -653,22 +413,6 @@
         },
         "context": 400000
       },
-      "copilot-gpt-5.2-codex": {
-        "id": "copilot-gpt-5.2-codex",
-        "name": "GitHub Copilot GPT-5.2 Codex",
-        "description": "Backward-compatible VT Code alias for the Copilot CLI raw model `gpt-5.2-codex`.",
-        "reasoning": true,
-        "tool_call": false,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 400000
-      },
       "copilot-gpt-5.1-codex-max": {
         "id": "copilot-gpt-5.1-codex-max",
         "name": "GitHub Copilot GPT-5.1 Codex Max",
@@ -684,150 +428,6 @@
           ]
         },
         "context": 400000
-      },
-      "copilot-gpt-5.4": {
-        "id": "copilot-gpt-5.4",
-        "name": "GitHub Copilot GPT-5.4",
-        "description": "Backward-compatible VT Code alias for the Copilot CLI raw model `gpt-5.4`.",
-        "reasoning": true,
-        "tool_call": false,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1050000
-      },
-      "copilot-gpt-5.4-mini": {
-        "id": "copilot-gpt-5.4-mini",
-        "name": "GitHub Copilot GPT-5.4 Mini",
-        "description": "Backward-compatible VT Code alias for the Copilot CLI raw model `gpt-5.4-mini`.",
-        "reasoning": false,
-        "tool_call": false,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 200000
-      },
-      "copilot-claude-sonnet-4.6": {
-        "id": "copilot-claude-sonnet-4.6",
-        "name": "GitHub Copilot Claude Sonnet 4.6",
-        "description": "Backward-compatible VT Code alias for the Copilot CLI raw model `claude-sonnet-4.6`.",
-        "reasoning": true,
-        "tool_call": false,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1000000
-      },
-      "claude-sonnet-4.6": {
-        "id": "claude-sonnet-4.6",
-        "name": "Claude Sonnet 4.6",
-        "description": "Verified GitHub Copilot CLI raw model id. VT Code exposes it through the text-only Copilot runtime.",
-        "reasoning": true,
-        "tool_call": false,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1000000
-      },
-      "claude-haiku-4.5": {
-        "id": "claude-haiku-4.5",
-        "name": "Claude Haiku 4.5",
-        "description": "Verified GitHub Copilot CLI raw model id for Claude Haiku 4.5.",
-        "reasoning": false,
-        "tool_call": false,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 200000
-      },
-      "claude-opus-4.6": {
-        "id": "claude-opus-4.6",
-        "name": "Claude Opus 4.6",
-        "description": "Verified GitHub Copilot CLI raw model id for Claude Opus 4.6.",
-        "reasoning": true,
-        "tool_call": false,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1000000
-      },
-      "claude-opus-4.6-fast": {
-        "id": "claude-opus-4.6-fast",
-        "name": "Claude Opus 4.6 Fast",
-        "description": "Verified GitHub Copilot CLI raw model id for the faster Claude Opus 4.6 variant.",
-        "reasoning": true,
-        "tool_call": false,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1000000
-      },
-      "claude-opus-4.6-1m": {
-        "id": "claude-opus-4.6-1m",
-        "name": "Claude Opus 4.6 1M",
-        "description": "Verified GitHub Copilot CLI raw model id for the 1M-context Claude Opus 4.6 variant.",
-        "reasoning": true,
-        "tool_call": false,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1000000
-      },
-      "claude-opus-4.5": {
-        "id": "claude-opus-4.5",
-        "name": "Claude Opus 4.5",
-        "description": "Verified GitHub Copilot CLI raw model id for Claude Opus 4.5.",
-        "reasoning": true,
-        "tool_call": false,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1000000
       },
       "claude-sonnet-4": {
         "id": "claude-sonnet-4",
@@ -861,54 +461,6 @@
         },
         "context": 1048576
       },
-      "gpt-5.4": {
-        "id": "gpt-5.4",
-        "name": "GPT-5.4",
-        "description": "Verified GitHub Copilot CLI raw model id for GPT-5.4.",
-        "reasoning": true,
-        "tool_call": false,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1050000
-      },
-      "gpt-5.3-codex": {
-        "id": "gpt-5.3-codex",
-        "name": "GPT-5.3 Codex",
-        "description": "Verified GitHub Copilot CLI raw model id for GPT-5.3 Codex.",
-        "reasoning": true,
-        "tool_call": false,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 400000
-      },
-      "gpt-5.2": {
-        "id": "gpt-5.2",
-        "name": "GPT-5.2",
-        "description": "Verified GitHub Copilot CLI raw model id for GPT-5.2.",
-        "reasoning": true,
-        "tool_call": false,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 400000
-      },
       "gpt-5.1": {
         "id": "gpt-5.1",
         "name": "GPT-5.1",
@@ -924,22 +476,6 @@
           ]
         },
         "context": 400000
-      },
-      "gpt-5.4-mini": {
-        "id": "gpt-5.4-mini",
-        "name": "GPT-5.4 Mini",
-        "description": "Verified GitHub Copilot CLI raw model id for GPT-5.4 Mini.",
-        "reasoning": false,
-        "tool_call": false,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 200000
       },
       "gpt-4.1": {
         "id": "gpt-4.1",
@@ -1027,25 +563,6 @@
           "structured_output": true
         }
       },
-      "zai-org/GLM-5.1:zai-org": {
-        "id": "zai-org/GLM-5.1:zai-org",
-        "name": "GLM-5.1 (zai-org)",
-        "description": "Z.AI GLM-5.1 next-gen foundation model available via Hugging Face router (zai-org provider).",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 200000,
-        "capabilities": {
-          "structured_output": true
-        }
-      },
       "zai-org/GLM-5.2:novita": {
         "id": "zai-org/GLM-5.2:novita",
         "name": "GLM-5.2 (Novita)",
@@ -1062,6 +579,27 @@
         },
         "context": 1000000,
         "max_output_tokens": 128000,
+        "capabilities": {
+          "structured_output": true
+        }
+      },
+      "zai-org/GLM-5.3-Flash:together": {
+        "id": "zai-org/GLM-5.3-Flash:together",
+        "name": "GLM-5.3 Flash (Together)",
+        "description": "Z.AI GLM-5.3 Flash efficient multimodal model via Together inference provider on Hugging Face router (320B/18B, 1M context, native vision).",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text",
+            "image"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 1000000,
+        "max_output_tokens": 131072,
         "capabilities": {
           "structured_output": true
         }
@@ -1257,44 +795,6 @@
           "structured_output": true
         }
       },
-      "zai-org/GLM-5.1:deepinfra": {
-        "id": "zai-org/GLM-5.1:deepinfra",
-        "name": "GLM-5.1 (DeepInfra)",
-        "description": "Z.ai GLM-5.1 model via DeepInfra inference provider on HuggingFace router.",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 200000,
-        "capabilities": {
-          "structured_output": true
-        }
-      },
-      "MiniMaxAI/MiniMax-M2.7:novita": {
-        "id": "MiniMaxAI/MiniMax-M2.7:novita",
-        "name": "MiniMax-M2.7 (Novita)",
-        "description": "MiniMax-M2.7 model via Novita inference provider on HuggingFace router. Recursive self-improvement with enhanced reasoning and coding capabilities.",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 204800,
-        "capabilities": {
-          "structured_output": true
-        }
-      },
       "MiniMaxAI/MiniMax-M3:novita": {
         "id": "MiniMaxAI/MiniMax-M3:novita",
         "name": "MiniMax-M3 (Novita)",
@@ -1364,14 +864,14 @@
     "api": "https://api.anthropic.com/v1",
     "name": "Anthropic",
     "doc": "https://docs.anthropic.com/claude/docs/models-overview",
-    "default_model": "claude-opus-4-8",
+    "default_model": "claude-opus-5",
     "models": {
       "claude-sonnet-5": {
         "id": "claude-sonnet-5",
-        "name": "Claude Sonnet 5",
-        "description": "The best combination of speed and intelligence with adaptive thinking on by default, 1M context, and new tokenizer",
+        "name": "Claude Haiku 4.5 (alias)",
+        "description": "The fastest model with near-frontier intelligence. Alias for latest Claude Haiku 4.5.",
+        "alias": "claude-sonnet-5",
         "reasoning": true,
-        "effort": true,
         "tool_call": true,
         "modalities": {
           "input": [
@@ -1382,10 +882,8 @@
             "text"
           ]
         },
-        "context": 1000000,
-        "output_tokens": 128000,
-        "status": "current",
-        "version": "5"
+        "context": 200000,
+        "status": "stable"
       },
       "claude-fable-5": {
         "id": "claude-fable-5",
@@ -1431,27 +929,6 @@
       },
       "claude-opus-5": {
         "id": "claude-opus-5",
-        "name": "Claude Opus 5",
-        "description": "Anthropic's newest Opus-tier model with 1M context, thinking on by default, and full effort ladder support",
-        "reasoning": true,
-        "effort": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1000000,
-        "output_tokens": 128000,
-        "status": "current",
-        "version": "5"
-      },
-      "claude-opus-4-8": {
-        "id": "claude-opus-4-8",
         "name": "Claude Opus 4.8",
         "description": "Anthropic's most capable model for complex reasoning, long-horizon agentic coding, and high-autonomy work",
         "reasoning": true,
@@ -1470,63 +947,6 @@
         "output_tokens": 128000,
         "status": "current",
         "version": "4.8"
-      },
-      "claude-haiku-4-5-20251001": {
-        "id": "claude-haiku-4-5-20251001",
-        "name": "Claude Haiku 4.5",
-        "description": "The fastest model with near-frontier intelligence. Supports extended thinking with manual budget.",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 200000,
-        "output_tokens": 64000,
-        "status": "current"
-      },
-      "claude-sonnet-4-6": {
-        "id": "claude-sonnet-4-6",
-        "name": "Claude Sonnet 4.6",
-        "description": "The best combination of speed and intelligence. Supports extended thinking and adaptive thinking with 1M context.",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1000000,
-        "output_tokens": 64000,
-        "status": "current"
-      },
-      "claude-haiku-4-5": {
-        "id": "claude-haiku-4-5",
-        "name": "Claude Haiku 4.5 (alias)",
-        "description": "The fastest model with near-frontier intelligence. Alias for latest Claude Haiku 4.5.",
-        "alias": "claude-haiku-4-5-20251001",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 200000,
-        "status": "stable"
       }
     }
   },
@@ -1555,22 +975,6 @@
           ]
         },
         "context": 1000000
-      },
-      "MiniMax-M2.5": {
-        "id": "MiniMax-M2.5",
-        "name": "MiniMax-M2.5",
-        "description": "Latest MiniMax-M2.5 model with enhanced code understanding and reasoning",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 204800
       }
     }
   },
@@ -1633,7 +1037,7 @@
         },
         "context": 1000000,
         "max_output_tokens": 384000,
-        "description": "Experimental vision model — image + text input via chat/completions (base64/file_id/URL, 600 images, 48MiB body, 8192px)"
+        "description": "Experimental vision model \u2014 image + text input via chat/completions (base64/file_id/URL, 600 images, 48MiB body, 8192px)"
       }
     }
   },
@@ -1646,41 +1050,6 @@
     "name": "Z.AI",
     "doc": "https://docs.z.ai/guides/llm/glm-5",
     "models": {
-      "glm-5.3": {
-        "id": "glm-5.3",
-        "name": "GLM-5.3",
-        "description": "Z.ai flagship coding model with frontier long-horizon agentic performance. Built on the GLM-5.2 base with post-training gains: much stronger complex coding and long-horizon task execution, using the same 1M-token context.",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1000000,
-        "max_output_tokens": 128000,
-        "capabilities": {
-          "thinking": true,
-          "streaming": true,
-          "function_calling": true,
-          "context_caching": true,
-          "structured_output": true,
-          "tool_streaming": true
-        },
-        "vtcode": {
-          "variant": "ZaiGlm53",
-          "constant": "Z_AI_GLM_5_3",
-          "display": "GLM-5.3",
-          "description": "Z.ai flagship coding model with frontier long-horizon agentic performance and 1M context.",
-          "efficient": false,
-          "top_tier": true,
-          "generation": "5.3",
-          "doc_comment": "GLM-5.3 - Z.ai flagship coding model with frontier long-horizon agentic performance"
-        }
-      },
       "glm-5.2": {
         "id": "glm-5.2",
         "name": "GLM-5.2",
@@ -1716,108 +1085,10 @@
           "doc_comment": "GLM-5.2 - Z.ai flagship model for long-horizon tasks"
         }
       },
-      "glm-5.1": {
-        "id": "glm-5.1",
-        "name": "GLM-5.1",
-        "description": "Z.ai next-gen GLM-5.1 foundation model with improved reasoning, enhanced agent capabilities, and stronger agentic coding performance.",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 200000,
-        "max_output_tokens": 128000,
-        "capabilities": {
-          "thinking": true,
-          "streaming": true,
-          "function_calling": true,
-          "context_caching": true,
-          "structured_output": true,
-          "tool_streaming": true
-        },
-        "vtcode": {
-          "variant": "ZaiGlm51",
-          "constant": "Z_AI_GLM_5_1",
-          "display": "GLM-5.1",
-          "description": "Z.AI next-gen GLM-5.1 foundation model with improved reasoning.",
-          "efficient": false,
-          "top_tier": true,
-          "generation": "GLM-5.1",
-          "doc_comment": "GLM-5.1 - Z.AI next-gen GLM-5.1 model"
-        }
-      }
-    }
-  },
-  "opencode-zen": {
-    "id": "opencode-zen",
-    "env": [
-      "OPENCODE_ZEN_API_KEY"
-    ],
-    "api": "https://opencode.ai/zen/v1",
-    "name": "OpenCode Zen",
-    "doc": "https://opencode.ai/docs/zen/",
-    "default_model": "gpt-5.4",
-    "models": {
-      "gpt-5.4": {
-        "id": "gpt-5.4",
-        "name": "GPT-5.4 (OpenCode Zen)",
-        "description": "OpenCode Zen flagship GPT-5.4 route on the curated pay-as-you-go gateway.",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1050000,
-        "capabilities": {
-          "caching": true,
-          "structured_output": true
-        },
-        "cost": {
-          "input": 2.5e-06,
-          "output": 1.5e-05,
-          "cache_read": 2.5e-07
-        }
-      },
-      "gpt-5.4-mini": {
-        "id": "gpt-5.4-mini",
-        "name": "GPT-5.4 Mini (OpenCode Zen)",
-        "description": "Lower-cost GPT-5.4 Mini route served through OpenCode Zen.",
-        "reasoning": false,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 200000,
-        "capabilities": {
-          "caching": true,
-          "structured_output": true
-        },
-        "cost": {
-          "input": 7.5e-07,
-          "output": 4.5e-06,
-          "cache_read": 7.5e-08
-        }
-      },
-      "claude-sonnet-4-6": {
-        "id": "claude-sonnet-4-6",
-        "name": "Claude Sonnet 4.6 (OpenCode Zen)",
-        "description": "Claude Sonnet 4.6 served through OpenCode Zen's curated Anthropic endpoint.",
+      "glm-5.3-flash": {
+        "id": "glm-5.3-flash",
+        "name": "GLM-5.3 Flash",
+        "description": "Z.ai efficient multimodal model with hybrid sparse+linear attention (320B total / 18B active, 3.01x less attention compute, 4.44x smaller KV cache), 1M context and native vision for coding and visual workflows.",
         "reasoning": true,
         "tool_call": true,
         "modalities": {
@@ -1832,20 +1103,29 @@
         "context": 1000000,
         "max_output_tokens": 128000,
         "capabilities": {
+          "thinking": true,
+          "streaming": true,
+          "function_calling": true,
           "context_caching": true,
-          "structured_output": true
+          "structured_output": true,
+          "tool_streaming": true,
+          "vision": true
         },
-        "cost": {
-          "input": 3e-06,
-          "output": 1.5e-05,
-          "cache_read": 3e-07,
-          "cache_write": 3.75e-06
+        "vtcode": {
+          "variant": "ZaiGlm53Flash",
+          "constant": "Z_AI_GLM_5_3_FLASH",
+          "display": "GLM-5.3 Flash",
+          "description": "Z.ai efficient multimodal model with hybrid sparse+linear attention, 1M context and native vision.",
+          "efficient": true,
+          "top_tier": true,
+          "generation": "5.3",
+          "doc_comment": "GLM-5.3 Flash - Z.ai efficient multimodal model with hybrid sparse+linear attention, 320B total / 18B active, 1M context, native vision"
         }
       },
-      "glm-5.1": {
-        "id": "glm-5.1",
-        "name": "GLM-5.1 (OpenCode Zen)",
-        "description": "GLM-5.1 served through OpenCode Zen for lower-cost reasoning and coding work.",
+      "glm-5.3": {
+        "id": "glm-5.3",
+        "name": "GLM-5.3",
+        "description": "Z.ai flagship coding model with frontier long-horizon agentic performance. Built on the GLM-5.2 base with post-training gains: much stronger complex coding and long-horizon task execution, using the same 1M-token context.",
         "reasoning": true,
         "tool_call": true,
         "modalities": {
@@ -1856,19 +1136,40 @@
             "text"
           ]
         },
-        "context": 200000,
+        "context": 1000000,
         "max_output_tokens": 128000,
         "capabilities": {
+          "thinking": true,
+          "streaming": true,
+          "function_calling": true,
           "context_caching": true,
-          "structured_output": true
+          "structured_output": true,
+          "tool_streaming": true
         },
-        "cost": {
-          "input": 1.4e-06,
-          "output": 4.4e-06,
-          "cache_read": 2.6e-07
+        "vtcode": {
+          "variant": "ZaiGlm53",
+          "constant": "Z_AI_GLM_5_3",
+          "display": "GLM-5.3",
+          "description": "Z.ai flagship coding model with frontier long-horizon agentic performance and 1M context.",
+          "efficient": false,
+          "top_tier": true,
+          "generation": "5.3",
+          "doc_comment": "GLM-5.3 - Z.ai flagship coding model with frontier long-horizon agentic performance"
         }
       }
-    }
+    },
+    "default_model": "glm-5.3"
+  },
+  "opencode-zen": {
+    "id": "opencode-zen",
+    "env": [
+      "OPENCODE_ZEN_API_KEY"
+    ],
+    "api": "https://opencode.ai/zen/v1",
+    "name": "OpenCode Zen",
+    "doc": "https://opencode.ai/docs/zen/",
+    "default_model": "gpt-5.6-sol",
+    "models": {}
   },
   "opencode-go": {
     "id": "opencode-go",
@@ -1878,33 +1179,12 @@
     "api": "https://opencode.ai/zen/go/v1",
     "name": "OpenCode Go",
     "doc": "https://opencode.ai/docs/go/",
-    "default_model": "glm-5.1",
+    "default_model": "glm-5.2",
     "models": {
       "glm-5.2": {
         "id": "glm-5.2",
         "name": "GLM-5.2 (OpenCode Go)",
-        "description": "GLM-5.2 — flagship Z.AI model included with the OpenCode Go subscription for long-horizon coding.",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 200000,
-        "max_output_tokens": 128000,
-        "capabilities": {
-          "context_caching": true,
-          "structured_output": true
-        }
-      },
-      "glm-5.1": {
-        "id": "glm-5.1",
-        "name": "GLM-5.1 (OpenCode Go)",
-        "description": "GLM-5.1 included with the OpenCode Go subscription.",
+        "description": "GLM-5.2 \u2014 flagship Z.AI model included with the OpenCode Go subscription for long-horizon coding.",
         "reasoning": true,
         "tool_call": true,
         "modalities": {
@@ -1925,23 +1205,7 @@
       "kimi-k2.7-code": {
         "id": "kimi-k2.7-code",
         "name": "Kimi K2.7 Code (OpenCode Go)",
-        "description": "Kimi K2.7 Code — Moonshot's most capable coding model included with the OpenCode Go subscription.",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 256000
-      },
-      "kimi-k2.6": {
-        "id": "kimi-k2.6",
-        "name": "Kimi K2.6 (OpenCode Go)",
-        "description": "Kimi K2.6 — Moonshot's 1T MoE general-purpose model included with the OpenCode Go subscription.",
+        "description": "Kimi K2.7 Code \u2014 Moonshot's most capable coding model included with the OpenCode Go subscription.",
         "reasoning": true,
         "tool_call": true,
         "modalities": {
@@ -1957,7 +1221,7 @@
       "mimo-v2.5": {
         "id": "mimo-v2.5",
         "name": "MiMo-V2.5 (OpenCode Go)",
-        "description": "MiMo-V2.5 — Xiaomi's omnimodal high-volume model included with the OpenCode Go subscription.",
+        "description": "MiMo-V2.5 \u2014 Xiaomi's omnimodal high-volume model included with the OpenCode Go subscription.",
         "reasoning": true,
         "tool_call": true,
         "modalities": {
@@ -1973,7 +1237,7 @@
       "mimo-v2.5-pro": {
         "id": "mimo-v2.5-pro",
         "name": "MiMo-V2.5-Pro (OpenCode Go)",
-        "description": "MiMo-V2.5-Pro — Xiaomi's flagship reasoning model included with the OpenCode Go subscription.",
+        "description": "MiMo-V2.5-Pro \u2014 Xiaomi's flagship reasoning model included with the OpenCode Go subscription.",
         "reasoning": true,
         "tool_call": true,
         "modalities": {
@@ -1989,7 +1253,7 @@
       "minimax-m3": {
         "id": "minimax-m3",
         "name": "MiniMax M3 (OpenCode Go)",
-        "description": "MiniMax M3 — frontier multimodal coding model included with the OpenCode Go subscription.",
+        "description": "MiniMax M3 \u2014 frontier multimodal coding model included with the OpenCode Go subscription.",
         "reasoning": true,
         "tool_call": true,
         "modalities": {
@@ -2002,26 +1266,10 @@
         },
         "context": 1048576
       },
-      "minimax-m2.7": {
-        "id": "minimax-m2.7",
-        "name": "MiniMax M2.7 (OpenCode Go)",
-        "description": "MiniMax M2.7 included with the OpenCode Go subscription for stronger agentic coding.",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 204800
-      },
       "qwen3.7-max": {
         "id": "qwen3.7-max",
         "name": "Qwen3.7 Max (OpenCode Go)",
-        "description": "Qwen3.7 Max — highest capability Qwen tier included with the OpenCode Go subscription.",
+        "description": "Qwen3.7 Max \u2014 highest capability Qwen tier included with the OpenCode Go subscription.",
         "reasoning": true,
         "tool_call": true,
         "modalities": {
@@ -2037,7 +1285,7 @@
       "qwen3.7-plus": {
         "id": "qwen3.7-plus",
         "name": "Qwen3.7 Plus (OpenCode Go)",
-        "description": "Qwen3.7 Plus — balanced Qwen coding model included with the OpenCode Go subscription.",
+        "description": "Qwen3.7 Plus \u2014 balanced Qwen coding model included with the OpenCode Go subscription.",
         "reasoning": true,
         "tool_call": true,
         "modalities": {
@@ -2053,7 +1301,7 @@
       "qwen3.6-plus": {
         "id": "qwen3.6-plus",
         "name": "Qwen3.6 Plus (OpenCode Go)",
-        "description": "Qwen3.6 Plus — cost-effective Qwen coding model included with the OpenCode Go subscription.",
+        "description": "Qwen3.6 Plus \u2014 cost-effective Qwen coding model included with the OpenCode Go subscription.",
         "reasoning": true,
         "tool_call": true,
         "modalities": {
@@ -2069,7 +1317,7 @@
       "deepseek-v4-pro": {
         "id": "deepseek-v4-pro",
         "name": "DeepSeek V4 Pro (OpenCode Go)",
-        "description": "DeepSeek V4 Pro — high-quality reasoning model included with the OpenCode Go subscription.",
+        "description": "DeepSeek V4 Pro \u2014 high-quality reasoning model included with the OpenCode Go subscription.",
         "reasoning": true,
         "tool_call": true,
         "modalities": {
@@ -2085,7 +1333,7 @@
       "deepseek-v4-flash": {
         "id": "deepseek-v4-flash",
         "name": "DeepSeek V4 Flash (OpenCode Go)",
-        "description": "DeepSeek V4 Flash — fast, low-cost coding model included with the OpenCode Go subscription.",
+        "description": "DeepSeek V4 Flash \u2014 fast, low-cost coding model included with the OpenCode Go subscription.",
         "reasoning": true,
         "tool_call": true,
         "modalities": {
@@ -2098,48 +1346,10 @@
         },
         "context": 128000
       },
-      "grok-4.5": {
-        "id": "grok-4.5",
-        "name": "Grok 4.5 (OpenCode Go)",
-        "description": "Grok 4.5 — xAI flagship reasoning model included with the OpenCode Go subscription.",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 500000
-      },
-      "glm-5.3": {
-        "id": "glm-5.3",
-        "name": "GLM-5.3 (OpenCode Go)",
-        "description": "GLM-5.3 — Z.AI flagship for frontier long-horizon coding included with the OpenCode Go subscription.",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 200000,
-        "max_output_tokens": 128000,
-        "capabilities": {
-          "context_caching": true,
-          "structured_output": true
-        }
-      },
       "gpt-5.6-luna": {
         "id": "gpt-5.6-luna",
         "name": "GPT-5.6 Luna (OpenCode Go)",
-        "description": "GPT-5.6 Luna — OpenAI cost-efficient frontier model included with the OpenCode Go subscription.",
+        "description": "GPT-5.6 Luna \u2014 OpenAI cost-efficient frontier model included with the OpenCode Go subscription.",
         "reasoning": true,
         "tool_call": true,
         "modalities": {
@@ -2156,7 +1366,7 @@
       "kimi-k3": {
         "id": "kimi-k3",
         "name": "Kimi K3 (OpenCode Go)",
-        "description": "Kimi K3 — Moonshot flagship 2.8T agentic model included with the OpenCode Go subscription.",
+        "description": "Kimi K3 \u2014 Moonshot flagship 2.8T agentic model included with the OpenCode Go subscription.",
         "reasoning": true,
         "tool_call": true,
         "modalities": {
@@ -2173,7 +1383,7 @@
       "muse-spark-1.2-contributor": {
         "id": "muse-spark-1.2-contributor",
         "name": "Muse Spark 1.2 Contributor (OpenCode Go)",
-        "description": "Muse Spark 1.2 Contributor — Meta long-context reasoning model included with the OpenCode Go subscription (limited regions).",
+        "description": "Muse Spark 1.2 Contributor \u2014 Meta long-context reasoning model included with the OpenCode Go subscription (limited regions).",
         "reasoning": true,
         "tool_call": true,
         "modalities": {
@@ -2193,7 +1403,7 @@
       "qwen3.8-max": {
         "id": "qwen3.8-max",
         "name": "Qwen3.8 Max (OpenCode Go)",
-        "description": "Qwen3.8 Max — highest capability Qwen tier included with the OpenCode Go subscription.",
+        "description": "Qwen3.8 Max \u2014 highest capability Qwen tier included with the OpenCode Go subscription.",
         "reasoning": true,
         "tool_call": true,
         "modalities": {
@@ -2210,7 +1420,7 @@
       "hy3": {
         "id": "hy3",
         "name": "Hy3 (OpenCode Go)",
-        "description": "Hy3 — high-volume coding model included with the OpenCode Go subscription.",
+        "description": "Hy3 \u2014 high-volume coding model included with the OpenCode Go subscription.",
         "reasoning": true,
         "tool_call": true,
         "modalities": {
@@ -2222,6 +1432,27 @@
           ]
         },
         "context": 1048576
+      },
+      "glm-5.3": {
+        "id": "glm-5.3",
+        "name": "GLM-5.3 (OpenCode Go)",
+        "description": "GLM-5.3 included with the OpenCode Go subscription for frontier long-horizon coding",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 200000,
+        "capabilities": {
+          "context_caching": true,
+          "structured_output": true
+        },
+        "max_output_tokens": 128000
       }
     }
   },
@@ -2342,9 +1573,9 @@
         },
         "context": 131072,
         "cost": {
-          "input": 3.5e-7,
-          "output": 1.5e-6,
-          "cache_read": 4e-8
+          "input": 3.5e-07,
+          "output": 1.5e-06,
+          "cache_read": 4e-08
         },
         "vtcode": {
           "variant": "OpenRouterMetaMuseGlimmer30b",
@@ -2378,9 +1609,9 @@
         },
         "context": 1048576,
         "cost": {
-          "input": 1.25e-6,
-          "output": 4.25e-6,
-          "cache_read": 1.5e-7
+          "input": 1.25e-06,
+          "output": 4.25e-06,
+          "cache_read": 1.5e-07
         },
         "vtcode": {
           "variant": "OpenRouterMetaMuseSpark12",
@@ -2419,65 +1650,6 @@
           "top_tier": true,
           "generation": "Step-3.5",
           "doc_comment": "Step 3.5 Flash (free) - StepFun's most capable open-source reasoning model via OpenRouter"
-        }
-      },
-      "anthropic/claude-haiku-4.5": {
-        "id": "anthropic/claude-haiku-4.5",
-        "name": "Anthropic: Claude Haiku 4.5",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 200000,
-        "vtcode": {
-          "variant": "OpenRouterAnthropicClaudeHaiku45",
-          "constant": "ANTHROPIC_CLAUDE_HAIKU_4_5",
-          "vendor": "anthropic",
-          "display": "Claude Haiku 4.5",
-          "description": "Anthropic Claude Haiku 4.5 listing",
-          "efficient": true,
-          "top_tier": false,
-          "generation": "2025-10-15",
-          "doc_comment": "Claude Haiku 4.5 - Anthropic Claude Haiku 4.5 listing"
-        }
-      },
-      "anthropic/claude-sonnet-4.6": {
-        "id": "anthropic/claude-sonnet-4.6",
-        "name": "Anthropic: Claude Sonnet 4.6",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image",
-            "file"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1000000,
-        "max_output_tokens": 128000,
-        "cost": {
-          "input": 3e-06,
-          "output": 1.5e-05
-        },
-        "vtcode": {
-          "variant": "OpenRouterAnthropicClaudeSonnet46",
-          "constant": "ANTHROPIC_CLAUDE_SONNET_4_6",
-          "vendor": "anthropic",
-          "display": "Claude Sonnet 4.6",
-          "description": "Anthropic Claude Sonnet 4.6 listing",
-          "efficient": false,
-          "top_tier": true,
-          "generation": "2026-02-20",
-          "doc_comment": "Claude Sonnet 4.6 - Anthropic Claude Sonnet 4.6 listing"
         }
       },
       "anthropic/claude-sonnet-5": {
@@ -2598,62 +1770,6 @@
           "doc_comment": "DeepSeek R1 - DeepSeek R1 reasoning model with chain-of-thought"
         }
       },
-      "google/gemini-3.1-pro-preview": {
-        "id": "google/gemini-3.1-pro-preview",
-        "name": "Google: Gemini 3.1 Pro Preview",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image",
-            "file"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1048576,
-        "vtcode": {
-          "variant": "OpenRouterGoogleGemini31ProPreview",
-          "constant": "GOOGLE_GEMINI_3_1_PRO_PREVIEW",
-          "vendor": "google",
-          "display": "Gemini 3.1 Pro Preview",
-          "description": "Google Gemini 3.1 Pro model via OpenRouter",
-          "efficient": false,
-          "top_tier": true,
-          "generation": "3.1",
-          "doc_comment": "Gemini 3.1 Pro Preview - Google Gemini 3.1 Pro model via OpenRouter"
-        }
-      },
-      "google/gemini-3.5-flash-lite": {
-        "id": "google/gemini-3.5-flash-lite",
-        "name": "Google: Gemini 3.5 Flash Lite",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image",
-            "file"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1048576,
-        "vtcode": {
-          "variant": "OpenRouterGoogleGemini35FlashLite",
-          "constant": "GOOGLE_GEMINI_3_5_FLASH_LITE",
-          "vendor": "google",
-          "display": "Gemini 3.5 Flash Lite",
-          "description": "Cost-optimized lightweight Gemini model for efficient inference via OpenRouter",
-          "efficient": true,
-          "top_tier": false,
-          "generation": "3.5",
-          "doc_comment": "Gemini 3.5 Flash Lite - Cost-optimized lightweight Gemini model for efficient inference via OpenRouter"
-        }
-      },
       "google/gemini-3.6-flash": {
         "id": "google/gemini-3.6-flash",
         "name": "Google: Gemini 3.6 Flash",
@@ -2741,33 +1857,6 @@
           "top_tier": true,
           "generation": "2025-09-20",
           "doc_comment": "OpenAI GPT-5 - OpenAI GPT-5 model accessed through OpenRouter"
-        }
-      },
-      "openai/gpt-5.5": {
-        "id": "openai/gpt-5.5",
-        "name": "OpenAI: GPT-5.5",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1050000,
-        "vtcode": {
-          "variant": "OpenRouterOpenAIGpt55",
-          "constant": "OPENAI_GPT_5_5",
-          "vendor": "openai",
-          "display": "OpenAI GPT-5.5",
-          "description": "OpenAI GPT-5.5 model accessed through OpenRouter",
-          "efficient": false,
-          "top_tier": true,
-          "generation": "2026-04-23",
-          "doc_comment": "OpenAI GPT-5.5 - OpenAI GPT-5.5 model accessed through OpenRouter"
         }
       },
       "openai/gpt-5-chat": {
@@ -2992,39 +2081,6 @@
           "doc_comment": "Kimi K3 - Moonshot AI's 2.8T parameter flagship model via OpenRouter"
         }
       },
-      "moonshotai/kimi-k2.6": {
-        "id": "moonshotai/kimi-k2.6",
-        "name": "MoonshotAI: Kimi K2.6",
-        "description": "Kimi K2.6 is Moonshot AI's next-generation multimodal model, designed for long-horizon coding, coding-driven UI/UX generation, and multi-agent orchestration. Handles complex end-to-end coding tasks across Python, Rust, and Go, and can convert prompts and visual inputs into production-ready interfaces.",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 262144,
-        "max_output_tokens": 8192,
-        "cost": {
-          "input": 9.5e-07,
-          "output": 4e-06
-        },
-        "vtcode": {
-          "variant": "OpenRouterMoonshotaiKimiK26",
-          "constant": "MOONSHOTAI_KIMI_K2_6",
-          "vendor": "moonshotai",
-          "display": "Kimi K2.6",
-          "description": "Kimi K2.6 multimodal agentic model for long-horizon coding and design via OpenRouter",
-          "efficient": false,
-          "top_tier": true,
-          "generation": "K2.6",
-          "doc_comment": "Kimi K2.6 - Moonshot AI's next-generation multimodal model for long-horizon coding and design via OpenRouter"
-        }
-      },
       "moonshotai/kimi-k2.7-code": {
         "id": "moonshotai/kimi-k2.7-code",
         "name": "MoonshotAI: Kimi K2.7 Code",
@@ -3217,34 +2273,6 @@
           "doc_comment": "MiMo-V2.5 - Xiaomi's omnimodal agentic model for complex software engineering via OpenRouter"
         }
       },
-      "z-ai/glm-5.1": {
-        "id": "z-ai/glm-5.1",
-        "name": "Z.AI: GLM-5.1",
-        "description": "Z.AI next-gen GLM-5.1 foundation model with improved reasoning and agent capabilities.",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 200000,
-        "max_output_tokens": 128000,
-        "vtcode": {
-          "variant": "OpenRouterZaiGlm51",
-          "constant": "ZAI_GLM_5_1",
-          "vendor": "z-ai",
-          "display": "GLM-5.1",
-          "description": "Z.AI GLM-5.1 next-gen foundation model via OpenRouter",
-          "efficient": false,
-          "top_tier": true,
-          "generation": "5.1",
-          "doc_comment": "GLM-5.1 - Z.AI GLM-5.1 next-gen foundation model via OpenRouter"
-        }
-      },
       "z-ai/glm-5.2": {
         "id": "z-ai/glm-5.2",
         "name": "Z.AI: GLM-5.2",
@@ -3271,6 +2299,40 @@
           "top_tier": true,
           "generation": "5.2",
           "doc_comment": "GLM-5.2 - Z.AI GLM-5.2 flagship model for long-horizon tasks via OpenRouter"
+        }
+      },
+      "z-ai/glm-5.3-flash": {
+        "id": "z-ai/glm-5.3-flash",
+        "name": "Z.AI: GLM-5.3 Flash",
+        "description": "Z.AI efficient multimodal model with hybrid sparse+linear attention (320B total / 18B active, 3.01x less attention compute, 4.44x smaller KV cache), 1M context and native vision for efficient coding and long-horizon agent tasks.",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text",
+            "image"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 1310720,
+        "max_output_tokens": 131072,
+        "cost": {
+          "input": 1.5e-07,
+          "output": 5e-07,
+          "cache_read": 3e-08
+        },
+        "vtcode": {
+          "variant": "OpenRouterZaiGlm53Flash",
+          "constant": "ZAI_GLM_5_3_FLASH",
+          "vendor": "z-ai",
+          "display": "GLM-5.3 Flash",
+          "description": "Z.AI GLM-5.3 Flash efficient multimodal model via OpenRouter",
+          "efficient": true,
+          "top_tier": true,
+          "generation": "5.3",
+          "doc_comment": "GLM-5.3 Flash - Z.AI efficient multimodal model with hybrid sparse+linear attention via OpenRouter"
         }
       },
       "poolside/laguna-xs.2:free": {
@@ -3385,8 +2447,8 @@
         "context": 262144,
         "max_output_tokens": 131072,
         "cost": {
-          "input": 4.5e-7,
-          "output": 3.2e-6
+          "input": 4.5e-07,
+          "output": 3.2e-06
         },
         "vtcode": {
           "variant": "OpenRouterQwenQwen3827b",
@@ -4132,29 +3194,6 @@
           "function_calling": true,
           "structured_output": true
         }
-      },
-      "glm-5.1": {
-        "id": "glm-5.1",
-        "name": "GLM-5.1 (Qwen)",
-        "description": "Z.AI GLM-5.1 next-gen foundation model served through Qwen Cloud API",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 131072,
-        "max_output_tokens": 8192,
-        "capabilities": {
-          "thinking": true,
-          "streaming": true,
-          "function_calling": true,
-          "structured_output": true
-        }
       }
     }
   },
@@ -4166,54 +3205,8 @@
     "api": "https://direct.evolink.ai/v1",
     "name": "Evolink",
     "doc": "https://docs.evolink.ai/llms.txt",
-    "default_model": "gpt-5.2",
+    "default_model": "deepseek-v4-pro",
     "models": {
-      "gpt-5.2": {
-        "id": "gpt-5.2",
-        "name": "GPT-5.2 (Evolink)",
-        "description": "GPT-5.2 served through the Evolink OpenAI-compatible gateway.",
-        "reasoning": false,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 400000,
-        "capabilities": {
-          "thinking": false,
-          "streaming": true,
-          "function_calling": true,
-          "structured_output": true
-        }
-      },
-      "gpt-5.5": {
-        "id": "gpt-5.5",
-        "name": "GPT-5.5 (Evolink)",
-        "description": "GPT-5.5 flagship model served through the Evolink gateway.",
-        "reasoning": false,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 400000,
-        "capabilities": {
-          "thinking": false,
-          "streaming": true,
-          "function_calling": true,
-          "structured_output": true
-        }
-      },
       "deepseek-v4-pro": {
         "id": "deepseek-v4-pro",
         "name": "DeepSeek V4 Pro (Evolink)",
@@ -4281,52 +3274,6 @@
           "structured_output": true
         }
       },
-      "gemini-3.1-pro-preview": {
-        "id": "gemini-3.1-pro-preview",
-        "name": "Gemini 3.1 Pro (Evolink)",
-        "description": "Gemini 3.1 Pro served through the Evolink gateway via OpenAI SDK format.",
-        "reasoning": false,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1000000,
-        "capabilities": {
-          "thinking": false,
-          "streaming": true,
-          "function_calling": true,
-          "structured_output": true
-        }
-      },
-      "gemini-3.5-flash": {
-        "id": "gemini-3.5-flash",
-        "name": "Gemini 3.5 Flash (Evolink)",
-        "description": "Gemini 3.5 Flash served through the Evolink gateway via OpenAI SDK format.",
-        "reasoning": false,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1000000,
-        "capabilities": {
-          "thinking": false,
-          "streaming": true,
-          "function_calling": true,
-          "structured_output": true
-        }
-      },
       "MiniMax-M3": {
         "id": "MiniMax-M3",
         "name": "MiniMax-M3 (Evolink)",
@@ -4351,54 +3298,8 @@
           "structured_output": true
         }
       },
-      "claude-sonnet-4-6": {
-        "id": "claude-sonnet-4-6",
-        "name": "Claude Sonnet 4.6 (Evolink)",
-        "description": "Claude Sonnet 4.6 served through Evolink via Anthropic Messages API.",
-        "reasoning": false,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 200000,
-        "capabilities": {
-          "thinking": false,
-          "streaming": false,
-          "function_calling": true,
-          "structured_output": true
-        }
-      },
       "claude-opus-5": {
         "id": "claude-opus-5",
-        "name": "Claude Opus 5 (Evolink)",
-        "description": "Claude Opus 5 served through Evolink via Anthropic Messages API.",
-        "reasoning": false,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 200000,
-        "capabilities": {
-          "thinking": false,
-          "streaming": false,
-          "function_calling": true,
-          "structured_output": true
-        }
-      },
-      "claude-opus-4-8": {
-        "id": "claude-opus-4-8",
         "name": "Claude Opus 4.8 (Evolink)",
         "description": "Claude Opus 4.8 served through Evolink via Anthropic Messages API.",
         "reasoning": false,
@@ -4420,8 +3321,8 @@
           "structured_output": true
         }
       },
-      "claude-haiku-4-5-20251001": {
-        "id": "claude-haiku-4-5-20251001",
+      "claude-sonnet-5": {
+        "id": "claude-sonnet-5",
         "name": "Claude Haiku 4.5 (Evolink)",
         "description": "Claude Haiku 4.5 fast model served through Evolink via Anthropic Messages API.",
         "reasoning": false,
@@ -4507,28 +3408,6 @@
           ]
         },
         "context": 128000,
-        "capabilities": {
-          "streaming": true,
-          "function_calling": true,
-          "structured_output": false
-        }
-      },
-      "openai/gpt-5.5": {
-        "id": "openai/gpt-5.5",
-        "name": "GPT-5.5 (Merge Gateway)",
-        "description": "OpenAI GPT-5.5 served through Merge Gateway's native Responses API.",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1100000,
-        "output_tokens": 128000,
         "capabilities": {
           "streaming": true,
           "function_calling": true,
@@ -4783,6 +3662,29 @@
           "structured_output": false
         }
       },
+      "zai/glm-5.3-flash": {
+        "id": "zai/glm-5.3-flash",
+        "name": "GLM-5.3 Flash (Merge Gateway)",
+        "description": "Z.AI GLM-5.3 Flash efficient multimodal model via Merge Gateway (320B total / 18B active, hybrid attention, native vision).",
+        "reasoning": true,
+        "tool_call": true,
+        "modalities": {
+          "input": [
+            "text",
+            "image"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "context": 1310720,
+        "max_output_tokens": 131072,
+        "capabilities": {
+          "streaming": true,
+          "function_calling": true,
+          "structured_output": true
+        }
+      },
       "openai/gpt-5.6-luna": {
         "id": "openai/gpt-5.6-luna",
         "name": "GPT-5.6 Luna (Merge Gateway)",
@@ -4981,52 +3883,6 @@
           ]
         },
         "context": 500000,
-        "capabilities": {
-          "streaming": true,
-          "function_calling": true,
-          "structured_output": true
-        }
-      },
-      "grok-4.5": {
-        "id": "grok-4.5",
-        "name": "Grok 4.5",
-        "description": "xAI's flagship reasoning model with reasoning_effort support (500k context)",
-        "version": "4.5",
-        "reasoning": true,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 500000,
-        "capabilities": {
-          "streaming": true,
-          "function_calling": true,
-          "structured_output": true
-        }
-      },
-      "grok-4.3": {
-        "id": "grok-4.3",
-        "name": "Grok 4.3",
-        "description": "xAI's balanced model with 1M context for complex tasks",
-        "version": "4.3",
-        "reasoning": false,
-        "tool_call": true,
-        "modalities": {
-          "input": [
-            "text",
-            "image"
-          ],
-          "output": [
-            "text"
-          ]
-        },
-        "context": 1000000,
         "capabilities": {
           "streaming": true,
           "function_calling": true,

@@ -33,8 +33,8 @@ pub(crate) fn gemini_presets() -> Vec<ModelPreset> {
             context_window: Some(1_048_576),
         },
         ModelPreset {
-            id: "gemini-3.5-flash-lite".to_string(),
-            model: "gemini-3.5-flash-lite".to_string(),
+            id: "gemini-3.7-flash".to_string(),
+            model: "gemini-3.7-flash".to_string(),
             display_name: "Gemini 3.5 Flash Lite".to_string(),
             description: "Cost-optimized lightweight model for efficient inference".to_string(),
             provider: Provider::Gemini,

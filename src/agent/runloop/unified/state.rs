@@ -1301,13 +1301,13 @@ mod tests {
         let mut stats = SessionStats::default();
         let openai_messages = vec![vtcode_core::llm::provider::Message::user("hello".to_string())];
         let gemini_messages = vec![vtcode_core::llm::provider::Message::user("hi".to_string())];
-        stats.set_previous_response_chain("openai", "gpt-5.4", Some("resp_openai"), &openai_messages);
+        stats.set_previous_response_chain("openai", "gpt-5.6-sol", Some("resp_openai"), &openai_messages);
         stats.set_previous_response_chain("gemini", "gemini-2.5-pro", Some("resp_gemini"), &gemini_messages);
 
-        stats.clear_previous_response_chain_for("openai", "gpt-5.4");
+        stats.clear_previous_response_chain_for("openai", "gpt-5.6-sol");
 
-        assert_eq!(stats.previous_response_id_for("openai", "gpt-5.4"), None);
-        assert_eq!(stats.previous_response_chain_for("openai", "gpt-5.4"), None);
+        assert_eq!(stats.previous_response_id_for("openai", "gpt-5.6-sol"), None);
+        assert_eq!(stats.previous_response_chain_for("openai", "gpt-5.6-sol"), None);
         assert_eq!(stats.previous_response_id_for("gemini", "gemini-2.5-pro"), Some("resp_gemini".to_string()));
         assert_eq!(
             stats

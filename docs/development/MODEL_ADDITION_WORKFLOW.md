@@ -167,7 +167,7 @@ echo 'gpt-5.4-nano' | cargo test -- --nocapture
 ```rust
 #[test]
 fn test_new_model() {
-    let model = "gpt-5.4-nano".parse::<ModelId>().unwrap();
+    let model = "gpt-5.6-luna".parse::<ModelId>().unwrap();
     assert_eq!(model.provider(), Provider::OpenAI);
     assert_eq!(model.generation(), "5.4");
 }

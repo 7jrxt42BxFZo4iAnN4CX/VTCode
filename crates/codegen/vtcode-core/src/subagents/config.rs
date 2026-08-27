@@ -634,7 +634,7 @@ mod tests {
         parent.mcp.providers.push(McpProviderConfig::default());
 
         let spec = test_subagent_spec();
-        let child = build_child_config(&parent, &spec, models::openai::GPT_5_4, None);
+        let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None);
 
         assert_eq!(
             child.agent.system_prompt_mode,
@@ -661,7 +661,7 @@ mod tests {
         parent.mcp.providers[0].name = "context7".to_string();
         spec.mcp_servers = vec![SubagentMcpServer::Named("context7".to_string())];
 
-        let child = build_child_config(&parent, &spec, models::openai::GPT_5_4, None);
+        let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None);
 
         assert_eq!(child.mcp.providers.len(), 1);
         assert_eq!(child.mcp.providers[0].name, "context7");
@@ -741,7 +741,7 @@ mod tests {
             compose_system_instruction_with_report(workspace.path(), Some(&parent), Some(&ctx)).await;
 
         let spec = test_subagent_spec();
-        let child = build_child_config(&parent, &spec, models::openai::GPT_5_4, None);
+        let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None);
 
         // The lightweight profile is the contract under test.
         assert_eq!(child.agent.system_prompt_mode, SystemPromptMode::Minimal);

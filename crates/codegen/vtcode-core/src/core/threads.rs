@@ -830,7 +830,7 @@ mod tests {
         let listing = SessionListing {
             path: PathBuf::from("session.json"),
             snapshot: SessionSnapshot {
-                metadata: SessionArchiveMetadata::new("ws", "/tmp/ws", "gpt-5.4", "openai", "theme", "medium"),
+                metadata: SessionArchiveMetadata::new("ws", "/tmp/ws", "gpt-5.6-sol", "openai", "theme", "medium"),
                 started_at: Utc::now(),
                 ended_at: Utc::now(),
                 total_messages: 2,

@@ -42,7 +42,7 @@ impl UserConfirmation {
         use crate::config::constants::models;
         println!("{}", style("Model Upgrade Required").red().bold());
         println!("Current model: {}", style(current_model).cyan());
-        println!("Requested model: {}", style(models::google::GEMINI_3_1_PRO_PREVIEW).cyan().bold());
+        println!("Requested model: {}", style(models::google::GEMINI_3_7_FLASH).cyan().bold());
         println!();
         println!("The Gemini 3 Pro model is the most capable but also:");
         println!("• More expensive per token");

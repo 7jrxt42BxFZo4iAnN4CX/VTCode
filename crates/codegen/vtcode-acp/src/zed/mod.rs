@@ -67,7 +67,7 @@ mod tests {
 
     async fn build_agent(workspace: &Path) -> ZedAgent {
         let core_config = CoreAgentConfig {
-            model: "gpt-5.4".to_string(),
+            model: "gpt-5.6-sol".to_string(),
             api_key: String::new(),
             provider: "openai".to_string(),
             api_key_env: "TEST_API_KEY".to_string(),
@@ -276,7 +276,7 @@ mod tests {
                     &option.kind,
                     SessionConfigKind::Select(select)
                         if select.current_value
-                            == crate::acp::SessionConfigValueId::new("gpt-5.4")
+                            == crate::acp::SessionConfigValueId::new("gpt-5.6-sol")
                 )
         }));
     }
@@ -324,7 +324,7 @@ mod tests {
                     &option.kind,
                     SessionConfigKind::Select(select)
                         if select.current_value
-                            == crate::acp::SessionConfigValueId::new("gpt-5.4")
+                            == crate::acp::SessionConfigValueId::new("gpt-5.6-sol")
                 )
         }));
     }
@@ -551,21 +551,21 @@ Project build prompt."#,
             .set_session_config_option(SetSessionConfigOptionRequest::new(
                 session_id.clone(),
                 SESSION_CONFIG_MODEL_ID,
-                "gpt-5.4-mini",
+                "gpt-5.6-luna",
             ))
             .await
             .unwrap();
 
         let session = agent.session_handle(&session_id).unwrap();
         assert_eq!(session.data.lock().unwrap().provider, "openai");
-        assert_eq!(session.data.lock().unwrap().model, "gpt-5.4-mini");
+        assert_eq!(session.data.lock().unwrap().model, "gpt-5.6-luna");
         assert!(response.config_options.iter().any(|option| {
             option.id == crate::acp::SessionConfigId::new(SESSION_CONFIG_MODEL_ID)
                 && matches!(
                     &option.kind,
                     SessionConfigKind::Select(select)
                         if select.current_value
-                            == crate::acp::SessionConfigValueId::new("gpt-5.4-mini")
+                            == crate::acp::SessionConfigValueId::new("gpt-5.6-luna")
                 )
         }));
     }

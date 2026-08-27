@@ -23,7 +23,7 @@ fn test_provider_factory() {
 
     // Test provider detection from model names
     assert_eq!(factory.provider_from_model("gpt-5"), Some("openai".to_string()));
-    assert_eq!(factory.provider_from_model(models::CLAUDE_SONNET_4_6), Some("anthropic".to_string()));
+    assert_eq!(factory.provider_from_model(models::CLAUDE_SONNET_5), Some("anthropic".to_string()));
     assert_eq!(factory.provider_from_model("claude-sonnet-4-20250514"), Some("anthropic".to_string()));
     assert_eq!(factory.provider_from_model("gemini-3-flash-preview"), Some("gemini".to_string()));
 }
@@ -37,7 +37,7 @@ fn test_provider_creation() {
     let openai = create_provider_for_model("gpt-5", "test_key".to_string(), None, None);
     let _openai = openai.unwrap();
 
-    let anthropic = create_provider_for_model(models::CLAUDE_SONNET_4_6, "test_key".to_string(), None, None);
+    let anthropic = create_provider_for_model(models::CLAUDE_SONNET_5, "test_key".to_string(), None, None);
     let _anthropic = anthropic.unwrap();
 }
 
@@ -50,7 +50,7 @@ fn test_unified_client_creation() {
     let openai_client = create_provider_for_model("gpt-5", "test_key".to_string(), None, None);
     let _openai_client = openai_client.unwrap();
 
-    let anthropic_client = create_provider_for_model(models::CLAUDE_SONNET_4_6, "test_key".to_string(), None, None);
+    let anthropic_client = create_provider_for_model(models::CLAUDE_SONNET_5, "test_key".to_string(), None, None);
     let _anthropic_client = anthropic_client.unwrap();
 }
 
@@ -88,7 +88,7 @@ fn test_provider_supported_models() {
 
     let anthropic = AnthropicProvider::new("test_key".to_string());
     let anthropic_models = anthropic.supported_models();
-    assert!(anthropic_models.contains(&models::CLAUDE_SONNET_4_6.to_string()));
+    assert!(anthropic_models.contains(&models::CLAUDE_SONNET_5.to_string()));
     assert!(anthropic_models.contains(&"claude-sonnet-4-20250514".to_string()));
 }
 

@@ -286,8 +286,8 @@ mod tests {
 
     #[test]
     fn validates_known_model() {
-        let result = validate_model_exists("google", "gemini-3-flash-preview");
-        assert!(result.is_ok(), "Should validate gemini-3-flash-preview for google provider");
+        let result = validate_model_exists("google", "gemini-3.7-flash");
+        assert!(result.is_ok(), "Should validate gemini-3.7-flash for google provider");
     }
 
     #[test]
@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn accepts_live_copilot_model_id() {
-        let result = validate_model_exists("copilot", "gpt-5.3-codex");
+        let result = validate_model_exists("copilot", "gpt-5-codex");
         assert!(result.is_ok(), "Should accept live Copilot model ids");
     }
 
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn gets_context_window() {
-        let result = effective_model_context_window("google", "gemini-3-flash-preview");
+        let result = effective_model_context_window("google", "gemini-3.7-flash");
         assert!(result.is_ok(), "Should get context window");
 
         let context = result.unwrap();
@@ -336,7 +336,7 @@ mod tests {
 
     #[test]
     fn anthropic_46_uses_effective_context_window() {
-        let result = effective_model_context_window("anthropic", "claude-sonnet-4-6");
+        let result = effective_model_context_window("anthropic", "claude-sonnet-5");
         assert_eq!(result.unwrap(), Some(1_000_000));
     }
 
@@ -364,7 +364,7 @@ mod tests {
     fn whitelist_allows_configured_provider() {
         let mut config = VTCodeConfig::default();
         config.agent.provider = "openai".to_string();
-        config.agent.default_model = "gpt-5.5".to_string();
+        config.agent.default_model = "gpt-5.6-sol".to_string();
         config.providers_whitelist = vec!["openai".to_string()];
 
         let result = validate_config(&config, Path::new(".")).expect("validation should run");
@@ -375,7 +375,7 @@ mod tests {
     fn whitelist_blocks_non_whitelisted_provider() {
         let mut config = VTCodeConfig::default();
         config.agent.provider = "openai".to_string();
-        config.agent.default_model = "gpt-5.5".to_string();
+        config.agent.default_model = "gpt-5.6-sol".to_string();
         config.providers_whitelist = vec!["anthropic".to_string()];
 
         let result = validate_config(&config, Path::new(".")).expect("validation should run");
@@ -390,7 +390,7 @@ mod tests {
     fn empty_whitelist_allows_all_providers() {
         let mut config = VTCodeConfig::default();
         config.agent.provider = "openai".to_string();
-        config.agent.default_model = "gpt-5.5".to_string();
+        config.agent.default_model = "gpt-5.6-sol".to_string();
         config.providers_whitelist.clear();
 
         let result = validate_config(&config, Path::new(".")).expect("validation should run");

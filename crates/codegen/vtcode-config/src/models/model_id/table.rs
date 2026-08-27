@@ -84,34 +84,6 @@ macro_rules! model_id_table {
 
 model_id_table! {
     // Gemini models
-    Gemini31ProPreview {
-        provider: Gemini,
-        id: models::GEMINI_3_1_PRO_PREVIEW,
-        parse: [models::GEMINI_3_1_PRO_PREVIEW],
-        display: "Gemini 3.1 Pro Preview",
-        description: "Latest Gemini 3.1 Pro flagship model with improved thinking, efficiency, and factual consistency",
-    },
-    Gemini31ProPreviewCustomTools {
-        provider: Gemini,
-        id: models::GEMINI_3_1_PRO_PREVIEW_CUSTOMTOOLS,
-        parse: [models::GEMINI_3_1_PRO_PREVIEW_CUSTOMTOOLS],
-        display: "Gemini 3.1 Pro Preview (Custom Tools)",
-        description: "Gemini 3.1 Pro variant optimized for agentic workflows using custom tools and bash",
-    },
-    Gemini35Flash {
-        provider: Gemini,
-        id: models::GEMINI_3_5_FLASH,
-        parse: [models::GEMINI_3_5_FLASH, models::GEMINI_3_FLASH_PREVIEW],
-        display: "Gemini 3.5 Flash",
-        description: "High-efficiency frontier model for fast inference with excellent quality-to-speed balance",
-    },
-    Gemini35FlashLite {
-        provider: Gemini,
-        id: models::GEMINI_3_5_FLASH_LITE,
-        parse: [models::GEMINI_3_5_FLASH_LITE],
-        display: "Gemini 3.5 Flash Lite",
-        description: "Cost-optimized lightweight model for efficient inference with balanced quality and speed",
-    },
     Gemini36Flash {
         provider: Gemini,
         id: models::GEMINI_3_6_FLASH,
@@ -122,7 +94,7 @@ model_id_table! {
     Gemini37Flash {
         provider: Gemini,
         id: models::GEMINI_3_7_FLASH,
-        parse: [models::GEMINI_3_7_FLASH],
+        parse: [models::GEMINI_3_7_FLASH, models::GEMINI_3_FLASH_PREVIEW],
         display: "Gemini 3.7 Flash",
         description: "Flash model with 1M context and tunable thinking levels (low, medium, high)",
     },
@@ -130,7 +102,7 @@ model_id_table! {
     GPT56Sol {
         provider: OpenAI,
         id: models::openai::GPT_5_6_SOL,
-        parse: [models::openai::GPT_5_6_SOL, models::openai::GPT_5_6],
+        parse: [models::openai::GPT_5_6_SOL, models::openai::GPT_5_6, models::GPT],
         display: "GPT-5.6 Sol",
         description: "Frontier model for complex professional work in the GPT-5.6 family",
     },
@@ -147,48 +119,6 @@ model_id_table! {
         parse: [models::openai::GPT_5_6_LUNA],
         display: "GPT-5.6 Luna",
         description: "GPT-5.6 model optimized for cost-sensitive workloads",
-    },
-    GPT55 {
-        provider: OpenAI,
-        id: models::openai::GPT_5_5,
-        parse: [models::openai::GPT_5_5, models::openai::GPT_5_5_DATED],
-        display: "GPT-5.5",
-        description: "Next-gen OpenAI model with frontier reasoning and long context (2026-04-23 dated release)",
-    },
-    GPT54 {
-        provider: OpenAI,
-        id: models::GPT_5_4,
-        parse: [models::GPT_5_4, models::GPT],
-        display: "GPT-5.4",
-        description: "Mainline frontier GPT model for general-purpose work, coding, long context, and multi-step agents",
-    },
-    GPT54Pro {
-        provider: OpenAI,
-        id: models::GPT_5_4_PRO,
-        parse: [models::GPT_5_4_PRO],
-        display: "GPT-5.4 Pro",
-        description: "Higher-compute GPT-5.4 variant for tougher problems with deeper reasoning",
-    },
-    GPT54Nano {
-        provider: OpenAI,
-        id: models::openai::GPT_5_4_NANO,
-        parse: [models::openai::GPT_5_4_NANO],
-        display: "GPT-5.4 Nano",
-        description: "Lightweight GPT-5.4 variant optimized for speed and cost-efficiency",
-    },
-    GPT54Mini {
-        provider: OpenAI,
-        id: models::openai::GPT_5_4_MINI,
-        parse: [models::openai::GPT_5_4_MINI],
-        display: "GPT-5.4 Mini",
-        description: "Compact GPT-5.4 variant for cost-effective tasks with reduced reasoning overhead",
-    },
-    GPT53Codex {
-        provider: OpenAI,
-        id: models::openai::GPT_5_3_CODEX,
-        parse: [models::openai::GPT_5_3_CODEX],
-        display: "GPT-5.3 Codex",
-        description: "GPT-5.3 variant optimized for agentic coding tasks with reasoning effort support (low, medium, high, xhigh)",
     },
     OpenAIGptOss20b {
         provider: OpenAI,
@@ -233,27 +163,6 @@ model_id_table! {
         display: "Claude Opus 5",
         description: "Anthropic's newest Opus-tier model with 1M context, thinking on by default, and full effort ladder support",
     },
-    ClaudeOpus48 {
-        provider: Anthropic,
-        id: models::CLAUDE_OPUS_4_8,
-        parse: [models::CLAUDE_OPUS_4_8],
-        display: "Claude Opus 4.8",
-        description: "Anthropic's most capable model for complex reasoning, long-horizon agentic coding, and high-autonomy work",
-    },
-    ClaudeSonnet46 {
-        provider: Anthropic,
-        id: models::CLAUDE_SONNET_4_6,
-        parse: [models::CLAUDE_SONNET_4_6],
-        display: "Claude Sonnet 4.6",
-        description: "Balanced flagship model for coding with budgeted thinking in VT Code's current Anthropic rollout",
-    },
-    ClaudeHaiku45 {
-        provider: Anthropic,
-        id: models::CLAUDE_HAIKU_4_5,
-        parse: [models::CLAUDE_HAIKU_4_5, models::CLAUDE_HAIKU_4_5_20251001],
-        display: "Claude Haiku 4.5",
-        description: "Latest efficient Anthropic model optimized for low-latency agent workflows",
-    },
     // GitHub Copilot models
     CopilotAuto {
         provider: Copilot,
@@ -264,8 +173,8 @@ model_id_table! {
     },
     CopilotGPT52Codex {
         provider: Copilot,
-        id: models::copilot::GPT_5_2_CODEX,
-        parse: [models::copilot::GPT_5_2_CODEX],
+        id: models::copilot::GPT_5_CODEX,
+        parse: [models::copilot::GPT_5_CODEX],
         display: "GitHub Copilot GPT-5.2 Codex",
         description: "GitHub Copilot GPT-5.2 Codex option for agentic software engineering workflows",
     },
@@ -278,22 +187,22 @@ model_id_table! {
     },
     CopilotGPT54 {
         provider: Copilot,
-        id: models::copilot::GPT_5_4,
-        parse: [models::copilot::GPT_5_4],
+        id: models::copilot::GPT_5_6_SOL,
+        parse: [models::copilot::GPT_5_6_SOL],
         display: "GitHub Copilot GPT-5.4",
         description: "GitHub Copilot GPT-5.4 option for complex professional work and long context",
     },
     CopilotGPT54Mini {
         provider: Copilot,
-        id: models::copilot::GPT_5_4_MINI,
-        parse: [models::copilot::GPT_5_4_MINI],
+        id: models::copilot::GPT_5_6_LUNA,
+        parse: [models::copilot::GPT_5_6_LUNA],
         display: "GitHub Copilot GPT-5.4 Mini",
         description: "GitHub Copilot GPT-5.4 Mini option for faster, lighter-weight tasks",
     },
     CopilotClaudeSonnet46 {
         provider: Copilot,
-        id: models::copilot::CLAUDE_SONNET_4_6,
-        parse: [models::copilot::CLAUDE_SONNET_4_6],
+        id: models::copilot::CLAUDE_SONNET_5,
+        parse: [models::copilot::CLAUDE_SONNET_5],
         display: "GitHub Copilot Claude Sonnet 4.6",
         description: "GitHub Copilot Claude Sonnet 4.6 option for balanced coding and reasoning work",
     },
@@ -469,6 +378,13 @@ model_id_table! {
         display: "Muse Spark 1.1 (Merge Gateway)",
         description: "Meta Muse Spark 1.1 accessed through Merge Gateway's OpenAI-compatible endpoint",
     },
+    MergeGatewayZaiGlm53Flash {
+        provider: MergeGateway,
+        id: models::merge_gateway::ZAI_GLM_5_3_FLASH,
+        parse: [models::merge_gateway::ZAI_GLM_5_3_FLASH],
+        display: "GLM-5.3 Flash (Merge Gateway)",
+        description: "Z.AI GLM-5.3 Flash efficient multimodal model via Merge Gateway",
+    },
     MergeGatewayOpenAIGpt56Luna {
         provider: MergeGateway,
         id: models::merge_gateway::OPENAI_GPT_5_6_LUNA,
@@ -513,13 +429,6 @@ model_id_table! {
         display: "GPT-OSS 120B (HF)",
         description: "OpenAI GPT-OSS 120B via Hugging Face router",
     },
-    HuggingFaceGlm51ZaiOrg {
-        provider: HuggingFace,
-        id: models::huggingface::ZAI_GLM_5_1_ZAI_ORG,
-        parse: [models::huggingface::ZAI_GLM_5_1_ZAI_ORG],
-        display: "GLM-5.1 (zai-org)",
-        description: "Z.ai GLM-5.1 model via zai-org inference provider on HuggingFace router.",
-    },
     HuggingFaceGlm52Novita {
         provider: HuggingFace,
         id: models::huggingface::ZAI_GLM_5_2_NOVITA,
@@ -527,12 +436,12 @@ model_id_table! {
         display: "GLM-5.2 (Novita)",
         description: "Z.ai GLM-5.2 flagship model via Novita inference provider on HuggingFace router. 1M context for long-horizon tasks.",
     },
-    HuggingFaceKimiK26Novita {
+    HuggingFaceGlm53FlashTogether {
         provider: HuggingFace,
-        id: models::huggingface::KIMI_K2_6_NOVITA,
-        parse: [models::huggingface::KIMI_K2_6_NOVITA],
-        display: "Kimi K2.6 (Novita)",
-        description: "Kimi K2.6 via Novita inference provider on HuggingFace router.",
+        id: models::huggingface::ZAI_GLM_5_3_FLASH_TOGETHER,
+        parse: [models::huggingface::ZAI_GLM_5_3_FLASH_TOGETHER],
+        display: "GLM-5.3 Flash (Together)",
+        description: "Z.ai GLM-5.3 Flash via Together inference provider on HuggingFace router. Efficient multimodal model with hybrid sparse+linear attention (320B/18B, 1M context, native vision).",
     },
     HuggingFaceKimiK3Together {
         provider: HuggingFace,
@@ -565,20 +474,6 @@ model_id_table! {
         ],
         display: "Step 3.5 Flash (HF)",
         description: "Step 3.5 Flash flagship model via HuggingFace router (featherless-ai provider). Supports streaming and fast inference.",
-    },
-    HuggingFaceGlm51Deepinfra {
-        provider: HuggingFace,
-        id: models::huggingface::ZAI_GLM_5_1_DEEPINFRA,
-        parse: [models::huggingface::ZAI_GLM_5_1_DEEPINFRA],
-        display: "GLM-5.1 (DeepInfra)",
-        description: "Z.ai GLM-5.1 model via DeepInfra inference provider on HuggingFace router.",
-    },
-    HuggingFaceMinimaxM27Novita {
-        provider: HuggingFace,
-        id: models::huggingface::MINIMAX_M2_7_NOVITA,
-        parse: [models::huggingface::MINIMAX_M2_7_NOVITA],
-        display: "MiniMax-M2.7 (Novita)",
-        description: "MiniMax-M2.7 model via Novita inference provider on HuggingFace router. Recursive self-improvement with enhanced reasoning.",
     },
     HuggingFaceMinimaxM3Novita {
         provider: HuggingFace,
@@ -688,19 +583,19 @@ model_id_table! {
         display: "GLM 5.3",
         description: "Z.ai flagship coding model with frontier long-horizon agentic performance and 1M-token context",
     },
+    ZaiGlm53Flash {
+        provider: ZAI,
+        id: models::zai::GLM_5_3_FLASH,
+        parse: [models::zai::GLM_5_3_FLASH],
+        display: "GLM 5.3 Flash",
+        description: "Z.ai efficient multimodal model with hybrid sparse+linear attention, 320B total / 18B active, 1M context and native vision",
+    },
     ZaiGlm52 {
         provider: ZAI,
         id: models::zai::GLM_5_2,
         parse: [models::zai::GLM_5_2],
         display: "GLM 5.2",
         description: "Z.ai flagship model for long-horizon tasks with truly usable 1M-token context",
-    },
-    ZaiGlm51 {
-        provider: ZAI,
-        id: models::zai::GLM_5_1,
-        parse: [models::zai::GLM_5_1],
-        display: "GLM 5.1",
-        description: "Z.ai next-gen GLM-5.1 foundation model with improved reasoning and agent capabilities",
     },
     // MiMo models
     MiMoV25Pro {
@@ -732,50 +627,8 @@ model_id_table! {
         display: "Kimi K2.7 Code (Moonshot)",
         description: "Kimi K2.7 Code - Moonshot.ai's most capable coding model with long-horizon coding breakthrough, 256K context, and strong reasoning",
     },
-    MoonshotKimiK26 {
-        provider: Moonshot,
-        id: models::moonshot::KIMI_K2_6,
-        parse: [models::moonshot::KIMI_K2_6],
-        display: "Kimi K2.6 (Moonshot)",
-        description: "Kimi K2.6 - Moonshot.ai's 1T MoE flagship with 32B active parameters, MLA attention, and MoonViT vision",
-    },
     // OpenCode Zen models (parse only via the `opencode/`/`opencode-zen/` prefix)
-    OpenCodeZenGPT54 {
-        provider: OpenCodeZen,
-        id: models::opencode_zen::GPT_5_4,
-        parse: [],
-        display: "GPT-5.4 (OpenCode Zen)",
-        description: "OpenCode Zen flagship GPT-5.4 route using OpenCode's curated pay-as-you-go gateway",
-    },
-    OpenCodeZenGPT54Mini {
-        provider: OpenCodeZen,
-        id: models::opencode_zen::GPT_5_4_MINI,
-        parse: [],
-        display: "GPT-5.4 Mini (OpenCode Zen)",
-        description: "Lower-cost OpenCode Zen GPT-5.4 Mini option for faster and cheaper tasks",
-    },
-    OpenCodeZenClaudeSonnet46 {
-        provider: OpenCodeZen,
-        id: models::opencode_zen::CLAUDE_SONNET_4_6,
-        parse: [],
-        display: "Claude Sonnet 4.6 (OpenCode Zen)",
-        description: "Claude Sonnet 4.6 served through OpenCode Zen's curated Anthropic endpoint",
-    },
-    OpenCodeZenGlm51 {
-        provider: OpenCodeZen,
-        id: models::opencode_zen::GLM_5_1,
-        parse: [],
-        display: "GLM-5.1 (OpenCode Zen)",
-        description: "GLM-5.1 served through OpenCode Zen for lower-cost reasoning and coding work",
-    },
     // OpenCode Go models (parse only via the `opencode-go/` prefix)
-    OpenCodeGoGrok45 {
-        provider: OpenCodeGo,
-        id: models::opencode_go::GROK_4_5,
-        parse: [],
-        display: "Grok 4.5 (OpenCode Go)",
-        description: "Grok 4.5 included with the OpenCode Go subscription for flagship reasoning",
-    },
     OpenCodeGoGlm53 {
         provider: OpenCodeGo,
         id: models::opencode_go::GLM_5_3,
@@ -789,13 +642,6 @@ model_id_table! {
         parse: [],
         display: "GLM-5.2 (OpenCode Go)",
         description: "GLM-5.2 included with the OpenCode Go subscription for flagship open-model coding",
-    },
-    OpenCodeGoGlm51 {
-        provider: OpenCodeGo,
-        id: models::opencode_go::GLM_5_1,
-        parse: [],
-        display: "GLM-5.1 (OpenCode Go)",
-        description: "GLM-5.1 included with the OpenCode Go subscription for open-model coding workflows",
     },
     OpenCodeGoGpt56Luna {
         provider: OpenCodeGo,
@@ -818,13 +664,6 @@ model_id_table! {
         display: "Kimi K2.7 Code (OpenCode Go)",
         description: "Kimi K2.7 Code included with the OpenCode Go subscription for long-horizon coding",
     },
-    OpenCodeGoKimiK26 {
-        provider: OpenCodeGo,
-        id: models::opencode_go::KIMI_K2_6,
-        parse: [],
-        display: "Kimi K2.6 (OpenCode Go)",
-        description: "Kimi K2.6 included with the OpenCode Go subscription for general agentic coding",
-    },
     OpenCodeGoMimoV25 {
         provider: OpenCodeGo,
         id: models::opencode_go::MIMO_V2_5,
@@ -845,13 +684,6 @@ model_id_table! {
         parse: [],
         display: "MiniMax-M3 (OpenCode Go)",
         description: "MiniMax-M3 included with the OpenCode Go subscription for frontier agentic coding",
-    },
-    OpenCodeGoMinimaxM27 {
-        provider: OpenCodeGo,
-        id: models::opencode_go::MINIMAX_M2_7,
-        parse: [],
-        display: "MiniMax-M2.7 (OpenCode Go)",
-        description: "MiniMax-M2.7 included with the OpenCode Go subscription for stronger agentic coding",
     },
     OpenCodeGoMuseSpark12Contributor {
         provider: OpenCodeGo,
@@ -924,13 +756,6 @@ model_id_table! {
         display: "DeepSeek V4 Pro (Qwen)",
         description: "DeepSeek V4 Pro high-performance reasoning model served through Qwen Cloud API (1M context)",
     },
-    QwenGlm51 {
-        provider: Qwen,
-        id: models::qwen::GLM_5_1,
-        parse: [],
-        display: "GLM-5.1 (Qwen)",
-        description: "Z.AI GLM-5.1 next-gen foundation model served through Qwen Cloud API",
-    },
     // Ollama models
     OllamaGptOss20b {
         provider: Ollama,
@@ -967,13 +792,6 @@ model_id_table! {
         display: "DeepSeek V4 Pro (cloud)",
         description: "DeepSeek V4 Pro cloud deployment via Ollama with advanced thinking and strong reasoning",
     },
-    OllamaMinimaxM27Cloud {
-        provider: OllamaCloud,
-        id: models::ollama::MINIMAX_M27_CLOUD,
-        parse: [models::ollama::MINIMAX_M27_CLOUD],
-        display: "MiniMax-M2.7 (cloud)",
-        description: "Cloud-hosted MiniMax-M2.7 model accessed through Ollama Cloud for reasoning tasks",
-    },
     OllamaMinimaxM3Cloud {
         provider: OllamaCloud,
         id: models::ollama::MINIMAX_M3_CLOUD,
@@ -981,26 +799,12 @@ model_id_table! {
         display: "MiniMax-M3 (cloud)",
         description: "Cloud-hosted MiniMax-M3 model served via Ollama Cloud",
     },
-    OllamaGlm51Cloud {
-        provider: OllamaCloud,
-        id: models::ollama::GLM_5_1_CLOUD,
-        parse: [models::ollama::GLM_5_1_CLOUD],
-        display: "GLM-5.1 (cloud)",
-        description: "Cloud-hosted GLM-5.1 model served via Ollama Cloud",
-    },
     OllamaGlm52Cloud {
         provider: OllamaCloud,
         id: models::ollama::GLM_5_2_CLOUD,
         parse: [models::ollama::GLM_5_2_CLOUD],
         display: "GLM-5.2 (cloud)",
         description: "Cloud-hosted GLM-5.2 flagship model for long-horizon tasks with 1M context via Ollama Cloud",
-    },
-    OllamaKimiK26Cloud {
-        provider: OllamaCloud,
-        id: models::ollama::KIMI_K2_6_CLOUD,
-        parse: [models::ollama::KIMI_K2_6_CLOUD],
-        display: "Kimi-K2.6 (cloud)",
-        description: "Cloud-hosted Kimi K2.6 model served via Ollama Cloud",
     },
     OllamaKimiK27CodeCloud {
         provider: OllamaCloud,
@@ -1067,13 +871,6 @@ model_id_table! {
         display: "MiniMax-M3",
         description: "Frontier multimodal coding model with 1M context window",
     },
-    MinimaxM27 {
-        provider: Minimax,
-        id: models::minimax::MINIMAX_M2_7,
-        parse: [models::minimax::MINIMAX_M2_7],
-        display: "MiniMax-M2.7",
-        description: "Beginning the journey of recursive self-improvement with 204.8K context and strong reasoning/coding performance",
-    },
     // xAI models
     XaiGrokBuild01 {
         provider: XAI,
@@ -1088,20 +885,6 @@ model_id_table! {
         parse: [models::xai::GROK_4_6],
         display: "Grok 4.6",
         description: "xAI's flagship reasoning model with reasoning_effort support (500k context)",
-    },
-    XaiGrok45 {
-        provider: XAI,
-        id: models::xai::GROK_4_5,
-        parse: [models::xai::GROK_4_5],
-        display: "Grok 4.5",
-        description: "xAI's flagship reasoning model with reasoning_effort support (500k context)",
-    },
-    XaiGrok43 {
-        provider: XAI,
-        id: models::xai::GROK_4_3,
-        parse: [models::xai::GROK_4_3],
-        display: "Grok 4.3",
-        description: "xAI's balanced model with 1M context for complex tasks",
     },
     XaiGrok420Reasoning {
         provider: XAI,
@@ -1196,10 +979,10 @@ mod tests {
     #[test]
     fn parse_aliases_resolve_to_canonical_variants() {
         let cases: &[(&str, ModelId)] = &[
-            (models::GPT, ModelId::GPT54),
-            (models::openai::GPT_5_5_DATED, ModelId::GPT55),
-            (models::GEMINI_3_FLASH_PREVIEW, ModelId::Gemini35Flash),
-            (models::CLAUDE_HAIKU_4_5_20251001, ModelId::ClaudeHaiku45),
+            (models::GPT, ModelId::GPT56Sol),
+            (models::openai::GPT_5_6_SOL, ModelId::GPT56Sol),
+            (models::GEMINI_3_FLASH_PREVIEW, ModelId::Gemini37Flash),
+            (models::CLAUDE_SONNET_5, ModelId::ClaudeSonnet5),
             (models::huggingface::STEP_3_5_FLASH_BASE, ModelId::HuggingFaceStep35Flash),
             (models::huggingface::STEP_3_5_FLASH_LEGACY_FASTEST, ModelId::HuggingFaceStep35Flash),
         ];

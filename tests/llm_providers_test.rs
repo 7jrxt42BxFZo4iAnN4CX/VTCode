@@ -50,13 +50,13 @@ fn test_provider_auto_detection() {
     assert_eq!(factory.provider_from_model("o4-mini"), Some("openai".to_string()));
 
     // Test Anthropic models
-    assert_eq!(factory.provider_from_model(models::CLAUDE_SONNET_4_6), Some("anthropic".to_string()));
+    assert_eq!(factory.provider_from_model(models::CLAUDE_SONNET_5), Some("anthropic".to_string()));
     assert_eq!(factory.provider_from_model("claude-sonnet-4-20250514"), Some("anthropic".to_string()));
     assert_eq!(factory.provider_from_model("claude-opus-4-1-20250805"), Some("anthropic".to_string()));
 
     // Test Gemini models
     assert_eq!(factory.provider_from_model("gemini-3-flash-preview"), Some("gemini".to_string()));
-    assert_eq!(factory.provider_from_model("gemini-3.1-pro-preview"), Some("gemini".to_string()));
+    assert_eq!(factory.provider_from_model("gemini-3.7-flash"), Some("gemini".to_string()));
 
     // Test OpenRouter models
     assert_eq!(factory.provider_from_model(models::openrouter::DEEPSEEK_V4_PRO), Some("openrouter".to_string()));
@@ -69,7 +69,7 @@ fn test_provider_auto_detection() {
     );
 
     // Test Moonshot models
-    assert_eq!(factory.provider_from_model(models::moonshot::KIMI_K2_6), Some("moonshot".to_string()));
+    assert_eq!(factory.provider_from_model(models::moonshot::KIMI_K3), Some("moonshot".to_string()));
     assert_eq!(factory.provider_from_model(models::moonshot::KIMI_K2_5), Some("moonshot".to_string()));
 
     // Test unknown model
@@ -81,7 +81,7 @@ fn infer_provider_respects_override_and_model() {
     let provider = infer_provider(Some("openai"), "gemini-3-flash-preview");
     assert_eq!(provider, Some(Provider::OpenAI));
 
-    let provider = infer_provider(None, models::CLAUDE_SONNET_4_6);
+    let provider = infer_provider(None, models::CLAUDE_SONNET_5);
     assert_eq!(provider, Some(Provider::Anthropic));
 
     let provider = infer_provider(None, "unknown-model");
@@ -100,7 +100,7 @@ fn test_provider_creation() {
     let openai_reasoning = create_provider_for_model("o4-mini", "test_key".to_string(), None, None);
     let _openai_reasoning = openai_reasoning.unwrap();
 
-    let anthropic = create_provider_for_model(models::CLAUDE_SONNET_4_6, "test_key".to_string(), None, None);
+    let anthropic = create_provider_for_model(models::CLAUDE_SONNET_5, "test_key".to_string(), None, None);
     let _anthropic = anthropic.unwrap();
 
     let openrouter = create_provider_for_model(models::openrouter::DEEPSEEK_V4_PRO, "test_key".to_string(), None, None);
@@ -132,7 +132,7 @@ fn test_unified_client_creation() {
         assert_eq!(client.name(), "openai");
     }
 
-    let anthropic_client = create_provider_for_model(models::CLAUDE_SONNET_4_6, "test_key".to_string(), None, None);
+    let anthropic_client = create_provider_for_model(models::CLAUDE_SONNET_5, "test_key".to_string(), None, None);
     assert!(anthropic_client.is_ok());
     if let Ok(client) = anthropic_client {
         assert_eq!(client.name(), "anthropic");
@@ -201,7 +201,7 @@ fn test_provider_supported_models() {
     let gemini = GeminiProvider::new("test_key".to_string());
     let gemini_models = gemini.supported_models();
     assert!(gemini_models.contains(&"gemini-3-flash-preview".to_string()));
-    assert!(gemini_models.contains(&"gemini-3.1-pro-preview".to_string()));
+    assert!(gemini_models.contains(&"gemini-3.7-flash".to_string()));
     assert!(gemini_models.len() >= 2);
 
     let openai = OpenAIProvider::new("test_key".to_string());
@@ -212,8 +212,8 @@ fn test_provider_supported_models() {
 
     let anthropic = AnthropicProvider::new("test_key".to_string());
     let anthropic_models = anthropic.supported_models();
-    assert!(anthropic_models.contains(&models::CLAUDE_SONNET_4_6.to_string()));
-    assert!(anthropic_models.contains(&models::CLAUDE_HAIKU_4_5.to_string()));
+    assert!(anthropic_models.contains(&models::CLAUDE_SONNET_5.to_string()));
+    assert!(anthropic_models.contains(&models::CLAUDE_SONNET_5.to_string()));
     assert!(anthropic_models.len() >= 2);
 
     let openrouter = OpenRouterProvider::new("test_key".to_string());
@@ -224,7 +224,7 @@ fn test_provider_supported_models() {
 
     let moonshot = MoonshotProvider::new("test_key".to_string());
     let moonshot_models = moonshot.supported_models();
-    assert!(moonshot_models.contains(&models::moonshot::KIMI_K2_6.to_string()));
+    assert!(moonshot_models.contains(&models::moonshot::KIMI_K3.to_string()));
     assert!(moonshot_models.contains(&"kimi-k2.5".to_string()));
     assert_eq!(moonshot_models.len(), 2);
 }
@@ -281,7 +281,7 @@ fn test_request_validation() {
 
     let valid_anthropic_request = LLMRequest {
         messages: Arc::new(vec![Message::user("test".to_string())]),
-        model: models::CLAUDE_SONNET_4_6.to_string(),
+        model: models::CLAUDE_SONNET_5.to_string(),
         verbosity: Some(VerbosityLevel::default()),
         ..Default::default()
     };
@@ -316,7 +316,7 @@ fn test_anthropic_tool_message_handling() {
 
     let request = LLMRequest {
         messages: Arc::new(vec![tool_message]),
-        model: models::CLAUDE_SONNET_4_6.to_string(),
+        model: models::CLAUDE_SONNET_5.to_string(),
         verbosity: Some(VerbosityLevel::default()),
         ..Default::default()
     };

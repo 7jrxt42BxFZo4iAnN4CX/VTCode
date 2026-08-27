@@ -569,7 +569,7 @@ use_root_config = true
         vt_cfg.agent.theme = "mono".to_string();
 
         let config = CoreAgentConfig {
-            model: "gpt-5.4".to_string(),
+            model: "gpt-5.6-sol".to_string(),
             api_key: "test-key".to_string(),
             provider: "openai".to_string(),
             api_key_env: "OPENAI_API_KEY".to_string(),
@@ -594,7 +594,7 @@ use_root_config = true
         configure_runtime_debug_context("debug-session".to_string(), Some("session-1".to_string()));
         let path = PathBuf::from("/tmp/debug-session.log");
         set_runtime_debug_log_path(&path);
-        let model_id = ModelId::from_str("gpt-5.4").expect("model id");
+        let model_id = ModelId::from_str("gpt-5.6-sol").expect("model id");
         let metadata = build_exec_archive_metadata(Path::new("."), &model_id, &vt_cfg, &config);
 
         assert_eq!(runtime_debug_log_path().as_deref(), Some(path.as_path()));

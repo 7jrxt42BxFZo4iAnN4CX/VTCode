@@ -1255,7 +1255,7 @@ mod tests {
         let provider = test_provider();
         let tool_call_id = "direct_exec_command_1".to_string();
         let request = LLMRequest {
-            model: models::ollama::MINIMAX_M27_CLOUD.to_string(),
+            model: models::ollama::MINIMAX_M3_CLOUD.to_string(),
             messages: vec![
                 Message::assistant_with_tools(
                     String::new(),
@@ -1314,7 +1314,7 @@ mod tests {
     fn build_payload_hoists_history_system_directives_into_system_prompt() {
         let provider = test_provider();
         let request = LLMRequest {
-            model: models::ollama::MINIMAX_M27_CLOUD.to_string(),
+            model: models::ollama::MINIMAX_M3_CLOUD.to_string(),
             system_prompt: Some(std::sync::Arc::from(
                 "stable system instructions",
             )),
@@ -1359,7 +1359,7 @@ mod tests {
     fn build_payload_promotes_history_system_directive_without_base_system_prompt() {
         let provider = test_provider();
         let request = LLMRequest {
-            model: models::ollama::MINIMAX_M27_CLOUD.to_string(),
+            model: models::ollama::MINIMAX_M3_CLOUD.to_string(),
             messages: vec![
                 Message::system(
                     "Repeated read-only exploration hit the per-turn family cap. Scheduling a final recovery pass without more tools.".to_string(),
@@ -1427,7 +1427,7 @@ mod tests {
     fn build_payload_rehydrates_glm_interleaved_history_into_content() {
         let provider = test_provider();
         let request = LLMRequest {
-            model: models::ollama::GLM_5_1_CLOUD.to_string(),
+            model: models::ollama::GLM_5_2_CLOUD.to_string(),
             messages: vec![Message::assistant("done".to_string()).with_reasoning(Some("trace".to_string()))].into(),
             ..Default::default()
         };

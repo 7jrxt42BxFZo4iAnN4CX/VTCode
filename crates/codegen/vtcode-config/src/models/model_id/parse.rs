@@ -12,10 +12,6 @@ impl FromStr for ModelId {
         let trimmed = s.trim();
 
         // Explicitly handle built-in models that might be shadowed by OpenRouter
-        if trimmed == models::zai::GLM_5_1 {
-            return Ok(ModelId::ZaiGlm51);
-        }
-
         if trimmed == models::zai::GLM_5_2 {
             return Ok(ModelId::ZaiGlm52);
         }
@@ -24,33 +20,34 @@ impl FromStr for ModelId {
             return Ok(ModelId::ZaiGlm53);
         }
 
+        if trimmed == models::GPT_5_CODEX {
+            return Ok(ModelId::GPT56Sol);
+        }
+
+        if trimmed == "gpt-5.4" {
+            return Ok(ModelId::GPT56Sol);
+        }
+
         if let Some(opencode_model) = trimmed
             .strip_prefix("opencode/")
             .or_else(|| trimmed.strip_prefix("opencode-zen/"))
         {
             return match opencode_model {
-                m if m == models::opencode_zen::GPT_5_4 => Ok(ModelId::OpenCodeZenGPT54),
-                m if m == models::opencode_zen::GPT_5_4_MINI => Ok(ModelId::OpenCodeZenGPT54Mini),
-                m if m == models::opencode_zen::CLAUDE_SONNET_4_6 => Ok(ModelId::OpenCodeZenClaudeSonnet46),
-                m if m == models::opencode_zen::GLM_5_1 => Ok(ModelId::OpenCodeZenGlm51),
+                "gpt-5.4" | "gpt-5.6-sol" => Ok(ModelId::GPT56Sol),
                 _ => Err(ModelParseError::InvalidModel(trimmed.to_string())),
             };
         }
 
         if let Some(opencode_model) = trimmed.strip_prefix("opencode-go/") {
             return match opencode_model {
-                m if m == models::opencode_go::GROK_4_5 => Ok(ModelId::OpenCodeGoGrok45),
                 m if m == models::opencode_go::GLM_5_3 => Ok(ModelId::OpenCodeGoGlm53),
                 m if m == models::opencode_go::GLM_5_2 => Ok(ModelId::OpenCodeGoGlm52),
-                m if m == models::opencode_go::GLM_5_1 => Ok(ModelId::OpenCodeGoGlm51),
                 m if m == models::opencode_go::GPT_5_6_LUNA => Ok(ModelId::OpenCodeGoGpt56Luna),
                 m if m == models::opencode_go::KIMI_K3 => Ok(ModelId::OpenCodeGoKimiK3),
                 m if m == models::opencode_go::KIMI_K2_7_CODE => Ok(ModelId::OpenCodeGoKimiK27Code),
-                m if m == models::opencode_go::KIMI_K2_6 => Ok(ModelId::OpenCodeGoKimiK26),
                 m if m == models::opencode_go::MIMO_V2_5 => Ok(ModelId::OpenCodeGoMimoV25),
                 m if m == models::opencode_go::MIMO_V2_5_PRO => Ok(ModelId::OpenCodeGoMimoV25Pro),
                 m if m == models::opencode_go::MINIMAX_M3 => Ok(ModelId::OpenCodeGoMinimaxM3),
-                m if m == models::opencode_go::MINIMAX_M2_7 => Ok(ModelId::OpenCodeGoMinimaxM27),
                 m if m == models::opencode_go::MUSE_SPARK_1_2_CONTRIBUTOR => {
                     Ok(ModelId::OpenCodeGoMuseSpark12Contributor)
                 }
@@ -76,9 +73,7 @@ impl FromStr for ModelId {
         match trimmed {
             // OpenRouter models without generated metadata
             "moonshotai/kimi-k3" => Ok(ModelId::OpenRouterMoonshotaiKimiK3),
-            "moonshotai/kimi-k2.6" => Ok(ModelId::OpenRouterMoonshotaiKimiK26),
             "moonshotai/kimi-k2.7-code" => Ok(ModelId::OpenRouterMoonshotaiKimiK27Code),
-            "z-ai/glm-5.1" => Ok(ModelId::OpenRouterZaiGlm51),
             "z-ai/glm-5.2" => Ok(ModelId::OpenRouterZaiGlm52),
             _ => {
                 if let Some(model) = Self::parse_openrouter_model(s) {

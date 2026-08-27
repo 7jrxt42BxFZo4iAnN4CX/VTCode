@@ -231,7 +231,7 @@ display_name = "MyCorp"
 base_url = "https://llm.corp.example/v1"
 api_key_env = "MYCORP_API_KEY"
 model = "gpt-5-mini"
-models = ["gpt-5-mini", "gpt-5.4"]
+models = ["gpt-5-mini", "gpt-5.6-sol"]
 context_window = 256000   # optional; defaults to 128000 tokens
 ```
 
@@ -264,7 +264,7 @@ the [custom provider configuration](./docs/config/config.md#custom_providers).
 Use a profile for model-specific overrides:
 
 ```toml
-[custom_providers.profiles."gpt-5.4"]
+[custom_providers.profiles."gpt-5.6-sol"]
 api_format = "openai-responses"
 context_window = 131072
 supports_tools = true

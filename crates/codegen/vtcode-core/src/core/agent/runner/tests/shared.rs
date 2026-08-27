@@ -98,7 +98,7 @@ impl LLMProvider for QueuedProvider {
     }
 
     fn supported_models(&self) -> Vec<String> {
-        vec!["gpt-5.3-codex".to_string()]
+        vec!["gpt-5-codex".to_string()]
     }
 
     fn validate_request(&self, _request: &LLMRequest) -> Result<(), LLMError> {
@@ -156,7 +156,7 @@ impl LLMProvider for RecordingQueuedProvider {
     }
 
     fn supported_models(&self) -> Vec<String> {
-        vec!["gpt-5.3-codex".to_string()]
+        vec!["gpt-5-codex".to_string()]
     }
 
     fn supports_native_allowed_tools(&self, _model: &str) -> bool {
@@ -276,7 +276,7 @@ impl LLMProvider for RoleQueuedProvider {
     }
 
     fn supported_models(&self) -> Vec<String> {
-        vec!["gpt-5.3-codex".to_string()]
+        vec!["gpt-5-codex".to_string()]
     }
 
     fn validate_request(&self, _request: &LLMRequest) -> Result<(), LLMError> {
@@ -296,7 +296,7 @@ pub fn task(title: &str, id: &str) -> Task {
 pub fn text_response(text: &str) -> LLMResponse {
     LLMResponse {
         content: Some(text.to_string()),
-        model: "gpt-5.3-codex".to_string(),
+        model: "gpt-5-codex".to_string(),
         finish_reason: FinishReason::Stop,
         ..Default::default()
     }
@@ -314,7 +314,7 @@ pub fn tool_call_response(tool_name: &str, args: serde_json::Value) -> LLMRespon
             tool_name.to_string(),
             args.to_string(),
         )]),
-        model: "gpt-5.3-codex".to_string(),
+        model: "gpt-5-codex".to_string(),
         finish_reason: FinishReason::ToolCalls,
         ..Default::default()
     }

@@ -53,7 +53,7 @@ mod tests {
         let events = LLMStreamEvent::Completed {
             response: Box::new(LLMResponse {
                 content: Some("done".to_string()),
-                model: "gpt-5.4".to_string(),
+                model: "gpt-5.6-sol".to_string(),
                 tool_calls: None,
                 usage: Some(Usage {
                     prompt_tokens: 10,

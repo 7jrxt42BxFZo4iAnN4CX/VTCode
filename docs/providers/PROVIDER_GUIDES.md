@@ -43,7 +43,7 @@ display_name = "MyCorp"
 base_url = "https://llm.corp.example/v1"
 api_key_env = "MYCORP_API_KEY"
 model = "gpt-5-mini"
-models = ["gpt-5-mini", "gpt-5.4"]
+models = ["gpt-5-mini", "gpt-5.6-sol"]
 context_window = 256000   # optional; defaults to 128000 tokens
 ```
 
@@ -264,7 +264,7 @@ complete field reference and precedence rules.
 -   **Authentication:** `MERGE_GATEWAY_API_KEY` (Bearer token; create a key in the [Merge dashboard](https://dashboard.merge.dev/))
 -   **Base URL:** `https://api-gateway.merge.dev/v1` (native Responses), override with `MERGE_GATEWAY_BASE_URL`; explicit `/v1/openai` selects legacy Chat Completions
 -   **Default model:** `default_routing`
--   **Curated picker models:** `openai/gpt-5.5`, `anthropic/claude-opus-5`, `google/gemini-3.6-flash`, `google/gemini-3.7-flash`, `deepseek/deepseek-v4-pro-0813`, `deepseek/deepseek-v4-flash-0731`, `xai/grok-4.6`, `qwen/qwen3.8-max`, `minimax/minimax-h3`, `moonshot/kimi-k3`, `thinkingmachines/inkling`, `meta/muse-spark-1.1`, `openai/gpt-5.6-luna`, `openai/gpt-5.6-sol`, and `openai/gpt-5.6-terra`
+-   **Curated picker models:** `openai/gpt-5.5`, `anthropic/claude-opus-5`, `google/gemini-3.6-flash`, `google/gemini-3.7-flash`, `deepseek/deepseek-v4-pro-0813`, `deepseek/deepseek-v4-flash-0731`, `xai/grok-4.6`, `qwen/qwen3.8-max`, `minimax/minimax-h3`, `moonshot/kimi-k3`, `thinkingmachines/inkling`, `meta/muse-spark-1.1`, `zai/glm-5.3-flash`, `openai/gpt-5.6-luna`, `openai/gpt-5.6-sol`, and `openai/gpt-5.6-terra`
 -   **Features:** Native Responses, streaming, tool calling, structured outputs, authenticated paginated model catalog, cache-backed picker metadata, and arbitrary explicit Merge route IDs
 -   **Limitations:** Reasoning controls remain route-specific and are not inferred generically; routing metadata and billed cost remain outside VT Code's normalized response fields. Explicit `/v1/openai` endpoints retain the legacy compatibility path.
 
@@ -285,7 +285,7 @@ complete field reference and precedence rules.
 -   Default model: `xiaomi/mimo-v2.5-pro` (VT Code's default). Xiaomi MiMo V2.5 and V2.5 Pro are also available.
 -   For Meta Muse, prefer the official [`meta` provider](./meta.md) when direct Meta access is desired. OpenRouter's `meta/...` entries are separately namespaced marketplace routes.
 -   **Meta Muse models via OpenRouter:** `meta/muse-glimmer-30b` and `meta/muse-spark-1.2`
--   **Curated picker catalog:** `openrouter/meta/muse-glimmer-30b`, `openrouter/meta/muse-spark-1.2`, `openrouter/deepseek/deepseek-chat`, `openrouter/moonshotai/kimi-k3`, `openrouter/moonshotai/kimi-k2.6`, `openrouter/moonshotai/kimi-k2.7-code`, `openrouter/qwen/qwen3.7-max`, `openrouter/tencent/hy3-preview`, `openrouter/x-ai/grok-build-0.1`, `openrouter/x-ai/grok-4.6`, `openrouter/xiaomi/mimo-v2.5`, `openrouter/xiaomi/mimo-v2.5-pro`, `openrouter/poolside/laguna-m.1:free`, `openrouter/poolside/laguna-s-2.1:free`, `openrouter/google/gemini-3.5-flash-lite`, `openrouter/google/gemini-3.6-flash`, `openrouter/google/gemini-3.7-flash`, and `openrouter/qwen/qwen3.8-27b`
+-   **Curated picker catalog:** `openrouter/meta/muse-glimmer-30b`, `openrouter/meta/muse-spark-1.2`, `openrouter/deepseek/deepseek-chat`, `openrouter/z-ai/glm-5.1`, `openrouter/z-ai/glm-5.2`, `openrouter/z-ai/glm-5.3-flash`, `openrouter/moonshotai/kimi-k3`, `openrouter/moonshotai/kimi-k2.6`, `openrouter/moonshotai/kimi-k2.7-code`, `openrouter/qwen/qwen3.7-max`, `openrouter/tencent/hy3-preview`, `openrouter/x-ai/grok-build-0.1`, `openrouter/x-ai/grok-4.6`, `openrouter/xiaomi/mimo-v2.5`, `openrouter/xiaomi/mimo-v2.5-pro`, `openrouter/poolside/laguna-m.1:free`, `openrouter/poolside/laguna-s-2.1:free`, `openrouter/google/gemini-3.5-flash-lite`, `openrouter/google/gemini-3.6-flash`, `openrouter/google/gemini-3.7-flash`, and `openrouter/qwen/qwen3.8-27b`
 -   **Xiaomi MiMo models:**
     -   `xiaomi/mimo-v2.5-pro` — flagship agentic model, 1M context, reasoning + tool calls
     -   `xiaomi/mimo-v2.5` — omnimodal model, 1M context, reasoning + tool calls
@@ -384,17 +384,18 @@ VT Code provides compatibility with the Anthropic Messages API to help connect e
 
 ## Z.AI (ZAI)
 
+-   **Guide:** [Z.AI Integration](./zai.md) · [Quick Reference](./zai-quick-reference.md)
 -   **Provider key:** `zai`
--   **Official docs:** [Z.AI Platform](https://z.ai/docs)
+-   **Official docs:** [Z.AI Platform](https://z.ai/docs) · [GLM-5.3 Flash](https://docs.z.ai/guides/vlm/glm-5.3-flash) · [GLM-5 docs](https://docs.z.ai/guides/llm/glm-5)
 -   **Auth:** `ZAI_API_KEY` environment variable
+-   **Base URL:** `https://api.z.ai/api`, override with `ZAI_BASE_URL`
 -   **Setup:** Set `ZAI_API_KEY` from Z.AI platform, then configure `provider = "zai"` in `vtcode.toml`
 -   **Models:**
     -   `glm-5.3` — flagship coding model, 1M context, reasoning + tool calls
+    -   `glm-5.3-flash` — efficient multimodal model, 320B total / 18B active, hybrid sparse+linear attention, 1M context, native vision (text+image), reasoning + tool calls
     -   `glm-5.2` — flagship model for long-horizon tasks, 1M context, reasoning + tool calls
-    -   `glm-5.1` — next-gen foundation model, reasoning + tool calls
-    -   `glm-4.7` — efficient model for general tasks
 -   **Default:** `glm-5.3`
--   **Features:** Streaming, tool calling, reasoning effort support
+-   **Features:** Streaming, tool calling, reasoning effort support, native vision (Flash), context caching, structured output, tool streaming
 
 ## Moonshot (Kimi)
 
@@ -405,7 +406,6 @@ VT Code provides compatibility with the Anthropic Messages API to help connect e
 -   **Models:**
     -   `kimi-k3` — 2.8T parameter flagship with Delta Attention, native vision, 1M context
     -   `kimi-k2.7-code` — most capable coding model with long-horizon coding breakthrough, 256K context
-    -   `kimi-k2.6` — multimodal model for coding and UI/UX generation, 1M context
     -   `kimi-k2.5` — enhanced reasoning model
 -   **Default:** `kimi-k3`
 -   **Features:** Streaming, tool calling, reasoning support, multimodal input (text, image, video)
@@ -429,7 +429,6 @@ VT Code provides compatibility with the Anthropic Messages API to help connect e
 -   **Setup:** Set `MINIMAX_API_KEY` from MiniMax platform, then configure `provider = "minimax"` in `vtcode.toml`
 -   **Models:**
     -   `MiniMax-M3` — frontier multimodal coding model, 1M context
-    -   `MiniMax-M2.7` — recursive self-improvement with enhanced reasoning
     -   `MiniMax-M2.5` — efficient model for general tasks
 -   **Default:** `MiniMax-M3`
 -   **Features:** Streaming, tool calling

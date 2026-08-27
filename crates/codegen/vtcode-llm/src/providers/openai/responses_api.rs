@@ -696,7 +696,7 @@ mod tests {
     #[test]
     fn standard_payload_uses_responses_function_call_items_for_structured_tool_history() {
         let request = LLMRequest {
-            model: "gpt-5.3-codex".to_string(),
+            model: "gpt-5-codex".to_string(),
             messages: vec![
                 Message::user("run cargo fmt".to_string()),
                 Message::assistant_with_tools(
@@ -733,7 +733,7 @@ mod tests {
     #[test]
     fn standard_payload_synthesizes_missing_function_call_output_for_orphan_call() {
         let request = LLMRequest {
-            model: "gpt-5.3-codex".to_string(),
+            model: "gpt-5-codex".to_string(),
             messages: vec![
                 Message::user("run cargo fmt".to_string()),
                 Message::assistant_with_tools(
@@ -766,7 +766,7 @@ mod tests {
     #[test]
     fn standard_payload_pairs_deferred_tool_output_when_output_precedes_call() {
         let request = LLMRequest {
-            model: "gpt-5.3-codex".to_string(),
+            model: "gpt-5-codex".to_string(),
             messages: vec![
                 Message::user("continue".to_string()),
                 Message::tool_response("call_1".to_string(), "{\"output\":\"late\"}".to_string()),
@@ -858,8 +858,7 @@ mod tests {
             ]
         });
 
-        let parsed =
-            parse_responses_payload(response, "gpt-5.3-codex".to_string(), false).expect("payload should parse");
+        let parsed = parse_responses_payload(response, "gpt-5-codex".to_string(), false).expect("payload should parse");
 
         let tool_calls = parsed.tool_calls.expect("tool calls should exist");
         assert_eq!(tool_calls.len(), 1);
@@ -882,8 +881,7 @@ mod tests {
             ]
         });
 
-        let parsed =
-            parse_responses_payload(response, "gpt-5.3-codex".to_string(), false).expect("payload should parse");
+        let parsed = parse_responses_payload(response, "gpt-5-codex".to_string(), false).expect("payload should parse");
 
         let tool_calls = parsed.tool_calls.expect("tool calls should exist");
         let namespace = tool_calls[0]
@@ -908,8 +906,7 @@ mod tests {
             ]
         });
 
-        let parsed =
-            parse_responses_payload(response, "gpt-5.3-codex".to_string(), false).expect("payload should parse");
+        let parsed = parse_responses_payload(response, "gpt-5-codex".to_string(), false).expect("payload should parse");
 
         let tool_calls = parsed.tool_calls.expect("tool calls should exist");
         assert_eq!(tool_calls.len(), 1);
@@ -940,8 +937,7 @@ mod tests {
             ]
         });
 
-        let parsed =
-            parse_responses_payload(response, "gpt-5.3-codex".to_string(), false).expect("payload should parse");
+        let parsed = parse_responses_payload(response, "gpt-5-codex".to_string(), false).expect("payload should parse");
 
         assert_eq!(parsed.content.as_deref(), Some("done"));
         assert_eq!(parsed.reasoning.as_deref(), Some("checked constraints"));
@@ -954,7 +950,7 @@ mod tests {
 
         let payload = build_standard_responses_payload(
             &LLMRequest {
-                model: "gpt-5.3-codex".to_string(),
+                model: "gpt-5-codex".to_string(),
                 messages: vec![
                     Message::assistant(parsed.content.unwrap_or_default())
                         .with_reasoning_details(Some(reasoning_details)),
@@ -988,15 +984,14 @@ mod tests {
             ]
         });
 
-        let parsed =
-            parse_responses_payload(response, "gpt-5.3-codex".to_string(), false).expect("payload should parse");
+        let parsed = parse_responses_payload(response, "gpt-5-codex".to_string(), false).expect("payload should parse");
 
         let preserved_items = parsed_reasoning_details(&parsed);
         assert!(preserved_items.iter().any(|item| item == &unknown_replay_item));
 
         let payload = build_standard_responses_payload(
             &LLMRequest {
-                model: "gpt-5.3-codex".to_string(),
+                model: "gpt-5-codex".to_string(),
                 messages: vec![
                     Message::assistant(parsed.content.unwrap_or_default())
                         .with_reasoning_details(Some(preserved_items)),
@@ -1026,8 +1021,7 @@ mod tests {
             ]
         });
 
-        let parsed =
-            parse_responses_payload(response, "gpt-5.3-codex".to_string(), false).expect("payload should parse");
+        let parsed = parse_responses_payload(response, "gpt-5-codex".to_string(), false).expect("payload should parse");
         let tool_calls = parsed.tool_calls.expect("tool calls should exist");
 
         assert_eq!(tool_calls.len(), 1);
@@ -1038,7 +1032,7 @@ mod tests {
 
         let payload = build_standard_responses_payload(
             &LLMRequest {
-                model: "gpt-5.3-codex".to_string(),
+                model: "gpt-5-codex".to_string(),
                 messages: vec![
                     Message::assistant_with_tools(String::new(), tool_calls),
                     Message::tool_response("call_789".to_string(), "{\"exit_code\":0}".to_string()),
@@ -1117,8 +1111,7 @@ mod tests {
             ]
         });
 
-        let parsed =
-            parse_responses_payload(response, "gpt-5.3-codex".to_string(), false).expect("payload should parse");
+        let parsed = parse_responses_payload(response, "gpt-5-codex".to_string(), false).expect("payload should parse");
 
         assert_eq!(parsed.tool_references, vec!["exec_command".to_string(), "write_file".to_string()]);
     }

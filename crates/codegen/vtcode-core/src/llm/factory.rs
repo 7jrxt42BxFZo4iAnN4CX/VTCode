@@ -654,7 +654,7 @@ mod tests {
             profile_config(CustomProviderApiFormat::OpenAIChat, Some(256_000), Some(false)),
         );
         profiles.insert(
-            "claude-sonnet-4-6".to_string(),
+            "claude-sonnet-5".to_string(),
             profile_config(CustomProviderApiFormat::AnthropicMessages, Some(512_000), Some(true)),
         );
 
@@ -683,7 +683,7 @@ mod tests {
             api_key_env: "MIXED_API_KEY".to_string(),
             auth: None,
             model: "gpt-5-mini".to_string(),
-            models: vec!["gpt-5-mini".to_string(), "claude-sonnet-4-6".to_string()],
+            models: vec!["gpt-5-mini".to_string(), "claude-sonnet-5".to_string()],
             profiles,
         }
     }
@@ -700,7 +700,7 @@ mod tests {
                 openai_chatgpt_auth: None,
                 copilot_auth: None,
                 base_url: None,
-                model: Some("claude-sonnet-4-6".to_string()),
+                model: Some("claude-sonnet-5".to_string()),
                 prompt_cache: None,
                 timeouts: None,
                 openai: Some(OpenAIConfig::default()),
@@ -742,8 +742,8 @@ mod tests {
 
         assert!(!provider.supports_tools("gpt-5-mini"));
         assert_eq!(provider.effective_context_size("gpt-5-mini"), 256_000);
-        assert!(provider.supports_tools("claude-sonnet-4-6"));
-        assert_eq!(provider.effective_context_size("claude-sonnet-4-6"), 512_000);
+        assert!(provider.supports_tools("claude-sonnet-5"));
+        assert_eq!(provider.effective_context_size("claude-sonnet-5"), 512_000);
 
         register_custom_providers(&[]);
     }
@@ -962,7 +962,7 @@ mod tests {
 
     #[test]
     fn create_provider_for_bare_minimax_model_uses_minimax_provider() {
-        let provider = create_provider_for_model("MiniMax-M2.5", "test-key".to_string(), None, None)
+        let provider = create_provider_for_model("MiniMax-M3", "test-key".to_string(), None, None)
             .expect("bare minimax model should resolve to minimax provider");
 
         assert_eq!(provider.name(), "minimax");

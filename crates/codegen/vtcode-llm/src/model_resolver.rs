@@ -526,7 +526,7 @@ mod tests {
 
     #[test]
     fn resolver_prefers_catalog_match_over_heuristic() {
-        let resolved = ModelResolver::resolve(None, "gpt-5.4", &[], None).expect("model");
+        let resolved = ModelResolver::resolve(None, "gpt-5.6-sol", &[], None).expect("model");
 
         assert_eq!(resolved.provider, Provider::OpenAI);
         assert!(resolved.known_model());
@@ -617,7 +617,7 @@ mod tests {
     fn resolver_carries_provider_api_key_override() {
         let resolved = ModelResolver::resolve_with_mode_and_api_key_env(
             Some("openai"),
-            "gpt-5.4",
+            "gpt-5.6-sol",
             &[],
             None,
             Some("CORPORATE_OPENAI_KEY"),

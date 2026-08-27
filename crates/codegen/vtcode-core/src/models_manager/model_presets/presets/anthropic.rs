@@ -158,8 +158,8 @@ pub(crate) fn anthropic_presets() -> Vec<ModelPreset> {
             context_window: Some(1_000_000),
         },
         ModelPreset {
-            id: "claude-opus-4-8".to_string(),
-            model: "claude-opus-4-8".to_string(),
+            id: "claude-opus-5".to_string(),
+            model: "claude-opus-5".to_string(),
             display_name: "Claude Opus 4.8".to_string(),
             description:
                 "Anthropic's most capable model for complex reasoning, long-horizon agentic coding, and high-autonomy work"
@@ -196,8 +196,8 @@ pub(crate) fn anthropic_presets() -> Vec<ModelPreset> {
             context_window: Some(1_000_000),
         },
         ModelPreset {
-            id: "claude-sonnet-4-6".to_string(),
-            model: "claude-sonnet-4-6".to_string(),
+            id: "claude-sonnet-5".to_string(),
+            model: "claude-sonnet-5".to_string(),
             display_name: "Claude Sonnet 4.6".to_string(),
             description:
                 "The best combination of speed and intelligence. Supports extended thinking and adaptive thinking with 1M context."
@@ -229,8 +229,8 @@ pub(crate) fn anthropic_presets() -> Vec<ModelPreset> {
             context_window: Some(1_000_000),
         },
         ModelPreset {
-            id: "claude-haiku-4-5".to_string(),
-            model: "claude-haiku-4-5".to_string(),
+            id: "claude-sonnet-5".to_string(),
+            model: "claude-sonnet-5".to_string(),
             display_name: "Claude Haiku 4.5".to_string(),
             description: "The fastest model with near-frontier intelligence. Supports extended thinking with manual budget."
                 .to_string(),

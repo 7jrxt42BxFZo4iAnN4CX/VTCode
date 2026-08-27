@@ -1673,7 +1673,7 @@ mod tests {
 
     #[test]
     fn selected_model_image_support_uses_image_modality_metadata() {
-        assert!(selected_model_supports_image_input("openai", "gpt-5.4", false));
+        assert!(selected_model_supports_image_input("openai", "gpt-5.6-sol", false));
     }
 
     #[test]
@@ -1683,7 +1683,7 @@ mod tests {
 
     #[test]
     fn selected_model_image_support_accepts_chatgpt_provider_label() {
-        assert!(selected_model_supports_image_input("OpenAI (ChatGPT)", "gpt-5.5", false));
+        assert!(selected_model_supports_image_input("OpenAI (ChatGPT)", "gpt-5.6-sol", false));
     }
 
     #[test]
@@ -1699,7 +1699,7 @@ mod tests {
     #[test]
     fn selected_model_image_support_falls_back_without_metadata() {
         assert!(selected_model_supports_image_input("openai", "custom-vision-model", true));
-        assert!(!selected_model_supports_image_input("custom-provider", "gpt-5.4", false));
+        assert!(!selected_model_supports_image_input("custom-provider", "gpt-5.6-sol", false));
     }
 
     #[test]

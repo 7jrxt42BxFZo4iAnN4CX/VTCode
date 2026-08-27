@@ -426,7 +426,7 @@ mod tests {
     fn edit_startup_mode_keeps_permissions_config_shape() {
         let mut config = base_config();
 
-        apply_selection(&mut config, "openai", "gpt-5.4", "", ReasoningEffortLevel::None, false);
+        apply_selection(&mut config, "openai", "gpt-5.6-sol", "", ReasoningEffortLevel::None, false);
 
         assert!(config.permissions.allow.is_empty());
         assert_eq!(config.default_primary_agent, "build");
@@ -436,7 +436,7 @@ mod tests {
     fn first_run_selection_does_not_write_old_mode_fields() {
         let mut config = base_config();
 
-        apply_selection(&mut config, "openai", "gpt-5.4", "", ReasoningEffortLevel::None, false);
+        apply_selection(&mut config, "openai", "gpt-5.6-sol", "", ReasoningEffortLevel::None, false);
 
         assert!(config.permissions.allow.is_empty());
         assert!(config.permissions.deny.is_empty());
@@ -447,7 +447,7 @@ mod tests {
     fn persistent_memory_selection_persists_opt_in() {
         let mut config = base_config();
 
-        apply_selection(&mut config, "openai", "gpt-5.4", "", ReasoningEffortLevel::None, true);
+        apply_selection(&mut config, "openai", "gpt-5.6-sol", "", ReasoningEffortLevel::None, true);
 
         assert!(config.features.memories);
         assert!(config.agent.persistent_memory.enabled);
@@ -459,7 +459,7 @@ mod tests {
         config.features.memories = true;
         config.agent.persistent_memory.enabled = true;
 
-        apply_selection(&mut config, "openai", "gpt-5.4", "", ReasoningEffortLevel::None, false);
+        apply_selection(&mut config, "openai", "gpt-5.6-sol", "", ReasoningEffortLevel::None, false);
 
         assert!(!config.features.memories);
         assert!(!config.agent.persistent_memory.enabled);
@@ -469,7 +469,7 @@ mod tests {
     fn setup_summary_mentions_new_capabilities() {
         let lines = setup_summary_lines(
             Provider::OpenAI,
-            "gpt-5.4",
+            "gpt-5.6-sol",
             "",
             ReasoningEffortLevel::None,
             false,

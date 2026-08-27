@@ -79,7 +79,6 @@ impl_openai_compat_provider!(QwenProvider, QwenSpec, {
             .unwrap_or(false)
             || requested == models::qwen::DEEPSEEK_V4_FLASH
             || requested == models::qwen::DEEPSEEK_V4_PRO
-            || requested == models::qwen::GLM_5_1
     }
 
     fn supports_reasoning_effort(&self, _model: &str) -> bool {

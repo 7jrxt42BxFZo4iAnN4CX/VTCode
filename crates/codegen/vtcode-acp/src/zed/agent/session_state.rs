@@ -550,7 +550,7 @@ mod tests {
 
     async fn build_agent_with_default_primary_agent(workspace: &Path, default_primary_agent: &str) -> ZedAgent {
         let core_config = CoreAgentConfig {
-            model: "gpt-5.4".to_string(),
+            model: "gpt-5.6-sol".to_string(),
             api_key: String::new(),
             provider: "openai".to_string(),
             api_key_env: "TEST_API_KEY".to_string(),
@@ -620,7 +620,7 @@ mod tests {
                 metadata: SessionArchiveMetadata::new(
                     "vtcode",
                     temp.path().to_string_lossy(),
-                    "gpt-5.4",
+                    "gpt-5.6-sol",
                     "openai",
                     "test",
                     "xhigh",
@@ -645,7 +645,7 @@ mod tests {
         assert_eq!(primary_agent(&handle), "build");
         assert_eq!(reasoning_effort(&handle), ReasoningEffortLevel::XHigh);
         assert_eq!(provider(&handle), "openai");
-        assert_eq!(model(&handle), "gpt-5.4");
+        assert_eq!(model(&handle), "gpt-5.6-sol");
     }
 
     #[tokio::test]
@@ -658,7 +658,7 @@ mod tests {
                 metadata: SessionArchiveMetadata::new(
                     "vtcode",
                     temp.path().to_string_lossy(),
-                    "gpt-5.4",
+                    "gpt-5.6-sol",
                     "openai",
                     "test",
                     "low",

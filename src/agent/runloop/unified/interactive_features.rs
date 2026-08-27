@@ -722,7 +722,7 @@ mod tests {
 
     #[test]
     fn prompt_suggestion_route_prefers_configured_small_model() {
-        let config = prompt_config("openai", "gpt-5.4");
+        let config = prompt_config("openai", "gpt-5.6-sol");
 
         let mut vt_cfg = VTCodeConfig::default();
         vt_cfg.agent.prompt_suggestions.model = "gpt-5-mini".to_string();
@@ -736,12 +736,12 @@ mod tests {
 
     #[test]
     fn prompt_suggestion_route_auto_selects_lightweight_sibling() {
-        let config = prompt_config("openai", "gpt-5.4");
+        let config = prompt_config("openai", "gpt-5.6-sol");
 
         let vt_cfg = VTCodeConfig::default();
         let routes = resolve_prompt_suggestion_routes(&config, Some(&vt_cfg));
         assert_eq!(routes.primary.provider_name, "openai");
-        assert_eq!(routes.primary.model, ModelId::GPT54Mini.as_str());
+        assert_eq!(routes.primary.model, ModelId::GPT56Luna.as_str());
     }
 
     #[test]

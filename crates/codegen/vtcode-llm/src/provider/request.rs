@@ -9,7 +9,7 @@ use super::{Message, ToolDefinition};
 /// Used with the `server-side-fallback-2026-07-01` beta header.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FallbackModel {
-    /// The model identifier to fall back to (e.g., "claude-opus-4-8")
+    /// The model identifier to fall back to (e.g., "claude-opus-5")
     pub(crate) model: String,
     /// Optional max_tokens override for this fallback attempt
     #[serde(skip_serializing_if = "Option::is_none")]

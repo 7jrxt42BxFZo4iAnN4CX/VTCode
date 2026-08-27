@@ -16,7 +16,7 @@ Complete this checklist when adding a new LLM model to VT Code.
 **Files:** `openai.rs`, `models.json`
 
 - [ ] Added to `SUPPORTED_MODELS` in the provider's constants module (for example, `constants/models/nvidia.rs`)
-- [ ] Added convenience constant (e.g., `GPT_5_4_NANO: &str = "gpt-5.4-nano"`)
+- [ ] Added convenience constant (e.g., `GPT_5_6_LUNA: &str = "gpt-5.6-luna"`)
 - [ ] Updated relevant arrays:
   - [ ] `RESPONSES_API_MODELS` (if applicable)
   - [ ] `REASONING_MODELS` (if applicable)
@@ -42,11 +42,11 @@ Complete this checklist when adding a new LLM model to VT Code.
 ### model_id.rs (Enum Definition)
 - [ ] Added enum variant in correct provider section (OpenAI, Anthropic, etc.)
 - [ ] Added doc comment with model description
-- [ ] Used PascalCase naming (e.g., `GPT54Nano`)
+- [ ] Used PascalCase naming (e.g., `GPT56Luna`)
 - [ ] Variant appears in correct alphabetical position
 
 ### as_str.rs (String Mapping)
-- [ ] Added match arm: `ModelId::GPT54Nano => models::openai::GPT_5_4_NANO`
+- [ ] Added match arm: `ModelId::GPT56Luna => models::openai::GPT_5_6_LUNA`
 - [ ] Constant reference matches defined constant
 
 ### display.rs (Human-Readable Name)
@@ -58,7 +58,7 @@ Complete this checklist when adding a new LLM model to VT Code.
 - [ ] Description matches `docs/models.json` "description" field
 
 ### parse.rs (String → Enum)
-- [ ] Added parse rule: `s if s == models::openai::GPT_5_4_NANO => Ok(ModelId::GPT54Nano)`
+- [ ] Added parse rule: `s if s == models::openai::GPT_5_6_LUNA => Ok(ModelId::GPT56Luna)`
 - [ ] Handles variant correctly
 
 ### provider.rs (Provider Assignment)
@@ -96,7 +96,7 @@ Complete this checklist when adding a new LLM model to VT Code.
 
 - [ ] Model appears in `/model` command help
 - [ ] Model can be selected: `vtcode ask --model gpt-5.4-nano "test"`
-- [ ] Model ID parses correctly: `"gpt-5.4-nano".parse::<ModelId>()`
+- [ ] Model ID parses correctly: `"gpt-5.6-luna".parse::<ModelId>()`
 - [ ] Model properties correct:
   - [ ] `provider()` returns correct provider
   - [ ] `generation()` returns correct version
@@ -155,8 +155,8 @@ mod model_tests {
     
     #[test]
     fn test_gpt_5_4_nano() {
-        let model = "gpt-5.4-nano".parse::<ModelId>().expect("parse failed");
-        assert_eq!(model, ModelId::GPT54Nano);
+        let model = "gpt-5.6-luna".parse::<ModelId>().expect("parse failed");
+        assert_eq!(model, ModelId::GPT56Luna);
         assert_eq!(model.provider(), Provider::OpenAI);
         assert_eq!(model.display_name(), "GPT-5.4 Nano");
         assert_eq!(model.generation(), "5.4");

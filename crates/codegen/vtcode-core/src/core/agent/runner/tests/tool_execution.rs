@@ -23,7 +23,7 @@ async fn denied_tool_call_emits_one_failed_output_for_runtime_invocation() {
     let mut runtime =
         AgentRuntime::new(AgentSessionState::new("session-denied".to_string(), 16, 4, 128_000), None, None);
     let request = LLMRequest {
-        model: "gpt-5.3-codex".to_string(),
+        model: "gpt-5-codex".to_string(),
         ..Default::default()
     };
     let turn = runtime
@@ -411,7 +411,7 @@ async fn steer_stop_closes_open_tool_calls_with_failed_output_items() {
     let mut runtime =
         AgentRuntime::new(AgentSessionState::new("session-stop".to_string(), 16, 4, 128_000), None, Some(steering_rx));
     let request = LLMRequest {
-        model: "gpt-5.3-codex".to_string(),
+        model: "gpt-5-codex".to_string(),
         ..Default::default()
     };
     let turn = runtime

@@ -373,7 +373,7 @@ pub struct AnthropicAdvisorTool {
     pub(crate) tool_type: String, // "advisor_20260301"
     /// Fixed advisor tool name.
     pub(crate) name: String, // "advisor"
-    /// Advisor model id (e.g. "claude-opus-4-8").
+    /// Advisor model id (e.g. "claude-opus-5").
     pub(crate) model: String,
     /// Maximum number of advisor invocations per request.
     #[serde(skip_serializing_if = "Option::is_none")]

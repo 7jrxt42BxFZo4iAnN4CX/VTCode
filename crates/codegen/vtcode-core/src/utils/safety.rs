@@ -25,13 +25,13 @@ impl SafetyValidator {
         use crate::config::constants::models;
         // Parse the requested model
         let model_id = match requested_model {
-            s if s == models::google::GEMINI_3_1_PRO_PREVIEW => Some(ModelId::Gemini31ProPreview),
-            s if s == models::GEMINI_3_5_FLASH => Some(ModelId::Gemini35Flash),
+            s if s == models::google::GEMINI_3_7_FLASH => Some(ModelId::Gemini37Flash),
+            s if s == models::GEMINI_3_7_FLASH => Some(ModelId::Gemini37Flash),
             _ => None,
         };
 
         // Check if this is the most capable (and expensive) model
-        if let Some(ModelId::Gemini31ProPreview) = model_id {
+        if let Some(ModelId::Gemini37Flash) = model_id {
             let current_default = ModelId::default();
 
             if skip_confirmations {
@@ -83,7 +83,7 @@ impl SafetyValidator {
         match (from_id, to_id) {
             (Some(from), Some(to)) => {
                 // Switching to Pro model requires confirmation
-                !matches!(to, ModelId::Gemini31ProPreview) || matches!(from, ModelId::Gemini31ProPreview)
+                !matches!(to, ModelId::Gemini37Flash) || matches!(from, ModelId::Gemini37Flash)
             }
             _ => true, // Unknown models are allowed
         }
@@ -110,7 +110,7 @@ impl SafetyValidator {
                 println!("• Reasonable cost");
                 println!("• Fast response times");
             }
-            s if s == models::google::GEMINI_3_1_PRO_PREVIEW => {
+            s if s == models::google::GEMINI_3_7_FLASH => {
                 println!("{}", style("Using most capable model:").cyan());
                 println!("• Highest quality responses");
                 println!("• Higher cost per token");
@@ -144,7 +144,7 @@ impl SafetyValidator {
         let mut warnings = Vec::new();
 
         // Check for expensive model usage
-        if model == models::google::GEMINI_3_1_PRO_PREVIEW {
+        if model == models::google::GEMINI_3_7_FLASH {
             warnings.push("Using most expensive model (Gemini 3 Pro)");
         }
 

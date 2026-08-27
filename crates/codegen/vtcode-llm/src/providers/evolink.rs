@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn normalizes_namespaced_model_for_wire() {
         let provider = EvolinkProvider::with_model("test-key".to_string(), "evolink/gpt-5.2".to_string());
-        assert_eq!(provider.model_id_for_test(), models::evolink::GPT_5_2);
+        assert_eq!(provider.model_id_for_test(), models::evolink::GPT_5_6);
     }
 
     #[test]
@@ -423,7 +423,7 @@ mod tests {
         provider.core.prepare(&mut request);
         let payload = provider.core.convert_request(&request).expect("payload should be valid");
 
-        assert_eq!(payload.get("model").and_then(|value| value.as_str()), Some(models::evolink::GPT_5_2));
+        assert_eq!(payload.get("model").and_then(|value| value.as_str()), Some(models::evolink::GPT_5_6));
         let messages = payload.get("messages").and_then(|v| v.as_array()).unwrap();
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0]["role"], "system");
