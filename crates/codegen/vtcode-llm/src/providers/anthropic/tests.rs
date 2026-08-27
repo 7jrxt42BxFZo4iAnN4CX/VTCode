@@ -10,28 +10,28 @@ mod capabilities_tests {
 
     #[test]
     fn test_supports_structured_output() {
-        assert!(supports_structured_output(models::CLAUDE_SONNET_4_6, models::anthropic::DEFAULT_MODEL));
+        assert!(supports_structured_output(models::CLAUDE_SONNET_5, models::anthropic::DEFAULT_MODEL));
         assert!(supports_structured_output("claude-opus-4-5-20251101", models::anthropic::DEFAULT_MODEL));
         assert!(supports_structured_output("claude-sonnet-4-5-20250929", models::anthropic::DEFAULT_MODEL));
-        assert!(supports_structured_output(models::CLAUDE_HAIKU_4_5, models::anthropic::DEFAULT_MODEL));
+        assert!(supports_structured_output(models::CLAUDE_SONNET_5, models::anthropic::DEFAULT_MODEL));
         assert!(!supports_structured_output("claude-3-7-sonnet-test", models::anthropic::DEFAULT_MODEL));
     }
 
     #[test]
     fn test_supports_vision() {
-        assert!(supports_vision(models::CLAUDE_SONNET_4_6, models::anthropic::DEFAULT_MODEL));
+        assert!(supports_vision(models::CLAUDE_SONNET_5, models::anthropic::DEFAULT_MODEL));
         assert!(supports_vision("claude-3-opus", models::anthropic::DEFAULT_MODEL));
         assert!(supports_vision("claude-4-sonnet", models::anthropic::DEFAULT_MODEL));
     }
 
     #[test]
     fn test_supports_effort() {
-        assert!(supports_effort(models::CLAUDE_SONNET_4_6, models::anthropic::DEFAULT_MODEL));
+        assert!(supports_effort(models::CLAUDE_SONNET_5, models::anthropic::DEFAULT_MODEL));
     }
 
     #[test]
     fn test_effective_context_size() {
-        assert_eq!(effective_context_size(models::CLAUDE_SONNET_4_6), 1_000_000);
+        assert_eq!(effective_context_size(models::CLAUDE_SONNET_5), 1_000_000);
         assert_eq!(effective_context_size("claude-sonnet-4-5-latest"), 200_000);
         assert_eq!(effective_context_size("claude-haiku-4-5-latest"), 200_000);
         assert_eq!(effective_context_size("claude-3-opus"), 200_000);
@@ -88,7 +88,7 @@ mod validation_tests {
     fn test_validate_empty_messages() {
         let request = LLMRequest {
             messages: vec![].into(),
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             ..Default::default()
         };
         let config = AnthropicConfig::default();
@@ -145,7 +145,7 @@ mod validation_tests {
     fn test_validate_effort_rejects_unsupported_models() {
         let request = LLMRequest {
             messages: vec![Message::user("hi".to_string())].into(),
-            model: models::CLAUDE_HAIKU_4_5.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             effort: Some("medium".to_string()),
             ..Default::default()
         };
@@ -158,7 +158,7 @@ mod validation_tests {
         let config = AnthropicConfig::default();
         let request = LLMRequest {
             messages: vec![Message::user("hi".to_string())].into(),
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             effort: Some("max".to_string()),
             ..Default::default()
         };
@@ -170,7 +170,7 @@ mod validation_tests {
         let config = AnthropicConfig::default();
         let request = LLMRequest {
             messages: vec![Message::user("hi".to_string())].into(),
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             effort: Some("xhigh".to_string()),
             ..Default::default()
         };
@@ -186,7 +186,7 @@ mod validation_tests {
         };
         let request = LLMRequest {
             messages: vec![Message::user("hi".to_string())].into(),
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             prefill: Some("{".to_string()),
             ..Default::default()
         };
@@ -202,7 +202,7 @@ mod validation_tests {
         };
         let request = LLMRequest {
             messages: vec![Message::user("hi".to_string())].into(),
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             coding_agent_settings: Some(Box::new(crate::provider::CodingAgentSettings {
                 prefill_thought: true,
                 ..Default::default()
@@ -218,7 +218,7 @@ mod validation_tests {
         let config = AnthropicConfig::default();
         let request = LLMRequest {
             messages: vec![Message::user("find warmest city".to_string())].into(),
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             tools: Some(Arc::new(vec![
                 ToolDefinition::function(
                     "get_weather".to_string(),
@@ -245,7 +245,7 @@ mod validation_tests {
         let config = AnthropicConfig::default();
         let request = LLMRequest {
             messages: vec![Message::user("find warmest city".to_string())].into(),
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             tools: Some(Arc::new(vec![
                 ToolDefinition::function(
                     "get_weather".to_string(),
@@ -272,7 +272,7 @@ mod validation_tests {
         let config = AnthropicConfig::default();
         let request = LLMRequest {
             messages: vec![Message::user("find warmest city".to_string())].into(),
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             tools: Some(Arc::new(vec![
                 ToolDefinition::function(
                     "get_weather".to_string(),
@@ -299,7 +299,7 @@ mod validation_tests {
         let config = AnthropicConfig::default();
         let request = LLMRequest {
             messages: vec![Message::user("find warmest city".to_string())].into(),
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             tools: Some(Arc::new(vec![
                 ToolDefinition::function(
                     "get_weather".to_string(),
@@ -326,7 +326,7 @@ mod validation_tests {
         let config = AnthropicConfig::default();
         let request = LLMRequest {
             messages: vec![Message::user("hi".to_string())].into(),
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             output_format: Some(json!({
                 "type": "object",
                 "properties": {
@@ -347,7 +347,7 @@ mod validation_tests {
         let config = AnthropicConfig::default();
         let request = LLMRequest {
             messages: vec![Message::user("hi".to_string())].into(),
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             tools: Some(Arc::new(vec![ToolDefinition::function(
                 "bad tool name".to_string(),
                 "Bad name".to_string(),
@@ -392,7 +392,7 @@ mod response_parser_tests {
             }
         });
 
-        let response = parse_response(response_json, "claude-haiku-4-5".to_string()).expect("parse response");
+        let response = parse_response(response_json, "claude-sonnet-5".to_string()).expect("parse response");
         assert_eq!(response.content.as_deref(), Some("Hello, world!"));
         assert!(matches!(response.finish_reason, FinishReason::Stop));
     }
@@ -411,7 +411,7 @@ mod response_parser_tests {
             }
         });
 
-        let response = parse_response(response_json, "claude-haiku-4-5".to_string()).expect("parse response");
+        let response = parse_response(response_json, "claude-sonnet-5".to_string()).expect("parse response");
         let reasoning = response.reasoning.as_deref().expect("expected reasoning content");
         assert!(reasoning.contains("Let me think"));
         assert_eq!(
@@ -446,7 +446,7 @@ mod response_parser_tests {
             }
         });
 
-        let response = parse_response(response_json, "claude-haiku-4-5".to_string()).expect("parse response");
+        let response = parse_response(response_json, "claude-sonnet-5".to_string()).expect("parse response");
         let tool_calls = response.tool_calls.as_ref().expect("expected tool calls");
         assert_eq!(tool_calls.len(), 1);
         let function = tool_calls[0].function.as_ref().expect("expected function call");
@@ -499,7 +499,7 @@ mod request_builder_tests {
     #[test]
     fn test_convert_to_anthropic_format_adds_top_level_cache_control() {
         let request = LLMRequest {
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             messages: vec![Message::user("hello".to_string())].into(),
             ..Default::default()
         };
@@ -551,7 +551,7 @@ mod request_builder_tests {
     #[test]
     fn test_convert_to_anthropic_format_preserves_opus_48_mid_conversation_system_message() {
         let request = LLMRequest {
-            model: models::CLAUDE_OPUS_4_8.to_string(),
+            model: models::CLAUDE_OPUS_5.to_string(),
             messages: vec![
                 Message::user("Review this code.".to_string()),
                 Message::system("From now on, every suggestion must include explicit type annotations.".to_string()),
@@ -581,7 +581,7 @@ mod request_builder_tests {
     #[test]
     fn test_convert_to_anthropic_format_drops_mid_conversation_system_for_pre_opus_48() {
         let request = LLMRequest {
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             messages: vec![
                 Message::user("Review this code.".to_string()),
                 Message::system("Use strict typing.".to_string()),
@@ -607,7 +607,7 @@ mod request_builder_tests {
     #[test]
     fn test_convert_to_anthropic_format_uses_native_structured_outputs() {
         let request = LLMRequest {
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             messages: vec![Message::user("hello".to_string())].into(),
             output_format: Some(json!({
                 "type": "object",
@@ -638,7 +638,7 @@ mod request_builder_tests {
     #[test]
     fn test_convert_to_anthropic_format_reuses_last_explicit_ttl_for_automatic_cache() {
         let request = LLMRequest {
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             system_prompt: Some(Arc::from("system prompt")),
             messages: vec![Message::user("hello".to_string())].into(),
             ..Default::default()
@@ -667,7 +667,7 @@ mod request_builder_tests {
     #[test]
     fn test_convert_to_anthropic_format_skips_automatic_cache_when_slots_exhausted() {
         let request = LLMRequest {
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             system_prompt: Some(Arc::from("stable system")),
             tools: Some(Arc::new(vec![ToolDefinition::function(
                 "do_work".to_string(),
@@ -710,7 +710,7 @@ mod request_builder_tests {
     #[test]
     fn test_rolling_anchors_only_last_two_qualifying_messages() {
         let request = LLMRequest {
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             system_prompt: Some(Arc::from("stable system")),
             tools: Some(Arc::new(vec![ToolDefinition::function(
                 "do_work".to_string(),
@@ -757,7 +757,7 @@ mod request_builder_tests {
     #[test]
     fn test_message_anchoring_skipped_when_tools_and_system_exhaust_breakpoints() {
         let request = LLMRequest {
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             system_prompt: Some(Arc::from("stable system")),
             tools: Some(Arc::new(vec![ToolDefinition::function(
                 "do_work".to_string(),
@@ -800,7 +800,7 @@ mod request_builder_tests {
     #[test]
     fn test_message_anchoring_uses_remaining_breakpoint_on_newest_message() {
         let request = LLMRequest {
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             system_prompt: Some(Arc::from("stable system")),
             tools: Some(Arc::new(vec![ToolDefinition::function(
                 "do_work".to_string(),
@@ -842,7 +842,7 @@ mod request_builder_tests {
     #[test]
     fn test_convert_to_anthropic_format_splits_runtime_context_without_caching_tail() {
         let request = LLMRequest {
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             system_prompt: Some(Arc::from(
                 "stable system instructions\n[Runtime Context]\n- turns: 7\n- tool_calls: 3",
             )),
@@ -876,7 +876,7 @@ mod request_builder_tests {
     #[test]
     fn test_convert_to_anthropic_format_splits_editor_only_runtime_context_without_caching_tail() {
         let request = LLMRequest {
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             system_prompt: Some(Arc::from(
                 "stable system instructions\n[Runtime Context]\n## Active Editor Context\n- Active file: src/main.rs",
             )),
@@ -909,7 +909,7 @@ mod request_builder_tests {
     #[test]
     fn test_convert_to_anthropic_format_uses_extended_message_ttl_for_budget_continuations() {
         let request = LLMRequest {
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             system_prompt: Some(Arc::from("stable system instructions")),
             messages: vec![Message::user("resume ".repeat(60))].into(),
             prompt_cache_profile: Some(PromptCacheProfile::BudgetContinuation),
@@ -933,7 +933,7 @@ mod request_builder_tests {
     #[test]
     fn test_convert_to_anthropic_format_hoists_history_system_directives_into_system_prompt() {
         let request = LLMRequest {
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             system_prompt: Some(Arc::from("stable system instructions")),
             messages: vec![
                 Message::user("explore architecture".to_string()),
@@ -975,7 +975,7 @@ mod request_builder_tests {
     #[test]
     fn test_convert_to_anthropic_format_includes_native_web_search_tool() {
         let request = LLMRequest {
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             messages: vec![Message::user("find latest rust release notes".to_string())].into(),
             tools: Some(Arc::new(vec![ToolDefinition {
                 tool_type: "web_search_20260209".to_string(),
@@ -1015,7 +1015,7 @@ mod request_builder_tests {
     #[test]
     fn test_convert_to_anthropic_format_rejects_mixed_web_search_domain_filters() {
         let request = LLMRequest {
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             messages: vec![Message::user("search docs".to_string())].into(),
             tools: Some(Arc::new(vec![ToolDefinition {
                 tool_type: "web_search_20250305".to_string(),
@@ -1051,7 +1051,7 @@ mod request_builder_tests {
     #[test]
     fn test_convert_to_anthropic_format_includes_native_code_execution_tool() {
         let request = LLMRequest {
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             messages: vec![Message::user("analyze this csv".to_string())].into(),
             tools: Some(Arc::new(vec![ToolDefinition {
                 tool_type: "code_execution_20250825".to_string(),
@@ -1087,7 +1087,7 @@ mod request_builder_tests {
     #[test]
     fn test_convert_to_anthropic_format_falls_back_to_high_for_sonnet_4_6_default_effort() {
         let request = LLMRequest {
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             messages: vec![Message::user("solve this carefully".to_string())].into(),
             ..Default::default()
         };
@@ -1109,7 +1109,7 @@ mod request_builder_tests {
     #[test]
     fn test_convert_to_anthropic_format_includes_native_memory_tool() {
         let request = LLMRequest {
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             messages: vec![Message::user("remember my preferred test runner".to_string())].into(),
             tools: Some(Arc::new(vec![ToolDefinition {
                 tool_type: "memory_20250818".to_string(),
@@ -1158,7 +1158,7 @@ mod request_builder_tests {
         tool.allowed_callers = Some(vec!["code_execution_20250825".to_string()]);
 
         let request = LLMRequest {
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             messages: vec![Message::user("find warmest city".to_string())].into(),
             tools: Some(Arc::new(vec![tool])),
             ..Default::default()
@@ -1199,7 +1199,7 @@ mod request_builder_tests {
         })]);
 
         let request = LLMRequest {
-            model: models::CLAUDE_SONNET_4_6.to_string(),
+            model: models::CLAUDE_SONNET_5.to_string(),
             messages: vec![Message::user("find warmest city".to_string())].into(),
             tools: Some(Arc::new(vec![tool])),
             ..Default::default()

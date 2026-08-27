@@ -2,6 +2,28 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.149.0 - 2026-08-27
+
+### Highlights
+#### Bug Fixes
+
+- Remove obsolete OpenRouter models from build_data and generated metadata (3fa11c79) (@vinhnx)
+### Other Changes
+## 0.148.0 - 2026-08-27
+
+### Highlights
+#### Bug Fixes
+
+- Complete metadata startup harness (cdad0ab7) 
+- Preserve responses at recovery cap (d16e468e) 
+- Make markdown table sizing responsive (18e2378c) 
+#### Features
+
+- Add GLM-5.3 Flash across providers; prune obsolete model variants (01ecd193) 
+### Other Changes
+#### Other
+
+- Update TODO (1ede031c) 
 ## 0.147.4 - 2026-08-25
 
 ### Highlights
@@ -3209,7 +3231,7 @@ All notable changes to vtcode will be documented in this file.
 - Enhance recovery handling for tool-call markers and improve documentation (e30b9e68) (@vinhnx)
 - Add Claude Fable 5 with fallback credit, remove deprecated models (d4ed7872) (@vinhnx)
 - Enhance Anthropic provider with new request handling and response parsing (73002a49) (@vinhnx)
-- Add support for CLAUDE_OPUS_4_8 in thinking profile and update test case (24fc08e8) (@vinhnx)
+- Add support for CLAUDE_OPUS_5 in thinking profile and update test case (24fc08e8) (@vinhnx)
 - Add README for vtcode-ui crate with overview and usage instructions (b3bea69a) (@vinhnx)
 - Add AGENTS.md for vtcode-ui with modules, rules, and gotchas (a2556300) (@vinhnx)
 - Add vtcode-ui to publish sequence and update CLI documentation (bb7228ed) (@vinhnx)
@@ -4469,7 +4491,7 @@ All notable changes to vtcode will be documented in this file.
 - Duplicate badge links for Agent Skills and protocols (b9216314) (@vinhnx)
 - Fix release note (f7562c14) (@vinhnx)
 - Update model references from gpt-4 to gpt-5 across documentation and codebase (cec3d7c9) (@vinhnx)
-- Update model references to "claude-haiku-4-5" across configuration and tests (b06501f4) (@vinhnx)
+- Update model references to "claude-sonnet-5" across configuration and tests (b06501f4) (@vinhnx)
 - Refactor agent guidelines, improve spacing in TODO, and enhance model picker logic; update Anthropic provider tests and configuration (0dece6ac) (@vinhnx)
 - Revert "refactor: enhance base URL resolution and improve JSON handling in request builder" (4cb8f2d9) (@vinhnx)
 - Improve release (ff4ae644) (@vinhnx)
@@ -4595,7 +4617,7 @@ All notable changes to vtcode will be documented in this file.
 - Enhance task tracker functionality and error handling (42781438) (@vinhnx)
 - Remove XAI provider tests and related assertions from model validation (880ec280) (@vinhnx)
 - Remove deprecated integration and workflow tests; clean up test module imports (3c9f5f42) (@vinhnx)
-- Update model references from "gemini-3-pro-preview" to "gemini-3.1-pro-preview" across the codebase (468a0765) (@vinhnx)
+- Update model references from "gemini-3-pro-preview" to "gemini-3.7-flash" across the codebase (468a0765) (@vinhnx)
 - Refactor caching mechanisms to use Mutex instead of RwLock for improved concurrency (af7ebf32) (@vinhnx)
 - Refactor sandbox configuration and enhance ANSI capabilities (cfb2f51a) (@vinhnx)
 - Update default model to GPT-5.3 Codex and enhance terminal title management (9d3d7d38) (@vinhnx)
@@ -5970,7 +5992,7 @@ All notable changes to vtcode will be documented in this file.
 - Enhance recovery handling for tool-call markers and improve documentation (e30b9e68) 
 - Add Claude Fable 5 with fallback credit, remove deprecated models (d4ed7872) 
 - Enhance Anthropic provider with new request handling and response parsing (73002a49) 
-- Add support for CLAUDE_OPUS_4_8 in thinking profile and update test case (24fc08e8) 
+- Add support for CLAUDE_OPUS_5 in thinking profile and update test case (24fc08e8) 
 ### Other Changes
 #### Other
 
@@ -8655,7 +8677,7 @@ All notable changes to vtcode will be documented in this file.
 - Enhance task tracker functionality and error handling (42781438)
 - Remove XAI provider tests and related assertions from model validation (880ec280)
 - Remove deprecated integration and workflow tests; clean up test module imports (3c9f5f42)
-- Update model references from "gemini-3-pro-preview" to "gemini-3.1-pro-preview" across the codebase (468a0765)
+- Update model references from "gemini-3-pro-preview" to "gemini-3.7-flash" across the codebase (468a0765)
 - Refactor caching mechanisms to use Mutex instead of RwLock for improved concurrency (af7ebf32)
 - Refactor sandbox configuration and enhance ANSI capabilities (cfb2f51a)
 - Update default model to GPT-5.3 Codex and enhance terminal title management (9d3d7d38)
@@ -10278,7 +10300,7 @@ All notable changes to vtcode will be documented in this file.
 - refactor: remove unused set_defer_rendering method from StreamingReasoningState (e429daf0) (@vinhnx)
 - refactor: remove deprecated model constants and clean up supported models list (eb9b6ff9) (@vinhnx)
 - fix: resolve duplicate model entries and correct legacy model references (a712a191) (@vinhnx)
-- Update model references to "claude-haiku-4-5" across configuration and tests (b06501f4) (@vinhnx)
+- Update model references to "claude-sonnet-5" across configuration and tests (b06501f4) (@vinhnx)
 - feat: add signal handling for graceful termination in TUI (f4de0101) (@vinhnx)
 - Update model references from gpt-4 to gpt-5 across documentation and codebase (cec3d7c9) (@vinhnx)
 - refactor: improve reasoning content comparison and suppress duplication in response rendering (87b066cf) (@vinhnx)
@@ -10296,7 +10318,7 @@ All notable changes to vtcode will be documented in this file.
 - refactor: remove unused set_defer_rendering method from StreamingReasoningState (756c86ba) (@vinhnx)
 - refactor: remove deprecated model constants and clean up supported models list (621b7373) (@vinhnx)
 - fix: resolve duplicate model entries and correct legacy model references (7928cb44) (@vinhnx)
-- Update model references to "claude-haiku-4-5" across configuration and tests (84a8d4ab) (@vinhnx)
+- Update model references to "claude-sonnet-5" across configuration and tests (84a8d4ab) (@vinhnx)
 - feat: add signal handling for graceful termination in TUI (a3ca378b) (@vinhnx)
 - Update model references from gpt-4 to gpt-5 across documentation and codebase (2520e9fa) (@vinhnx)
 - refactor: improve reasoning content comparison and suppress duplication in response rendering (bcce1fb1) (@vinhnx)

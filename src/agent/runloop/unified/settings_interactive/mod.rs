@@ -438,7 +438,7 @@ mod tests {
         let draft: TomlValue = toml::from_str(
             r#"
             [agent]
-            default_model = "gpt-5.4"
+            default_model = "gpt-5.6-sol"
             [agent.circuit_breaker]
             enabled = true
             "#,
@@ -483,7 +483,7 @@ mod tests {
     #[test]
     fn render_commented_config_includes_section_heading() {
         let mut config = VTCodeConfig::default();
-        config.agent.default_model = "gpt-5.4".to_string();
+        config.agent.default_model = "gpt-5.6-sol".to_string();
 
         let rendered = render_commented_config(&config).expect("config should render");
         assert!(rendered.contains("# Agent Defaults"));

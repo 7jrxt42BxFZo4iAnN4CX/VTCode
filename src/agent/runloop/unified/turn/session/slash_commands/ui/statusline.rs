@@ -311,7 +311,7 @@ mod tests {
     fn statusline_preview_includes_clock_when_enabled() {
         let draft = StatusLineConfig::default();
 
-        let preview = build_statusline_preview(&draft, None, Some("thread-1"), "gpt-5.4");
+        let preview = build_statusline_preview(&draft, None, Some("thread-1"), "gpt-5.6-sol");
 
         assert!(preview.contains("thread-1"), "preview: {preview}");
         assert!(preview.contains("14:30:05"), "preview must include the clock: {preview}");
@@ -321,7 +321,7 @@ mod tests {
     fn statusline_preview_omits_clock_when_disabled() {
         let draft = StatusLineConfig { show_clock: false, ..StatusLineConfig::default() };
 
-        let preview = build_statusline_preview(&draft, None, Some("thread-1"), "gpt-5.4");
+        let preview = build_statusline_preview(&draft, None, Some("thread-1"), "gpt-5.6-sol");
 
         assert!(!preview.contains("14:30:05"), "preview must omit the clock: {preview}");
     }
@@ -334,7 +334,7 @@ mod tests {
             ..StatusLineConfig::default()
         };
 
-        let preview = build_statusline_preview(&draft, Some(("main", false)), Some("thread-1"), "gpt-5.4");
+        let preview = build_statusline_preview(&draft, Some(("main", false)), Some("thread-1"), "gpt-5.6-sol");
 
         assert_eq!(preview, "command mode (setup does not execute command): .vtcode/statusline.sh");
     }

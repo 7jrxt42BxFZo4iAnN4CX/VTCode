@@ -157,7 +157,7 @@ developer_instructions = """
 Review modified code for correctness, maintainability, and missing tests.
 Return findings in priority order with file references.
 """
-model = "gpt-5.4-mini"
+model = "gpt-5.6-luna"
 model_reasoning_effort = "low"
 maxTurns = 6
 permissions = { default = "deny", allow = ["exec_command", "code_search"], ask = [], auto = [], deny = ["write_stdin", "apply_patch"] }

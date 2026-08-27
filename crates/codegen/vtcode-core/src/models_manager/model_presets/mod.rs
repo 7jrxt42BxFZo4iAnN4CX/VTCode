@@ -305,7 +305,7 @@ mod tests {
     fn openai_codex_presets_default_to_high_reasoning() {
         let codex = presets::openai_presets()
             .into_iter()
-            .find(|preset| preset.id == "gpt-5.3-codex")
+            .find(|preset| preset.id == "gpt-5-codex")
             .expect("gpt-5.3-codex preset");
 
         assert_eq!(codex.default_reasoning_effort, ReasoningEffortLevel::High);
@@ -314,7 +314,7 @@ mod tests {
     #[test]
     fn moonshot_presets_exist_and_default_to_kimi_k3() {
         let presets = presets::moonshot_presets();
-        assert_eq!(presets.len(), 3);
+        assert_eq!(presets.len(), 2);
 
         let default = presets
             .iter()
@@ -362,7 +362,7 @@ mod tests {
     #[test]
     fn merge_gateway_presets_expose_curated_routes_and_default() {
         let presets = presets::merge_gateway_presets();
-        assert_eq!(presets.len(), 16);
+        assert_eq!(presets.len(), 17);
         let default = presets
             .iter()
             .find(|preset| preset.is_default)

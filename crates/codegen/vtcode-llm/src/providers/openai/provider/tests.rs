@@ -549,8 +549,8 @@ fn chatgpt_auth_backend_setup_applies_account_headers_without_session_id() {
 
 #[test]
 fn api_key_and_chatgpt_subscription_share_responses_item_history_builder() {
-    let native_provider = native_openai_provider(models::openai::GPT_5_2);
-    let chatgpt_provider = chatgpt_backend_provider(models::openai::GPT_5_2);
+    let native_provider = native_openai_provider(models::openai::GPT_5_6);
+    let chatgpt_provider = chatgpt_backend_provider(models::openai::GPT_5_6);
     let mut request = provider::LLMRequest {
         messages: vec![
             provider::Message::system("Follow the local policy.".to_owned()),
@@ -559,7 +559,7 @@ fn api_key_and_chatgpt_subscription_share_responses_item_history_builder() {
             provider::Message::user("Continue.".to_owned()),
         ]
         .into(),
-        model: models::openai::GPT_5_2.to_string(),
+        model: models::openai::GPT_5_6.to_string(),
         stream: true,
         tools: Some(Arc::new(vec![sample_tool()])),
         ..Default::default()
@@ -598,8 +598,8 @@ fn api_key_and_chatgpt_subscription_share_responses_item_history_builder() {
 
 #[test]
 fn openai_responses_native_emits_store_false_without_previous_response_id() {
-    let provider = native_openai_provider(models::openai::GPT_5_2);
-    let mut request = sample_request(models::openai::GPT_5_2);
+    let provider = native_openai_provider(models::openai::GPT_5_6);
+    let mut request = sample_request(models::openai::GPT_5_6);
     request.previous_response_id = Some("resp_previous_123".to_string());
 
     let payload = provider
@@ -612,8 +612,8 @@ fn openai_responses_native_emits_store_false_without_previous_response_id() {
 
 #[test]
 fn chatgpt_responses_emits_store_false_without_previous_response_id() {
-    let provider = chatgpt_backend_provider(models::openai::GPT_5_2);
-    let mut request = sample_request(models::openai::GPT_5_2);
+    let provider = chatgpt_backend_provider(models::openai::GPT_5_6);
+    let mut request = sample_request(models::openai::GPT_5_6);
     request.previous_response_id = Some("resp_previous_123".to_string());
 
     let payload = provider
@@ -626,8 +626,8 @@ fn chatgpt_responses_emits_store_false_without_previous_response_id() {
 
 #[test]
 fn openai_and_chatgpt_share_responses_payload_builder_except_backend() {
-    let native_provider = native_openai_provider(models::openai::GPT_5_2);
-    let chatgpt_provider = chatgpt_backend_provider(models::openai::GPT_5_2);
+    let native_provider = native_openai_provider(models::openai::GPT_5_6);
+    let chatgpt_provider = chatgpt_backend_provider(models::openai::GPT_5_6);
     let mut request = provider::LLMRequest {
         messages: vec![
             provider::Message::system("Follow the local policy.".to_owned()),
@@ -636,7 +636,7 @@ fn openai_and_chatgpt_share_responses_payload_builder_except_backend() {
             provider::Message::user("Continue.".to_owned()),
         ]
         .into(),
-        model: models::openai::GPT_5_2.to_string(),
+        model: models::openai::GPT_5_6.to_string(),
         stream: true,
         ..Default::default()
     };
@@ -659,9 +659,9 @@ fn openai_and_chatgpt_share_responses_payload_builder_except_backend() {
 
 #[test]
 fn openai_and_chatgpt_preserve_prompt_cache_key() {
-    let native_provider = native_openai_provider(models::openai::GPT_5_2);
-    let chatgpt_provider = chatgpt_backend_provider(models::openai::GPT_5_2);
-    let mut request = sample_request(models::openai::GPT_5_2);
+    let native_provider = native_openai_provider(models::openai::GPT_5_6);
+    let chatgpt_provider = chatgpt_backend_provider(models::openai::GPT_5_6);
+    let mut request = sample_request(models::openai::GPT_5_6);
     request.prompt_cache_key = Some("vtcode:session".to_owned());
 
     let native_payload = native_provider
@@ -677,8 +677,8 @@ fn openai_and_chatgpt_preserve_prompt_cache_key() {
 
 #[test]
 fn openai_and_chatgpt_replay_structured_history_on_continuation_turns() {
-    let native_provider = native_openai_provider(models::openai::GPT_5_2_CODEX);
-    let chatgpt_provider = chatgpt_backend_provider(models::openai::GPT_5_2_CODEX);
+    let native_provider = native_openai_provider(models::openai::GPT_5_CODEX);
+    let chatgpt_provider = chatgpt_backend_provider(models::openai::GPT_5_CODEX);
     let mut request = provider::LLMRequest {
         messages: vec![
             provider::Message::user("Inspect the workspace.".to_owned()),
@@ -706,7 +706,7 @@ fn openai_and_chatgpt_replay_structured_history_on_continuation_turns() {
             provider::Message::user("Continue with the next step.".to_owned()),
         ]
         .into(),
-        model: models::openai::GPT_5_2_CODEX.to_string(),
+        model: models::openai::GPT_5_CODEX.to_string(),
         stream: true,
         ..Default::default()
     };
@@ -918,7 +918,7 @@ async fn chatgpt_responses_stream_accepts_empty_final_output_after_text_delta() 
     let provider = OpenAIProvider::new_with_client(
         String::new(),
         Some(sample_chatgpt_auth_handle()),
-        models::openai::GPT_5_5.to_string(),
+        models::openai::GPT_5_6_SOL.to_string(),
         reqwest::Client::builder().no_proxy().build().expect("test client"),
         chatgpt_mock_base_url(&server),
         TimeoutsConfig::default(),
@@ -927,7 +927,7 @@ async fn chatgpt_responses_stream_accepts_empty_final_output_after_text_delta() 
     let mut stream = provider
         .stream(provider::LLMRequest {
             messages: vec![provider::Message::user("Hello".to_string())].into(),
-            model: models::openai::GPT_5_5.to_string(),
+            model: models::openai::GPT_5_6_SOL.to_string(),
             ..Default::default()
         })
         .await
@@ -1126,19 +1126,19 @@ async fn explicit_openai_chat_format_keeps_chat_completions_path() {
         "custom".to_string(),
         "Custom".to_string(),
         Some("test-key".to_string()),
-        Some(models::openai::GPT_5_2.to_string()),
+        Some(models::openai::GPT_5_6.to_string()),
         Some(native_openai_mock_base_url(&server)),
         None,
         None,
         None,
         None,
         None,
-        Some(vec![models::openai::GPT_5_2.to_string()]),
+        Some(vec![models::openai::GPT_5_6.to_string()]),
     )
     .with_api_format_override(Some(CustomProviderApiFormat::OpenAIChat));
 
     let response = provider
-        .generate(sample_request(models::openai::GPT_5_2))
+        .generate(sample_request(models::openai::GPT_5_6))
         .await
         .expect("chat override should succeed");
 
@@ -1162,19 +1162,19 @@ async fn explicit_openai_responses_format_keeps_responses_path() {
         "custom".to_string(),
         "Custom".to_string(),
         Some("test-key".to_string()),
-        Some(models::openai::GPT_5_2.to_string()),
+        Some(models::openai::GPT_5_6.to_string()),
         Some(native_openai_mock_base_url(&server)),
         None,
         None,
         None,
         None,
         None,
-        Some(vec![models::openai::GPT_5_2.to_string()]),
+        Some(vec![models::openai::GPT_5_6.to_string()]),
     )
     .with_api_format_override(Some(CustomProviderApiFormat::OpenAIResponses));
 
     let response = provider
-        .generate(sample_request(models::openai::GPT_5_2))
+        .generate(sample_request(models::openai::GPT_5_6))
         .await
         .expect("responses override should succeed");
 
@@ -1201,18 +1201,18 @@ async fn auto_openai_format_retains_model_aware_responses_behavior() {
         "custom".to_string(),
         "Custom".to_string(),
         Some("test-key".to_string()),
-        Some(models::openai::GPT_5_5_DATED.to_string()),
+        Some(models::openai::GPT_5_6_SOL.to_string()),
         Some(native_openai_mock_base_url(&server)),
         None,
         None,
         None,
         None,
         None,
-        Some(vec![models::openai::GPT_5_5_DATED.to_string()]),
+        Some(vec![models::openai::GPT_5_6_SOL.to_string()]),
     );
 
     let response = provider
-        .generate(sample_request(models::openai::GPT_5_5_DATED))
+        .generate(sample_request(models::openai::GPT_5_6_SOL))
         .await
         .expect("auto behavior should still use responses path");
 
@@ -1435,7 +1435,7 @@ fn chat_payload_serializes_deferred_function_for_tool_search() {
         json!({"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}),
     ).with_defer_loading(true);
     let payload =
-        tool_serialization::serialize_tools(&[deferred], models::openai::GPT_5_4).expect("tools should serialize");
+        tool_serialization::serialize_tools(&[deferred], models::openai::GPT_5_6_SOL).expect("tools should serialize");
     assert_eq!(payload.as_array().expect("array")[0]["defer_loading"], json!(true));
 }
 
@@ -1453,8 +1453,8 @@ fn chat_completions_payload_uses_function_wrapper() {
 
 #[test]
 fn chat_completions_applies_gpt_5_5_addendum_only_for_gpt_5_5() {
-    let provider = native_openai_provider(models::openai::GPT_5_5);
-    let mut request = sample_request(models::openai::GPT_5_5);
+    let provider = native_openai_provider(models::openai::GPT_5_6_SOL);
+    let mut request = sample_request(models::openai::GPT_5_6_SOL);
     request.system_prompt = Some(Arc::from("You are a helpful assistant."));
     let payload = provider.convert_to_openai_format(&request).expect("conversion should succeed");
     let messages = payload
@@ -1469,8 +1469,8 @@ fn chat_completions_applies_gpt_5_5_addendum_only_for_gpt_5_5() {
     assert!(system_content.contains("You are a helpful assistant."));
     assert!(system_content.contains("## GPT-5.5 OpenAI Addendum"));
 
-    let provider = native_openai_provider(models::openai::GPT_5_4);
-    let mut request = sample_request(models::openai::GPT_5_4);
+    let provider = native_openai_provider(models::openai::GPT_5_6_SOL);
+    let mut request = sample_request(models::openai::GPT_5_6_SOL);
     request.system_prompt = Some(Arc::from("You are a helpful assistant."));
     let payload = provider.convert_to_openai_format(&request).expect("conversion should succeed");
     let messages = payload
@@ -1521,8 +1521,8 @@ fn custom_openai_provider_uses_compatible_max_tokens_field_even_on_openai_url() 
 
 #[test]
 fn chat_completions_applies_temperature_independent_of_max_tokens() {
-    let provider = native_openai_provider(models::openai::GPT_5_2);
-    let mut request = sample_request(models::openai::GPT_5_2);
+    let provider = native_openai_provider(models::openai::GPT_5_6);
+    let mut request = sample_request(models::openai::GPT_5_6);
     request.temperature = Some(0.4);
     let payload = provider.convert_to_openai_format(&request).expect("conversion should succeed");
     assert!(payload.get("max_completion_tokens").is_none());
@@ -1535,8 +1535,8 @@ fn chat_completions_applies_temperature_independent_of_max_tokens() {
 
 #[test]
 fn chat_completions_omits_temperature_for_gpt_5_5_with_reasoning() {
-    let provider = native_openai_provider(models::openai::GPT_5_5);
-    let mut request = sample_request(models::openai::GPT_5_5);
+    let provider = native_openai_provider(models::openai::GPT_5_6_SOL);
+    let mut request = sample_request(models::openai::GPT_5_6_SOL);
     request.reasoning_effort = Some(vtcode_config::types::ReasoningEffortLevel::Medium);
     request.temperature = Some(0.4);
     let payload = provider.convert_to_openai_format(&request).expect("conversion should succeed");
@@ -1545,8 +1545,8 @@ fn chat_completions_omits_temperature_for_gpt_5_5_with_reasoning() {
 
 #[test]
 fn chat_completions_keeps_temperature_for_gpt_5_5_without_reasoning() {
-    let provider = native_openai_provider(models::openai::GPT_5_5);
-    let mut request = sample_request(models::openai::GPT_5_5);
+    let provider = native_openai_provider(models::openai::GPT_5_6_SOL);
+    let mut request = sample_request(models::openai::GPT_5_6_SOL);
     request.reasoning_effort = Some(vtcode_config::types::ReasoningEffortLevel::None);
     request.temperature = Some(0.4);
     let payload = provider.convert_to_openai_format(&request).expect("conversion should succeed");
@@ -1691,15 +1691,15 @@ fn responses_payload_uses_function_wrapper() {
 
 #[test]
 fn responses_payload_omits_default_verbosity_for_gpt_5_2_codex() {
-    let provider = native_openai_provider(models::openai::GPT_5_2_CODEX);
-    let payload = responses_payload_for(models::openai::GPT_5_2_CODEX, &provider);
+    let provider = native_openai_provider(models::openai::GPT_5_CODEX);
+    let payload = responses_payload_for(models::openai::GPT_5_CODEX, &provider);
     assert_absent(&payload, "text");
 }
 
 #[test]
 fn responses_payload_ignores_configured_verbosity_for_gpt_5_2_codex() {
-    let provider = native_openai_provider(models::openai::GPT_5_2_CODEX);
-    let mut request = sample_request(models::openai::GPT_5_2_CODEX);
+    let provider = native_openai_provider(models::openai::GPT_5_CODEX);
+    let mut request = sample_request(models::openai::GPT_5_CODEX);
     request.verbosity = Some(vtcode_config::types::VerbosityLevel::Medium);
     let payload = provider
         .convert_to_openai_responses_format(&request)
@@ -1709,15 +1709,15 @@ fn responses_payload_ignores_configured_verbosity_for_gpt_5_2_codex() {
 
 #[test]
 fn responses_payload_omits_default_verbosity_for_gpt_5_3_codex() {
-    let provider = native_openai_provider(models::openai::GPT_5_3_CODEX);
-    let payload = responses_payload_for(models::openai::GPT_5_3_CODEX, &provider);
+    let provider = native_openai_provider(models::openai::GPT_5_CODEX);
+    let payload = responses_payload_for(models::openai::GPT_5_CODEX, &provider);
     assert_absent(&payload, "text");
 }
 
 #[test]
 fn responses_payload_keeps_configured_verbosity_for_gpt_5_3_codex() {
-    let provider = native_openai_provider(models::openai::GPT_5_3_CODEX);
-    let mut request = sample_request(models::openai::GPT_5_3_CODEX);
+    let provider = native_openai_provider(models::openai::GPT_5_CODEX);
+    let mut request = sample_request(models::openai::GPT_5_CODEX);
     request.verbosity = Some(vtcode_config::types::VerbosityLevel::High);
     let payload = provider
         .convert_to_openai_responses_format(&request)
@@ -1727,8 +1727,8 @@ fn responses_payload_keeps_configured_verbosity_for_gpt_5_3_codex() {
 
 #[test]
 fn responses_payload_keeps_configured_verbosity_for_gpt_5_4() {
-    let provider = native_openai_provider(models::openai::GPT_5_4);
-    let mut request = sample_request(models::openai::GPT_5_4);
+    let provider = native_openai_provider(models::openai::GPT_5_6_SOL);
+    let mut request = sample_request(models::openai::GPT_5_6_SOL);
     request.verbosity = Some(vtcode_config::types::VerbosityLevel::High);
     let payload = provider
         .convert_to_openai_responses_format(&request)
@@ -1767,8 +1767,8 @@ fn responses_payload_sets_instructions_from_system_prompt() {
 
 #[test]
 fn responses_payload_applies_gpt_5_5_addendum_only_for_gpt_5_5() {
-    let provider = native_openai_provider(models::openai::GPT_5_5);
-    let mut request = sample_request(models::openai::GPT_5_5);
+    let provider = native_openai_provider(models::openai::GPT_5_6_SOL);
+    let mut request = sample_request(models::openai::GPT_5_6_SOL);
     request.system_prompt = Some(Arc::from("You are a helpful assistant."));
     let payload = provider
         .convert_to_openai_responses_format(&request)
@@ -1780,8 +1780,8 @@ fn responses_payload_applies_gpt_5_5_addendum_only_for_gpt_5_5() {
     assert!(instructions.contains("You are a helpful assistant."));
     assert!(instructions.contains("## GPT-5.5 OpenAI Addendum"));
 
-    let provider = native_openai_provider(models::openai::GPT_5_4);
-    let mut request = sample_request(models::openai::GPT_5_4);
+    let provider = native_openai_provider(models::openai::GPT_5_6_SOL);
+    let mut request = sample_request(models::openai::GPT_5_6_SOL);
     request.system_prompt = Some(Arc::from("You are a helpful assistant."));
     let payload = provider
         .convert_to_openai_responses_format(&request)
@@ -1795,12 +1795,12 @@ fn responses_payload_applies_gpt_5_5_addendum_only_for_gpt_5_5() {
 
 #[test]
 fn responses_payload_treats_gpt_5_5_dated_alias_like_gpt_5_5() {
-    assert!(OpenAIProvider::is_responses_api_model(models::openai::GPT_5_5_DATED));
+    assert!(OpenAIProvider::is_responses_api_model(models::openai::GPT_5_6_SOL));
 
     let provider = OpenAIProvider::from_config(
         Some("key".to_owned()),
         None,
-        Some(models::openai::GPT_5_5_DATED.to_string()),
+        Some(models::openai::GPT_5_6_SOL.to_string()),
         None,
         None,
         None,
@@ -1808,7 +1808,7 @@ fn responses_payload_treats_gpt_5_5_dated_alias_like_gpt_5_5() {
         Some(priority_openai_config()),
         None,
     );
-    let mut request = sample_request(models::openai::GPT_5_5_DATED);
+    let mut request = sample_request(models::openai::GPT_5_6_SOL);
     request.system_prompt = Some(Arc::from("You are a helpful assistant."));
     let payload = provider
         .convert_to_openai_responses_format(&request)
@@ -2208,7 +2208,7 @@ fn responses_validation_rejects_combined_inline_files_over_limit() {
 
 #[test]
 fn responses_function_tools_add_empty_properties_for_bare_object_schema() {
-    let provider = native_openai_provider(models::openai::GPT_5_2_CODEX);
+    let provider = native_openai_provider(models::openai::GPT_5_CODEX);
     let request = provider::LLMRequest {
         messages: vec![provider::Message::user("Hello".to_owned())].into(),
         tools: Some(Arc::new(vec![provider::ToolDefinition::function(
@@ -2216,7 +2216,7 @@ fn responses_function_tools_add_empty_properties_for_bare_object_schema() {
             "Run clippy on the workspace".to_owned(),
             json!({"type": "object", "additionalProperties": true}),
         )])),
-        model: models::openai::GPT_5_2_CODEX.to_string(),
+        model: models::openai::GPT_5_CODEX.to_string(),
         ..Default::default()
     };
     let payload = provider
@@ -2323,8 +2323,8 @@ fn responses_payload_keeps_distinct_remote_mcp_tools() {
 
 #[test]
 fn chatgpt_backend_omits_previous_response_id_from_responses_payload() {
-    let provider = chatgpt_backend_provider(models::openai::GPT_5_2_CODEX);
-    let mut request = sample_request(models::openai::GPT_5_2_CODEX);
+    let provider = chatgpt_backend_provider(models::openai::GPT_5_CODEX);
+    let mut request = sample_request(models::openai::GPT_5_CODEX);
     request.previous_response_id = Some("resp_previous_123".to_string());
     let payload = provider
         .convert_to_openai_responses_format(&request)
@@ -2354,7 +2354,7 @@ fn chatgpt_backend_keeps_plain_assistant_history_structured_for_codex() {
                 .with_phase(Some(provider::AssistantPhase::FinalAnswer)),
             provider::Message::user("Tell me more.".to_owned()),
         ],
-        models::openai::GPT_5_2_CODEX,
+        models::openai::GPT_5_CODEX,
     );
     let input = get_input_array(&payload);
     assert_eq!(input.len(), 3);
@@ -2383,7 +2383,7 @@ fn chatgpt_backend_preserves_reasoning_detail_items_for_codex_follow_up() {
                 .with_phase(Some(provider::AssistantPhase::FinalAnswer)),
             provider::Message::user("tell me more".to_owned()),
         ],
-        models::openai::GPT_5_2_CODEX,
+        models::openai::GPT_5_CODEX,
     );
     let input = get_input_array(&payload);
     assert_eq!(input.len(), 3);
@@ -2414,7 +2414,7 @@ fn chatgpt_backend_keeps_tool_turn_history_structured_for_codex() {
                 .with_phase(Some(provider::AssistantPhase::FinalAnswer)),
             provider::Message::user("who are you".to_owned()),
         ],
-        models::openai::GPT_5_2_CODEX,
+        models::openai::GPT_5_CODEX,
     );
     let input = get_input_array(&payload);
     assert_eq!(input.len(), 5);
@@ -2431,7 +2431,7 @@ fn chatgpt_backend_keeps_tool_turn_history_structured_for_codex() {
 // Parametrized phase omission tests for ChatGPT backend models
 #[test]
 fn chatgpt_backend_omits_assistant_phase_for_codex_models() {
-    for model in [models::openai::GPT_5_3_CODEX, models::openai::GPT_5_4] {
+    for model in [models::openai::GPT_5_CODEX, models::openai::GPT_5_6_SOL] {
         let payload = chatgpt_codex_payload(
             vec![
                 provider::Message::user("Run the next check.".to_owned()),
@@ -2452,7 +2452,7 @@ fn chatgpt_backend_omits_assistant_phase_for_codex_models() {
 
 #[test]
 fn chatgpt_backend_preserves_structured_tool_turns_with_paired_function_calls() {
-    for model in [models::openai::GPT_5_3_CODEX, models::openai::GPT_5_4] {
+    for model in [models::openai::GPT_5_CODEX, models::openai::GPT_5_6_SOL] {
         let payload = chatgpt_codex_payload(
             vec![
                 provider::Message::user("Investigate the failing check.".to_owned()),
@@ -2511,7 +2511,7 @@ fn chatgpt_backend_replays_prior_direct_tool_turns() {
                 .with_phase(Some(provider::AssistantPhase::FinalAnswer)),
             provider::Message::user("continue".to_owned()),
         ],
-        models::openai::GPT_5_3_CODEX,
+        models::openai::GPT_5_CODEX,
     );
     let input = get_input_array(&payload);
     assert_eq!(input.len(), 5);
@@ -2552,7 +2552,7 @@ fn chatgpt_backend_synthesizes_missing_function_call_outputs_for_orphan_calls() 
             ),
             provider::Message::user("continue".to_owned()),
         ],
-        models::openai::GPT_5_3_CODEX,
+        models::openai::GPT_5_CODEX,
     );
     let input = get_input_array(&payload);
     assert!(input.iter().any(|i| {
@@ -2574,7 +2574,7 @@ fn chatgpt_backend_synthesizes_missing_function_call_outputs_for_orphan_calls() 
 #[test]
 fn responses_payload_phase_behavior() {
     // Native: includes phase for assistant, omits for user/tool
-    let native = native_openai_provider(models::openai::GPT_5_4);
+    let native = native_openai_provider(models::openai::GPT_5_6_SOL);
     let request = provider::LLMRequest {
         messages: vec![
             provider::Message::user("Start".to_owned()).with_phase(Some(provider::AssistantPhase::Commentary)),
@@ -2592,7 +2592,7 @@ fn responses_payload_phase_behavior() {
                 .with_phase(Some(provider::AssistantPhase::FinalAnswer)),
         ]
         .into(),
-        model: models::openai::GPT_5_4.to_string(),
+        model: models::openai::GPT_5_6_SOL.to_string(),
         ..Default::default()
     };
     let payload = native.convert_to_openai_responses_format(&request).expect("should succeed");
@@ -2603,14 +2603,14 @@ fn responses_payload_phase_behavior() {
     assert!(input[3].get("phase").is_none(), "tool response omits phase");
 
     // Non-native: omits phase entirely
-    let non_native = compatible_endpoint_provider(models::openai::GPT_5_4, "https://example.local/v1");
+    let non_native = compatible_endpoint_provider(models::openai::GPT_5_6_SOL, "https://example.local/v1");
     let request2 = provider::LLMRequest {
         messages: vec![
             provider::Message::user("Start".to_owned()),
             provider::Message::assistant("Checking.".to_owned()).with_phase(Some(provider::AssistantPhase::Commentary)),
         ]
         .into(),
-        model: models::openai::GPT_5_4.to_string(),
+        model: models::openai::GPT_5_6_SOL.to_string(),
         ..Default::default()
     };
     let payload2 = non_native
@@ -2626,7 +2626,7 @@ fn chatgpt_backend_forces_store_false_and_omits_output_sampling_cache() {
     let provider = OpenAIProvider::from_config(
         Some(String::new()),
         Some(sample_chatgpt_auth_handle()),
-        Some(models::openai::GPT_5_2.to_string()),
+        Some(models::openai::GPT_5_6.to_string()),
         None,
         None,
         None,
@@ -2634,14 +2634,14 @@ fn chatgpt_backend_forces_store_false_and_omits_output_sampling_cache() {
         Some(OpenAIConfig { responses_store: Some(true), ..Default::default() }),
         None,
     );
-    let payload = responses_payload_for(models::openai::GPT_5_2, &provider);
+    let payload = responses_payload_for(models::openai::GPT_5_6, &provider);
     assert_eq!(payload.get("store").and_then(Value::as_bool), Some(false));
     assert_absent(&payload, "output_types");
     assert_absent(&payload, "sampling_parameters");
     assert_absent(&payload, "prompt_cache_retention");
 
     // With temperature/top_p set, still omitted
-    let mut request = sample_request(models::openai::GPT_5_2);
+    let mut request = sample_request(models::openai::GPT_5_6);
     request.temperature = Some(0.4);
     request.top_p = Some(0.8);
     let payload2 = provider.convert_to_openai_responses_format(&request).expect("should succeed");
@@ -2650,14 +2650,14 @@ fn chatgpt_backend_forces_store_false_and_omits_output_sampling_cache() {
 
 #[test]
 fn chatgpt_backend_includes_encrypted_reasoning_and_preserves_configured_includes() {
-    let provider = chatgpt_backend_provider(models::openai::GPT_5_5);
-    let payload = responses_payload_for(models::openai::GPT_5_5, &provider);
+    let provider = chatgpt_backend_provider(models::openai::GPT_5_6_SOL);
+    let payload = responses_payload_for(models::openai::GPT_5_6_SOL, &provider);
     assert_eq!(payload.get("include").and_then(Value::as_array), Some(&vec![json!("reasoning.encrypted_content")]));
 
     let provider = OpenAIProvider::from_config(
         Some(String::new()),
         Some(sample_chatgpt_auth_handle()),
-        Some(models::openai::GPT_5_5.to_string()),
+        Some(models::openai::GPT_5_6_SOL.to_string()),
         None,
         None,
         None,
@@ -2671,7 +2671,7 @@ fn chatgpt_backend_includes_encrypted_reasoning_and_preserves_configured_include
         }),
         None,
     );
-    let payload = responses_payload_for(models::openai::GPT_5_5, &provider);
+    let payload = responses_payload_for(models::openai::GPT_5_6_SOL, &provider);
     assert_eq!(
         payload.get("include").and_then(Value::as_array),
         Some(&vec![json!("output_text.annotations"), json!("reasoning.encrypted_content"),])
@@ -2680,7 +2680,7 @@ fn chatgpt_backend_includes_encrypted_reasoning_and_preserves_configured_include
 
 #[test]
 fn chatgpt_backend_disables_chat_completions_fallback() {
-    let provider = chatgpt_backend_provider(models::openai::GPT_5_2);
+    let provider = chatgpt_backend_provider(models::openai::GPT_5_6);
     assert!(provider.is_chatgpt_backend());
     assert!(!provider.allows_chat_completions_fallback());
 }
@@ -2745,8 +2745,8 @@ fn manual_openai_compaction_unavailable_message_mentions_backend() {
 fn supported_models_include_current_reasoning_models() {
     let supported = OpenAIProvider::new("key".to_owned()).supported_models();
     // Current reasoning models must be in the supported list.
-    assert!(supported.contains(&"gpt-5.4".to_string()));
-    assert!(supported.contains(&models::openai::GPT_5_3_CODEX.to_string()));
+    assert!(supported.contains(&"gpt-5.6-sol".to_string()));
+    assert!(supported.contains(&models::openai::GPT_5_CODEX.to_string()));
     // Deprecated o-series models are removed from the picker but retained in
     // REASONING_MODELS for backward-compat routing.
     assert!(!supported.contains(&models::openai::O3.to_string()));
@@ -2775,7 +2775,7 @@ fn responses_payload_includes_prompt_cache_retention_for_native_openai() {
     let provider = OpenAIProvider::from_config(
         Some("key".to_owned()),
         None,
-        Some(models::openai::GPT_5_2.to_string()),
+        Some(models::openai::GPT_5_6.to_string()),
         None,
         Some(pc),
         None,
@@ -2784,7 +2784,7 @@ fn responses_payload_includes_prompt_cache_retention_for_native_openai() {
         None,
     );
     // Responses API model
-    let payload = responses_payload_for(models::openai::GPT_5_3_CODEX, &provider);
+    let payload = responses_payload_for(models::openai::GPT_5_CODEX, &provider);
     assert_eq!(payload.get("prompt_cache_retention").and_then(Value::as_str), Some("24h"));
     // Chat Completions model - should NOT have it
     let chat_payload = chat_payload_for(models::openai::GPT_5, &provider);
@@ -2793,8 +2793,8 @@ fn responses_payload_includes_prompt_cache_retention_for_native_openai() {
 
 #[test]
 fn responses_payload_includes_prompt_cache_key_for_native_openai() {
-    let provider = native_openai_provider(models::openai::GPT_5_2);
-    let mut request = sample_request(models::openai::GPT_5_2);
+    let provider = native_openai_provider(models::openai::GPT_5_6);
+    let mut request = sample_request(models::openai::GPT_5_6);
     request.prompt_cache_key = Some("vtcode:openai:session-123".to_string());
     let payload = provider.convert_to_openai_responses_format(&request).expect("should succeed");
     assert_eq!(payload.get("prompt_cache_key").and_then(Value::as_str), Some("vtcode:openai:session-123"));
@@ -2802,8 +2802,8 @@ fn responses_payload_includes_prompt_cache_key_for_native_openai() {
 
 #[test]
 fn responses_payload_omits_prompt_cache_key_for_non_native() {
-    let provider = compatible_endpoint_provider(models::openai::GPT_5_2, "https://example.local/v1");
-    let mut request = sample_request(models::openai::GPT_5_2);
+    let provider = compatible_endpoint_provider(models::openai::GPT_5_6, "https://example.local/v1");
+    let mut request = sample_request(models::openai::GPT_5_6);
     request.prompt_cache_key = Some("vtcode:openai:session-xyz".to_string());
     assert_absent(&provider.convert_to_openai_responses_format(&request).expect("should succeed"), "prompt_cache_key");
 }
@@ -2815,7 +2815,7 @@ fn prompt_cache_retention_excluded_when_not_set_and_for_unsupported_models() {
     let provider = OpenAIProvider::from_config(
         Some("key".to_string()),
         None,
-        Some(models::openai::GPT_5_2.to_string()),
+        Some(models::openai::GPT_5_6.to_string()),
         None,
         Some(pc),
         None,
@@ -2823,7 +2823,7 @@ fn prompt_cache_retention_excluded_when_not_set_and_for_unsupported_models() {
         None,
         None,
     );
-    let mut request = sample_request(models::openai::GPT_5_2);
+    let mut request = sample_request(models::openai::GPT_5_6);
     request.stream = true;
     assert_absent(
         &provider.convert_to_openai_responses_format(&request).expect("should succeed"),
@@ -2854,7 +2854,7 @@ fn provider_from_config_respects_prompt_cache_and_websocket_gating() {
     let provider = OpenAIProvider::from_config(
         Some("key".to_string()),
         None,
-        Some(models::openai::GPT_5_2.to_string()),
+        Some(models::openai::GPT_5_6.to_string()),
         None,
         Some(pc.clone()),
         None,
@@ -2867,7 +2867,7 @@ fn provider_from_config_respects_prompt_cache_and_websocket_gating() {
     let native_ws = OpenAIProvider::from_config(
         Some("key".to_string()),
         None,
-        Some(models::openai::GPT_5_2.to_string()),
+        Some(models::openai::GPT_5_6.to_string()),
         None,
         None,
         None,
@@ -2875,12 +2875,12 @@ fn provider_from_config_respects_prompt_cache_and_websocket_gating() {
         Some(OpenAIConfig { websocket_mode: true, ..Default::default() }),
         None,
     );
-    assert!(native_ws.websocket_mode_enabled(models::openai::GPT_5_2));
+    assert!(native_ws.websocket_mode_enabled(models::openai::GPT_5_6));
 
     let compatible_ws = OpenAIProvider::from_config(
         Some("key".to_string()),
         None,
-        Some(models::openai::GPT_5_2.to_string()),
+        Some(models::openai::GPT_5_6.to_string()),
         Some("https://compat.example/v1".to_string()),
         None,
         None,
@@ -2888,13 +2888,13 @@ fn provider_from_config_respects_prompt_cache_and_websocket_gating() {
         Some(OpenAIConfig { websocket_mode: true, ..Default::default() }),
         None,
     );
-    assert!(compatible_ws.websocket_mode_enabled(models::openai::GPT_5_2));
+    assert!(compatible_ws.websocket_mode_enabled(models::openai::GPT_5_6));
 
     let custom_ws = OpenAIProvider::from_custom_config(
         "mycorp".to_string(),
         "MyCorp".to_string(),
         Some("key".to_string()),
-        Some(models::openai::GPT_5_2.to_string()),
+        Some(models::openai::GPT_5_6.to_string()),
         Some("https://compat.example/v1".to_string()),
         None,
         None,
@@ -2903,12 +2903,12 @@ fn provider_from_config_respects_prompt_cache_and_websocket_gating() {
         None,
         None,
     );
-    assert!(custom_ws.websocket_mode_enabled(models::openai::GPT_5_2));
+    assert!(custom_ws.websocket_mode_enabled(models::openai::GPT_5_6));
 
     let chatgpt_ws = OpenAIProvider::from_config(
         Some(String::new()),
         Some(sample_chatgpt_auth_handle()),
-        Some(models::openai::GPT_5_2.to_string()),
+        Some(models::openai::GPT_5_6.to_string()),
         None,
         None,
         None,
@@ -2916,12 +2916,12 @@ fn provider_from_config_respects_prompt_cache_and_websocket_gating() {
         Some(OpenAIConfig { websocket_mode: true, ..Default::default() }),
         None,
     );
-    assert!(!chatgpt_ws.websocket_mode_enabled(models::openai::GPT_5_2));
+    assert!(!chatgpt_ws.websocket_mode_enabled(models::openai::GPT_5_6));
 
     let xai_ws = OpenAIProvider::from_config(
         Some("key".to_string()),
         None,
-        Some(models::openai::GPT_5_2.to_string()),
+        Some(models::openai::GPT_5_6.to_string()),
         Some("https://api.x.ai/v1".to_string()),
         None,
         None,
@@ -2929,7 +2929,7 @@ fn provider_from_config_respects_prompt_cache_and_websocket_gating() {
         Some(OpenAIConfig { websocket_mode: true, ..Default::default() }),
         None,
     );
-    assert!(!xai_ws.websocket_mode_enabled(models::openai::GPT_5_2));
+    assert!(!xai_ws.websocket_mode_enabled(models::openai::GPT_5_6));
 }
 
 // ─── Max Tokens & Reasoning ──────────────────────────────────────────────────
@@ -2946,8 +2946,8 @@ fn responses_payload_uses_max_output_tokens_field() {
 
 #[test]
 fn chatgpt_backend_omits_max_output_tokens_and_maps_minimal_reasoning() {
-    let provider = chatgpt_backend_provider(models::openai::GPT_5_2_CODEX);
-    let mut request = sample_request(models::openai::GPT_5_2_CODEX);
+    let provider = chatgpt_backend_provider(models::openai::GPT_5_CODEX);
+    let mut request = sample_request(models::openai::GPT_5_CODEX);
     request.max_tokens = Some(512);
     assert_absent(&provider.convert_to_openai_responses_format(&request).expect("should succeed"), "max_output_tokens");
 
@@ -2959,21 +2959,22 @@ fn chatgpt_backend_omits_max_output_tokens_and_maps_minimal_reasoning() {
 
 #[test]
 fn responses_payload_defaults_gpt_5_4_reasoning_to_none() {
-    let payload = responses_payload_for(models::openai::GPT_5_4, &native_openai_provider(models::openai::GPT_5_4));
+    let payload =
+        responses_payload_for(models::openai::GPT_5_6_SOL, &native_openai_provider(models::openai::GPT_5_6_SOL));
     assert_eq!(payload.get("reasoning").and_then(|r| r.get("effort")).and_then(Value::as_str), Some("none"));
 }
 
 #[test]
 fn responses_payload_defaults_gpt_5_3_codex_reasoning_to_high() {
     let payload =
-        responses_payload_for(models::openai::GPT_5_3_CODEX, &native_openai_provider(models::openai::GPT_5_3_CODEX));
+        responses_payload_for(models::openai::GPT_5_CODEX, &native_openai_provider(models::openai::GPT_5_CODEX));
     assert_eq!(payload.get("reasoning").and_then(|r| r.get("effort")).and_then(Value::as_str), Some("high"));
 }
 
 #[test]
 fn responses_payload_omits_sampling_parameters_for_gpt_5_4_high_reasoning() {
-    let provider = native_openai_provider(models::openai::GPT_5_4);
-    let mut request = sample_request(models::openai::GPT_5_4);
+    let provider = native_openai_provider(models::openai::GPT_5_6_SOL);
+    let mut request = sample_request(models::openai::GPT_5_6_SOL);
     request.reasoning_effort = Some(vtcode_config::types::ReasoningEffortLevel::High);
     request.temperature = Some(0.4);
     request.top_p = Some(0.9);
@@ -2985,8 +2986,8 @@ fn responses_payload_omits_sampling_parameters_for_gpt_5_4_high_reasoning() {
 
 #[test]
 fn responses_payload_omits_penalties_when_sampling_gate_closed() {
-    let provider = native_openai_provider(models::openai::GPT_5_4);
-    let mut request = sample_request(models::openai::GPT_5_4);
+    let provider = native_openai_provider(models::openai::GPT_5_6_SOL);
+    let mut request = sample_request(models::openai::GPT_5_6_SOL);
     request.reasoning_effort = Some(vtcode_config::types::ReasoningEffortLevel::High);
     request.presence_penalty = Some(0.1);
     request.frequency_penalty = Some(-0.5);
@@ -3001,8 +3002,8 @@ fn openai_models_support_streaming() {
     for model in [
         models::openai::GPT,
         models::openai::GPT_5,
-        models::openai::GPT_5_4,
-        models::openai::GPT_5_4_PRO,
+        models::openai::GPT_5_6_SOL,
+        models::openai::GPT_5_6_SOL,
         models::openai::GPT_5_MINI,
         models::openai::GPT_5_NANO,
     ] {
@@ -3015,10 +3016,10 @@ fn openai_models_support_streaming() {
 fn native_stream_required_models_disable_non_streaming() {
     for model in [
         models::openai::GPT,
-        models::openai::GPT_5_4,
-        models::openai::GPT_5_4_PRO,
-        models::openai::GPT_5_5,
-        models::openai::GPT_5_5_DATED,
+        models::openai::GPT_5_6_SOL,
+        models::openai::GPT_5_6_SOL,
+        models::openai::GPT_5_6_SOL,
+        models::openai::GPT_5_6_SOL,
     ] {
         let provider = test_provider("http://test", model);
         assert!(!provider.supports_non_streaming(model), "Model {model} should require streaming");
@@ -3027,9 +3028,9 @@ fn native_stream_required_models_disable_non_streaming() {
 
 #[test]
 fn chatgpt_backend_keeps_streaming_for_codex_and_disables_non_streaming() {
-    let provider = chatgpt_backend_provider(models::openai::GPT_5_2_CODEX);
+    let provider = chatgpt_backend_provider(models::openai::GPT_5_CODEX);
     assert!(provider.supports_streaming());
-    assert!(!provider.supports_non_streaming(models::openai::GPT_5_2_CODEX));
+    assert!(!provider.supports_non_streaming(models::openai::GPT_5_CODEX));
 }
 
 // ─── Harmony Parsing ─────────────────────────────────────────────────────────
@@ -3192,7 +3193,7 @@ async fn manual_compaction_payload_includes_selected_fields_and_appends_instruct
     let Some(server) = start_mock_server_or_skip().await else {
         return;
     };
-    let provider = test_provider(&native_openai_mock_base_url(&server), models::openai::GPT_5_4);
+    let provider = test_provider(&native_openai_mock_base_url(&server), models::openai::GPT_5_6_SOL);
     let captured = Arc::new(Mutex::new(None::<Value>));
     let captured_for_mock = Arc::clone(&captured);
     Mock::given(method("POST"))
@@ -3211,7 +3212,7 @@ async fn manual_compaction_payload_includes_selected_fields_and_appends_instruct
 
     let compacted = provider
         .compact_history_with_options(
-            models::openai::GPT_5_4,
+            models::openai::GPT_5_6_SOL,
             &[
                 provider::Message::system("Preserve decisions.".to_string()),
                 provider::Message::user("Summarize.".to_string()),
@@ -3232,7 +3233,7 @@ async fn manual_compaction_payload_includes_selected_fields_and_appends_instruct
     assert_eq!(compacted.len(), 1);
 
     let p = captured.lock().expect("not poisoned").clone().expect("payload captured");
-    assert_eq!(p["model"], json!(models::openai::GPT_5_4));
+    assert_eq!(p["model"], json!(models::openai::GPT_5_6_SOL));
     assert_eq!(p["max_output_tokens"], json!(321));
     assert_eq!(p["service_tier"], json!("priority"));
     assert_eq!(p["store"], json!(false));

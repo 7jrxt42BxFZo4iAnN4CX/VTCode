@@ -151,19 +151,13 @@ impl ModelId {
     /// Preferred built-in lightweight sibling or lower-tier fallback for this model.
     pub fn preferred_lightweight_variant(&self) -> Option<Self> {
         match self {
-            ModelId::Gemini31ProPreview | ModelId::Gemini31ProPreviewCustomTools => Some(ModelId::Gemini35Flash),
-            ModelId::GPT55 | ModelId::GPT54 | ModelId::GPT54Pro | ModelId::GPT53Codex => Some(ModelId::GPT54Mini),
             ModelId::GPT56Sol => Some(ModelId::GPT56Terra),
             ModelId::GPT56Terra => Some(ModelId::GPT56Luna),
             ModelId::MergeGatewayOpenAIGpt56Sol => Some(ModelId::MergeGatewayOpenAIGpt56Terra),
             ModelId::MergeGatewayOpenAIGpt56Terra => Some(ModelId::MergeGatewayOpenAIGpt56Luna),
-            ModelId::OpenCodeZenGPT54 => Some(ModelId::OpenCodeZenGPT54Mini),
-            ModelId::ClaudeSonnet5
-            | ModelId::ClaudeFable5
-            | ModelId::ClaudeMythos5
-            | ModelId::ClaudeOpus5
-            | ModelId::ClaudeOpus48
-            | ModelId::ClaudeSonnet46 => Some(ModelId::ClaudeHaiku45),
+            ModelId::ClaudeSonnet5 | ModelId::ClaudeFable5 | ModelId::ClaudeMythos5 | ModelId::ClaudeOpus5 => {
+                Some(ModelId::ClaudeSonnet5)
+            }
             ModelId::CopilotGPT54 => Some(ModelId::CopilotGPT54Mini),
             ModelId::CopilotGPT52Codex | ModelId::CopilotGPT51CodexMax => Some(ModelId::CopilotGPT54Mini),
             ModelId::DeepSeekV4Pro => Some(ModelId::DeepSeekV4Flash),
@@ -186,11 +180,8 @@ impl ModelId {
             | ModelId::MergeGatewayMetaMuseSpark11
             | ModelId::MergeGatewayOpenAIGpt56Luna => None,
             ModelId::OpenCodeGoDeepseekV4Pro => Some(ModelId::OpenCodeGoDeepseekV4Flash),
-            ModelId::OpenCodeGoGlm52 => Some(ModelId::OpenCodeGoGlm51),
-            ModelId::OpenCodeGoMinimaxM3 => Some(ModelId::OpenCodeGoMinimaxM27),
             ModelId::OpenCodeGoMimoV25Pro => Some(ModelId::OpenCodeGoMimoV25),
             ModelId::OpenCodeGoQwen37Max => Some(ModelId::OpenCodeGoQwen37Plus),
-            ModelId::OpenCodeGoKimiK27Code => Some(ModelId::OpenCodeGoKimiK26),
             ModelId::HuggingFaceDeepseekV4ProTogether => Some(ModelId::HuggingFaceDeepseekV4FlashNovita),
             ModelId::HuggingFaceDeepseekV4ProNovita => Some(ModelId::HuggingFaceDeepseekV4FlashNovita),
             ModelId::OllamaDeepseekV4ProCloud => Some(ModelId::OllamaDeepseekV4FlashCloud),
@@ -206,9 +197,9 @@ impl ModelId {
             | ModelId::EvolinkClaudeSonnet46
             | ModelId::EvolinkClaudeOpus48
             | ModelId::EvolinkClaudeHaiku45 => None,
-            ModelId::XaiGrok46 | ModelId::XaiGrok45 | ModelId::XaiGrok420Reasoning => Some(ModelId::XaiGrokBuild01),
             ModelId::PoolsideLagunaM1 => Some(ModelId::PoolsideLagunaXs2),
             ModelId::PoolsideLagunaS21 => Some(ModelId::PoolsideLagunaXs2),
+            ModelId::XaiGrok46 | ModelId::XaiGrok420Reasoning => Some(ModelId::XaiGrokBuild01),
             _ => None,
         }
     }
@@ -251,11 +242,6 @@ impl ModelId {
         }
 
         let direct = match self {
-            ModelId::Gemini31ProPreview | ModelId::Gemini31ProPreviewCustomTools => Some(ModelId::Gemini35Flash),
-            ModelId::GPT55 | ModelId::GPT54 | ModelId::GPT54Pro | ModelId::GPT54Nano | ModelId::GPT54Mini => {
-                Some(ModelId::GPT54Mini)
-            }
-            ModelId::OpenCodeZenGPT54 => Some(ModelId::OpenCodeZenGPT54Mini),
             ModelId::CopilotGPT52Codex | ModelId::CopilotGPT54 => Some(ModelId::CopilotGPT54Mini),
             ModelId::DeepSeekV4Pro | ModelId::DeepSeekV4FlashVisionExp => Some(ModelId::DeepSeekV4Flash),
             ModelId::MetaMuseSpark12 => Some(ModelId::MetaMuseSpark11),
@@ -280,14 +266,7 @@ impl ModelId {
             ModelId::HuggingFaceDeepseekV4ProTogether => Some(ModelId::HuggingFaceDeepseekV4FlashNovita),
             ModelId::HuggingFaceDeepseekV4ProNovita => Some(ModelId::HuggingFaceDeepseekV4FlashNovita),
             ModelId::OllamaDeepseekV4ProCloud => Some(ModelId::OllamaDeepseekV4FlashCloud),
-            ModelId::ClaudeSonnet5
-            | ModelId::ClaudeFable5
-            | ModelId::ClaudeMythos5
-            | ModelId::ClaudeOpus5
-            | ModelId::ClaudeOpus48
-            | ModelId::ClaudeSonnet46 => Some(ModelId::ClaudeSonnet46),
             ModelId::XaiGrok420Reasoning => Some(ModelId::XaiGrokBuild01),
-            ModelId::MinimaxM27 => None,
             _ => None,
         };
 
@@ -304,8 +283,7 @@ impl ModelId {
     pub fn is_flash_variant(&self) -> bool {
         matches!(
             self,
-            ModelId::Gemini35Flash
-                | ModelId::Gemini37Flash
+            ModelId::Gemini37Flash
                 | ModelId::MergeGatewayGoogleGemini36Flash
                 | ModelId::MergeGatewayGoogleGemini37Flash
                 | ModelId::EvolinkGemini35Flash
@@ -317,6 +295,9 @@ impl ModelId {
                 | ModelId::MergeGatewayDeepseekV4Flash0731
                 | ModelId::DeepSeekV4Flash
                 | ModelId::DeepSeekV4FlashVisionExp
+                | ModelId::ZaiGlm53Flash
+                | ModelId::MergeGatewayZaiGlm53Flash
+                | ModelId::HuggingFaceGlm53FlashTogether
         )
     }
 
@@ -324,15 +305,8 @@ impl ModelId {
     pub fn is_pro_variant(&self) -> bool {
         matches!(
             self,
-            ModelId::Gemini31ProPreview
-                | ModelId::Gemini31ProPreviewCustomTools
-                | ModelId::OpenRouterGoogleGemini31ProPreview
-                | ModelId::GPT56Sol
+            ModelId::GPT56Sol
                 | ModelId::MergeGatewayOpenAIGpt56Sol
-                | ModelId::GPT55
-                | ModelId::GPT54
-                | ModelId::GPT54Pro
-                | ModelId::GPT53Codex
                 | ModelId::CopilotGPT52Codex
                 | ModelId::CopilotGPT51CodexMax
                 | ModelId::CopilotGPT54
@@ -341,16 +315,10 @@ impl ModelId {
                 | ModelId::ClaudeFable5
                 | ModelId::ClaudeMythos5
                 | ModelId::ClaudeOpus5
-                | ModelId::ClaudeOpus48
-                | ModelId::ClaudeSonnet46
-                | ModelId::OpenCodeZenGPT54
-                | ModelId::OpenCodeZenClaudeSonnet46
-                | ModelId::OpenCodeZenGlm51
-                | ModelId::OpenCodeGoGlm51
+                | ModelId::OpenCodeGoGlm53
                 | ModelId::OpenCodeGoGlm52
                 | ModelId::OpenCodeGoKimiK27Code
                 | ModelId::OpenCodeGoMimoV25Pro
-                | ModelId::OpenCodeGoMinimaxM27
                 | ModelId::OpenCodeGoMinimaxM3
                 | ModelId::OpenCodeGoQwen37Max
                 | ModelId::OpenCodeGoDeepseekV4Pro
@@ -360,19 +328,14 @@ impl ModelId {
                 | ModelId::EvolinkDeepseekV4Pro
                 | ModelId::ZaiGlm53
                 | ModelId::ZaiGlm52
-                | ModelId::ZaiGlm51
                 | ModelId::OpenRouterStepfunStep35FlashFree
-                | ModelId::MinimaxM27
-                | ModelId::OllamaGlm51Cloud
                 | ModelId::OllamaGlm52Cloud
                 | ModelId::HuggingFaceDeepseekV4ProTogether
-                | ModelId::HuggingFaceGlm51Deepinfra
                 | ModelId::HuggingFaceGlm52Novita
-                | ModelId::HuggingFaceMinimaxM27Novita
+                | ModelId::HuggingFaceGlm53FlashTogether
                 | ModelId::HuggingFaceMinimaxM3Novita
                 | ModelId::HuggingFaceDeepseekV4ProNovita
                 | ModelId::OpenRouterMoonshotaiKimiK3
-                | ModelId::OpenRouterMoonshotaiKimiK26
                 | ModelId::OpenRouterMoonshotaiKimiK27Code
                 | ModelId::MoonshotKimiK3
                 | ModelId::MergeGatewayMoonshotKimiK3
@@ -381,7 +344,6 @@ impl ModelId {
                 | ModelId::PoolsideLagunaS21
                 | ModelId::XaiGrok46
                 | ModelId::MergeGatewayXaiGrok46
-                | ModelId::XaiGrok45
                 | ModelId::XaiGrok420Reasoning
         )
     }
@@ -393,15 +355,11 @@ impl ModelId {
         }
         matches!(
             self,
-            ModelId::Gemini35Flash
-                | ModelId::Gemini37Flash
+            ModelId::Gemini37Flash
                 | ModelId::MergeGatewayGoogleGemini37Flash
-                | ModelId::GPT54Mini
                 | ModelId::GPT56Luna
                 | ModelId::MergeGatewayOpenAIGpt56Luna
                 | ModelId::CopilotGPT54Mini
-                | ModelId::ClaudeHaiku45
-                | ModelId::OpenCodeZenGPT54Mini
                 | ModelId::DeepSeekV4Flash
                 | ModelId::DeepSeekV4FlashVisionExp
                 | ModelId::MergeGatewayDeepseekV4Flash0731
@@ -415,6 +373,9 @@ impl ModelId {
                 | ModelId::OpenCodeGoQwen36Plus
                 | ModelId::OpenCodeGoDeepseekV4Flash
                 | ModelId::XaiGrokBuild01
+                | ModelId::ZaiGlm53Flash
+                | ModelId::MergeGatewayZaiGlm53Flash
+                | ModelId::HuggingFaceGlm53FlashTogether
         )
     }
 
@@ -425,36 +386,21 @@ impl ModelId {
         }
         matches!(
             self,
-            ModelId::Gemini31ProPreview
-                | ModelId::Gemini31ProPreviewCustomTools
-                | ModelId::OpenRouterGoogleGemini31ProPreview
-                | ModelId::Gemini35Flash
-                | ModelId::Gemini37Flash
+            ModelId::Gemini37Flash
                 | ModelId::MergeGatewayGoogleGemini37Flash
                 | ModelId::GPT56Sol
                 | ModelId::MergeGatewayOpenAIGpt56Sol
                 | ModelId::GPT56Terra
                 | ModelId::MergeGatewayOpenAIGpt56Terra
                 | ModelId::MergeGatewayOpenAIGpt56Luna
-                | ModelId::GPT55
-                | ModelId::GPT54
-                | ModelId::GPT54Pro
-                | ModelId::GPT53Codex
                 | ModelId::ClaudeSonnet5
                 | ModelId::ClaudeFable5
                 | ModelId::ClaudeMythos5
                 | ModelId::ClaudeOpus5
-                | ModelId::ClaudeOpus48
-                | ModelId::ClaudeSonnet46
-                | ModelId::OpenCodeZenGPT54
-                | ModelId::OpenCodeZenClaudeSonnet46
-                | ModelId::OpenCodeZenGlm51
-                | ModelId::OpenCodeGoGlm51
+                | ModelId::OpenCodeGoGlm53
                 | ModelId::OpenCodeGoGlm52
                 | ModelId::OpenCodeGoKimiK27Code
-                | ModelId::OpenCodeGoKimiK26
                 | ModelId::OpenCodeGoMimoV25Pro
-                | ModelId::OpenCodeGoMinimaxM27
                 | ModelId::OpenCodeGoMinimaxM3
                 | ModelId::OpenCodeGoQwen37Max
                 | ModelId::OpenCodeGoQwen37Plus
@@ -463,18 +409,17 @@ impl ModelId {
                 | ModelId::MergeGatewayDeepseekV4Pro0813
                 | ModelId::MetaMuseSpark12
                 | ModelId::ZaiGlm53
+                | ModelId::ZaiGlm53Flash
                 | ModelId::ZaiGlm52
-                | ModelId::ZaiGlm51
+                | ModelId::MergeGatewayZaiGlm53Flash
+                | ModelId::HuggingFaceGlm53FlashTogether
                 | ModelId::OpenRouterStepfunStep35FlashFree
                 | ModelId::HuggingFaceDeepseekV4FlashNovita
                 | ModelId::HuggingFaceDeepseekV4ProTogether
-                | ModelId::HuggingFaceGlm51Deepinfra
                 | ModelId::HuggingFaceGlm52Novita
-                | ModelId::HuggingFaceMinimaxM27Novita
                 | ModelId::HuggingFaceMinimaxM3Novita
                 | ModelId::HuggingFaceDeepseekV4ProNovita
                 | ModelId::OpenRouterMoonshotaiKimiK3
-                | ModelId::OpenRouterMoonshotaiKimiK26
                 | ModelId::OpenRouterMoonshotaiKimiK27Code
                 | ModelId::MoonshotKimiK3
                 | ModelId::MergeGatewayMoonshotKimiK3
@@ -484,7 +429,6 @@ impl ModelId {
                 | ModelId::OllamaGlm52Cloud
                 | ModelId::XaiGrok46
                 | ModelId::MergeGatewayXaiGrok46
-                | ModelId::XaiGrok45
                 | ModelId::XaiGrok420Reasoning
         )
     }
@@ -520,21 +464,14 @@ impl ModelId {
         }
         match self {
             // Gemini generations
-            ModelId::Gemini31ProPreview | ModelId::Gemini31ProPreviewCustomTools => "3.1",
             // OpenAI generations
             ModelId::GPT56Sol | ModelId::GPT56Terra | ModelId::GPT56Luna => "5.6",
-            ModelId::GPT55 => "5.5",
-            ModelId::GPT54 | ModelId::GPT54Pro | ModelId::GPT54Nano | ModelId::GPT54Mini => "5.4",
-            ModelId::GPT53Codex => "5.3",
             ModelId::OpenAIGptOss20b | ModelId::OpenAIGptOss120b => "5",
             // Anthropic generations
             ModelId::ClaudeSonnet5 => "5",
             ModelId::ClaudeFable5 => "5",
             ModelId::ClaudeMythos5 => "5",
             ModelId::ClaudeOpus5 => "5",
-            ModelId::ClaudeOpus48 => "4.8",
-            ModelId::ClaudeSonnet46 => "4.6",
-            ModelId::ClaudeHaiku45 => "4.5",
             // DeepSeek generations
             ModelId::DeepSeekV4Pro | ModelId::DeepSeekV4Flash | ModelId::DeepSeekV4FlashVisionExp => "4",
             ModelId::MergeGatewayDeepseekV4Pro0813 => "4-pro-0813",
@@ -542,26 +479,18 @@ impl ModelId {
             ModelId::MetaMuseSpark11 => "Muse-Spark-1.1",
             ModelId::MetaMuseSpark12 | ModelId::MetaMuseSpark12Contributor => "Muse-Spark-1.2",
             // Z.AI generations
-            ModelId::ZaiGlm53 => "5.3",
+            ModelId::ZaiGlm53 | ModelId::ZaiGlm53Flash | ModelId::MergeGatewayZaiGlm53Flash => "5.3",
             ModelId::ZaiGlm52 => "5.2",
-            ModelId::ZaiGlm51 => "5.1",
-            ModelId::Gemini35Flash => "3.5",
             ModelId::Gemini36Flash => "3.6",
             ModelId::Gemini37Flash => "3.7",
             ModelId::MergeGatewayGoogleGemini37Flash => "3.7",
-            ModelId::OpenCodeZenGPT54 | ModelId::OpenCodeZenGPT54Mini => "5.4",
-            ModelId::OpenCodeZenClaudeSonnet46 => "4.6",
-            ModelId::OpenCodeZenGlm51 | ModelId::OpenCodeGoGlm51 => "5.1",
             ModelId::OpenCodeGoGlm53 => "5.3",
             ModelId::OpenCodeGoGlm52 => "5.2",
-            ModelId::OpenCodeGoGrok45 => "4.5",
             ModelId::OpenCodeGoGpt56Luna => "5.6-luna",
             ModelId::OpenCodeGoKimiK3 => "k3",
             ModelId::OpenCodeGoKimiK27Code => "k2.7",
-            ModelId::OpenCodeGoKimiK26 => "k2.6",
             ModelId::OpenCodeGoMimoV25 | ModelId::OpenCodeGoMimoV25Pro => "v2.5",
             ModelId::OpenCodeGoMinimaxM3 => "m3",
-            ModelId::OpenCodeGoMinimaxM27 => "m2.7",
             ModelId::OpenCodeGoMuseSpark12Contributor => "Muse-Spark-1.2",
             ModelId::OpenCodeGoQwen38Max => "3.8-max",
             ModelId::OpenCodeGoQwen37Max => "3.7-max",
@@ -574,11 +503,8 @@ impl ModelId {
             ModelId::OllamaGptOss120bCloud => "oss-cloud",
             ModelId::OllamaDeepseekV4FlashCloud => "deepseek-v4-flash",
             ModelId::OllamaDeepseekV4ProCloud => "deepseek-v4-pro",
-            ModelId::OllamaMinimaxM27Cloud => "minimax-m2.7",
             ModelId::OllamaMinimaxM3Cloud => "minimax-m3",
-            ModelId::OllamaGlm51Cloud => "glm-5.1",
             ModelId::OllamaGlm52Cloud => "glm-5.2",
-            ModelId::OllamaKimiK26Cloud => "kimi-k2.6",
             ModelId::OllamaKimiK27CodeCloud => "kimi-k2.7-code",
             ModelId::OllamaLagunaXs2 => "laguna-xs.2",
             ModelId::OllamaGemma4 => "gemma-4",
@@ -588,21 +514,16 @@ impl ModelId {
             ModelId::LlamaCppStep35Flash => "3.5",
             // MiniMax models
             ModelId::MinimaxM3 => "M3",
-            ModelId::MinimaxM27 => "M2.7",
             // Moonshot models
             ModelId::MoonshotKimiK3 => "k3",
             ModelId::MergeGatewayMoonshotKimiK3 => "k3",
             ModelId::MoonshotKimiK27Code => "k2.7",
-            ModelId::MoonshotKimiK26 => "k2.6",
             // Hugging Face generations
             ModelId::HuggingFaceOpenAIGptOss20b => "oss",
             ModelId::HuggingFaceOpenAIGptOss120b => "oss",
-            ModelId::HuggingFaceMinimaxM27Novita => "m2.7",
             ModelId::HuggingFaceMinimaxM3Novita => "m3",
-            ModelId::HuggingFaceGlm51ZaiOrg => "5.1",
             ModelId::HuggingFaceGlm52Novita => "5.2",
-            ModelId::HuggingFaceGlm51Deepinfra => "5.1",
-            ModelId::HuggingFaceKimiK26Novita => "k2.6",
+            ModelId::HuggingFaceGlm53FlashTogether => "5.3",
             ModelId::HuggingFaceDeepseekV4FlashNovita => "v4-flash",
             ModelId::HuggingFaceDeepseekV4ProTogether => "v4-pro",
             ModelId::HuggingFaceDeepseekV4ProNovita => "v4-pro",
@@ -611,8 +532,6 @@ impl ModelId {
             ModelId::XaiGrokBuild01 => "build-0.1",
             ModelId::XaiGrok46 => "4.6",
             ModelId::MergeGatewayXaiGrok46 => "4.6",
-            ModelId::XaiGrok45 => "4.5",
-            ModelId::XaiGrok43 => "4.3",
             ModelId::XaiGrok420Reasoning => "4.20",
             // Poolside models
             ModelId::PoolsideLagunaM1 => "laguna-m.1",
@@ -620,7 +539,6 @@ impl ModelId {
             ModelId::PoolsideLagunaS21 => "laguna-s.2.1",
             // Qwen models
             ModelId::QwenDeepSeekV4Flash | ModelId::QwenDeepSeekV4Pro => "v4",
-            ModelId::QwenGlm51 => "5.1",
             ModelId::MergeGatewayDefaultRouting => "routing",
             ModelId::MergeGatewayOpenAIGpt55 => "5.5",
             ModelId::MergeGatewayAnthropicClaudeOpus5 => "5",
@@ -638,16 +556,7 @@ impl ModelId {
 
     /// Determine if this model supports GPT-5.1+/5.2+/5.3+ shell tool type
     pub(crate) fn supports_shell_tool(&self) -> bool {
-        matches!(
-            self,
-            ModelId::GPT56Sol
-                | ModelId::GPT56Terra
-                | ModelId::GPT56Luna
-                | ModelId::GPT55
-                | ModelId::GPT54
-                | ModelId::GPT54Pro
-                | ModelId::GPT53Codex
-        )
+        matches!(self, ModelId::GPT56Sol | ModelId::GPT56Terra | ModelId::GPT56Luna)
     }
 
     /// Determine if this model supports optimized apply_patch tool

@@ -1293,7 +1293,7 @@ mod validation_tests {
         let workspace = temp.path().to_path_buf();
         let mut config = VTCodeConfig::default();
         config.agent.provider = "codex".to_string();
-        config.agent.default_model = "gpt-5.3-codex".to_string();
+        config.agent.default_model = "gpt-5-codex".to_string();
         config.agent.codex_app_server.command = workspace.join("missing-codex").display().to_string();
         config.agent.credential_storage_mode = AuthCredentialsStoreMode::File;
         config.auth.openai.preferred_method = OpenAIPreferredMethod::ApiKey;
@@ -1309,16 +1309,16 @@ mod validation_tests {
             .expect("startup should fall back to openai");
 
         assert_eq!(ctx.agent_config.provider, "openai");
-        assert_eq!(ctx.agent_config.model, "gpt-5.3-codex");
+        assert_eq!(ctx.agent_config.model, "gpt-5-codex");
         assert_eq!(ctx.config.agent.provider, "openai");
-        assert_eq!(ctx.config.agent.default_model, "gpt-5.3-codex");
+        assert_eq!(ctx.config.agent.default_model, "gpt-5-codex");
 
         let persisted = ConfigManager::load_from_workspace(&workspace)
             .expect("reload persisted config")
             .config()
             .clone();
         assert_eq!(persisted.agent.provider, "openai");
-        assert_eq!(persisted.agent.default_model, "gpt-5.3-codex");
+        assert_eq!(persisted.agent.default_model, "gpt-5-codex");
     }
 
     #[tokio::test]
@@ -1336,7 +1336,7 @@ mod validation_tests {
 
         let mut config = VTCodeConfig::default();
         config.agent.provider = "codex".to_string();
-        config.agent.default_model = "gpt-5.3-codex".to_string();
+        config.agent.default_model = "gpt-5-codex".to_string();
         config.agent.codex_app_server.command = workspace.join("missing-codex").display().to_string();
         config.agent.credential_storage_mode = AuthCredentialsStoreMode::File;
         config.auth.openai.preferred_method = OpenAIPreferredMethod::Chatgpt;
@@ -1369,7 +1369,7 @@ mod validation_tests {
 
         let mut config = VTCodeConfig::default();
         config.agent.provider = "codex".to_string();
-        config.agent.default_model = "gpt-5.3-codex".to_string();
+        config.agent.default_model = "gpt-5-codex".to_string();
         config.agent.codex_app_server.command = workspace.join("missing-codex").display().to_string();
         config.agent.credential_storage_mode = AuthCredentialsStoreMode::File;
         config.auth.openai.preferred_method = OpenAIPreferredMethod::Chatgpt;

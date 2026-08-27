@@ -64,7 +64,7 @@ The AI provider that VT Code should use.
 ```toml
 [agent]
 provider = "anthropic"  # available: openai, anthropic, google, meta, deepseek, copilot, openrouter, mimo, huggingface, zai, moonshot, minimax, mistral, qwen, stepfun, evolink, poolside, xai, nvidia, merge-gateway, ollama, lmstudio, llamacpp
-default_model = "claude-sonnet-4-6"  # overrides the default model for the selected provider
+default_model = "claude-sonnet-5"  # overrides the default model for the selected provider
 ```
 
 ### agent.provider_settings
@@ -149,7 +149,7 @@ Use these settings when you want VT Code to launch the official Codex app-server
 ```toml
 [agent]
 provider = "codex"
-default_model = "gpt-5.3-codex"
+default_model = "gpt-5-codex"
 
 [agent.codex_app_server]
 command = "codex"
@@ -182,7 +182,7 @@ name = "mycorp"
 display_name = "MyCorporateName"
 base_url = "https://llm.corp.example/v1"
 api_key_env = "MYCORP_API_KEY"
-model = "gpt-5.4"
+model = "gpt-5.6-sol"
 # context_window = 256000   # Optional context window size in tokens (provider capability)
 # api_format = "auto"      # Optional provider-level API format hint: auto|openai-chat|openai-responses|anthropic-messages
 ```
@@ -260,7 +260,7 @@ Use `[providers.<name>]` to extend a built-in provider's model list with additio
 
 ```toml
 [providers.opencode-zen]
-models = ["gpt-5.4", "claude-sonnet-4-6", "glm-5.1"]
+models = ["gpt-5.6-sol", "claude-sonnet-5", "glm-5.1"]
 base_url = "https://custom-endpoint.example.com"   # optional
 api_key_env = "MY_CUSTOM_KEY"                        # optional
 ```
@@ -288,7 +288,7 @@ models = ["ft:gpt-5.4:my-org:custom-model:v1"]
 
 ```toml
 [providers.opencode-zen]
-models = ["gpt-5.4", "claude-sonnet-4-6"]
+models = ["gpt-5.6-sol", "claude-sonnet-5"]
 base_url = "https://my-proxy.example.com/v1"
 api_key_env = "MY_PROXY_KEY"
 ```
@@ -842,7 +842,7 @@ default_participants = ["@workspace", "@code", "@git"]
 [profiles.research]
 [profiles.research.agent]
 provider = "anthropic"
-default_model = "claude-haiku-4-5"
+default_model = "claude-sonnet-5"
 
 [profiles.research.tools.policies]
 web_search = "allow"
@@ -894,7 +894,7 @@ default_participants = ["@workspace", "@code", "@terminal"]
 # Settings for any workspace containing a Cargo.toml
 [workspace.rust]
 [workspace.rust.agent]
-default_model = "claude-haiku-4-5"
+default_model = "claude-sonnet-5"
 
 [workspace.rust.participants]
 default_participants = ["@workspace", "@code", "@terminal", "@git"]

@@ -65,7 +65,7 @@ fn generate_default_config() -> String {
 
 [agent]
 # Default model to use
-default_model = "gpt-5.4"
+default_model = "gpt-5.6-sol"
 # AI provider (gemini, openai, anthropic, meta, openrouter, merge-gateway)
 provider = "openai"
 # Environment variable containing API key

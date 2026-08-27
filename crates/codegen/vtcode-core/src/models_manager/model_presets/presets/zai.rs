@@ -24,6 +24,35 @@ pub(crate) fn zai_presets() -> Vec<ModelPreset> {
                     description: "Deep thinking".to_string(),
                 },
             ],
+            is_default: false,
+            upgrade: None,
+            show_in_picker: true,
+            supported_in_api: true,
+            context_window: Some(1_000_000),
+        },
+        ModelPreset {
+            id: "glm-5.3-flash".to_string(),
+            model: "glm-5.3-flash".to_string(),
+            display_name: "GLM-5.3 Flash".to_string(),
+            description:
+                "Z.ai efficient multimodal model with hybrid sparse+linear attention (320B total / 18B active), 1M context and native vision"
+                    .to_string(),
+            provider: Provider::ZAI,
+            default_reasoning_effort: ReasoningEffortLevel::High,
+            supported_reasoning_efforts: vec![
+                ReasoningEffortPreset {
+                    effort: ReasoningEffortLevel::Medium,
+                    description: "Balanced".to_string(),
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffortLevel::High,
+                    description: "Deep thinking".to_string(),
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffortLevel::XHigh,
+                    description: "Max reasoning".to_string(),
+                },
+            ],
             is_default: true,
             upgrade: None,
             show_in_picker: true,
@@ -52,29 +81,6 @@ pub(crate) fn zai_presets() -> Vec<ModelPreset> {
             show_in_picker: true,
             supported_in_api: true,
             context_window: Some(1_000_000),
-        },
-        ModelPreset {
-            id: "glm-5.1".to_string(),
-            model: "glm-5.1".to_string(),
-            display_name: "GLM-5.1".to_string(),
-            description: "Z.ai's next-gen foundation model with improved reasoning and agent capabilities".to_string(),
-            provider: Provider::ZAI,
-            default_reasoning_effort: ReasoningEffortLevel::Medium,
-            supported_reasoning_efforts: vec![
-                ReasoningEffortPreset {
-                    effort: ReasoningEffortLevel::Medium,
-                    description: "Balanced".to_string(),
-                },
-                ReasoningEffortPreset {
-                    effort: ReasoningEffortLevel::High,
-                    description: "Deep thinking".to_string(),
-                },
-            ],
-            is_default: false,
-            upgrade: None,
-            show_in_picker: true,
-            supported_in_api: true,
-            context_window: Some(200_000),
         },
     ]
 }

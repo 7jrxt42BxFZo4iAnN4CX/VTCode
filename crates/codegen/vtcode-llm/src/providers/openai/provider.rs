@@ -95,14 +95,7 @@ pub struct OpenAIProvider {
 
 impl OpenAIProvider {
     fn requires_streaming_responses(model: &str) -> bool {
-        matches!(
-            model,
-            models::openai::GPT
-                | models::openai::GPT_5_4
-                | models::openai::GPT_5_4_PRO
-                | models::openai::GPT_5_5
-                | models::openai::GPT_5_5_DATED
-        )
+        matches!(model, models::openai::GPT | models::openai::GPT_5_6_SOL)
     }
 
     fn model_supports_reasoning_summaries(model: &str) -> bool {

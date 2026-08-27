@@ -349,8 +349,8 @@ mod tests {
         let result = manager
             .execute_with_retry(
                 "test_operation",
-                &ModelId::Gemini35Flash,
-                Some(&ModelId::Gemini31ProPreview),
+                &ModelId::Gemini37Flash,
+                Some(&ModelId::Gemini37Flash),
                 |_model| async { Ok::<String, anyhow::Error>("success".to_owned()) },
             )
             .await;
@@ -376,8 +376,8 @@ mod tests {
         let result = manager
             .execute_with_retry(
                 "test_operation",
-                &ModelId::Gemini35Flash,
-                Some(&ModelId::Gemini31ProPreview),
+                &ModelId::Gemini37Flash,
+                Some(&ModelId::Gemini37Flash),
                 move |_model| {
                     let attempt_count = attempt_count_clone.clone();
                     async move {

@@ -1260,11 +1260,11 @@ mod tests {
 
         let mut ctx = backing.turn_processing_context();
         ctx.vt_cfg = Some(cfg);
-        let mut snapshot = capture_turn_request_snapshot(&mut ctx, "claude-sonnet-4-6", false);
+        let mut snapshot = capture_turn_request_snapshot(&mut ctx, "claude-sonnet-5", false);
         snapshot.provider_name = "anthropic".to_string();
         snapshot.capabilities.context_edits = true;
 
-        let built = build_turn_request(&mut ctx, 1, "claude-sonnet-4-6", &snapshot, Some(320), None, false)
+        let built = build_turn_request(&mut ctx, 1, "claude-sonnet-5", &snapshot, Some(320), None, false)
             .await
             .expect("anthropic request should build");
 
@@ -1293,7 +1293,7 @@ mod tests {
         // scenario exercises the "compaction only" path (clearing off).
         compaction_only_cfg.agent.harness.tool_result_clearing.enabled = false;
         ctx.vt_cfg = Some(Box::leak(Box::new(compaction_only_cfg)));
-        let built = build_turn_request(&mut ctx, 1, "claude-sonnet-4-6", &snapshot, Some(320), None, false)
+        let built = build_turn_request(&mut ctx, 1, "claude-sonnet-5", &snapshot, Some(320), None, false)
             .await
             .expect("compaction-only anthropic request should build");
         assert_eq!(
@@ -1314,7 +1314,7 @@ mod tests {
         // "no context management payload" (fully disabled) path is exercised.
         disabled_cfg.agent.harness.tool_result_clearing.enabled = false;
         ctx.vt_cfg = Some(Box::leak(Box::new(disabled_cfg)));
-        let built = build_turn_request(&mut ctx, 1, "claude-sonnet-4-6", &snapshot, Some(320), None, false)
+        let built = build_turn_request(&mut ctx, 1, "claude-sonnet-5", &snapshot, Some(320), None, false)
             .await
             .expect("disabled anthropic request should build");
         assert!(built.request.context_management.is_none());

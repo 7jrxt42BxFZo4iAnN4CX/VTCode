@@ -13,6 +13,7 @@ pub const MINIMAX_H3: &str = "minimax/minimax-h3";
 pub const MOONSHOT_KIMI_K3: &str = "moonshot/kimi-k3";
 pub const THINKINGMACHINES_INKLING: &str = "thinkingmachines/inkling";
 pub const META_MUSE_SPARK_1_1: &str = "meta/muse-spark-1.1";
+pub const ZAI_GLM_5_3_FLASH: &str = "zai/glm-5.3-flash";
 pub const OPENAI_GPT_5_6_LUNA: &str = "openai/gpt-5.6-luna";
 pub const OPENAI_GPT_5_6_SOL: &str = "openai/gpt-5.6-sol";
 pub const OPENAI_GPT_5_6_TERRA: &str = "openai/gpt-5.6-terra";
@@ -35,6 +36,7 @@ pub const SUPPORTED_MODELS: &[&str] = &[
     MOONSHOT_KIMI_K3,
     THINKINGMACHINES_INKLING,
     META_MUSE_SPARK_1_1,
+    ZAI_GLM_5_3_FLASH,
     OPENAI_GPT_5_6_LUNA,
     OPENAI_GPT_5_6_SOL,
     OPENAI_GPT_5_6_TERRA,
@@ -47,6 +49,7 @@ pub const REASONING_EFFORT_ROUTES: &[&str] = &[
     XAI_GROK_4_6,
     MOONSHOT_KIMI_K3,
     META_MUSE_SPARK_1_1,
+    ZAI_GLM_5_3_FLASH,
     OPENAI_GPT_5_6_LUNA,
     OPENAI_GPT_5_6_SOL,
     OPENAI_GPT_5_6_TERRA,
@@ -80,6 +83,7 @@ pub const REASONING_MODELS: &[&str] = &[
     MOONSHOT_KIMI_K3,
     THINKINGMACHINES_INKLING,
     META_MUSE_SPARK_1_1,
+    ZAI_GLM_5_3_FLASH,
     OPENAI_GPT_5_6_LUNA,
     OPENAI_GPT_5_6_SOL,
     OPENAI_GPT_5_6_TERRA,
@@ -94,6 +98,7 @@ pub fn route_uses_reasoning_effort(model: &str) -> bool {
         || model.starts_with("xai/")
         || model.starts_with("moonshot/")
         || model.starts_with("meta/")
+        || model.starts_with("zai/")
 }
 
 /// Returns true when the route exposes a Gateway-managed `thinking.budget_tokens`

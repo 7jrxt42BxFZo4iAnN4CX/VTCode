@@ -123,6 +123,13 @@ pub(crate) fn merge_gateway_presets() -> Vec<ModelPreset> {
             false,
         ),
         (
+            models::merge_gateway::ZAI_GLM_5_3_FLASH,
+            "GLM-5.3 Flash (Merge Gateway)",
+            "Z.AI GLM-5.3 Flash through Merge Gateway",
+            1_310_720,
+            false,
+        ),
+        (
             models::merge_gateway::OPENAI_GPT_5_6_LUNA,
             "GPT-5.6 Luna (Merge Gateway)",
             "OpenAI GPT-5.6 Luna through Merge Gateway",

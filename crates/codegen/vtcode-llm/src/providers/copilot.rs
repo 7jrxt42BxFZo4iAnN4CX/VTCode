@@ -537,11 +537,11 @@ fn normalize_copilot_model_id(model: &str) -> Option<Option<String>> {
 
     match trimmed {
         copilot_models::AUTO => Some(None),
-        copilot_models::GPT_5_2_CODEX => Some(Some("gpt-5.2-codex".to_string())),
+        copilot_models::GPT_5_CODEX => Some(Some("gpt-5.2-codex".to_string())),
         copilot_models::GPT_5_1_CODEX_MAX => Some(Some("gpt-5.1-codex-max".to_string())),
-        copilot_models::GPT_5_4 => Some(Some("gpt-5.4".to_string())),
-        copilot_models::GPT_5_4_MINI => Some(Some("gpt-5.4-mini".to_string())),
-        copilot_models::CLAUDE_SONNET_4_6 => Some(Some("claude-sonnet-4.6".to_string())),
+        copilot_models::GPT_5_6_SOL => Some(Some("gpt-5.6-sol".to_string())),
+        copilot_models::GPT_5_6_LUNA => Some(Some("gpt-5.6-luna".to_string())),
+        copilot_models::CLAUDE_SONNET_5 => Some(Some("claude-sonnet-4.6".to_string())),
         _ if trimmed.contains(char::is_whitespace) => None,
         _ => Some(Some(trimmed.to_string())),
     }
@@ -583,12 +583,12 @@ mod tests {
     #[test]
     fn curated_model_mapping_uses_auto_as_empty_override() {
         assert_eq!(normalize_copilot_model_id(copilot_models::AUTO), Some(None));
-        assert_eq!(normalize_copilot_model_id(copilot_models::GPT_5_4), Some(Some("gpt-5.4".to_string())));
+        assert_eq!(normalize_copilot_model_id(copilot_models::GPT_5_6_SOL), Some(Some("gpt-5.6-sol".to_string())));
     }
 
     #[test]
     fn normalize_copilot_model_id_accepts_raw_model_ids() {
-        assert_eq!(normalize_copilot_model_id("gpt-5.3-codex"), Some(Some("gpt-5.3-codex".to_string())));
+        assert_eq!(normalize_copilot_model_id("gpt-5-codex"), Some(Some("gpt-5-codex".to_string())));
         assert_eq!(normalize_copilot_model_id("gpt 5.3"), None);
     }
 
@@ -658,6 +658,6 @@ mod tests {
         let provider = provider();
 
         assert!(provider.supports_reasoning(copilot_models::AUTO));
-        assert!(provider.supports_reasoning("gpt-5.3-codex"));
+        assert!(provider.supports_reasoning("gpt-5-codex"));
     }
 }

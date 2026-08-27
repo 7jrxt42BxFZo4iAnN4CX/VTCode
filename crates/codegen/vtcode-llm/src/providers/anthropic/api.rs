@@ -314,7 +314,7 @@ mod tests {
     #[test]
     fn convert_anthropic_to_llm_request_preserves_web_search_options() {
         let request = AnthropicMessagesRequest {
-            model: "claude-sonnet-4-6".to_string(),
+            model: "claude-sonnet-5".to_string(),
             max_tokens: 1024,
             messages: vec![AnthropicMessage {
                 role: "user".to_string(),
@@ -358,7 +358,7 @@ mod tests {
     #[test]
     fn convert_anthropic_to_llm_request_preserves_function_allowed_callers() {
         let request = AnthropicMessagesRequest {
-            model: "claude-sonnet-4-6".to_string(),
+            model: "claude-sonnet-5".to_string(),
             max_tokens: 1024,
             messages: vec![AnthropicMessage {
                 role: "user".to_string(),
@@ -399,7 +399,7 @@ mod tests {
     #[test]
     fn convert_anthropic_to_llm_request_preserves_strict_and_input_examples() {
         let request = AnthropicMessagesRequest {
-            model: "claude-sonnet-4-6".to_string(),
+            model: "claude-sonnet-5".to_string(),
             max_tokens: 1024,
             messages: vec![AnthropicMessage {
                 role: "user".to_string(),
@@ -454,7 +454,7 @@ mod tests {
     #[test]
     fn convert_anthropic_to_llm_request_accepts_native_code_execution_tool() {
         let request = AnthropicMessagesRequest {
-            model: "claude-sonnet-4-6".to_string(),
+            model: "claude-sonnet-5".to_string(),
             max_tokens: 1024,
             messages: vec![AnthropicMessage {
                 role: "user".to_string(),
@@ -486,7 +486,7 @@ mod tests {
     #[test]
     fn convert_anthropic_to_llm_request_accepts_native_memory_tool() {
         let request = AnthropicMessagesRequest {
-            model: "claude-sonnet-4-6".to_string(),
+            model: "claude-sonnet-5".to_string(),
             max_tokens: 1024,
             messages: vec![AnthropicMessage {
                 role: "user".to_string(),
@@ -518,7 +518,7 @@ mod tests {
     #[test]
     fn convert_anthropic_to_llm_request_maps_container_upload_to_file_part() {
         let request = AnthropicMessagesRequest {
-            model: "claude-sonnet-4-6".to_string(),
+            model: "claude-sonnet-5".to_string(),
             max_tokens: 1024,
             messages: vec![AnthropicMessage {
                 role: "user".to_string(),
@@ -567,7 +567,7 @@ mod tests {
     #[test]
     fn convert_anthropic_to_llm_request_maps_native_structured_output_config() {
         let request = AnthropicMessagesRequest {
-            model: "claude-sonnet-4-6".to_string(),
+            model: "claude-sonnet-5".to_string(),
             max_tokens: 1024,
             messages: vec![AnthropicMessage {
                 role: "user".to_string(),
@@ -618,7 +618,7 @@ mod tests {
     #[test]
     fn convert_anthropic_to_llm_request_maps_thinking_display_effort_and_task_budget() {
         let request = AnthropicMessagesRequest {
-            model: "claude-sonnet-4-6".to_string(),
+            model: "claude-sonnet-5".to_string(),
             max_tokens: 1024,
             messages: vec![AnthropicMessage {
                 role: "user".to_string(),
@@ -653,7 +653,7 @@ mod tests {
     #[test]
     fn convert_anthropic_to_llm_request_maps_manual_budget_thinking_mode() {
         let request = AnthropicMessagesRequest {
-            model: "claude-sonnet-4-6".to_string(),
+            model: "claude-sonnet-5".to_string(),
             max_tokens: 1024,
             messages: vec![AnthropicMessage {
                 role: "user".to_string(),
@@ -685,7 +685,7 @@ mod tests {
     #[test]
     fn convert_anthropic_to_llm_request_preserves_assistant_tool_calls_and_reasoning() {
         let request = AnthropicMessagesRequest {
-            model: "claude-sonnet-4-6".to_string(),
+            model: "claude-sonnet-5".to_string(),
             max_tokens: 1024,
             messages: vec![AnthropicMessage {
                 role: "assistant".to_string(),
@@ -739,7 +739,7 @@ mod tests {
     #[test]
     fn convert_anthropic_to_llm_request_maps_disable_parallel_tool_use() {
         let request = AnthropicMessagesRequest {
-            model: "claude-sonnet-4-6".to_string(),
+            model: "claude-sonnet-5".to_string(),
             max_tokens: 1024,
             messages: vec![AnthropicMessage {
                 role: "user".to_string(),
@@ -796,13 +796,13 @@ mod tests {
     fn convert_llm_to_anthropic_response_preserves_reasoning_and_model() {
         let response = crate::provider::LLMResponse {
             content: Some("Done".to_string()),
-            model: "claude-sonnet-4-6".to_string(),
+            model: "claude-sonnet-5".to_string(),
             reasoning: Some("inspect files".to_string()),
             ..Default::default()
         };
 
         let anthropic = convert_llm_to_anthropic_response(response);
-        assert_eq!(anthropic.model, "claude-sonnet-4-6");
+        assert_eq!(anthropic.model, "claude-sonnet-5");
         assert!(matches!(
             anthropic.content.first(),
             Some(AnthropicContentBlock::Thinking { thinking, .. }) if thinking == "inspect files"
@@ -816,7 +816,7 @@ mod tests {
     #[test]
     fn convert_llm_to_anthropic_response_preserves_reasoning_signature_details() {
         let response = crate::provider::LLMResponse {
-            model: "claude-sonnet-4-6".to_string(),
+            model: "claude-sonnet-5".to_string(),
             reasoning_details: Some(vec![
                 json!({
                     "type": "thinking",

@@ -651,7 +651,7 @@ provider = "openai"
 api_key_env = "OPENAI_API_KEY"
 
 # Default model to use when no specific model is specified
-default_model = "gpt-5.4"
+default_model = "gpt-5.6-sol"
 
 # Visual theme for the terminal interface
 theme = "ciapre-dark"

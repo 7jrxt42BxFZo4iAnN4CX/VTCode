@@ -65,6 +65,7 @@ vtcode --provider merge-gateway --model anthropic/claude-opus-5
 | `moonshot/kimi-k3` | 1M | Yes | Moonshot route |
 | `thinkingmachines/inkling` | 1M | No | Thinking Machines route |
 | `meta/muse-spark-1.1` | 1M | Yes | Meta route |
+| `zai/glm-5.3-flash` | 1.31M | Yes | Z.AI route (320B/18B hybrid attention, native vision) |
 | `openai/gpt-5.6-luna` | 1.1M | Yes | OpenAI route |
 | `openai/gpt-5.6-sol` | 1.1M | Yes | OpenAI route |
 | `openai/gpt-5.6-terra` | 1.1M | Yes | OpenAI route |
@@ -130,7 +131,7 @@ Merge's reasoning behavior is vendor- and route-specific. VT Code discovers each
 route's reasoning capability from the authenticated `/v1/models` catalog and
 applies the configured reasoning effort using the route's advertised control:
 routes advertising a provider-native `reasoning_effort` (OpenAI, xAI, Moonshot,
-Meta prefixes) receive a `reasoning_effort` string, while routes advertising a
+Meta, Z.AI prefixes) receive a `reasoning_effort` string, while routes advertising a
 Gateway-managed thinking budget (Anthropic, Gemini, DeepSeek, Qwen, MiniMax,
 Thinking Machines prefixes) receive a top-level `thinking` block with a
 `budget_tokens` value derived from the effort level and clamped below

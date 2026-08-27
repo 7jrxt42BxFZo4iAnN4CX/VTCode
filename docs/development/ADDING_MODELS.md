@@ -51,13 +51,13 @@ namespace.
 // In the provider's SUPPORTED_MODELS array
 pub const SUPPORTED_MODELS: &[&str] = &[
     // ... existing models
-    "gpt-5.4-nano",    // Add here in order
-    "gpt-5.4-mini",
+    "gpt-5.6-luna",    // Add here in order
+    "gpt-5.6-luna",
 ];
 
 // Add convenience constant (at bottom)
-pub const GPT_5_4_NANO: &str = "gpt-5.4-nano";
-pub const GPT_5_4_MINI: &str = "gpt-5.4-mini";
+pub const GPT_5_6_LUNA: &str = "gpt-5.6-luna";
+pub const GPT_5_6_LUNA: &str = "gpt-5.6-luna";
 ```
 
 **When to update:**
@@ -74,8 +74,8 @@ pub const GPT_5_4_MINI: &str = "gpt-5.4-mini";
 **File:** `docs/models.json`
 
 ```json
-"gpt-5.4-nano": {
-  "id": "gpt-5.4-nano",
+"gpt-5.6-luna": {
+  "id": "gpt-5.6-luna",
   "name": "GPT-5.4 Nano",
   "description": "Lightweight variant optimized for speed and cost",
   "reasoning": false,
@@ -109,9 +109,9 @@ Add in the appropriate provider section (OpenAI, Anthropic, etc.):
 
 ```rust
 /// GPT-5.4 Nano - Lightweight GPT-5.4 variant optimized for speed and cost-efficiency
-GPT54Nano,
+GPT56Luna,
 /// GPT-5.4 Mini - Compact GPT-5.4 variant for cost-effective tasks
-GPT54Mini,
+GPT56Luna,
 ```
 
 **Naming convention:** `PascalCase` enum variant, no hyphens.
@@ -123,8 +123,8 @@ GPT54Mini,
 Maps enum to constant string:
 
 ```rust
-ModelId::GPT54Nano => models::openai::GPT_5_4_NANO,
-ModelId::GPT54Mini => models::openai::GPT_5_4_MINI,
+ModelId::GPT56Luna => models::openai::GPT_5_6_LUNA,
+ModelId::GPT56Luna => models::openai::GPT_5_6_LUNA,
 ```
 
 ### Step 5: Update display.rs
@@ -134,8 +134,8 @@ ModelId::GPT54Mini => models::openai::GPT_5_4_MINI,
 Human-readable name for UI:
 
 ```rust
-ModelId::GPT54Nano => "GPT-5.4 Nano",
-ModelId::GPT54Mini => "GPT-5.4 Mini",
+ModelId::GPT56Luna => "GPT-5.4 Nano",
+ModelId::GPT56Luna => "GPT-5.4 Mini",
 ```
 
 ### Step 6: Update description.rs
@@ -145,10 +145,10 @@ ModelId::GPT54Mini => "GPT-5.4 Mini",
 Full description for help/info:
 
 ```rust
-ModelId::GPT54Nano => {
+ModelId::GPT56Luna => {
     "Lightweight GPT-5.4 variant optimized for speed and cost-efficiency"
 }
-ModelId::GPT54Mini => {
+ModelId::GPT56Luna => {
     "Compact GPT-5.4 variant for cost-effective tasks with reduced reasoning overhead"
 }
 ```
@@ -160,8 +160,8 @@ ModelId::GPT54Mini => {
 String → Enum parsing:
 
 ```rust
-s if s == models::openai::GPT_5_4_NANO => Ok(ModelId::GPT54Nano),
-s if s == models::openai::GPT_5_4_MINI => Ok(ModelId::GPT54Mini),
+s if s == models::openai::GPT_5_6_LUNA => Ok(ModelId::GPT56Luna),
+s if s == models::openai::GPT_5_6_LUNA => Ok(ModelId::GPT56Luna),
 ```
 
 ### Step 8: Update collection.rs
@@ -171,11 +171,11 @@ s if s == models::openai::GPT_5_4_MINI => Ok(ModelId::GPT54Mini),
 Add to `all_models()` vector (keep alphabetically sorted within provider):
 
 ```rust
-ModelId::GPT54,
-ModelId::GPT54Pro,
-ModelId::GPT54Nano,      // Add here
-ModelId::GPT54Mini,      // Add here
-ModelId::GPT53Codex,
+ModelId::GPT56Sol,
+ModelId::GPT56Sol,
+ModelId::GPT56Luna,      // Add here
+ModelId::GPT56Luna,      // Add here
+ModelId::GPT56Sol,
 ```
 
 ### Step 9: Update capabilities.rs
@@ -186,12 +186,12 @@ Update methods that match on model families:
 
 ```rust
 // non_reasoning_variant() - if not a reasoning model
-ModelId::GPT52 | ModelId::GPT54 | ModelId::GPT54Pro | ModelId::GPT54Nano | ModelId::GPT54Mini | ModelId::GPT5 => {
+ModelId::GPT52 | ModelId::GPT56Sol | ModelId::GPT56Sol | ModelId::GPT56Luna | ModelId::GPT56Luna | ModelId::GPT5 => {
     Some(ModelId::GPT5Mini)
 }
 
 // generation() - version string
-ModelId::GPT54 | ModelId::GPT54Pro | ModelId::GPT54Nano | ModelId::GPT54Mini => "5.4",
+ModelId::GPT56Sol | ModelId::GPT56Sol | ModelId::GPT56Luna | ModelId::GPT56Luna => "5.4",
 
 // is_top_tier() - if flagship class (optional, depends on model positioning)
 // is_pro_variant() - if pro/advanced variant (optional)
@@ -209,10 +209,10 @@ Add to provider match:
 ModelId::GPT5
  | ModelId::GPT52
  | ModelId::GPT52Codex
- | ModelId::GPT54
- | ModelId::GPT54Pro
- | ModelId::GPT54Nano    // Add here
- | ModelId::GPT54Mini    // Add here
+ | ModelId::GPT56Sol
+ | ModelId::GPT56Sol
+ | ModelId::GPT56Luna    // Add here
+ | ModelId::GPT56Luna    // Add here
  | ModelId::GPT5Mini
  | ModelId::GPT5Nano
  // ... rest
@@ -233,7 +233,7 @@ Test model resolution:
 
 ```bash
 # Verify model is in palette
-cargo run -- /model --help | grep -i "gpt-5.4"
+cargo run -- /model --help | grep -i "gpt-5.6-sol"
 
 # Test direct model selection
 cargo run -- ask --model gpt-5.4-nano "test"
@@ -245,7 +245,7 @@ When adding a new model, use this template:
 
 ```
 Model Name: gpt-5.4-nano
-Enum Name: GPT54Nano
+Enum Name: GPT56Luna
 Provider: OpenAI
 Generation: 5.4
 Context: 100000
@@ -257,10 +257,10 @@ Input: ["text"]
 1. openai.rs - SUPPORTED_MODELS + constant
 2. models.json - full metadata
 3. model_id.rs - enum variant
-4. as_str.rs - ModelId::GPT54Nano => models::openai::GPT_5_4_NANO
+4. as_str.rs - ModelId::GPT56Luna => models::openai::GPT_5_6_LUNA
 5. display.rs - "GPT-5.4 Nano"
 6. description.rs - description string
-7. parse.rs - s if s == models::openai::GPT_5_4_NANO => Ok(ModelId::GPT54Nano)
+7. parse.rs - s if s == models::openai::GPT_5_6_LUNA => Ok(ModelId::GPT56Luna)
 8. collection.rs - add to all_models()
 9. capabilities.rs - update version + optional trait methods
 10. provider.rs - add to OpenAI provider match
@@ -288,8 +288,8 @@ Add model to integration test:
 ```rust
 #[test]
 fn test_gpt_5_4_nano_parsing() {
-    let model = "gpt-5.4-nano".parse::<ModelId>().unwrap();
-    assert_eq!(model, ModelId::GPT54Nano);
+    let model = "gpt-5.6-luna".parse::<ModelId>().unwrap();
+    assert_eq!(model, ModelId::GPT56Luna);
     assert_eq!(model.provider(), Provider::OpenAI);
     assert_eq!(model.generation(), "5.4");
 }
@@ -307,7 +307,7 @@ x **Don't:**
 
 v **Do:**
 
-- Keep naming consistent: `gpt-5.4-nano` (const), `GPT54Nano` (enum), `"GPT-5.4 Nano"` (display)
+- Keep naming consistent: `gpt-5.4-nano` (const), `GPT56Luna` (enum), `"GPT-5.4 Nano"` (display)
 - Update all 10 files in order
 - Run `cargo check` after each logical group
 - Test with actual model resolution before submitting

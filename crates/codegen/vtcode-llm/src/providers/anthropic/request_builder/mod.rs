@@ -422,7 +422,7 @@ mod tests {
     #[test]
     fn resolve_advisor_tool_disabled_returns_none() {
         let cfg = advisor_config(false, "", None);
-        assert!(resolve_advisor_tool("claude-sonnet-4-6", &cfg).is_none());
+        assert!(resolve_advisor_tool("claude-sonnet-5", &cfg).is_none());
     }
 
     #[test]
@@ -434,10 +434,10 @@ mod tests {
     #[test]
     fn resolve_advisor_tool_defaults_to_valid_pair() {
         let cfg = advisor_config(true, "", None);
-        let tool = resolve_advisor_tool("claude-sonnet-4-6", &cfg);
+        let tool = resolve_advisor_tool("claude-sonnet-5", &cfg);
         assert!(matches!(tool, Some(AnthropicTool::Advisor(_))));
         if let Some(AnthropicTool::Advisor(t)) = tool {
-            assert_eq!(t.model, "claude-opus-4-8");
+            assert_eq!(t.model, "claude-opus-5");
             assert_eq!(t.name, "advisor");
             assert_eq!(t.tool_type, "advisor_20260301");
         }
@@ -446,8 +446,8 @@ mod tests {
     #[test]
     fn resolve_advisor_tool_invalid_pair_returns_none() {
         // Advisor less capable than the executor must be rejected.
-        let cfg = advisor_config(true, "claude-haiku-4-5", None);
-        assert!(resolve_advisor_tool("claude-opus-4-8", &cfg).is_none());
+        let cfg = advisor_config(true, "claude-sonnet-5", None);
+        assert!(resolve_advisor_tool("claude-opus-5", &cfg).is_none());
     }
 
     #[test]
@@ -455,7 +455,7 @@ mod tests {
         let cfg = advisor_config(true, "claude-fable-5", None);
         assert!(resolve_advisor_tool("claude-fable-5", &cfg).is_some());
         // Fable may only advise Fable.
-        assert!(resolve_advisor_tool("claude-opus-4-8", &cfg).is_none());
+        assert!(resolve_advisor_tool("claude-opus-5", &cfg).is_none());
     }
 
     #[test]

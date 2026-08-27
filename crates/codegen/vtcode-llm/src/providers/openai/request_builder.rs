@@ -21,8 +21,8 @@ use super::responses_api::build_standard_responses_payload;
 use super::tool_serialization;
 use super::types::{MAX_COMPLETION_TOKENS_FIELD, OpenAIResponsesPayload};
 
-const NONE_REASONING_EFFORT_MODELS: &[&str] = &[openai_models::GPT, openai_models::GPT_5_2, openai_models::GPT_5_4];
-const MEDIUM_REASONING_EFFORT_MODELS: &[&str] = &[openai_models::GPT_5, openai_models::GPT_5_4_PRO];
+const NONE_REASONING_EFFORT_MODELS: &[&str] = &[openai_models::GPT, openai_models::GPT_5_6, openai_models::GPT_5_6_SOL];
+const MEDIUM_REASONING_EFFORT_MODELS: &[&str] = &[openai_models::GPT_5, openai_models::GPT_5_6_SOL];
 const HIGH_REASONING_EFFORT_MODELS: &[&str] = &[
     openai_models::GPT_5_6_SOL,
     openai_models::GPT_5_6_TERRA,
@@ -31,12 +31,12 @@ const HIGH_REASONING_EFFORT_MODELS: &[&str] = &[
 ];
 const TEXT_VERBOSITY_MODELS: &[&str] = &[
     openai_models::GPT,
-    openai_models::GPT_5_2,
-    openai_models::GPT_5_4,
-    openai_models::GPT_5_4_PRO,
-    openai_models::GPT_5_3_CODEX,
-    openai_models::GPT_5_5,
-    openai_models::GPT_5_5_DATED,
+    openai_models::GPT_5_6,
+    openai_models::GPT_5_6_SOL,
+    openai_models::GPT_5_6_SOL,
+    openai_models::GPT_5_CODEX,
+    openai_models::GPT_5_6_SOL,
+    openai_models::GPT_5_6_SOL,
     openai_models::GPT_5_6_SOL,
     openai_models::GPT_5_6_TERRA,
     openai_models::GPT_5_6_LUNA,
@@ -44,26 +44,26 @@ const TEXT_VERBOSITY_MODELS: &[&str] = &[
 ];
 const LOW_VERBOSITY_MODELS: &[&str] = &[
     openai_models::GPT,
-    openai_models::GPT_5_2,
-    openai_models::GPT_5_4,
-    openai_models::GPT_5_4_PRO,
+    openai_models::GPT_5_6,
+    openai_models::GPT_5_6_SOL,
+    openai_models::GPT_5_6_SOL,
 ];
 const PHASE_REPLAY_MODELS: &[&str] = &[
     openai_models::GPT,
-    openai_models::GPT_5_4,
-    openai_models::GPT_5_4_PRO,
-    openai_models::GPT_5_3_CODEX,
+    openai_models::GPT_5_6_SOL,
+    openai_models::GPT_5_6_SOL,
+    openai_models::GPT_5_CODEX,
 ];
 const GATED_SAMPLING_MODELS: &[&str] = &[
     openai_models::GPT,
-    openai_models::GPT_5_2,
-    openai_models::GPT_5_4,
-    openai_models::GPT_5_5,
-    openai_models::GPT_5_5_DATED,
+    openai_models::GPT_5_6,
+    openai_models::GPT_5_6_SOL,
+    openai_models::GPT_5_6_SOL,
+    openai_models::GPT_5_6_SOL,
 ];
 const SAMPLING_DISABLED_MODELS: &[&str] = &[
     openai_models::GPT_5,
-    openai_models::GPT_5_4_PRO,
+    openai_models::GPT_5_6_SOL,
     openai_models::GPT_5_MINI,
     openai_models::GPT_5_NANO,
 ];
@@ -119,7 +119,7 @@ fn is_gpt5_codex_model(model: &str) -> bool {
 }
 
 fn is_gpt55_model(model: &str) -> bool {
-    model == openai_models::GPT_5_5 || model == openai_models::GPT_5_5_DATED
+    model == openai_models::GPT_5_6_SOL
 }
 
 fn is_gpt56_model(model: &str) -> bool {

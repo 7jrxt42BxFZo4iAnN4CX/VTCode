@@ -107,62 +107,7 @@
         "doc_comment": "Mistral Large 3 2512 - Mistral Large 3 2512 model via OpenRouter"
       }
     },
-    "google/gemini-3.1-pro-preview": {
-      "id": "google/gemini-3.1-pro-preview",
-      "name": "Google: Gemini 3.1 Pro Preview",
-      "reasoning": true,
-      "tool_call": true,
-      "modalities": {
-        "input": [
-          "text",
-          "image",
-          "file"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "context": 1048576,
-      "vtcode": {
-        "variant": "OpenRouterGoogleGemini31ProPreview",
-        "constant": "GOOGLE_GEMINI_3_1_PRO_PREVIEW",
-        "vendor": "google",
-        "display": "Gemini 3.1 Pro Preview",
-        "description": "Google Gemini 3.1 Pro model via OpenRouter",
-        "efficient": false,
-        "top_tier": true,
-        "generation": "3.1",
-        "doc_comment": "Gemini 3.1 Pro Preview - Google Gemini 3.1 Pro model via OpenRouter"
-      }
-    },
-    "google/gemini-3.5-flash-lite": {
-      "id": "google/gemini-3.5-flash-lite",
-      "name": "Google: Gemini 3.5 Flash Lite",
-      "reasoning": true,
-      "tool_call": true,
-      "modalities": {
-        "input": [
-          "text",
-          "image",
-          "file"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "context": 1048576,
-      "vtcode": {
-        "variant": "OpenRouterGoogleGemini35FlashLite",
-        "constant": "GOOGLE_GEMINI_3_5_FLASH_LITE",
-        "vendor": "google",
-        "display": "Gemini 3.5 Flash Lite",
-        "description": "Cost-optimized lightweight Gemini model for efficient inference via OpenRouter",
-        "efficient": true,
-        "top_tier": false,
-        "generation": "3.5",
-        "doc_comment": "Gemini 3.5 Flash Lite - Cost-optimized lightweight Gemini model for efficient inference via OpenRouter"
-      }
-    },
+
     "google/gemini-3.6-flash": {
       "id": "google/gemini-3.6-flash",
       "name": "Google: Gemini 3.6 Flash",
@@ -246,32 +191,7 @@
         "doc_comment": "Step 3.5 Flash (free) - StepFun's most capable open-source reasoning model via OpenRouter"
       }
     },
-    "anthropic/claude-haiku-4.5": {
-      "id": "anthropic/claude-haiku-4.5",
-      "name": "Anthropic: Claude Haiku 4.5",
-      "reasoning": true,
-      "tool_call": true,
-      "modalities": {
-        "input": [
-          "text"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "context": 200000,
-      "vtcode": {
-        "variant": "OpenRouterAnthropicClaudeHaiku45",
-        "constant": "ANTHROPIC_CLAUDE_HAIKU_4_5",
-        "vendor": "anthropic",
-        "display": "Claude Haiku 4.5",
-        "description": "Anthropic Claude Haiku 4.5 listing",
-        "efficient": true,
-        "top_tier": false,
-        "generation": "2025-10-15",
-        "doc_comment": "Claude Haiku 4.5 - Anthropic Claude Haiku 4.5 listing"
-      }
-    },
+
     "nex-agi/deepseek-v3.1-nex-n1": {
       "id": "nex-agi/deepseek-v3.1-nex-n1",
       "name": "Nex AGI: DeepSeek V3.1 Nex N1",
@@ -301,39 +221,6 @@
         "top_tier": true,
         "generation": "V3.1-Nex",
         "doc_comment": "DeepSeek V3.1 Nex N1 - Nex AGI DeepSeek V3.1 Nex N1 model via OpenRouter"
-      }
-    },
-    "anthropic/claude-sonnet-4.6": {
-      "id": "anthropic/claude-sonnet-4.6",
-      "name": "Anthropic: Claude Sonnet 4.6",
-      "reasoning": true,
-      "tool_call": true,
-      "modalities": {
-        "input": [
-          "text",
-          "image",
-          "file"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "context": 1000000,
-      "max_output_tokens": 128000,
-      "cost": {
-        "input": 3e-06,
-        "output": 1.5e-05
-      },
-      "vtcode": {
-        "variant": "OpenRouterAnthropicClaudeSonnet46",
-        "constant": "ANTHROPIC_CLAUDE_SONNET_4_6",
-        "vendor": "anthropic",
-        "display": "Claude Sonnet 4.6",
-        "description": "Anthropic Claude Sonnet 4.6 listing",
-        "efficient": false,
-        "top_tier": true,
-        "generation": "2026-02-20",
-        "doc_comment": "Claude Sonnet 4.6 - Anthropic Claude Sonnet 4.6 listing"
       }
     },
     "deepseek/deepseek-chat": {
@@ -462,9 +349,11 @@
         "doc_comment": "OpenAI GPT-5 - OpenAI GPT-5 model accessed through OpenRouter"
       }
     },
-    "openai/gpt-5.5": {
-      "id": "openai/gpt-5.5",
-      "name": "OpenAI: GPT-5.5",
+
+    "z-ai/glm-5.3-flash": {
+      "id": "z-ai/glm-5.3-flash",
+      "name": "Z.AI: GLM-5.3 Flash",
+      "description": "Z.AI efficient multimodal model with hybrid sparse+linear attention (320B total / 18B active, 3.01x less attention compute, 4.44x smaller KV cache), 1M context and native vision for efficient coding and long-horizon agent tasks.",
       "reasoning": true,
       "tool_call": true,
       "modalities": {
@@ -476,17 +365,23 @@
           "text"
         ]
       },
-      "context": 1050000,
+      "context": 1310720,
+      "max_output_tokens": 131072,
+      "cost": {
+        "input": 1.5e-07,
+        "output": 5e-07,
+        "cache_read": 3e-08
+      },
       "vtcode": {
-        "variant": "OpenRouterOpenAIGpt55",
-        "constant": "OPENAI_GPT_5_5",
-        "vendor": "openai",
-        "display": "OpenAI GPT-5.5",
-        "description": "OpenAI GPT-5.5 model accessed through OpenRouter",
-        "efficient": false,
+        "variant": "OpenRouterZaiGlm53Flash",
+        "constant": "ZAI_GLM_5_3_FLASH",
+        "vendor": "z-ai",
+        "display": "GLM-5.3 Flash",
+        "description": "Z.AI GLM-5.3 Flash efficient multimodal model via OpenRouter",
+        "efficient": true,
         "top_tier": true,
-        "generation": "2026-04-23",
-        "doc_comment": "OpenAI GPT-5.5 - OpenAI GPT-5.5 model accessed through OpenRouter"
+        "generation": "5.3",
+        "doc_comment": "GLM-5.3 Flash - Z.AI efficient multimodal model with hybrid sparse+linear attention via OpenRouter"
       }
     },
     "openai/gpt-5-chat": {
@@ -616,39 +511,6 @@
         "top_tier": true,
         "generation": "K3",
         "doc_comment": "Kimi K3 - Moonshot AI's 2.8T parameter flagship model via OpenRouter"
-      }
-    },
-    "moonshotai/kimi-k2.6": {
-      "id": "moonshotai/kimi-k2.6",
-      "name": "MoonshotAI: Kimi K2.6",
-      "description": "Kimi K2.6 is Moonshot AI's next-generation multimodal model, designed for long-horizon coding, coding-driven UI/UX generation, and multi-agent orchestration. Handles complex end-to-end coding tasks across Python, Rust, and Go, and can convert prompts and visual inputs into production-ready interfaces.",
-      "reasoning": true,
-      "tool_call": true,
-      "modalities": {
-        "input": [
-          "text",
-          "image"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "context": 262144,
-      "max_output_tokens": 8192,
-      "cost": {
-        "input": 9.5e-07,
-        "output": 4e-06
-      },
-      "vtcode": {
-        "variant": "OpenRouterMoonshotaiKimiK26",
-        "constant": "MOONSHOTAI_KIMI_K2_6",
-        "vendor": "moonshotai",
-        "display": "Kimi K2.6",
-        "description": "Kimi K2.6 multimodal agentic model for long-horizon coding and design via OpenRouter",
-        "efficient": false,
-        "top_tier": true,
-        "generation": "K2.6",
-        "doc_comment": "Kimi K2.6 - Moonshot AI's next-generation multimodal model for long-horizon coding and design via OpenRouter"
       }
     },
     "moonshotai/kimi-k2.7-code": {

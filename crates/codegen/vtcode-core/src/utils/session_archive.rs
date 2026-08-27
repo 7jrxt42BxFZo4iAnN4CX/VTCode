@@ -1922,7 +1922,7 @@ mod metadata_compat_tests {
         let metadata = serde_json::from_value::<SessionArchiveMetadata>(serde_json::json!({
             "workspace_label": "ws",
             "workspace_path": "/tmp/ws",
-            "model": "gpt-5.4",
+            "model": "gpt-5.6-sol",
             "provider": "openai",
             "theme": "test",
             "reasoning_effort": "low"
@@ -1937,7 +1937,7 @@ mod metadata_compat_tests {
 
     #[test]
     fn set_primary_agent_records_mode_on_archive() {
-        let metadata = SessionArchiveMetadata::new("ws", "/tmp/ws", "gpt-5.4", "openai", "test", "low");
+        let metadata = SessionArchiveMetadata::new("ws", "/tmp/ws", "gpt-5.6-sol", "openai", "test", "low");
         let mut archive = tokio::runtime::Runtime::new()
             .expect("runtime")
             .block_on(SessionArchive::new_with_identifier(metadata, "ws-0000".to_string()))

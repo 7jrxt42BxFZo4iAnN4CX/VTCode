@@ -667,28 +667,28 @@ mod tests {
         let messages_52 = vec![Message::user("hello".to_string())];
         let messages_54 = vec![Message::user("continue".to_string())];
 
-        state.set_previous_response_chain("openai", "gpt-5.2", Some("resp_123"), messages_52.clone());
-        state.set_previous_response_chain("openai", "gpt-5.4", Some("resp_456"), messages_54.clone());
+        state.set_previous_response_chain("openai", "gpt-5.6", Some("resp_123"), messages_52.clone());
+        state.set_previous_response_chain("openai", "gpt-5.6-sol", Some("resp_456"), messages_54.clone());
 
-        assert_eq!(state.previous_response_id_for("openai", "gpt-5.2"), Some("resp_123".to_string()));
-        assert_eq!(state.previous_response_id_for("openai", "gpt-5.4"), Some("resp_456".to_string()));
-        assert_eq!(state.previous_response_id_for("gemini", "gpt-5.2"), None);
+        assert_eq!(state.previous_response_id_for("openai", "gpt-5.6"), Some("resp_123".to_string()));
+        assert_eq!(state.previous_response_id_for("openai", "gpt-5.6-sol"), Some("resp_456".to_string()));
+        assert_eq!(state.previous_response_id_for("gemini", "gpt-5.6"), None);
 
-        state.clear_previous_response_chain_for("openai", "gpt-5.2");
+        state.clear_previous_response_chain_for("openai", "gpt-5.6");
 
-        assert_eq!(state.previous_response_id_for("openai", "gpt-5.2"), None);
-        assert_eq!(state.previous_response_chain_for("openai", "gpt-5.2"), None);
-        assert_eq!(state.previous_response_id_for("openai", "gpt-5.4"), Some("resp_456".to_string()));
+        assert_eq!(state.previous_response_id_for("openai", "gpt-5.6"), None);
+        assert_eq!(state.previous_response_chain_for("openai", "gpt-5.6"), None);
+        assert_eq!(state.previous_response_id_for("openai", "gpt-5.6-sol"), Some("resp_456".to_string()));
         assert_eq!(
             state
-                .previous_response_chain_for("openai", "gpt-5.4")
+                .previous_response_chain_for("openai", "gpt-5.6-sol")
                 .map(|chain| chain.messages.as_slice()),
             Some(messages_54.as_slice())
         );
 
         state.clear_previous_response_chain();
-        assert_eq!(state.previous_response_id_for("openai", "gpt-5.4"), None);
-        assert_eq!(state.previous_response_chain_for("openai", "gpt-5.4"), None);
+        assert_eq!(state.previous_response_id_for("openai", "gpt-5.6-sol"), None);
+        assert_eq!(state.previous_response_chain_for("openai", "gpt-5.6-sol"), None);
     }
 
     #[test]
@@ -696,10 +696,10 @@ mod tests {
         let mut state = AgentSessionState::new("session".to_string(), 4, 4, 16_000);
         let messages = Arc::new(vec![Message::user("hello".to_string())]);
 
-        state.set_previous_response_chain_shared("openai", "gpt-5.4", Some("resp_123"), Arc::clone(&messages));
+        state.set_previous_response_chain_shared("openai", "gpt-5.6-sol", Some("resp_123"), Arc::clone(&messages));
 
         let stored = &state
-            .previous_response_chain_for("openai", "gpt-5.4")
+            .previous_response_chain_for("openai", "gpt-5.6-sol")
             .expect("continuation state")
             .messages;
         assert!(Arc::ptr_eq(&messages, stored));

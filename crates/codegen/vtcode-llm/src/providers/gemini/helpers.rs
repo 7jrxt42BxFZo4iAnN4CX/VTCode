@@ -110,7 +110,7 @@ impl GeminiProvider {
     ///
     /// Affected: all `gemini-3.5+` models and all future model releases.
     pub(super) fn uses_latest_gemini_api(model: &str) -> bool {
-        // Extract version from model name like "gemini-3.5-flash-lite" -> "3.5"
+        // Extract version from model name like "gemini-3.7-flash" -> "3.5"
         let rest = match model.strip_prefix("gemini-") {
             Some(r) => r,
             None => return false,

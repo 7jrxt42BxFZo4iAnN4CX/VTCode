@@ -39,19 +39,5 @@ pub(crate) fn moonshot_presets() -> Vec<ModelPreset> {
             supported_in_api: true,
             context_window: Some(256_000),
         },
-        ModelPreset {
-            id: "kimi-k2.6".to_string(),
-            model: "kimi-k2.6".to_string(),
-            display_name: "Kimi K2.6 (Moonshot)".to_string(),
-            description: "Moonshot's previous flagship coding and agent model.".to_string(),
-            provider: Provider::Moonshot,
-            default_reasoning_effort: ReasoningEffortLevel::Medium,
-            supported_reasoning_efforts: vec![reasoning_preset(ReasoningEffortLevel::Medium, "Balanced")],
-            is_default: false,
-            upgrade: None,
-            show_in_picker: true,
-            supported_in_api: true,
-            context_window: Some(256_000),
-        },
     ]
 }

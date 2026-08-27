@@ -66,8 +66,8 @@ pub(crate) fn openai_presets() -> Vec<ModelPreset> {
             context_window: Some(1_050_000),
         },
         ModelPreset {
-            id: "gpt-5.4".to_string(),
-            model: "gpt-5.4".to_string(),
+            id: "gpt-5.6-sol".to_string(),
+            model: "gpt-5.6-sol".to_string(),
             display_name: "GPT-5.4".to_string(),
             description: "Frontier model for complex professional work".to_string(),
             provider: Provider::OpenAI,
@@ -80,8 +80,8 @@ pub(crate) fn openai_presets() -> Vec<ModelPreset> {
             context_window: Some(1_050_000),
         },
         ModelPreset {
-            id: "gpt-5.4-pro".to_string(),
-            model: "gpt-5.4-pro".to_string(),
+            id: "gpt-5.6-sol".to_string(),
+            model: "gpt-5.6-sol".to_string(),
             display_name: "GPT-5.4 Pro".to_string(),
             description: "Higher-compute GPT-5.4 variant for tougher problems".to_string(),
             provider: Provider::OpenAI,
@@ -98,8 +98,8 @@ pub(crate) fn openai_presets() -> Vec<ModelPreset> {
             context_window: Some(1_050_000),
         },
         ModelPreset {
-            id: "gpt-5.3-codex".to_string(),
-            model: "gpt-5.3-codex".to_string(),
+            id: "gpt-5-codex".to_string(),
+            model: "gpt-5-codex".to_string(),
             display_name: "GPT-5.3 Codex".to_string(),
             description: "GPT-5.3 variant optimized for agentic coding with xhigh reasoning".to_string(),
             provider: Provider::OpenAI,
@@ -126,8 +126,8 @@ pub(crate) fn openai_presets() -> Vec<ModelPreset> {
             context_window: Some(272_000),
         },
         ModelPreset {
-            id: "gpt-5.2".to_string(),
-            model: "gpt-5.2".to_string(),
+            id: "gpt-5.6".to_string(),
+            model: "gpt-5.6".to_string(),
             display_name: "GPT-5.2".to_string(),
             description: "Previous frontier model with improved reasoning and coding".to_string(),
             provider: Provider::OpenAI,

@@ -601,7 +601,7 @@ mod tests {
                 metadata: SessionArchiveMetadata::new(
                     "vtcode",
                     "/workspace/vtcode",
-                    "gpt-5.4",
+                    "gpt-5.6-sol",
                     "openai",
                     "sunrise",
                     "medium",
@@ -619,7 +619,7 @@ mod tests {
 
         let value = session_search_value(&listing, "2026-03-11 16:05", "5m 0s", 2);
         assert!(value.contains("vtcode"));
-        assert!(value.contains("gpt-5.4"));
+        assert!(value.contains("gpt-5.6-sol"));
         assert!(value.contains("2026-03-11 16:05"));
         assert!(value.contains("5m 0s"));
         assert!(value.contains("12 messages"));

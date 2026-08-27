@@ -157,7 +157,7 @@ mod tests {
     #[test]
     fn ignores_explicit_budget_for_opus_4_8() {
         let request = LLMRequest {
-            model: anthropic::CLAUDE_OPUS_4_8.to_string(),
+            model: anthropic::CLAUDE_OPUS_5.to_string(),
             thinking_budget: Some(2048),
             ..Default::default()
         };
@@ -170,7 +170,7 @@ mod tests {
     #[test]
     fn adaptive_thinking_includes_summarized_display() {
         let request = LLMRequest {
-            model: anthropic::CLAUDE_SONNET_4_6.to_string(),
+            model: anthropic::CLAUDE_SONNET_5.to_string(),
             ..Default::default()
         };
         let config = AnthropicConfig {
@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn adaptive_thinking_includes_omitted_display() {
         let request = LLMRequest {
-            model: anthropic::CLAUDE_SONNET_4_6.to_string(),
+            model: anthropic::CLAUDE_SONNET_5.to_string(),
             ..Default::default()
         };
         let config = AnthropicConfig {
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn adaptive_thinking_includes_display_for_sonnet_4_6_when_configured() {
         let request = LLMRequest {
-            model: anthropic::CLAUDE_SONNET_4_6.to_string(),
+            model: anthropic::CLAUDE_SONNET_5.to_string(),
             ..Default::default()
         };
         let config = AnthropicConfig {
@@ -224,7 +224,7 @@ mod tests {
     #[test]
     fn thinking_display_defaults_to_none() {
         let request = LLMRequest {
-            model: anthropic::CLAUDE_SONNET_4_6.to_string(),
+            model: anthropic::CLAUDE_SONNET_5.to_string(),
             ..Default::default()
         };
         let config = AnthropicConfig::default();

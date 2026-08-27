@@ -404,39 +404,24 @@ pub(super) fn reasoning_level_label(level: ReasoningEffortLevel) -> &'static str
 }
 
 pub(super) fn supports_gpt5_none_reasoning(model_id: &str) -> bool {
-    matches!(
-        model_id,
-        "gpt-5.2"
-            | "gpt-5.4"
-            | "gpt-5.4-pro"
-            | "gpt-5.5"
-            | "gpt-5.5-2026-04-23"
-            | "gpt-5.6-sol"
-            | "gpt-5.6-terra"
-            | "gpt-5.6-luna"
-            | "gpt-5.6"
-    ) || matches!(model_id, "gpt-5.2-codex" | "gpt-5.3-codex")
+    matches!(model_id, "gpt-5.6" | "gpt-5.6-sol" | "gpt-5.5-2026-04-23" | "gpt-5.6-terra" | "gpt-5.6-luna")
+        || matches!(model_id, "gpt-5.2-codex" | "gpt-5-codex")
 }
 
 pub(super) fn supports_xhigh_reasoning(model_id: &str) -> bool {
     matches!(
         model_id,
-        "gpt-5.2"
+        "gpt-5.6"
             | "gpt-5.2-codex"
-            | "gpt-5.4"
-            | "gpt-5.4-pro"
-            | "gpt-5.5"
-            | "gpt-5.5-2026-04-23"
-            | "gpt-5.3-codex"
             | "gpt-5.6-sol"
+            | "gpt-5.5-2026-04-23"
+            | "gpt-5-codex"
             | "gpt-5.6-terra"
             | "gpt-5.6-luna"
-            | "gpt-5.6"
             | "claude-sonnet-5"
             | "claude-fable-5"
             | "claude-mythos-5"
             | "claude-opus-5"
-            | "claude-opus-4-8"
     )
 }
 
@@ -451,8 +436,6 @@ pub(super) fn supports_max_reasoning(model_id: &str) -> bool {
             | "claude-fable-5"
             | "claude-mythos-5"
             | "claude-opus-5"
-            | "claude-opus-4-8"
-            | "claude-sonnet-4-6"
     )
 }
 

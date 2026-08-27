@@ -5,18 +5,16 @@ pub const SUPPORTED_MODELS: &[&str] = &[
     // Additional supported models
     OPENAI_GPT_OSS_20B,
     // Novita inference provider models
-    ZAI_GLM_5_1_ZAI_ORG,
     ZAI_GLM_5_2_NOVITA,
+    // Together inference provider models (incl. Z.AI Flash via Together)
+    ZAI_GLM_5_3_FLASH_TOGETHER,
     // Moonshot inference provider models
-    KIMI_K2_6_NOVITA,
     KIMI_K3_TOGETHER,
     // Together inference provider models
     DEEPSEEK_V4_PRO_TOGETHER,
     STEP_3_5_FLASH,
     // DeepInfra inference provider models
-    ZAI_GLM_5_1_DEEPINFRA,
     // Additional Novita models
-    MINIMAX_M2_7_NOVITA,
     DEEPSEEK_V4_PRO_NOVITA,
     MINIMAX_M3_NOVITA,
 ];
@@ -31,10 +29,9 @@ pub(crate) const STEP_3_5_FLASH_LEGACY_FASTEST: &str = "stepfun-ai/Step-3.5-Flas
 // Additional supported models
 pub(crate) const OPENAI_GPT_OSS_20B: &str = "openai/gpt-oss-20b:huggingface";
 
-pub const ZAI_GLM_5_1_ZAI_ORG: &str = "zai-org/GLM-5.1:zai-org";
-pub(crate) const ZAI_GLM_5_2_NOVITA: &str = "zai-org/GLM-5.2:novita";
-pub(crate) const KIMI_K2_6_NOVITA: &str = "moonshotai/Kimi-K2.6:novita";
-pub(crate) const KIMI_K3_TOGETHER: &str = "moonshotai/Kimi-K3:together";
+pub const ZAI_GLM_5_2_NOVITA: &str = "zai-org/GLM-5.2:novita";
+pub const ZAI_GLM_5_3_FLASH_TOGETHER: &str = "zai-org/GLM-5.3-Flash:together";
+pub const KIMI_K3_TOGETHER: &str = "moonshotai/Kimi-K3:together";
 
 // DeepSeek V4 models via HF router
 pub(crate) const DEEPSEEK_V4_FLASH_NOVITA: &str = "deepseek-ai/DeepSeek-V4-Flash:novita";
@@ -42,10 +39,8 @@ pub(crate) const DEEPSEEK_V4_PRO_TOGETHER: &str = "deepseek-ai/DeepSeek-V4-Pro:t
 pub(crate) const DEEPSEEK_V4_PRO_NOVITA: &str = "deepseek-ai/DeepSeek-V4-Pro:novita";
 
 // DeepInfra inference provider models
-pub(crate) const ZAI_GLM_5_1_DEEPINFRA: &str = "zai-org/GLM-5.1:deepinfra";
 
 // Additional Novita models
-pub(crate) const MINIMAX_M2_7_NOVITA: &str = "MiniMaxAI/MiniMax-M2.7:novita";
 
 // MiniMax M3 via Novita
 pub(crate) const MINIMAX_M3_NOVITA: &str = "MiniMaxAI/MiniMax-M3:novita";
@@ -55,10 +50,8 @@ pub const REASONING_MODELS: &[&str] = &[
     DEEPSEEK_R1,
     // Additional reasoning models
     OPENAI_GPT_OSS_20B,
-    ZAI_GLM_5_1_ZAI_ORG,
     ZAI_GLM_5_2_NOVITA,
-    ZAI_GLM_5_1_DEEPINFRA,
-    MINIMAX_M2_7_NOVITA,
+    ZAI_GLM_5_3_FLASH_TOGETHER,
     MINIMAX_M3_NOVITA,
     DEEPSEEK_V4_PRO_TOGETHER,
     DEEPSEEK_V4_PRO_NOVITA,

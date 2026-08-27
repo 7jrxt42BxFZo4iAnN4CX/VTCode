@@ -116,7 +116,7 @@ pub(crate) fn claude_thinking_profile(model: &str, default_model: &str) -> Optio
         });
     }
 
-    if matches_model(requested, models::anthropic::CLAUDE_OPUS_4_8) {
+    if matches_model(requested, models::anthropic::CLAUDE_OPUS_5) {
         return Some(ClaudeThinkingProfile {
             mode: ClaudeThinkingMode::Adaptive,
             supports_manual_budget: false,
@@ -132,7 +132,7 @@ pub(crate) fn claude_thinking_profile(model: &str, default_model: &str) -> Optio
         });
     }
 
-    if matches_model(requested, models::anthropic::CLAUDE_SONNET_4_6) {
+    if matches_model(requested, models::anthropic::CLAUDE_SONNET_5) {
         return Some(ClaudeThinkingProfile {
             mode: ClaudeThinkingMode::Adaptive,
             supports_manual_budget: true,
@@ -148,7 +148,7 @@ pub(crate) fn claude_thinking_profile(model: &str, default_model: &str) -> Optio
         });
     }
 
-    if matches_model(requested, models::anthropic::CLAUDE_HAIKU_4_5) {
+    if matches_model(requested, models::anthropic::CLAUDE_SONNET_5) {
         return Some(ClaudeThinkingProfile {
             mode: ClaudeThinkingMode::ManualBudget,
             supports_manual_budget: true,
@@ -172,8 +172,8 @@ fn supports_native_1m_context(model: &str) -> bool {
         || matches_model(model, models::anthropic::CLAUDE_FABLE_5)
         || matches_model(model, models::anthropic::CLAUDE_MYTHOS_5)
         || matches_model(model, models::anthropic::CLAUDE_OPUS_5)
-        || matches_model(model, models::anthropic::CLAUDE_SONNET_4_6)
-        || matches_model(model, models::anthropic::CLAUDE_OPUS_4_8)
+        || matches_model(model, models::anthropic::CLAUDE_SONNET_5)
+        || matches_model(model, models::anthropic::CLAUDE_OPUS_5)
 }
 
 pub(crate) fn supports_reasoning(model: &str, default_model: &str) -> bool {
@@ -225,7 +225,7 @@ pub(crate) fn supports_assistant_prefill(model: &str, default_model: &str) -> bo
         Some(profile) => {
             // Haiku 4.5 is the only thinking-profile model that supports prefill.
             // All others (Sonnet 5, Fable 5, Mythos 5, Opus 4.8, Sonnet 4.6) do not.
-            !profile.adaptive_only && matches_model(requested, models::anthropic::CLAUDE_HAIKU_4_5)
+            !profile.adaptive_only && matches_model(requested, models::anthropic::CLAUDE_SONNET_5)
         }
         None => true,
     }
@@ -234,7 +234,7 @@ pub(crate) fn supports_assistant_prefill(model: &str, default_model: &str) -> bo
 pub(crate) fn supports_mid_conversation_system_messages(model: &str, default_model: &str) -> bool {
     let requested = resolve_model_name(model, default_model);
     matches_model(requested, models::anthropic::CLAUDE_OPUS_5)
-        || matches_model(requested, models::anthropic::CLAUDE_OPUS_4_8)
+        || matches_model(requested, models::anthropic::CLAUDE_OPUS_5)
 }
 
 pub(crate) fn adaptive_thinking_always_on(model: &str, default_model: &str) -> bool {
@@ -272,8 +272,8 @@ pub(crate) fn supports_compaction(model: &str) -> bool {
         || matches_model(model, models::anthropic::CLAUDE_FABLE_5)
         || matches_model(model, models::anthropic::CLAUDE_MYTHOS_5)
         || matches_model(model, models::anthropic::CLAUDE_OPUS_5)
-        || matches_model(model, models::anthropic::CLAUDE_OPUS_4_8)
-        || matches_model(model, models::anthropic::CLAUDE_SONNET_4_6)
+        || matches_model(model, models::anthropic::CLAUDE_OPUS_5)
+        || matches_model(model, models::anthropic::CLAUDE_SONNET_5)
 }
 
 pub(crate) fn supports_parallel_tool_config(_model: &str) -> bool {
@@ -294,7 +294,7 @@ pub(crate) fn rejects_sampling(model: &str, default_model: &str) -> bool {
         || matches_model(requested, models::anthropic::CLAUDE_FABLE_5)
         || matches_model(requested, models::anthropic::CLAUDE_MYTHOS_5)
         || matches_model(requested, models::anthropic::CLAUDE_OPUS_5)
-        || matches_model(requested, models::anthropic::CLAUDE_OPUS_4_8)
+        || matches_model(requested, models::anthropic::CLAUDE_OPUS_5)
 }
 
 pub(crate) fn supports_structured_output(model: &str, default_model: &str) -> bool {
@@ -308,7 +308,7 @@ pub(crate) fn supports_structured_output(model: &str, default_model: &str) -> bo
     // Legacy models without thinking profiles that support structured outputs.
     matches_model(requested, "claude-sonnet-4-5")
         || matches_model(requested, "claude-opus-4-5")
-        || matches_model(requested, "claude-haiku-4-5")
+        || matches_model(requested, "claude-sonnet-5")
 }
 
 pub(crate) fn supports_vision(model: &str, default_model: &str) -> bool {

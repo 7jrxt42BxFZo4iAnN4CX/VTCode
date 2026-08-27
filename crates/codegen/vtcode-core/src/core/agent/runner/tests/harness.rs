@@ -183,7 +183,7 @@ async fn review_non_openai_request_exposes_only_read_only_inspection_tools() {
 #[tokio::test]
 async fn review_openai_compatible_request_filters_inactive_tools() {
     let temp = TempDir::new().expect("tempdir");
-    let request = record_review_request(&temp, ModelId::GPT53Codex, "openai", "thread-review-openai-compatible").await;
+    let request = record_review_request(&temp, ModelId::GPT56Sol, "openai", "thread-review-openai-compatible").await;
     assert_review_request_exposes_only_code_search(&request);
 }
 

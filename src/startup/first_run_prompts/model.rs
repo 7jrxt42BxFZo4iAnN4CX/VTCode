@@ -255,9 +255,9 @@ mod tests {
 
     #[test]
     fn model_entries_use_raw_model_ids() {
-        let entries = model_entries(&["gpt-5.4".to_owned(), "claude-sonnet-4".to_owned()]);
+        let entries = model_entries(&["gpt-5.6-sol".to_owned(), "claude-sonnet-4".to_owned()]);
 
-        assert_eq!(entries[0].title, "gpt-5.4");
+        assert_eq!(entries[0].title, "gpt-5.6-sol");
         assert_eq!(entries[1].title, "claude-sonnet-4");
     }
 }

@@ -42,22 +42,5 @@ pub(crate) fn qwen_presets() -> Vec<ModelPreset> {
             supported_in_api: true,
             context_window: Some(1_048_576),
         },
-        ModelPreset {
-            id: qwen_models::GLM_5_1.to_string(),
-            model: qwen_models::GLM_5_1.to_string(),
-            display_name: "GLM-5.1 (Qwen)".to_string(),
-            description: "Z.AI GLM-5.1 next-gen foundation model served through Qwen Cloud API".to_string(),
-            provider: Provider::Qwen,
-            default_reasoning_effort: ReasoningEffortLevel::Medium,
-            supported_reasoning_efforts: vec![ReasoningEffortPreset {
-                effort: ReasoningEffortLevel::Medium,
-                description: "Balanced".to_string(),
-            }],
-            is_default: false,
-            upgrade: None,
-            show_in_picker: true,
-            supported_in_api: true,
-            context_window: Some(131_072),
-        },
     ]
 }

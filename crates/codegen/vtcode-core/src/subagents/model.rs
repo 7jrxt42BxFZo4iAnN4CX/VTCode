@@ -265,9 +265,9 @@ fn handle_model_override_failure(
 
 fn normalize_subagent_model_alias(model: &str) -> &str {
     match model.trim() {
-        "claude-haiku-4.5" => models::anthropic::CLAUDE_HAIKU_4_5,
-        "claude-sonnet-4.6" => models::anthropic::CLAUDE_SONNET_4_6,
-        "claude-opus-4.8" => models::anthropic::CLAUDE_OPUS_4_8,
+        "claude-haiku-4.5" => models::anthropic::CLAUDE_SONNET_5,
+        "claude-sonnet-4.6" => models::anthropic::CLAUDE_SONNET_5,
+        "claude-opus-4.8" => models::anthropic::CLAUDE_OPUS_5,
         other => other,
     }
 }
@@ -275,18 +275,18 @@ fn normalize_subagent_model_alias(model: &str) -> &str {
 fn alias_model_for_provider(parent_provider: &str, alias: &str, parent_model: &str) -> String {
     match infer_provider(Some(parent_provider), parent_model) {
         Some(Provider::Anthropic) => match alias.to_ascii_lowercase().as_str() {
-            "haiku" => models::anthropic::CLAUDE_HAIKU_4_5.to_string(),
-            "opus" => models::anthropic::CLAUDE_OPUS_4_8.to_string(),
-            _ => models::anthropic::CLAUDE_SONNET_4_6.to_string(),
+            "haiku" => models::anthropic::CLAUDE_SONNET_5.to_string(),
+            "opus" => models::anthropic::CLAUDE_OPUS_5.to_string(),
+            _ => models::anthropic::CLAUDE_SONNET_5.to_string(),
         },
         Some(Provider::OpenAI) => match alias.to_ascii_lowercase().as_str() {
-            "haiku" => models::openai::GPT_5_4_MINI.to_string(),
-            "opus" => models::openai::GPT_5_4.to_string(),
-            _ => models::openai::GPT_5_4.to_string(),
+            "haiku" => models::openai::GPT_5_6_LUNA.to_string(),
+            "opus" => models::openai::GPT_5_6_SOL.to_string(),
+            _ => models::openai::GPT_5_6_SOL.to_string(),
         },
         Some(Provider::Gemini) => match alias.to_ascii_lowercase().as_str() {
             "haiku" => models::google::GEMINI_3_FLASH_PREVIEW.to_string(),
-            _ => models::google::GEMINI_3_1_PRO_PREVIEW.to_string(),
+            _ => models::google::GEMINI_3_7_FLASH.to_string(),
         },
         _ => parent_model.to_string(),
     }

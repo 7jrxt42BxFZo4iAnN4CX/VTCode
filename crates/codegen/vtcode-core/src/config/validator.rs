@@ -457,7 +457,7 @@ mod tests {
 
     #[test]
     fn copilot_managed_auth_model_accepts_live_raw_ids() {
-        assert!(is_managed_auth_model(Some(Provider::Copilot), "gpt-5.3-codex"));
+        assert!(is_managed_auth_model(Some(Provider::Copilot), "gpt-5-codex"));
         assert!(!is_managed_auth_model(Some(Provider::Copilot), "   "));
     }
 

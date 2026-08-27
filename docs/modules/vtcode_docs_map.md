@@ -566,6 +566,15 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Provider whitelisting, Custom providers, Google Gemini, OpenAI, Anthropic
   - **User Questions**: "What can you tell me about Provider Guides?", "How does Provider whitelisting work?", "How does Custom providers work?"
 
+- **File**: `docs/providers/zai.md`
+  - **Content**: Z.AI Provider Guide
+  - **Topics**: Quickstart, Model API — GLM-5.3 Flash, Curated models, Vision-driven workflows (Flash), GLM Coding Plan
+  - **User Questions**: "What can you tell me about Z.AI Provider Guide?", "How does Quickstart work?", "How does Model API — GLM-5.3 Flash work?"
+
+- **File**: `docs/providers/zai-quick-reference.md`
+  - **Content**: Z.AI Quick Reference
+  - **User Questions**: "What can you tell me about Z.AI Quick Reference?"
+
 - **File**: `docs/providers/llamacpp.md`
   - **Content**: llama.cpp Provider Guide
   - **Topics**: What VT Code manages, Manual server mode, Configuration, Notes

@@ -2552,12 +2552,12 @@ mod tests {
 
         assert!(anthropic_native_memory_enabled_for_runtime(
             Some(Provider::Anthropic),
-            "claude-sonnet-4-6",
+            "claude-sonnet-5",
             Some(&config),
         ));
         assert!(!anthropic_native_memory_enabled_for_runtime(
             Some(Provider::OpenAI),
-            "claude-sonnet-4-6",
+            "claude-sonnet-5",
             Some(&config),
         ));
         assert!(!anthropic_native_memory_enabled_for_runtime(Some(Provider::Anthropic), "gpt-5", Some(&config),));

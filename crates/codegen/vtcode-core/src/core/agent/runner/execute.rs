@@ -1401,13 +1401,13 @@ mod tests {
             Message::user("hello".to_string()),
             Message::user("continue".to_string()),
         ];
-        state.set_previous_response_chain("openai", "gpt-5.4", Some("resp_123"), prior_messages);
+        state.set_previous_response_chain("openai", "gpt-5.6-sol", Some("resp_123"), prior_messages);
 
         let (request_messages, previous_response_id) = prepare_responses_request_messages(
             &mut state.previous_response_chains,
             "openai",
             false,
-            "gpt-5.4",
+            "gpt-5.6-sol",
             &current_messages,
         );
 
@@ -1421,10 +1421,10 @@ mod tests {
         let messages = vec![Message::user("hello".to_string())];
 
         if records_responses_continuation_state("openai", true) {
-            state.set_previous_response_chain("openai", "gpt-5.4", Some("resp_123"), messages);
+            state.set_previous_response_chain("openai", "gpt-5.6-sol", Some("resp_123"), messages);
         }
 
-        assert_eq!(state.previous_response_chain_for("openai", "gpt-5.4"), None);
+        assert_eq!(state.previous_response_chain_for("openai", "gpt-5.6-sol"), None);
     }
 
     #[test]
@@ -1433,10 +1433,10 @@ mod tests {
         let messages = vec![Message::user("hello".to_string())];
 
         if records_responses_continuation_state("mycorp", true) {
-            state.set_previous_response_chain("mycorp", "gpt-5.4", Some("resp_123"), messages);
+            state.set_previous_response_chain("mycorp", "gpt-5.6-sol", Some("resp_123"), messages);
         }
 
-        assert_eq!(state.previous_response_chain_for("mycorp", "gpt-5.4"), None);
+        assert_eq!(state.previous_response_chain_for("mycorp", "gpt-5.6-sol"), None);
     }
 
     #[test]
@@ -1469,13 +1469,13 @@ mod tests {
             Message::user("hello".to_string()),
             Message::user("continue".to_string()),
         ];
-        state.set_previous_response_chain("mycorp", "gpt-5.4", Some("resp_123"), prior_messages);
+        state.set_previous_response_chain("mycorp", "gpt-5.6-sol", Some("resp_123"), prior_messages);
 
         let (request_messages, previous_response_id) = prepare_responses_request_messages(
             &mut state.previous_response_chains,
             "mycorp",
             true,
-            "gpt-5.4",
+            "gpt-5.6-sol",
             &current_messages,
         );
 

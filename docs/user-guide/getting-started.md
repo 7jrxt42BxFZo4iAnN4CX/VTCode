@@ -53,12 +53,12 @@ Choose one of the supported LLM providers:
 
 -   **Z.AI**: `export ZAI_API_KEY=your_key_here`
     -   Get from [Z.AI Platform](https://z.ai/docs)
-    -   Models: GLM-5.3, GLM-5.2, GLM-5.1, GLM-4.7
-    -   Default model: `glm-5.3`; see the [Z.AI provider guide](../providers/PROVIDER_GUIDES.md#zai-zai)
+    -   Models: GLM-5.3, GLM-5.3 Flash (320B/18B, hybrid attention, native vision, 1M context), GLM-5.2
+    -   Default model: `glm-5.3`; Flash is `glm-5.3-flash` (recommended `reasoning_effort: max` / `xhigh`); see the [Z.AI provider guide](../providers/zai.md) and [GLM-5.3 Flash guide](https://docs.z.ai/guides/vlm/glm-5.3-flash)
 
 -   **Moonshot (Kimi)**: `export MOONSHOT_API_KEY=your_key_here`
     -   Get from [Moonshot Platform](https://platform.moonshot.ai/docs)
-    -   Models: Kimi K3, K2.7 Code, K2.6, K2.5
+    -   Models: Kimi K3, K2.7 Code, K2.5
     -   Default model: `kimi-k3`; see the [Moonshot provider guide](../providers/PROVIDER_GUIDES.md#moonshot-kimi)
 
 -   **StepFun**: `export STEPFUN_API_KEY=your_key_here`
@@ -68,7 +68,7 @@ Choose one of the supported LLM providers:
 
 -   **MiniMax**: `export MINIMAX_API_KEY=your_key_here`
     -   Get from [MiniMax Platform](https://platform.minimax.io/docs)
-    -   Models: MiniMax-M3, M2.7, M2.5
+    -   Models: MiniMax-M3, M2.5
     -   Default model: `MiniMax-M3`
 
 -   **NVIDIA NIM**: `export NVIDIA_API_KEY=your_key_here`
@@ -266,7 +266,7 @@ VT Code uses a comprehensive TOML configuration system. The `init` command creat
 # Agent settings
 [agent]
 provider = "openai"  # or anthropic, google, deepseek, etc.
-default_model = "gpt-5.4"  # Your preferred model
+default_model = "gpt-5.6-sol"  # Your preferred model
 max_conversation_turns = 150
 
 # Security settings

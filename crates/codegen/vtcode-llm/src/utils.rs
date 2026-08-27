@@ -416,7 +416,7 @@ mod tests {
     #[test]
     fn test_validate_model_string() {
         validate_model_string("gpt-5").unwrap();
-        validate_model_string("claude-haiku-4-5").unwrap();
+        validate_model_string("claude-sonnet-5").unwrap();
         assert!(validate_model_string("").is_err());
         assert!(validate_model_string(&"a".repeat(101)).is_err());
         assert!(validate_model_string("invalid@model").is_err());

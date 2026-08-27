@@ -60,7 +60,7 @@ fn test_layered_config_loading() {
 
     // 2. Workspace config
     let workspace_config_path = workspace_root.join("vtcode.toml");
-    fs::write(&workspace_config_path, "agent.default_model = \"claude-haiku-4-5\"")
+    fs::write(&workspace_config_path, "agent.default_model = \"claude-sonnet-5\"")
         .expect("failed to write workspace config");
 
     let static_paths = StaticWorkspacePaths::new(workspace_root, workspace_root.join(".vtcode"));
@@ -70,7 +70,7 @@ fn test_layered_config_loading() {
         let manager = ConfigManager::load_from_workspace(workspace_root).expect("failed to load config");
 
         assert_eq!(manager.config().agent.provider, "anthropic");
-        assert_eq!(manager.config().agent.default_model, "claude-haiku-4-5");
+        assert_eq!(manager.config().agent.default_model, "claude-sonnet-5");
 
         let layers = manager.layer_stack().layers();
         // User + Workspace
@@ -817,7 +817,7 @@ fn save_config_writes_sparse_model_theme_and_permission_values() {
 
     let mut manager = ConfigManager::load_from_workspace(workspace).expect("failed to load config");
     let mut modified_config = manager.config().clone();
-    modified_config.agent.default_model = "gpt-5.4".to_string();
+    modified_config.agent.default_model = "gpt-5.6-sol".to_string();
     modified_config.agent.theme = "ansi".to_string();
     modified_config.permissions.allow = vec!["read_file".to_string()];
 
@@ -829,7 +829,7 @@ fn save_config_writes_sparse_model_theme_and_permission_values() {
         "unchanged default primary agent should not be persisted. Got:\n{saved_content}"
     );
     assert!(saved_content.contains("[agent]"));
-    assert!(saved_content.contains("default_model = \"gpt-5.4\""));
+    assert!(saved_content.contains("default_model = \"gpt-5.6-sol\""));
     assert!(saved_content.contains("theme = \"ansi\""));
     assert!(saved_content.contains("[permissions]"));
     assert!(saved_content.contains("allow = [\"read_file\"]"));
@@ -840,7 +840,7 @@ fn save_config_writes_sparse_model_theme_and_permission_values() {
     assert!(!saved_content.contains("[ui]"), "default UI section should not be expanded. Got:\n{saved_content}");
 
     let reloaded = ConfigManager::load_from_workspace(workspace).expect("failed to reload config");
-    assert_eq!(reloaded.config().agent.default_model, "gpt-5.4");
+    assert_eq!(reloaded.config().agent.default_model, "gpt-5.6-sol");
     assert_eq!(reloaded.config().agent.theme, "ansi");
     assert_eq!(reloaded.config().permissions.allow, vec!["read_file".to_string()]);
 }

@@ -413,7 +413,7 @@ mod tests {
             Path::new("/tmp/demo-project"),
             "main",
             Some("feature/title"),
-            "gpt-5.4",
+            "gpt-5.6-sol",
             Some("Thinking"),
             &["project".to_string(), "spinner".to_string(), "status".to_string()],
         );
@@ -462,7 +462,7 @@ mod tests {
             Path::new("/tmp/demo-project"),
             "main",
             Some("main"),
-            "gpt-5.4",
+            "gpt-5.6-sol",
             Some("Ready"),
             &["thread".to_string(), "git-branch".to_string()],
         );

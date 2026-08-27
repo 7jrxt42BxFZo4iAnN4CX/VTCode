@@ -9,7 +9,7 @@ pub(crate) fn evolink_presets() -> Vec<ModelPreset> {
     vec![
         ModelPreset {
             id: "evolink/gpt-5.2".to_string(),
-            model: evolink_models::GPT_5_2.to_string(),
+            model: evolink_models::GPT_5_6.to_string(),
             display_name: "GPT-5.2 (Evolink)".to_string(),
             description: "GPT-5.2 served through the Evolink OpenAI-compatible gateway.".to_string(),
             provider: Provider::Evolink,
@@ -23,7 +23,7 @@ pub(crate) fn evolink_presets() -> Vec<ModelPreset> {
         },
         ModelPreset {
             id: "evolink/gpt-5.5".to_string(),
-            model: evolink_models::GPT_5_5.to_string(),
+            model: evolink_models::GPT_5_6_SOL.to_string(),
             display_name: "GPT-5.5 (Evolink)".to_string(),
             description: "GPT-5.5 flagship model served through the Evolink gateway.".to_string(),
             provider: Provider::Evolink,
@@ -105,7 +105,7 @@ pub(crate) fn evolink_presets() -> Vec<ModelPreset> {
         },
         ModelPreset {
             id: "evolink/gemini-3.5-flash".to_string(),
-            model: evolink_models::GEMINI_3_5_FLASH.to_string(),
+            model: evolink_models::GEMINI_3_7_FLASH.to_string(),
             display_name: "Gemini 3.5 Flash (Evolink)".to_string(),
             description: "Gemini 3.5 Flash served through the Evolink gateway via OpenAI SDK format.".to_string(),
             provider: Provider::Evolink,
@@ -133,7 +133,7 @@ pub(crate) fn evolink_presets() -> Vec<ModelPreset> {
         },
         ModelPreset {
             id: "evolink/claude-sonnet-4-6".to_string(),
-            model: evolink_models::CLAUDE_SONNET_4_6.to_string(),
+            model: evolink_models::CLAUDE_SONNET_5.to_string(),
             display_name: "Claude Sonnet 4.6 (Evolink)".to_string(),
             description: "Claude Sonnet 4.6 served through Evolink via Anthropic Messages API.".to_string(),
             provider: Provider::Evolink,
@@ -147,7 +147,7 @@ pub(crate) fn evolink_presets() -> Vec<ModelPreset> {
         },
         ModelPreset {
             id: "evolink/claude-opus-4-8".to_string(),
-            model: evolink_models::CLAUDE_OPUS_4_8.to_string(),
+            model: evolink_models::CLAUDE_OPUS_5.to_string(),
             display_name: "Claude Opus 4.8 (Evolink)".to_string(),
             description: "Claude Opus 4.8 served through Evolink via Anthropic Messages API.".to_string(),
             provider: Provider::Evolink,
@@ -164,7 +164,7 @@ pub(crate) fn evolink_presets() -> Vec<ModelPreset> {
         },
         ModelPreset {
             id: "evolink/claude-haiku-4-5-20251001".to_string(),
-            model: evolink_models::CLAUDE_HAIKU_4_5.to_string(),
+            model: evolink_models::CLAUDE_SONNET_5.to_string(),
             display_name: "Claude Haiku 4.5 (Evolink)".to_string(),
             description: "Claude Haiku 4.5 fast model served through Evolink via Anthropic Messages API.".to_string(),
             provider: Provider::Evolink,
