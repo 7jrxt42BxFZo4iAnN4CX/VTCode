@@ -27,6 +27,7 @@ Universal model-facing behavior is compiled in `crates/codegen/vtcode-core/src/p
 - CI/release: [docs/development/ci-cd.md](docs/development/ci-cd.md), [docs/development/CHANGELOG_GENERATION.md](docs/development/CHANGELOG_GENERATION.md).
 - Architecture/conventions: [docs/guides/code-organization-patterns.md](docs/guides/code-organization-patterns.md), [docs/guides/async-architecture.md](docs/guides/async-architecture.md), [docs/development/rust-performance-principles.md](docs/development/rust-performance-principles.md).
 - Tools/security: [docs/development/grep-tool-guide.md](docs/development/grep-tool-guide.md), [docs/development/grep-quick-reference.md](docs/development/grep-quick-reference.md), [docs/development/COMMAND_SECURITY_MODEL.md](docs/development/COMMAND_SECURITY_MODEL.md), [docs/guides/security.md](docs/guides/security.md).
+- WebMCP bridge: [docs/development/webmcp.md](docs/development/webmcp.md) — authenticated browser editing, pairing, runtime adapters, and security boundaries.
 - Harness/agent behavior: [docs/guides/agent-loop-contract.md](docs/guides/agent-loop-contract.md), [docs/harness/INDEX.md](docs/harness/INDEX.md), [docs/harness/CORE_BELIEFS.md](docs/harness/CORE_BELIEFS.md), [docs/harness/ARCHITECTURAL_INVARIANTS.md](docs/harness/ARCHITECTURAL_INVARIANTS.md), [docs/harness/AGENT_LEGIBILITY_GUIDE.md](docs/harness/AGENT_LEGIBILITY_GUIDE.md).
 - Prompt/runtime boundaries: [docs/development/runtime-guidance.md](docs/development/runtime-guidance.md).
 - Planning and automation: [docs/guides/planning-workflow.md](docs/guides/planning-workflow.md), [docs/guides/full-automation.md](docs/guides/full-automation.md), [docs/development/EXECUTION_POLICY.md](docs/development/EXECUTION_POLICY.md).
@@ -48,6 +49,7 @@ Cargo workspace, ~30 crates. Rust stable, MSRV 1.88, edition 2024. `default-memb
 | `crates/codegen/vtcode-auth`              | OAuth and credential storage                                                                                                           |
 | `crates/codegen/vtcode-indexer`           | Code indexing and search                                                                                                               |
 | `crates/common/vtcode-exec-events`        | `ThreadEvent` contract and ATIF export                                                                                                 |
+| `crates/codegen/vtcode-webmcp`            | Authenticated browser editor bridge, pairing, event replay, and bounded workspace adapter                                             |
 | `crates/common/vtcode-commons`            | Shared utilities                                                                                                                       |
 | `crates/common/vtcode-macros`             | Procedural macros                                                                                                                      |
 | `crates/common/vtcode-utility-tool-specs` | JSON schemas for utility, file, and collaboration/HITL tools                                                                           |
@@ -78,6 +80,7 @@ Every crate has its own AGENTS.md with crate-specific conventions:
 | `vtcode-auth`               | [crates/codegen/vtcode-auth/AGENTS.md](crates/codegen/vtcode-auth/AGENTS.md)                           |
 | `vtcode-indexer`            | [crates/codegen/vtcode-indexer/AGENTS.md](crates/codegen/vtcode-indexer/AGENTS.md)                     |
 | `vtcode-exec-events`        | [crates/common/vtcode-exec-events/AGENTS.md](crates/common/vtcode-exec-events/AGENTS.md)               |
+| `vtcode-webmcp`             | [crates/codegen/vtcode-webmcp/AGENTS.md](crates/codegen/vtcode-webmcp/AGENTS.md)                       |
 | `vtcode-commons`            | [crates/common/vtcode-commons/AGENTS.md](crates/common/vtcode-commons/AGENTS.md)                       |
 | `vtcode-macros`             | [crates/common/vtcode-macros/AGENTS.md](crates/common/vtcode-macros/AGENTS.md)                         |
 | `vtcode-utility-tool-specs` | [crates/common/vtcode-utility-tool-specs/AGENTS.md](crates/common/vtcode-utility-tool-specs/AGENTS.md) |

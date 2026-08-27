@@ -881,6 +881,16 @@ python3 scripts/generate_config_field_reference.py
 | `ui.tool_output_spool_bytes` | `integer` | no | `80000` | Maximum bytes of output to display before auto-spooling to disk |
 | `ui.tool_output_spool_dir` | `null \| string` | no | `null` | Optional custom directory for spooled tool output logs |
 | `ui.vim_mode` | `boolean` | no | `false` | Enable Vim-style prompt editing in the interactive terminal UI. |
+| `webmcp.allowed_origins` | `array` | no | `[]` | Exact browser origins allowed to pair. |
+| `webmcp.allowed_origins[]` | `string` | no | `-` | - |
+| `webmcp.allowed_roots` | `array` | no | `[]` | Explicit headless roots; the current bridge serves one root per process. |
+| `webmcp.allowed_roots[]` | `string` | no | `-` | - |
+| `webmcp.enabled` | `boolean` | no | `false` | Whether a session may start a WebMCP listener through an integration. |
+| `webmcp.host` | `string` | no | `"127.0.0.1"` | Literal loopback bind host; remote clients require a TLS-terminating reverse proxy. |
+| `webmcp.max_frame_bytes` | `integer` | no | `1048576` | Maximum JSON WebSocket frame size. |
+| `webmcp.max_in_flight_requests` | `integer` | no | `8` | Maximum concurrent bridge operations. |
+| `webmcp.pairing_ttl_secs` | `integer` | no | `300` | One-time pairing and session lifetime. |
+| `webmcp.port` | `integer` | no | `0` | Bind port. Zero asks the OS for an available port. |
 | `workspace.include_context` | `boolean` | no | `true` | Include workspace context in messages. |
 | `workspace.max_context_size` | `integer \| null` | no | `null` | Maximum size of workspace context to include (in bytes). |
 | `workspace.use_root_config` | `boolean` | no | `false` | When true, force the workspace root `vtcode.toml` as the sole active config layer, discarding system, user, project, and dot-dir layers. |

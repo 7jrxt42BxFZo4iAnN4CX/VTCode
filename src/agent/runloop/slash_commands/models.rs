@@ -159,6 +159,11 @@ pub(crate) enum SlashCommandOutcome {
     ToggleTasksPanel,
     ShowJobsPanel,
     ShowStatus,
+    ShowWebmcpStatus,
+    StartWebmcp {
+        origin: String,
+    },
+    StopWebmcp,
     Notify {
         message: String,
     },

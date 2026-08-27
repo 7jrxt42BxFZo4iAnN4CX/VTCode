@@ -186,6 +186,11 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Summary, Auto-Allowed Commands, Tool Policies, Key Safety Features, Dangerous Operations (Blocked)
   - **User Questions**: "What can you tell me about VT Code Execution Policy?", "How does Summary work?", "How does Auto-Allowed Commands work?"
 
+- **File**: `docs/development/webmcp.md`
+  - **Content**: WebMCP bridge development guide
+  - **Topics**: Boundaries, Transport and pairing, Running the headless bridge, Runtime adapters, Configuration and verification
+  - **User Questions**: "What can you tell me about WebMCP bridge development guide?", "How does Boundaries work?", "How does Transport and pairing work?"
+
 - **File**: `docs/development/model-profiles.md`
   - **Content**: model-profiles.md
   - **User Questions**: "What can you tell me about model-profiles.md?"
@@ -288,6 +293,11 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Content**: VT Code Platform Compatibility Matrix
   - **Topics**: Quick Reference, Minimum Supported Rust Version (MSRV), Platform-Specific Features, LLM Provider Compatibility, Feature Flags Matrix
   - **User Questions**: "What can you tell me about VT Code Platform Compatibility Matrix?", "How does Quick Reference work?", "How does Minimum Supported Rust Version (MSRV) work?"
+
+- **File**: `docs/user-guide/webmcp-demo.md`
+  - **Content**: WebMCP Demo User Guide
+  - **Topics**: Run the fallback demo, Connect to a real workspace, Edit, review, and apply in headless mode, Send a draft to an active VT Code session, Drafts and conflicts
+  - **User Questions**: "What can you tell me about WebMCP Demo User Guide?", "How does Run the fallback demo work?", "How does Connect to a real workspace work?"
 
 ### Integrations & Tooling
 

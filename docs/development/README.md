@@ -16,6 +16,7 @@ Entry point for VT Code contributor workflows.
 - [Process Hardening](./PROCESS_HARDENING.md) - Runtime hardening controls.
 - [Execution Policy](./EXECUTION_POLICY.md) - Command policy model.
 - [Command Security Model](./COMMAND_SECURITY_MODEL.md) - Command validation and threat model.
+- [WebMCP bridge](./webmcp.md) - Authenticated browser editing, pairing, runtime adapters, and security boundaries.
 - [Security Guide](../guides/security.md) - Process sandbox boundaries, MCP inheritance, and provider diagnostic redaction.
 - [Runtime Guidance](./runtime-guidance.md) - Boundary between compiled universal behavior and dynamic project instructions.
 - [vtcode Binary Gotchas](./vtcode-binary-gotchas.md) - Binary startup, runloop recovery, allocator, and request-assembly invariants.

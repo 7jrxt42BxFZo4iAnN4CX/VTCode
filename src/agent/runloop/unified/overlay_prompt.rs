@@ -123,7 +123,7 @@ where
                 close_overlay(handle).await;
                 return Ok(OverlayWaitOutcome::Exit);
             }
-            InlineEvent::Submit(_) | InlineEvent::QueueSubmit(_) => continue,
+            InlineEvent::Submit(_) | InlineEvent::WebmcpSubmit(_) | InlineEvent::QueueSubmit(_) => continue,
             InlineEvent::Transient(_) => {}
             _ => {
                 tracing::info!(

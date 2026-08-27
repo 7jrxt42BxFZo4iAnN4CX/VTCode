@@ -458,6 +458,43 @@ fn handle_edit_command(args: &str) -> Result<SlashCommandOutcome> {
     Ok(SlashCommandOutcome::LaunchEditor { file })
 }
 
+#[allow(dead_code, reason = "Intentional compatibility, platform, or test-only suppression.")]
+fn handle_webmcp_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
+    match args.trim() {
+        "" | "status" => return Ok(SlashCommandOutcome::ShowWebmcpStatus),
+        "tools" => {
+            renderer.line(MessageStyle::Info, "WebMCP tools: workspace.list_files, workspace.read_file, patch.propose, patch.apply, checks.run, patch.revert, turn.request, cancel")?;
+        }
+        "roots" => {
+            renderer.line(
+                MessageStyle::Info,
+                "Headless WebMCP roots are configured with [webmcp].allowed_roots or --allowed-root.",
+            )?;
+        }
+        "pair" => renderer.line(
+            MessageStyle::Info,
+            "Usage: /webmcp pair <exact-browser-origin> (for example, /webmcp pair http://localhost:5173)",
+        )?,
+        "unpair" => return Ok(SlashCommandOutcome::StopWebmcp),
+        pair_args if pair_args.starts_with("pair ") => {
+            let origin = pair_args.strip_prefix("pair ").unwrap_or_default().trim();
+            let origin = origin.strip_prefix("--origin ").unwrap_or(origin).trim();
+            if origin.is_empty() || origin.split_whitespace().count() != 1 {
+                renderer.line(
+                    MessageStyle::Error,
+                    "Usage: /webmcp pair <exact-browser-origin> (for example, /webmcp pair http://localhost:5173)",
+                )?;
+            } else {
+                return Ok(SlashCommandOutcome::StartWebmcp { origin: origin.to_string() });
+            }
+        }
+        _ => {
+            renderer.line(MessageStyle::Error, "Usage: /webmcp [status|tools|roots|pair <origin>|unpair]")?;
+        }
+    }
+    Ok(SlashCommandOutcome::Handled)
+}
+
 pub(in crate::agent::runloop::slash_commands) async fn execute_built_in_command_skill(
     spec: &'static CommandSkillSpec,
     args: &str,
@@ -489,6 +526,7 @@ pub(in crate::agent::runloop::slash_commands) async fn execute_built_in_command_
         "checkup" => handle_checkup_command(args, renderer, renderer.supports_inline_ui()),
         "update" => handle_update_command(args),
         "mcp" => handle_mcp_command(args, renderer),
+        "webmcp" => handle_webmcp_command(args, renderer),
         "local" => handle_local_command(args, renderer),
         "model" => Ok(SlashCommandOutcome::StartModelSelection),
         "mode" => handle_mode_command(args),

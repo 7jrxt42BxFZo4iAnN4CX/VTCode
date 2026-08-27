@@ -298,6 +298,12 @@ const COMMAND_SKILL_SPECS: &[CommandSkillSpec] = &[
         "integration"
     ),
     built_in_command_spec!(
+        "webmcp",
+        "Manage the opt-in authenticated browser editor bridge (usage: /webmcp [status|tools|roots|pair <origin>|unpair])",
+        "/webmcp [status|tools|roots|pair <origin>|unpair]",
+        "integration"
+    ),
+    built_in_command_spec!(
         "plugin",
         "Open interactive Agent Plugins manager (usage: /plugin, /plugin manager)",
         "/plugin [manager|list|info <name>|add <source> [--name <id>]|remove <name>|validate <path>|refresh|help]",

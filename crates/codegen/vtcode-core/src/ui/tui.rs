@@ -41,6 +41,8 @@ mod headless {
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub enum InlineEvent {
         Submit(SubmittedInput),
+        /// Submit text from the WebMCP bridge without interpreting slash commands.
+        WebmcpSubmit(SubmittedInput),
         QueueSubmit(SubmittedInput),
         Steer(SubmittedInput),
         ProcessLatestQueued,

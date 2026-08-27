@@ -1,51 +1,120 @@
-# VT Code WebMCP Challenge demo
+# VT Code WebMCP editor
 
-This is a dependency-free static browser demo of a human-approved coding workflow. It is self-contained: the sample project and all state live in page memory. No arbitrary code, shell commands, network requests, filesystem access, or user-supplied JavaScript are executed.
+This Vite example is a real CodeMirror 6 browser editor for a VT Code
+workspace. It supports editable drafts, syntax highlighting, tabs, line
+numbers, dirty state, unified diff review, checks, prompt requests, and
+backend events.
 
-The example is covered by the repository's [MIT OR Apache-2.0 license](../../LICENSE).
+For the click-by-click setup and fallback/connected workflow, see the
+[local demo guide](GUIDE.md) or the [repository WebMCP demo user
+guide](../../docs/user-guide/webmcp-demo.md).
+
+The browser never writes to the local filesystem. With no bridge, the page
+starts in a deterministic `InMemoryBackend`; edits, proposals, checks, and
+reverts are confined to page memory. When paired with `vtcode webmcp serve`,
+the same UI uses an authenticated WebSocket backend. VT Code verifies base
+digests, owns the authoritative diff, applies terminal or full-auto policy,
+and validates current files before reverts.
+
+The interface is intentionally IDE-shaped. The explorer keeps directories
+collapsed, lists file metadata without loading every file, and reads content
+only when a file is opened. The bottom panel separates `TERMINAL`, `CHANGES`,
+and `VT CODE` output so large files and long command output stay inside their
+own scroll areas.
 
 ## Run locally
 
-From this directory, use any static server. For example:
+From this directory:
 
 ```sh
-python3 -m http.server 8000
+npm ci
+npm run dev -- --host localhost --port 5173 --strictPort
 ```
 
-Open `http://localhost:8000/`. If you already have `npx serve` installed, `npx serve .` works too; this project does not install or require it.
+Open the URL printed by Vite. The Vite base is relative, so the generated site
+also works beneath a GitHub Pages project path.
 
-## Deploy to GitHub Pages
-
-The repository workflow at `../../.github/workflows/webmcp-demo.yml` publishes this directory when `feat/webmcp-challenge-demo` is pushed, or when the workflow is run manually. In the repository settings, set **Pages → Build and deployment → Source** to **GitHub Actions** if Pages is not enabled yet.
+Build and test the example with:
 
 ```sh
-git push --set-upstream origin feat/webmcp-challenge-demo
+npm test
+npm run build
 ```
 
-For this repository, the expected project URL is `https://vinhnx.github.io/VTCode/` after the first successful deployment. Verify the deployed URL in the workflow's `github-pages` environment before adding it to Devpost.
+## Pair with VT Code
 
-## WebMCP behavior
+Start the bridge from the repository checkout with an explicit origin
+allowlist. Using the checkout avoids accidentally invoking an older globally
+installed `vtcode` binary:
 
-When `document.modelContext.registerTool` is available in a secure context, the page dynamically registers a safe baseline and exposes mutation tools only for the lifecycle step where they are usable. Browsers without WebMCP show a clear “WebMCP unavailable” status; every action remains exercisable through the normal UI. No `exposedTo` origins are configured, so the tools retain the API's same-origin default.
+```sh
+cd /path/to/vtcode
+cargo run --locked -- webmcp serve \
+  --origin http://localhost:5173 \
+  --allowed-root /absolute/path/to/workspace
+```
 
-| Tool | Input | Behavior |
-| --- | --- | --- |
-| `list_project_files` | none | Returns the three in-memory paths; read-only. |
-| `search_code` | `{ query: string }` | Returns matching file/line records; read-only. |
-| `read_file` | `{ path: string }` | Returns one known file; read-only. |
-| `propose_patch` | none | Stages a fixed greeting patch; does not mutate files. |
-| `run_checks` | none | Runs two deterministic content assertions in-browser; read-only. |
-| `apply_approved_patch` | none | Registered only after explicit UI approval; applies only the still-staged patch when approval is present, consumes approval, then is unregistered. |
-| `revert_last_change` | none | Registered after apply; restores the previous content only after a confirmation dialog, then is unregistered. |
+Enter the newest printed `ws://.../webmcp` address and matching one-time
+pairing code in the editor's connection panel. Keep the bridge terminal
+running. A restart can change the port and always invalidates the previous
+code. The pairing code and returned session token are held only in JavaScript
+memory; they are not put in query parameters, browser storage, or logs. The
+terminal remains the write authority. A default server started without
+explicit full-auto permission can inspect and stage proposals but rejects
+filesystem mutation requests; checks also require `exec_command` (or `*`) in
+the explicit full-auto allowlist.
 
-Tool handlers reject unknown paths, reject unexpected input keys, cap user-controlled string lengths, and do not accept executable content. `read_file` and `search_code` mark returned source as untrusted; read-only tools use `readOnlyHint`. Registration uses abort signals to unregister tools as their lifecycle window closes, and partial registrations are cleaned up on failure. Approval is a separate UI action: it records permission while leaving the patch staged, then enables and registers `apply_approved_patch`. Applying consumes that approval; direct agent calls remain fail-closed without it. The sample project is intentionally bounded to three files. There is no persistence, network, filesystem, or command execution.
+If an installed `vtcode` says `unrecognized subcommand 'serve'`, update it or
+run `cargo run --locked -- webmcp serve ...` from the source checkout. The
+configured origin must match the page exactly: `localhost:5173` and
+`127.0.0.1:5173` are different origins.
 
-## Three-minute demo script
+The standalone `serve` command is headless: it does not open an interactive
+terminal approval prompt or execute agent turns. For a real **VT CODE TURN**,
+start `vtcode chat` in the target workspace and enter
+`/webmcp pair http://localhost:5173` in that same TUI session. See the user
+guide for the complete active-session workflow.
 
-1. Open the page and point out the browser support status, sandbox note, file tree, read-only viewer, and live audit log.
-2. Search for `greeting`, open the matching source result, and explain that inspection tools cannot mutate state.
-3. Click **Stage greeting update**. Review the staged diff and the “Awaiting approval” state.
-4. Click **Approve patch** and confirm. The patch remains staged, and **Apply approved patch** is enabled.
-5. Click **Apply approved patch**, confirm the keyboard-friendly dialog, then open `src/greeting.js` to see the highlighted modified line and the “Modified in memory” editor state before running local checks. An agent can invoke the dynamically registered apply tool at this point as well.
-6. Click **Revert last change**, confirm, and show the original source restored.
-7. Click **Run self-check** to demonstrate the complete proposal → approval → apply → verify → revert path. In a WebMCP-capable browser, explain that the same bounded handlers are registered as tools.
+## Editor workflow
+
+1. Filter the workspace with **Filter files**, expand a directory, and open a
+   file. Only the selected file is loaded into the editor.
+2. Edit the file in its draft buffer. Open another file from the explorer or
+   tabs without losing the draft.
+3. Use `Cmd/Ctrl+S` or **Review changes** to create a client-side unified diff.
+4. Select **CHANGES** in the bottom panel and review the diff. **Approve
+   patch** sends structured changes with their `sha256:` base digests. In
+   fallback mode this is an in-memory approval; in connected mode it requests
+   VT Code/terminal approval.
+5. Apply only after the backend accepts the proposal. Stale files and
+   external changes fail closed.
+6. Select **TERMINAL** to inspect activity and checks, or **VT CODE** to
+   compose an agent turn.
+
+The prompt composer attaches the reviewed diff to a VT Code turn request. The
+static fallback and the standalone headless bridge do not execute an agent
+turn: the editor reports that limitation in the response panel. The active
+TUI bridge started with `/webmcp pair <origin>` is the runtime path for a real
+model response.
+
+Reload compares a clean draft with the latest backend snapshot. A dirty buffer
+is marked as an external-change conflict instead of being silently overwritten.
+File paths, content sizes, proposal counts, commands, and WebSocket frames are
+bounded by the backend. The file filter narrows the explorer by name or path;
+it is not a full-content search.
+
+## WebMCP browser API
+
+When the browser exposes `document.modelContext.registerTool`, the page
+registers bounded read-only inspection tools. The normal UI remains usable when
+that API is unavailable. Browser WebMCP tools do not bypass the VT Code
+WebSocket pairing or terminal approval boundary.
+
+## GitHub Pages
+
+The repository workflow at `../../.github/workflows/webmcp-demo.yml` runs
+`npm ci`, builds the Vite app, and publishes `dist/` when the demo branch is
+pushed or the workflow is started manually. Configure Pages to use **GitHub
+Actions**.
+
+The example is covered by the repository's [MIT OR Apache-2.0 license](../../LICENSE).

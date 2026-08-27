@@ -151,6 +151,7 @@ guide, integration guide, or reference.
 
 - [**Interactive TUI**](./docs/user-guide/interactive-mode.md): primary agents, slash commands (`/model`, `/review`, `/mcp`, `/skills`, `/theme`, `/compact`)
 - [**CLI commands**](./docs/user-guide/commands.md): command reference for interactive, headless, review, and automation workflows
+- [**WebMCP demo**](./docs/user-guide/webmcp-demo.md): run the browser editor in fallback mode or pair it with a local VT Code bridge
 - [**Full automation**](./docs/guides/full-automation.md): `--full-auto` CLI, plan-build-evaluate harness, subagents, and scheduled tasks
 - [**Providers**](./docs/providers/PROVIDER_GUIDES.md): setup guides for all built-in providers
 - [**Configuration**](./docs/config/CONFIG_FIELD_REFERENCE.md): `vtcode.toml`, tool config, and lifecycle hooks

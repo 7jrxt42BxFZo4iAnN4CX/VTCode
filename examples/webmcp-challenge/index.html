@@ -1,31 +1,121 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
+  <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="VT Code WebMCP Challenge companion demo">
-  <title>VT Code · Human-approved coding</title>
-  <link rel="stylesheet" href="styles.css">
+  <meta name="description" content="VT Code WebMCP browser code editor with a safe in-memory fallback">
+  <title>VT Code · WebMCP editor</title>
 </head>
 <body>
-  <header class="topbar">
-    <a class="brand" href="."><span class="brand-mark">VT</span><span>VT Code <small>WebMCP challenge</small></span></a>
-    <div class="top-actions"><span id="supportStatus" class="support-pill" role="status" aria-live="polite">Checking WebMCP…</span><button id="selfCheck" type="button" class="button subtle">Run self-check</button></div>
-  </header>
-  <main class="shell">
-    <section class="hero"><div><p class="eyebrow">SAFE BY DESIGN · LOCAL DEMO</p><h1>Code with a human<br><em>in the loop.</em></h1><p class="lede">A bounded WebMCP sidecar for inspecting, proposing, and approving changes to a tiny project.</p></div><div class="hero-card"><span class="pulse"></span><div><strong>Approval gate active</strong><small>Nothing changes without your explicit approval.</small></div></div></section>
-    <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <section class="workspace" aria-label="Coding workspace">
-      <aside class="panel files-panel"><div class="panel-heading"><div><span class="label">PROJECT</span><h2>hello-world</h2></div><span class="count">3 files</span></div><div id="fileTree" class="file-tree"></div><div class="boundary-note"><span>⌁</span><div><strong>Sandboxed project</strong><small>In-memory · no network · no shell</small></div></div></aside>
-      <section class="panel editor-panel"><div class="panel-heading editor-heading"><div><span class="label">CODE VIEWER</span><h2 id="fileTitle">README.md</h2></div><span id="fileType" class="file-type">MD</span></div><pre id="codeViewer" class="code-viewer" tabindex="0" aria-label="Selected file contents"></pre><div class="editor-footer"><span id="lineCount">0 lines</span><span id="editorState" class="editor-state">Original snapshot · in-memory</span></div></section>
-      <aside class="right-column"><section class="panel search-panel"><div class="panel-heading"><div><span class="label">INSPECT</span><h2>Search code</h2></div><span class="tool-chip">read-only</span></div><div class="search-box"><span aria-hidden="true">⌕</span><input id="searchInput" type="search" maxlength="120" placeholder="Try “greeting”" aria-label="Search project code"><kbd>⌘ K</kbd></div><div id="searchResults" class="search-results" aria-live="polite"><small>Search across the embedded project.</small></div></section>
-      <section class="panel activity-panel"><div class="panel-heading"><div><span class="label">TRACE</span><h2>Activity log</h2></div><span class="live-dot">LIVE</span></div><ol id="activityLog" class="activity-log"></ol></section></aside>
-    </section>
-    <section class="panel proposal-panel"><div class="panel-heading"><div><span class="label">CHANGE CONTROL</span><h2>Staged patch</h2></div><span id="proposalState" class="state-badge">No proposal</span></div><div class="patch-grid"><div id="diffView" class="diff-view"><div class="empty-state"><span>⌘</span><strong>No changes staged</strong><small>Use “Stage greeting update” to preview a deterministic patch.</small></div></div><div class="approval-card"><div class="approval-icon">✓</div><h3>Review, then approve</h3><p id="approvalCopy">Review the staged diff. Approving records permission; applying is a separate action.</p><div class="approval-actions"><button id="proposePatch" class="button primary">Stage greeting update</button><button id="approvePatch" class="button approve" disabled>Approve patch</button><button id="applyPatch" class="button approve" disabled>Apply approved patch</button><button id="revertPatch" class="button danger" disabled>Revert last change</button></div></div></div></section>
-    <section class="status-row"><div><span class="status-icon" aria-hidden="true">●</span><strong id="statusText" role="status" aria-live="polite">Ready for inspection</strong><small id="statusDetail">Select a file or use a read-only tool.</small></div><button id="runChecks" type="button" class="button subtle">Run local checks <span aria-hidden="true">→</span></button></section>
-  </main>
-  <dialog id="confirmDialog"><form method="dialog"><span class="dialog-kicker">CONFIRMATION REQUIRED</span><h2 id="dialogTitle">Apply this patch?</h2><p id="dialogCopy">This will update the in-memory sample project.</p><div class="dialog-actions"><button value="cancel" class="button subtle">Cancel</button><button id="dialogConfirm" value="confirm" class="button primary">Confirm</button></div></form></dialog>
-  <footer><span>VT Code / WebMCP Challenge</span><span>Local-first · deterministic · inspectable</span></footer>
-  <script type="module" src="app.js"></script>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href=".">
+        <span class="brand-mark">VT</span>
+        <span>VT CODE <small>WEBMCP EDITOR</small></span>
+      </a>
+      <div class="workspace-identity">
+        <span class="label">WORKSPACE</span>
+        <strong id="modeTitle">hello-world</strong>
+        <small id="modeDetail">In-memory fallback · no filesystem access.</small>
+      </div>
+      <div class="top-actions">
+        <span id="supportStatus" class="support-pill" role="status">Fallback mode</span>
+        <button id="selfCheck" class="button subtle" type="button">Run self-check</button>
+      </div>
+    </header>
+
+    <details id="connectionPanel" class="connection-panel">
+      <summary>Connect to a local VT Code bridge</summary>
+      <div class="connection-form">
+        <label>WebSocket URL<input id="bridgeUrl" type="url" value="ws://127.0.0.1:8787/webmcp" autocomplete="off" spellcheck="false"></label>
+        <label>Pairing code<input id="pairingCode" type="password" inputmode="text" maxlength="64" autocomplete="off" spellcheck="false"></label>
+        <button id="connectBridge" class="button primary" type="button">Pair with VT Code</button>
+      </div>
+      <p class="connection-note">Use the URL and one-time code printed by the same running bridge. The code and session token stay in browser memory only.</p>
+    </details>
+
+    <main class="ide-shell" aria-label="VT Code coding workspace">
+      <aside class="explorer" aria-label="Workspace explorer">
+        <div class="explorer-header">
+          <div><span class="label">EXPLORER</span><h2>Files</h2></div>
+          <span id="fileCount" class="count">0 files</span>
+        </div>
+        <div class="explorer-filter">
+          <span aria-hidden="true">⌕</span>
+          <input id="searchInput" type="search" maxlength="160" placeholder="Filter files" aria-label="Filter files by name or path">
+          <kbd>⌘K</kbd>
+        </div>
+        <div id="searchResults" class="filter-status" aria-live="polite">Filter files by name or path</div>
+        <div id="fileTree" class="file-tree" role="tree"></div>
+        <div class="boundary-note">
+          <span class="boundary-mark">LOCAL</span>
+          <div><strong>Write boundary</strong><small id="boundaryDetail">In-memory · no filesystem</small></div>
+        </div>
+      </aside>
+
+      <section class="editor-workspace" aria-label="Code editor">
+        <header class="editor-titlebar">
+          <div class="editor-file-heading">
+            <span class="label">EDITOR</span>
+            <h1 id="fileTitle">No file</h1>
+          </div>
+          <div class="editor-meta"><span id="fileType" class="file-type">TEXT</span><span id="editorState">Workspace snapshot</span></div>
+        </header>
+        <nav id="fileTabs" class="file-tabs" role="tablist" aria-label="Open files"></nav>
+        <div class="editor-toolbar">
+          <button id="reloadFile" class="toolbar-button" type="button">Reload</button>
+          <button id="discardDraft" class="toolbar-button" type="button">Discard draft</button>
+          <span class="toolbar-hint">Ctrl/Cmd+S reviews changes</span>
+          <button id="reviewChanges" class="button primary" type="button">Review changes</button>
+        </div>
+        <div id="editor" class="code-editor" aria-label="Selected file editor"></div>
+        <div class="editor-footer"><span id="cursorPosition">Ln 1, Col 1</span><span class="editor-footer-hint">Drafts stay in this browser until reviewed</span></div>
+
+        <section class="terminal-panel" aria-label="Terminal and VT Code output">
+          <header class="terminal-header">
+            <nav class="terminal-tabs" role="tablist" aria-label="Bottom panel">
+              <button class="terminal-tab active" type="button" role="tab" aria-selected="true" data-terminal="activity">TERMINAL</button>
+              <button class="terminal-tab" type="button" role="tab" aria-selected="false" data-terminal="changes">CHANGES <span id="proposalState" class="state-badge">No proposal</span></button>
+              <button class="terminal-tab" type="button" role="tab" aria-selected="false" data-terminal="turn">VT CODE</button>
+            </nav>
+            <div class="terminal-status"><strong id="statusText" role="status">Ready for inspection</strong><span id="statusDetail">Fallback mode is memory-only.</span></div>
+            <div class="terminal-actions"><button id="runChecks" class="toolbar-button" type="button">Run checks</button><small id="webmcpCapability">Checking browser WebMCP support…</small></div>
+          </header>
+
+          <div id="terminalActivity" class="terminal-pane active" role="tabpanel">
+            <div class="terminal-grid">
+              <div class="terminal-section"><span class="terminal-label">ACTIVITY</span><ol id="activityLog" class="activity-log"></ol></div>
+              <div class="terminal-section check-output-wrap"><span class="terminal-label">CHECK OUTPUT</span><pre id="checkOutput">No checks run yet.</pre></div>
+            </div>
+          </div>
+
+          <div id="terminalChanges" class="terminal-pane" role="tabpanel" hidden>
+            <div class="change-grid">
+              <div id="diffView" class="diff-view"><div class="empty-state"><strong>No changes staged</strong><small>Edit a buffer, then review the draft.</small></div></div>
+              <div class="approval-card">
+                <span class="terminal-label">CHANGE CONTROL</span>
+                <h2>Review before writing</h2>
+                <p id="approvalCopy">Draft buffers stay local until you review and send a structured proposal.</p>
+                <div class="approval-actions"><button id="approvePatch" class="button approve" type="button" disabled>Approve patch</button><button id="applyPatch" class="button approve" type="button" disabled>Apply approved patch</button><button id="revertPatch" class="button danger" type="button" disabled>Revert last change</button></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="terminalTurn" class="terminal-pane" role="tabpanel" hidden>
+            <div class="turn-grid">
+              <div class="turn-heading"><span class="terminal-label">VT CODE TURN</span><h2>Prompt composer</h2><small id="promptDetail">Browser-only fallback: pair a bridge for workspace access; agent turns need an active runtime.</small></div>
+              <textarea id="promptInput" maxlength="4000" rows="2" placeholder="Ask VT Code to inspect the reviewed change"></textarea>
+              <button id="requestTurn" class="button subtle" type="button">Pair editor first</button>
+              <div class="turn-output-wrap"><span class="terminal-label">RESPONSE</span><pre id="turnOutput">No VT Code turn requested.</pre></div>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <dialog id="confirmDialog"><form method="dialog"><span class="dialog-kicker">CONFIRMATION REQUIRED</span><h2 id="dialogTitle">Apply this patch?</h2><p id="dialogCopy"></p><div class="dialog-actions"><button value="cancel" class="button subtle" type="submit">Cancel</button><button id="dialogConfirm" value="confirm" class="button primary" type="button">Confirm</button></div></form></dialog>
+  <script type="module" src="./src/main.js"></script>
 </body>
 </html>

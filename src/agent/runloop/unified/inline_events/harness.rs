@@ -21,6 +21,7 @@ use vtcode_core::exec::events::{
     ThreadItemDetails, ToolCallStatus, ToolOutcome, TurnCompletedEvent, TurnFailedEvent, TurnStartedEvent, Usage,
     VersionedThreadEvent,
 };
+use vtcode_webmcp::WebmcpEventHub;
 
 mod atif;
 mod canonical;
@@ -46,6 +47,7 @@ struct HarnessEventEmitterInner {
     legacy: Mutex<Option<LegacyWriter>>,
     open_responses: Mutex<Option<OpenResponsesExporter>>,
     atif: Mutex<Option<AtifExporter>>,
+    webmcp_event_hub: Mutex<Option<WebmcpEventHub>>,
     dispatch_gate: Mutex<()>,
     finalized: AtomicBool,
     finish_result: OnceCell<std::result::Result<(), String>>,
@@ -66,6 +68,7 @@ impl HarnessEventEmitter {
                 legacy: Mutex::new(Some(legacy)),
                 open_responses: Mutex::new(None),
                 atif: Mutex::new(None),
+                webmcp_event_hub: Mutex::new(None),
                 dispatch_gate: Mutex::new(()),
                 finalized: AtomicBool::new(false),
                 finish_result: OnceCell::new(),
@@ -103,6 +106,7 @@ impl HarnessEventEmitter {
                 legacy: Mutex::new(legacy),
                 open_responses: Mutex::new(None),
                 atif: Mutex::new(None),
+                webmcp_event_hub: Mutex::new(None),
                 dispatch_gate: Mutex::new(()),
                 finalized: AtomicBool::new(false),
                 finish_result: OnceCell::new(),
@@ -191,6 +195,13 @@ impl HarnessEventEmitter {
             canonical.emit(&event)?;
         }
 
+        if let Ok(guard) = self.inner.webmcp_event_hub.lock()
+            && let Some(hub) = guard.as_ref()
+            && let Err(error) = hub.publish(VersionedThreadEvent::new(event.clone()))
+        {
+            tracing::warn!(target: "vtcode.webmcp", error = %error, "failed to publish a runtime event to WebMCP");
+        }
+
         // The legacy JSONL file is an optional compatibility export.
         if let Ok(guard) = self.inner.legacy.lock() {
             if let Some(writer) = guard.as_ref() {
@@ -234,6 +245,15 @@ impl HarnessEventEmitter {
         }
 
         Ok(())
+    }
+
+    /// Attach the active WebMCP event hub to this session's canonical event
+    /// fan-out. Runtime events remain `VersionedThreadEvent` values; the hub
+    /// only adds transport sequencing for browser replay.
+    pub(crate) fn attach_webmcp_event_hub(&self, hub: WebmcpEventHub) {
+        if let Ok(mut guard) = self.inner.webmcp_event_hub.lock() {
+            *guard = Some(hub);
+        }
     }
 
     /// Emit a completed assistant message for a response that did not come

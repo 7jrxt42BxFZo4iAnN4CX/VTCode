@@ -15,6 +15,7 @@ VT Code uses a configuration file named `vtcode.toml` that can be placed at the 
 - [Long-running command waits](#long-running-command-waits)
 - [Context compaction and session history](#context-compaction-and-session-history)
 - [MCP integration](#mcp-integration)
+- [WebMCP browser bridge](#webmcp-browser-bridge)
 - [Security and approvals](#security-and-approvals)
 - [User data directories](../guides/user-data-directories.md)
 - [Permissions guide](../guides/permissions.md)
@@ -661,6 +662,24 @@ Each MCP provider supports these options:
 | `enabled` | boolean | No       | Whether this provider is enabled (default: true) |
 | `env`     | table   | No       | Environment variables to pass to the server      |
 | `cwd`     | string  | No       | Working directory for the command                |
+
+## WebMCP browser bridge
+
+WebMCP is a separate, opt-in bridge for a browser editor. It is not an MCP provider and does not reuse `[mcp]` settings. The browser receives no direct filesystem capability: it sends digest-checked proposals over an origin-validated WebSocket, while VT Code or the headless full-auto policy remains the mutation authority.
+
+```toml
+[webmcp]
+enabled = false
+host = "127.0.0.1"
+port = 0
+allowed_origins = ["http://localhost:5173"]
+allowed_roots = []
+pairing_ttl_secs = 300
+max_frame_bytes = 1048576
+max_in_flight_requests = 8
+```
+
+`allowed_origins` must contain exact browser origins; wildcards are rejected. Loopback is the default bind host and direct non-loopback binding is rejected. Remote access additionally requires explicit CLI opt-in, a `wss://` public URL, and a TLS-terminating reverse proxy forwarding to the loopback listener. Pairing codes expire after five minutes by default and are consumed once. Tokens remain in memory only. See the [WebMCP development guide](../development/webmcp.md) for the protocol and threat model.
 
 ## Security and approvals
 

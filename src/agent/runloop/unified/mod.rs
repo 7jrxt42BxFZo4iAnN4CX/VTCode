@@ -53,6 +53,7 @@ mod ui_interaction_stream_helpers;
 #[cfg(test)]
 mod ui_interaction_tests;
 mod wait_feedback;
+pub(crate) mod webmcp;
 pub(crate) mod wizard_modal;
 mod workspace_links;
 

@@ -140,6 +140,8 @@ pub enum InlineCommand {
 #[derive(Debug, Clone)]
 pub enum InlineEvent {
     Submit(SubmittedInput),
+    /// Submit text from the WebMCP bridge without interpreting slash commands.
+    WebmcpSubmit(SubmittedInput),
     QueueSubmit(SubmittedInput),
     Steer(SubmittedInput),
     ProcessLatestQueued,

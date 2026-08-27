@@ -102,6 +102,7 @@ New to VT Code? Start with installation and basic usage:
 - **[Subagents](./user-guide/subagents.md)** - Create, configure, invoke, and switch between delegated child agents with VT Code-native tool metadata
 - **[Agent Plugins](./user-guide/agent-plugins.md)** - Install portable plugins that bundle Agent Skills and MCP servers under a `plugin.json` manifest
 - **[Interactive Mode Reference](./user-guide/interactive-mode.md)** - Keyboard shortcuts and terminal workflows
+- **[WebMCP Demo User Guide](./user-guide/webmcp-demo.md)** - Run the browser editor in fallback mode or pair it with a local VT Code bridge
 - **[Scheduled Tasks](./user-guide/scheduled-tasks.md)** - Reminders and durable `vtcode schedule` automations
 - [Decision Ledger](./context/context_engineering.md#4-decision-ledger-structured-note-taking) - How decisions are tracked and injected
 - **[Configuration Guide](./config/config.md)** - Comprehensive configuration options

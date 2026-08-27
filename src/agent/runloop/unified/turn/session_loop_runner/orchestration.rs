@@ -452,6 +452,9 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
         let mut prefer_latest_queued_input_once = false;
         let mut queued_inputs: VecDeque<crate::agent::runloop::unified::inline_events::QueuedInput> =
             VecDeque::with_capacity(8);
+        let (webmcp_prompt_sender, webmcp_prompt_receiver) = crate::agent::runloop::unified::webmcp::prompt_channel();
+        let mut webmcp_prompt_receiver = Some(webmcp_prompt_receiver);
+        let mut webmcp_bridge = None;
         let mut agent_touched_paths = std::collections::BTreeSet::new();
         let mut ctrl_c_notice_displayed = false;
         let mut inline_prompt_cost_notice_shown = false;
@@ -679,6 +682,9 @@ pub(crate) async fn run_single_agent_loop_unified_impl(
                             turn_metadata_cache: &mut interaction_turn_metadata_cache,
                             harness_config: harness_config.clone(),
                             runtime_steering,
+                            webmcp_prompt_receiver: &mut webmcp_prompt_receiver,
+                            webmcp_prompt_sender: &webmcp_prompt_sender,
+                            webmcp_bridge: &mut webmcp_bridge,
                             startup_update_notice_rx: &mut startup_update_notice_rx,
                             editor_open_sender: &editor_open_sender,
                         };

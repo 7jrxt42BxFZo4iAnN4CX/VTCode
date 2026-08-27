@@ -133,6 +133,7 @@ impl StartupPolicy {
                 }
                 Some(
                     Commands::ToolPolicy { .. }
+                    | Commands::Webmcp { .. }
                     | Commands::Login { .. }
                     | Commands::Logout { .. }
                     | Commands::Auth { .. }

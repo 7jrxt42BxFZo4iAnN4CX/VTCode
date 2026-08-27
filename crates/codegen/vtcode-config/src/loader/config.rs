@@ -26,6 +26,7 @@ use crate::root::{ChatConfig, PtyConfig, UiConfig};
 use crate::subagents::SubagentRuntimeLimits;
 use crate::telemetry::TelemetryConfig;
 use crate::timeouts::TimeoutsConfig;
+use crate::webmcp::WebmcpConfig;
 
 use crate::loader::syntax_highlighting::SyntaxHighlightingConfig;
 
@@ -220,6 +221,10 @@ pub struct VTCodeConfig {
     #[serde(default)]
     pub mcp: McpClientConfig,
 
+    /// Authenticated browser editor bridge configuration
+    #[serde(default)]
+    pub webmcp: WebmcpConfig,
+
     /// Agent Client Protocol configuration
     #[serde(default)]
     pub acp: AgentClientProtocolConfig,
@@ -310,6 +315,7 @@ impl Default for VTCodeConfig {
             subagents: SubagentRuntimeLimits::default(),
             prompt_cache: PromptCachingConfig::default(),
             mcp: McpClientConfig::default(),
+            webmcp: WebmcpConfig::default(),
             acp: AgentClientProtocolConfig::default(),
             ide_context: IdeContextConfig::default(),
             hooks: HooksConfig::default(),
@@ -339,6 +345,8 @@ impl VTCodeConfig {
         self.timeouts.validate().context("Invalid timeouts configuration")?;
 
         self.prompt_cache.validate().context("Invalid prompt_cache configuration")?;
+
+        self.webmcp.validate().context("Invalid webmcp configuration")?;
 
         self.agent
             .validate_llm_params()

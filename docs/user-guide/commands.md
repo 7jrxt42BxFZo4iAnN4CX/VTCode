@@ -136,6 +136,40 @@ Configure the behaviour under **Settings › Extensions › VT Code**:
 - `/plan` starts or continues the planning workflow. It is a workflow command, not a state selector. Execution agents may also suggest it for demanding or multi-phase tasks; interactive policies confirm the suggestion, while full-auto and skip-confirmations policies accept it automatically. When the plan agent needs a material clarification, the inline interview wizard presents selectable answers and resumes planning with the chosen answer. Use `/plan off` to cancel an active planning workflow without implementing its draft.
 - `/checkup` runs configuration diagnostics and suggests reversible optimizations. Use `/checkup [--quick|--full]` (defaults to a full pass); optimizations are confirmed via the selection modal before any config is mutated.
 
+## WebMCP browser bridge
+
+`/webmcp` displays the active-session bridge status and can start the bridge
+inside an interactive TUI session:
+
+```text
+/webmcp
+/webmcp pair http://localhost:5173
+/webmcp tools
+/webmcp roots
+/webmcp unpair
+```
+
+Use `/webmcp pair <origin>` when the browser must submit real agent turns to
+this same VT Code session. The printed WebSocket URL and one-time pairing code
+belong to that running TUI process.
+
+The standalone command starts the opt-in authenticated WebSocket bridge for
+headless workspace operations:
+
+```bash
+vtcode webmcp serve --origin http://localhost:5173
+vtcode webmcp pair --origin http://localhost:5173
+vtcode webmcp status
+vtcode webmcp tools
+vtcode webmcp roots
+vtcode webmcp unpair
+```
+
+The server binds to loopback and chooses an available port by default. Enter its one-time pairing code in the browser editor. Exact origins are required; remote access must use `--allow-remote --public-url wss://...` behind a TLS-terminating reverse proxy, and direct non-loopback binding is rejected. Browser confirmation cannot authorize a real write: terminal permission or the existing explicit full-auto allowlist remains authoritative. See [WebMCP bridge development](../development/webmcp.md).
+
+For the browser walkthrough, including fallback mode, local pairing, connected
+drafts, and troubleshooting, see the [WebMCP demo user guide](./webmcp-demo.md).
+
 ## Scheduled tasks
 
 Use `vtcode schedule` when the task should survive restarts.

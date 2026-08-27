@@ -23,6 +23,7 @@ Last reviewed: 2026-08-23
 - [Web Search Tool](tools/web_search.md) - Web search configuration and guard rails.
 - [Defuddle Fetch](tools/defuddle_fetch.md) - Markdown extraction fallback for complex pages.
 - [Scheduled Tasks](user-guide/scheduled-tasks.md) - Reminder and durable scheduler flows.
+- [WebMCP Demo User Guide](user-guide/webmcp-demo.md) - Run the browser editor in fallback mode or pair it with a local VT Code bridge.
 - [Planning Workflow](guides/planning-workflow.md) - `/plan`, review gate, plan handoff to build/auto agents.
 - [Permissions Guide](guides/permissions.md) - Granular agent permissions and rule grammar.
 - [Provider Guides](providers/PROVIDER_GUIDES.md) - LLM provider setup and behavior.

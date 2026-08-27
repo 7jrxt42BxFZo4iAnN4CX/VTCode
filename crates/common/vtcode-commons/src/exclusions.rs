@@ -31,6 +31,14 @@ pub const SENSITIVE_FILES: &[&str] = &[
     ".env.development",
     ".env.test",
     ".DS_Store",
+    ".git-credentials",
+    ".netrc",
+    ".npmrc",
+    ".pypirc",
+    "credentials",
+    "credentials.json",
+    "id_ed25519",
+    "id_rsa",
 ];
 
 /// Glob patterns passed to ripgrep (or other search back-ends) to exclude
@@ -49,7 +57,23 @@ pub const DEFAULT_IGNORE_GLOBS: &[&str] = &[
 ];
 
 /// Returns `true` if `name` matches any entry in [`SENSITIVE_FILES`] or
-/// starts with `.env.` (catches all dotenv variants).
+/// starts with `.env.` (catches all dotenv variants). Matching is
+/// case-insensitive because macOS and Windows commonly use case-insensitive
+/// filesystems.
 pub fn is_sensitive_file(name: &str) -> bool {
-    SENSITIVE_FILES.contains(&name) || name.starts_with(".env.")
+    SENSITIVE_FILES.iter().any(|sensitive| name.eq_ignore_ascii_case(sensitive))
+        || name.get(..5).is_some_and(|prefix| prefix.eq_ignore_ascii_case(".env."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_sensitive_file;
+
+    #[test]
+    fn sensitive_file_matching_is_case_insensitive() {
+        assert!(is_sensitive_file(".ENV"));
+        assert!(is_sensitive_file(".Env.Local"));
+        assert!(is_sensitive_file(".NPMRC"));
+        assert!(!is_sensitive_file(".environment"));
+    }
 }

@@ -14,6 +14,7 @@ use crate::cli::app_server::handle_app_server_command;
 use crate::cli::bench_allocator::handle_bench_allocator_command;
 use crate::cli::plugins::dispatch_plugins_command;
 use crate::cli::session_store::handle_session_store_command;
+use crate::cli::webmcp;
 use crate::cli::{
     analyze, benchmark, check, config, create_project, dependencies, exec, init, init_project, man, notify, revert,
     review, schedule, schema, secret, skills, snapshots, trajectory, update,
@@ -41,6 +42,9 @@ pub(crate) async fn dispatch_command(args: &Cli, startup: &StartupContext, comma
         }
         Commands::A2a { command } => {
             vtcode_core::cli::a2a::execute_a2a_command(command).await?;
+        }
+        Commands::Webmcp { command } => {
+            webmcp::handle_webmcp_command(startup, command).await?;
         }
         Commands::AppServer { listen } => {
             handle_app_server_command(core_cfg, cfg, &listen).await?;
