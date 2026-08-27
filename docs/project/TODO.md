@@ -13,40 +13,7 @@ session: /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/sessions/
 
 ---
 
-CRITICAL: check vtcode post-amble summaried session is not gone/missing. it was working before. context: when user control+c or quit the program, there is the summarization turn/context shown in the CLI. Currently it showing a blank space. This is a regression from the previous behavior. The summarization turn/context should be shown in the CLI after the user quits the program.
-
----
-
-The full benchmark command began a lengthy release-profile compilation and did not complete within the available
-execution window. The broader deferral/help-path optimizations were not implemented because the measured benchmark
-evidence and relevant startup call paths require further investigation.
-
------------------------------------------------------- Info -------------------------------------------------------
-Execution summary: blocked; changed files: Cargo.toml, benches/startup.rs,
-crates/codegen/vtcode-config/src/loader/manager.rs, crates/common/vtcode-commons/src/startup_trace.rs,
-docs/development/testing.md, docs/development/vtcode-binary-gotchas.md, src/main.rs,
-src/main_helpers/bootstrap.rs, src/startup/config_loading.rs; verification: see the final response and task
-tracker; blockers: pending checklist items: Add a repeatable launch benchmark covering cold and warm invocations
-of `--version`, `--help`, and a non-interactive command, recording median and p95 process duration -> files: [
-benches/startup.rs, Cargo.toml] -> verify: [cargo bench --bench startup], Defer or skip startup work that cannot
-affect the selected command, especially theme persistence, dot-folder initialization, update checks, spool
-cleanup, and provider/auth probing for metadata-only commands; retain runtime security initialization for
-commands that execute tools -> files: [src/startup/mod.rs, src/main.rs, src/startup/theme.rs] -> verify: [cargo
-nextest run -p vtcode --all-targets], Reduce repeated filesystem/config work on the help path by reusing the
-already parsed command context where possible and avoiding duplicate config probing in `
-    build_augmented_cli_command` -> files: [src/main_helpers/bootstrap.rs,
-crates/codegen/vtcode-core/src/cli/args/mod.rs] -> verify: [VTCODE_STARTUP_TRACE=1 target/release/vtcode --help],
-Optimize the measured dominant phase only after benchmark evidence, keeping changes surgical and documenting the
-resulting behavior in the binary startup guide -> files: [docs/development/vtcode-binary-gotchas.md,
-docs/development/testing.md] -> verify: [./scripts/check-dev.sh --changed].
-
----
-
-log:
-/Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/checkpoints/turn_1002.json
-/Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/checkpoints/turn_1001.json
-
-/Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/sessions/session-vtcode-20260826T024326Z_049248-14625 /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/sessions/session-vtcode-20260826T024235Z_031640-09364
+CRITICAL: check vtcode post-amble summaried session is sometimes gone/missing. it was working before. context: when user control+c or quit the program, there is the summarization turn/context shown in the CLI. Currently it showing a blank space. This is a regression from the previous behavior. The summarization turn/context should be shown in the CLI after the user quits the program.
 
 ===
 
