@@ -5,9 +5,10 @@ use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
+use fs2::FileExt;
 
 #[path = "vtcode_paths_migration.rs"]
 mod migration;
@@ -17,6 +18,8 @@ pub use migration::{
 
 const APP: &str = "vtcode";
 const MARKER: &str = "legacy-v1.complete";
+const PRIVATE_FILE_LOCK_ATTEMPTS: usize = 100;
+const PRIVATE_FILE_LOCK_DELAY: Duration = Duration::from_millis(10);
 
 struct NativeRoots {
     config_dir: PathBuf,
@@ -429,6 +432,56 @@ impl VtCodePaths {
         result.with_context(|| format!("could not atomically write {}", destination.display()))
     }
 
+    /// Atomically publishes a private file only when the destination is absent.
+    ///
+    /// The temporary file is linked into place instead of renamed over the
+    /// destination. This makes legacy-cache republishing safe when multiple
+    /// VT Code processes initialize the same cache concurrently: the first
+    /// publisher wins and a newer canonical cache cannot be clobbered.
+    pub fn write_private_file_atomic_if_absent(path: impl AsRef<Path>, contents: &[u8]) -> Result<bool> {
+        let destination = path.as_ref();
+        ensure_file_parent(destination)?;
+        validate_file_destination(destination)?;
+        if fs::symlink_metadata(destination).is_ok() {
+            return Ok(false);
+        }
+
+        let parent = destination
+            .parent()
+            .ok_or_else(|| anyhow!("private file {} has no parent", destination.display()))?;
+        let stem = destination.file_name().unwrap_or_else(|| OsStr::new("file"));
+        let (temporary, mut file) = unique_private_file(parent, stem)?;
+        let result: io::Result<bool> = (|| {
+            file.write_all(contents)?;
+            file.sync_all()?;
+            drop(file);
+            match fs::hard_link(&temporary, destination) {
+                Ok(()) => Ok(true),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
+                Err(error) => Err(error),
+            }
+        })();
+        remove_temporary_file(&temporary);
+        result.with_context(|| format!("could not atomically create {}", destination.display()))
+    }
+
+    /// Runs an operation while holding an exclusive private lock adjacent to a file.
+    ///
+    /// Lock acquisition is bounded and released by the operating system when
+    /// the owning process exits, so an abandoned lock cannot permanently
+    /// disable cache writes.
+    pub fn with_private_file_lock<T>(path: impl AsRef<Path>, operation: impl FnOnce() -> Result<T>) -> Result<T> {
+        let destination = path.as_ref();
+        ensure_file_parent(destination)?;
+        let parent = destination
+            .parent()
+            .ok_or_else(|| anyhow!("private file {} has no parent", destination.display()))?;
+        let stem = destination.file_name().unwrap_or_else(|| OsStr::new("file"));
+        let lock_path = parent.join(format!(".{}.lock", stem.to_string_lossy()));
+        let _lock = acquire_private_file_lock(&lock_path)?;
+        operation()
+    }
+
     /// Creates a private runtime child directory after validating its path.
     pub fn ensure_runtime_child_dir(&self, relative: impl AsRef<Path>) -> Result<PathBuf> {
         let path = self.runtime_path(relative)?;
@@ -600,7 +653,7 @@ fn ensure_private_dir(path: &Path) -> io::Result<()> {
         Ok(_) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             ensure_private_parent_dir(path)?;
-            fs::create_dir(path)?;
+            create_private_dir(path)?;
         }
         Err(error) => return Err(error),
     }
@@ -636,10 +689,7 @@ fn ensure_user_dir(path: &Path) -> io::Result<()> {
         }
         Ok(metadata) if !metadata.is_dir() => Err(io::Error::other(format!("{} is not a directory", path.display()))),
         Ok(_) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            fs::create_dir(path)?;
-            set_private_permissions(path)
-        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => create_user_dir(path),
         Err(error) => Err(error),
     }
 }
@@ -660,8 +710,7 @@ fn ensure_private_parent_dir(path: &Path) -> io::Result<()> {
         Ok(_) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             ensure_private_parent_dir(parent)?;
-            fs::create_dir(parent)?;
-            set_private_permissions(parent)
+            create_user_dir(parent)
         }
         Err(error) => Err(error),
     }
@@ -672,6 +721,41 @@ fn ensure_private_parent_dir(path: &Path) -> io::Result<()> {
 fn ensure_migration_dir(path: &Path) -> io::Result<()> {
     ensure_user_dir(path)
 }
+
+fn create_user_dir(path: &Path) -> io::Result<()> {
+    match fs::create_dir(path) {
+        Ok(()) => set_private_permissions(path),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => match fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                Err(io::Error::other(format!("refusing symlink directory {}", path.display())))
+            }
+            Ok(metadata) if !metadata.is_dir() => {
+                Err(io::Error::other(format!("{} is not a directory", path.display())))
+            }
+            Ok(_) => Ok(()),
+            Err(error) => Err(error),
+        },
+        Err(error) => Err(error),
+    }
+}
+
+fn create_private_dir(path: &Path) -> io::Result<()> {
+    match fs::create_dir(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => match fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                Err(io::Error::other(format!("refusing symlink directory {}", path.display())))
+            }
+            Ok(metadata) if !metadata.is_dir() => {
+                Err(io::Error::other(format!("{} is not a directory", path.display())))
+            }
+            Ok(_) => Ok(()),
+            Err(error) => Err(error),
+        },
+        Err(error) => Err(error),
+    }
+}
+
 fn create_private_new_file(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
     let _ = options.write(true).create_new(true);
@@ -791,6 +875,65 @@ fn unique_private_file(parent: &Path, stem: &OsStr) -> Result<(PathBuf, File)> {
         }
     }
     bail!("could not allocate a unique private temporary file in {}", parent.display())
+}
+
+struct PrivateFileLock {
+    _file: File,
+}
+
+fn acquire_private_file_lock(path: &Path) -> Result<PrivateFileLock> {
+    let file = open_private_lock_file(path)?;
+    for attempt in 0..PRIVATE_FILE_LOCK_ATTEMPTS {
+        match file.try_lock_exclusive() {
+            Ok(()) => return Ok(PrivateFileLock { _file: file }),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                if attempt + 1 < PRIVATE_FILE_LOCK_ATTEMPTS {
+                    std::thread::sleep(PRIVATE_FILE_LOCK_DELAY);
+                }
+            }
+            Err(error) => return Err(error).with_context(|| format!("could not lock {}", path.display())),
+        }
+    }
+    bail!("timed out waiting for private file lock {}", path.display())
+}
+
+fn open_private_lock_file(path: &Path) -> Result<File> {
+    match create_private_lock_file(path) {
+        Ok(file) => Ok(file),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            validate_file_destination(path)?;
+            let mut options = OpenOptions::new();
+            let _ = options.read(true).write(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                let _ = options.custom_flags(libc::O_NOFOLLOW);
+            }
+            options
+                .open(path)
+                .with_context(|| format!("could not open private lock {}", path.display()))
+        }
+        Err(error) => Err(error).with_context(|| format!("could not create lock {}", path.display())),
+    }
+}
+
+fn create_private_lock_file(path: &Path) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    let _ = options.read(true).write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let _ = options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    options.open(path)
+}
+
+impl Drop for PrivateFileLock {
+    fn drop(&mut self) {
+        if let Err(error) = self._file.unlock() {
+            tracing::debug!(%error, "failed to release private file lock");
+        }
+    }
 }
 
 fn remove_temporary_file(path: &Path) {
@@ -1057,6 +1200,58 @@ mod tests {
     }
 
     #[test]
+    fn migration_copies_pre_xdg_config_root_cache_and_state() {
+        let temp = tempdir().expect("tempdir");
+        let paths = migration_paths(&temp);
+        let old_cache_file = paths.config_dir().join("cache/models/dynamic_local_models.json");
+        let old_log_file = paths.config_dir().join("logs/session.log");
+        let old_session_file = paths.config_dir().join("sessions/session.jsonl");
+        let old_backup_file = paths.config_dir().join("backups/config.toml");
+        for path in [&old_cache_file, &old_log_file, &old_session_file, &old_backup_file] {
+            fs::create_dir_all(path.parent().expect("legacy parent")).expect("create legacy parent");
+            fs::write(path, path.file_name().expect("file name").to_string_lossy().as_bytes())
+                .expect("write legacy file");
+        }
+
+        let report = paths.migrate_legacy().expect("migrate pre-XDG config data");
+
+        for (source, destination) in [
+            (old_cache_file, paths.cache_dir().join("models/dynamic_local_models.json")),
+            (old_log_file, paths.state_dir().join("logs/session.log")),
+            (old_session_file, paths.state_dir().join("sessions/session.jsonl")),
+            (old_backup_file, paths.state_dir().join("backups/config.toml")),
+        ] {
+            assert!(source.is_file());
+            assert_eq!(fs::read(&source).expect("read source"), fs::read(&destination).expect("read destination"));
+        }
+        assert!(report.migrated.len() >= 4);
+    }
+
+    #[test]
+    fn migration_copies_legacy_installer_backoff_caches() {
+        let temp = tempdir().expect("tempdir");
+        let paths = migration_paths(&temp);
+        let old_ast_cache = paths.legacy_home_dir().join("ast_grep_install_cache.json");
+        let old_ripgrep_cache = paths.legacy_home_dir().join("ripgrep_install_cache.json");
+        fs::create_dir_all(paths.legacy_home_dir()).expect("legacy home directory");
+        for path in [&old_ast_cache, &old_ripgrep_cache] {
+            fs::write(path, path.file_name().expect("file name").to_string_lossy().as_bytes())
+                .expect("write legacy installer cache");
+        }
+
+        let report = paths.migrate_legacy().expect("migrate installer caches");
+
+        for (source, destination) in [
+            (old_ast_cache, paths.cache_dir().join("ast-grep/install.json")),
+            (old_ripgrep_cache, paths.cache_dir().join("ripgrep/ripgrep_install_cache.json")),
+        ] {
+            assert!(source.is_file());
+            assert_eq!(fs::read(&source).expect("read source"), fs::read(destination).expect("read destination"));
+        }
+        assert!(report.migrated.len() >= 2);
+    }
+
+    #[test]
     fn migration_reports_conflicts_and_excludes_tmp() {
         let temp = tempdir().expect("tempdir");
         let paths = migration_paths(&temp);
@@ -1127,6 +1322,71 @@ mod tests {
         symlink(&destination, &linked).expect("final symlink");
         assert!(VtCodePaths::write_private_file_atomic(&linked, b"blocked").is_err());
         assert_eq!(fs::read_to_string(destination).expect("original data"), "original");
+    }
+
+    #[test]
+    fn private_file_writer_if_absent_does_not_replace_existing_file() {
+        let temp = tempdir().expect("tempdir");
+        let destination = temp.path().join("cache/data");
+
+        assert!(VtCodePaths::write_private_file_atomic_if_absent(&destination, b"first").expect("create file"));
+        assert!(!VtCodePaths::write_private_file_atomic_if_absent(&destination, b"second").expect("keep file"));
+        assert_eq!(fs::read(&destination).expect("read file"), b"first");
+    }
+
+    #[test]
+    fn private_file_lock_releases_after_operation() {
+        let temp = tempdir().expect("tempdir");
+        let destination = temp.path().join("cache/data");
+        let lock_path = destination.parent().expect("cache parent").join(".data.lock");
+
+        let result =
+            VtCodePaths::with_private_file_lock(&destination, || Ok::<_, anyhow::Error>(17)).expect("lock operation");
+
+        assert_eq!(result, 17);
+        assert!(lock_path.is_file());
+        assert_eq!(
+            VtCodePaths::with_private_file_lock(&destination, || Ok::<_, anyhow::Error>(23))
+                .expect("lock can be reused"),
+            23
+        );
+    }
+
+    #[test]
+    fn private_file_lock_serializes_concurrent_operations() {
+        use std::sync::{
+            Arc, Barrier,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let temp = tempdir().expect("tempdir");
+        let destination = Arc::new(temp.path().join("cache/data"));
+        let start = Arc::new(Barrier::new(4));
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+        let handles = (0..4)
+            .map(|_| {
+                let destination = Arc::clone(&destination);
+                let start = Arc::clone(&start);
+                let active = Arc::clone(&active);
+                let max_active = Arc::clone(&max_active);
+                std::thread::spawn(move || {
+                    let _ = start.wait();
+                    VtCodePaths::with_private_file_lock(destination.as_ref(), || {
+                        let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                        let _ = max_active.fetch_max(current, Ordering::SeqCst);
+                        std::thread::sleep(Duration::from_millis(25));
+                        let _ = active.fetch_sub(1, Ordering::SeqCst);
+                        Ok::<_, anyhow::Error>(())
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for handle in handles {
+            handle.join().expect("lock thread panicked").expect("lock operation");
+        }
+        assert_eq!(max_active.load(Ordering::SeqCst), 1);
     }
 
     #[cfg(unix)]

@@ -127,6 +127,30 @@ pub async fn write_private_file_atomic(path: &Path, contents: impl AsRef<[u8]>) 
         .context("private file write task panicked")?
 }
 
+/// Atomically create a category-owned private file when the destination is absent.
+///
+/// Returns `true` when this call published the file and `false` when another
+/// writer had already created it.
+pub async fn write_private_file_atomic_if_absent(path: &Path, contents: impl AsRef<[u8]>) -> Result<bool> {
+    let path = path.to_path_buf();
+    let contents = contents.as_ref().to_vec();
+    tokio::task::spawn_blocking(move || crate::VtCodePaths::write_private_file_atomic_if_absent(&path, &contents))
+        .await
+        .context("private file create task panicked")?
+}
+
+/// Run a blocking operation while holding an exclusive private file lock.
+pub async fn with_private_file_lock<T, F>(path: &Path, operation: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || crate::VtCodePaths::with_private_file_lock(&path, operation))
+        .await
+        .context("private file lock task panicked")?
+}
+
 /// Read and deserialize a category-owned private JSON file.
 pub async fn read_private_json_file<T: DeserializeOwned>(path: &Path) -> Result<T> {
     let contents = read_private_file_no_follow(path).await?;

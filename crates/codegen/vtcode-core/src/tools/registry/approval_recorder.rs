@@ -21,17 +21,44 @@ impl ApprovalRecorder {
         let manager = JustificationManager::new(cache_dir);
         Self { manager: Arc::new(RwLock::new(manager)) }
     }
+
+    /// Create a recorder that can recover approval patterns from older cache directories.
+    pub fn new_with_legacy_cache_dirs(
+        cache_dir: PathBuf,
+        legacy_cache_dirs: impl IntoIterator<Item = PathBuf>,
+    ) -> Self {
+        let legacy_pattern_files = legacy_cache_dirs
+            .into_iter()
+            .map(|directory| directory.join("approval_patterns.json"));
+        let manager = JustificationManager::new_with_legacy_pattern_files(cache_dir, legacy_pattern_files);
+        Self { manager: Arc::new(RwLock::new(manager)) }
+    }
 }
 
 impl Default for ApprovalRecorder {
     fn default() -> Self {
-        let cache_dir = VtCodePaths::resolve()
-            .and_then(|paths| paths.ensure_cache_child_dir("approval"))
-            .unwrap_or_else(|_| {
-                std::env::temp_dir()
-                    .join(format!("vtcode-{}", std::process::id()))
-                    .join("approval")
-            });
+        match VtCodePaths::resolve() {
+            Ok(paths) => match paths.ensure_cache_child_dir("approval") {
+                Ok(cache_dir) => {
+                    let legacy_cache_dirs = [
+                        paths.cache_dir().to_path_buf(),
+                        paths.config_dir().join("cache"),
+                        paths.legacy_dir().join("cache"),
+                    ];
+                    Self::new_with_legacy_cache_dirs(cache_dir, legacy_cache_dirs)
+                }
+                Err(_) => Self::fallback(),
+            },
+            Err(_) => Self::fallback(),
+        }
+    }
+}
+
+impl ApprovalRecorder {
+    fn fallback() -> Self {
+        let cache_dir = std::env::temp_dir()
+            .join(format!("vtcode-{}", std::process::id()))
+            .join("approval");
         Self::new(cache_dir)
     }
 }
@@ -132,6 +159,7 @@ impl ApprovalRecorder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use tempfile::TempDir;
 
     fn temp_cache_dir() -> TempDir {
@@ -246,6 +274,107 @@ mod tests {
         // Without the disk refresh in should_auto_approve, the reader's
         // in-memory map would still be empty and this assertion would fail.
         assert!(reader.should_auto_approve(key).await);
+    }
+
+    #[tokio::test]
+    async fn recovers_legacy_patterns_and_republishes_to_canonical_cache() {
+        let temp_dir = temp_cache_dir();
+        let legacy_dir = temp_dir.path().join("legacy-cache");
+        let canonical_dir = temp_dir.path().join("cache/approval");
+        std::fs::create_dir_all(&legacy_dir).expect("legacy cache directory");
+
+        let mut patterns = HashMap::new();
+        patterns.insert(
+            "run_command".to_string(),
+            ApprovalPattern {
+                tool_name: "run_command".to_string(),
+                display_name: Some("Run Command".to_string()),
+                approve_count: 3,
+                deny_count: 0,
+                last_decision: Some(true),
+                recent_reason: None,
+            },
+        );
+        std::fs::write(
+            legacy_dir.join("approval_patterns.json"),
+            serde_json::to_vec(&patterns).expect("serialize legacy patterns"),
+        )
+        .expect("write legacy patterns");
+
+        let recorder = ApprovalRecorder::new_with_legacy_cache_dirs(canonical_dir.clone(), [legacy_dir]);
+        assert_eq!(recorder.get_approval_count("run_command").await, 3);
+        assert!(recorder.has_high_approval_rate("run_command").await);
+        assert!(canonical_dir.join("approval_patterns.json").is_file());
+    }
+
+    #[tokio::test]
+    async fn canonical_patterns_take_precedence_over_legacy_patterns() {
+        let temp_dir = temp_cache_dir();
+        let legacy_dir = temp_dir.path().join("legacy-cache");
+        let canonical_dir = temp_dir.path().join("cache/approval");
+        std::fs::create_dir_all(&legacy_dir).expect("legacy cache directory");
+        std::fs::create_dir_all(&canonical_dir).expect("canonical cache directory");
+
+        let pattern = |approve_count| ApprovalPattern {
+            tool_name: "run_command".to_owned(),
+            display_name: Some("Run Command".to_owned()),
+            approve_count,
+            deny_count: 0,
+            last_decision: Some(true),
+            recent_reason: None,
+        };
+        let mut canonical_patterns = HashMap::new();
+        canonical_patterns.insert("run_command".to_owned(), pattern(1));
+        let mut legacy_patterns = HashMap::new();
+        legacy_patterns.insert("run_command".to_owned(), pattern(5));
+
+        std::fs::write(
+            canonical_dir.join("approval_patterns.json"),
+            serde_json::to_vec(&canonical_patterns).expect("serialize canonical patterns"),
+        )
+        .expect("write canonical patterns");
+        std::fs::write(
+            legacy_dir.join("approval_patterns.json"),
+            serde_json::to_vec(&legacy_patterns).expect("serialize legacy patterns"),
+        )
+        .expect("write legacy patterns");
+
+        let recorder = ApprovalRecorder::new_with_legacy_cache_dirs(canonical_dir, [legacy_dir]);
+        assert_eq!(recorder.get_approval_count("run_command").await, 1);
+    }
+
+    #[tokio::test]
+    async fn malformed_canonical_patterns_recover_legacy_without_replacing_them() {
+        let temp_dir = temp_cache_dir();
+        let legacy_dir = temp_dir.path().join("legacy-cache");
+        let canonical_dir = temp_dir.path().join("cache/approval");
+        std::fs::create_dir_all(&legacy_dir).expect("legacy cache directory");
+        std::fs::create_dir_all(&canonical_dir).expect("canonical cache directory");
+        let canonical_file = canonical_dir.join("approval_patterns.json");
+        std::fs::write(&canonical_file, b"not json").expect("malformed canonical patterns");
+
+        let mut patterns = HashMap::new();
+        patterns.insert(
+            "run_command".to_owned(),
+            ApprovalPattern {
+                tool_name: "run_command".to_owned(),
+                display_name: Some("Run Command".to_owned()),
+                approve_count: 3,
+                deny_count: 0,
+                last_decision: Some(true),
+                recent_reason: None,
+            },
+        );
+        std::fs::write(
+            legacy_dir.join("approval_patterns.json"),
+            serde_json::to_vec(&patterns).expect("serialize legacy patterns"),
+        )
+        .expect("write legacy patterns");
+
+        let recorder = ApprovalRecorder::new_with_legacy_cache_dirs(canonical_dir, [legacy_dir]);
+
+        assert_eq!(recorder.get_approval_count("run_command").await, 3);
+        assert_eq!(std::fs::read(canonical_file).expect("read canonical patterns"), b"not json");
     }
 
     #[tokio::test]

@@ -342,10 +342,16 @@ pub(crate) async fn initialize_session(
 
     let tool_result_cache = Arc::new(RwLock::new(ToolResultCache::new(128)));
     let tool_permission_cache = Arc::new(RwLock::new(ToolPermissionCache::new()));
-    let cache_dir = VtCodePaths::resolve()
-        .and_then(|paths| paths.ensure_cache_child_dir("approval"))
-        .context("failed to resolve private VT Code approval cache")?;
-    let approval_recorder = Arc::new(ApprovalRecorder::new(cache_dir));
+    let paths = VtCodePaths::resolve().context("failed to resolve private VT Code approval cache")?;
+    let cache_dir = paths
+        .ensure_cache_child_dir("approval")
+        .context("failed to create private VT Code approval cache")?;
+    let legacy_cache_dirs = [
+        paths.cache_dir().to_path_buf(),
+        paths.config_dir().join("cache"),
+        paths.legacy_dir().join("cache"),
+    ];
+    let approval_recorder = Arc::new(ApprovalRecorder::new_with_legacy_cache_dirs(cache_dir, legacy_cache_dirs));
     let permissions_state = Arc::new(RwLock::new(vt_cfg.map(|cfg| cfg.permissions.clone()).unwrap_or_default()));
     if let Some(cfg) = vt_cfg
         && cfg.context.dynamic.enabled

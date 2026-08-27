@@ -7667,6 +7667,7 @@ dependencies = [
  "compact_str 0.10.0",
  "dirs",
  "dunce",
+ "fs2",
  "futures",
  "hashbrown 0.17.1",
  "ignore",

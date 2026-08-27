@@ -247,15 +247,7 @@ struct LegacyMapping {
 
 fn legacy_mappings(paths: &VtCodePaths) -> Vec<LegacyMapping> {
     let legacy = paths.legacy_home_dir();
-    let mut mappings = Vec::with_capacity(44);
-    let mut add = |name: &str, destination: PathBuf| {
-        mappings.push(LegacyMapping {
-            source: legacy.join(name),
-            destination,
-            skip: false,
-            excluded_children: &[],
-        });
-    };
+    let mut mappings = Vec::with_capacity(50);
     for name in [
         "vtcode.toml",
         "update.toml",
@@ -277,9 +269,9 @@ fn legacy_mappings(paths: &VtCodePaths) -> Vec<LegacyMapping> {
         "output-styles",
         "output_styles",
     ] {
-        add(name, paths.config_dir().join(name));
+        add_mapping(&mut mappings, legacy, name, paths.config_dir().join(name));
     }
-    add("auth.json", paths.auth_file());
+    add_mapping(&mut mappings, legacy, "auth.json", paths.auth_file());
     for name in [
         "plugins",
         "skills",
@@ -288,9 +280,9 @@ fn legacy_mappings(paths: &VtCodePaths) -> Vec<LegacyMapping> {
         "durable-assets",
         "tools",
     ] {
-        add(name, paths.data_dir().join(name));
+        add_mapping(&mut mappings, legacy, name, paths.data_dir().join(name));
     }
-    add("bin", paths.executable_dir().to_path_buf());
+    add_mapping(&mut mappings, legacy, "bin", paths.executable_dir().to_path_buf());
     for name in [
         "projects",
         "sessions",
@@ -304,8 +296,42 @@ fn legacy_mappings(paths: &VtCodePaths) -> Vec<LegacyMapping> {
         "checkpoints",
         "backups",
     ] {
-        add(name, paths.state_dir().join(name));
+        add_mapping(&mut mappings, legacy, name, paths.state_dir().join(name));
     }
+    add_mapping(
+        &mut mappings,
+        legacy,
+        "ast_grep_install_cache.json",
+        paths.cache_dir().join("ast-grep/install.json"),
+    );
+    add_mapping(
+        &mut mappings,
+        legacy,
+        "ripgrep_install_cache.json",
+        paths.cache_dir().join("ripgrep/ripgrep_install_cache.json"),
+    );
+    // Before the centralized path policy, DotManager kept cache, logs,
+    // sessions, and backups directly below the configuration directory. On
+    // native platforms that directory is still the current config root, so
+    // those files are outside the legacy-home scan above and need explicit
+    // compatibility mappings.
+    for (name, destination) in [
+        ("cache", paths.cache_dir().to_path_buf()),
+        ("logs", paths.state_dir().join("logs")),
+        ("sessions", paths.state_dir().join("sessions")),
+        ("backups", paths.state_dir().join("backups")),
+    ] {
+        let source = paths.config_dir().join(name);
+        if source != legacy.join(name) {
+            mappings.push(LegacyMapping {
+                source,
+                destination,
+                skip: false,
+                excluded_children: &[],
+            });
+        }
+    }
+
     for name in [
         "model-cache",
         "prompt-cache",
@@ -315,10 +341,13 @@ fn legacy_mappings(paths: &VtCodePaths) -> Vec<LegacyMapping> {
         "web-fetch",
         "large-output",
     ] {
-        add(name, paths.cache_dir().join(name));
+        add_mapping(&mut mappings, legacy, name, paths.cache_dir().join(name));
     }
-    add("cache", paths.cache_dir().to_path_buf());
-    add(".cache", paths.cache_dir().to_path_buf());
+    // Keep the pre-XDG configuration root ahead of the legacy home cache when
+    // both layouts exist; it is the most recent location used by DotManager.
+    add_mapping(&mut mappings, legacy, "cache", paths.cache_dir().to_path_buf());
+    add_mapping(&mut mappings, legacy, ".cache", paths.cache_dir().to_path_buf());
+
     mappings.push(LegacyMapping {
         source: legacy.join("state"),
         destination: paths.state_dir().to_path_buf(),
@@ -334,6 +363,15 @@ fn legacy_mappings(paths: &VtCodePaths) -> Vec<LegacyMapping> {
         excluded_children: &[],
     });
     mappings
+}
+
+fn add_mapping(mappings: &mut Vec<LegacyMapping>, legacy: &Path, name: &str, destination: PathBuf) {
+    mappings.push(LegacyMapping {
+        source: legacy.join(name),
+        destination,
+        skip: false,
+        excluded_children: &[],
+    });
 }
 
 fn record_unmapped_entries(legacy_root: &Path, mappings: &[LegacyMapping], report: &mut MigrationReport) {

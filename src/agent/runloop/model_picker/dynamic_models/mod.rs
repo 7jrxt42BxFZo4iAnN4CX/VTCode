@@ -2,8 +2,10 @@ mod cache;
 mod endpoints;
 
 use hashbrown::{HashMap, HashSet};
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use once_cell::sync::Lazy;
@@ -15,7 +17,7 @@ use vtcode_config::VTCodeConfig;
 use vtcode_config::auth::AuthCredentialsStoreMode;
 use vtcode_core::config::constants::defaults;
 use vtcode_core::config::models::Provider;
-use vtcode_core::copilot::{CopilotAuthStatusKind, list_available_models, probe_auth_status};
+use vtcode_core::copilot::{CopilotAuthStatus, CopilotAuthStatusKind, list_available_models, probe_auth_status};
 use vtcode_core::llm::providers::llamacpp::fetch_llamacpp_models;
 use vtcode_core::llm::providers::lmstudio::fetch_lmstudio_models;
 use vtcode_core::llm::providers::ollama::fetch_ollama_models;
@@ -28,7 +30,9 @@ use super::selection::{SelectionDetail, selection_from_dynamic_with_api_key_env}
 
 type StaticModelIndex = HashMap<Provider, HashSet<String>>;
 
-static HTTP_CLIENT: Lazy<Client> = Lazy::new(Client::new);
+const MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
+static HTTP_CLIENT: Lazy<Client> =
+    Lazy::new(|| vtcode_commons::http::create_client_with_timeout(MODEL_DISCOVERY_TIMEOUT));
 
 #[derive(Clone, Default)]
 pub(crate) struct DynamicModelRegistry {
@@ -56,53 +60,56 @@ impl DynamicModelRegistry {
 
         let openai_base_url = endpoints.resolved_base_url(Provider::OpenAI);
         let openai_api_key_env = configured_openai_api_key_env(vt_cfg);
-        let openai_auth = resolve_openai_dynamic_auth(vt_cfg, workspace, openai_api_key_env.as_deref());
-        let openai_fetch = if let Some(openai_api_key) = openai_auth {
-            let (result, warning) = cache_store
-                .fetch_with_cache(Provider::OpenAI, endpoints.base_url(Provider::OpenAI), {
-                    let openai_api_key = openai_api_key.clone();
-                    move |base_url| fetch_openai_models(base_url, openai_api_key.clone())
-                })
-                .await;
-            Some((result, warning))
-        } else {
+        let openai_auth = if cache_store.fresh_models(Provider::OpenAI, Some(&openai_base_url)).is_some() {
             None
+        } else {
+            resolve_openai_dynamic_auth(vt_cfg, workspace, openai_api_key_env.as_deref())
         };
-
         let ollama_base_url = endpoints.resolved_base_url(Provider::Ollama);
-        let (ollama_result, ollama_warning) = cache_store
-            .fetch_with_cache(Provider::Ollama, endpoints.base_url(Provider::Ollama), fetch_ollama_models)
-            .await;
         let llamacpp_base_url = endpoints.resolved_base_url(Provider::LlamaCpp);
-        let (llamacpp_result, llamacpp_warning) = cache_store
-            .fetch_with_cache(Provider::LlamaCpp, endpoints.base_url(Provider::LlamaCpp), fetch_llamacpp_models)
-            .await;
         let lmstudio_base_url = endpoints.resolved_base_url(Provider::LmStudio);
-        let (lmstudio_result, lmstudio_warning) = cache_store
-            .fetch_with_cache(Provider::LmStudio, endpoints.base_url(Provider::LmStudio), fetch_lmstudio_models)
-            .await;
-
         let copilot_auth_cfg = Arc::new(vt_cfg.map(|cfg| cfg.auth.copilot.clone()).unwrap_or_default());
-        let copilot_status = probe_auth_status(&copilot_auth_cfg, Some(&workspace_root)).await;
-        let copilot_fetch = if matches!(copilot_status.kind, CopilotAuthStatusKind::Authenticated) {
-            let (result, warning) = cache_store
-                .fetch_with_cache(Provider::Copilot, Some(copilot_cache_base(&copilot_auth_cfg)), {
-                    let copilot_auth_cfg = Arc::clone(&copilot_auth_cfg);
-                    let workspace_root = Arc::clone(&workspace_root);
-                    move |_| {
-                        let copilot_auth_cfg = Arc::clone(&copilot_auth_cfg);
-                        let workspace_root = Arc::clone(&workspace_root);
-                        async move {
-                            let models = list_available_models(&copilot_auth_cfg, &workspace_root).await?;
-                            Ok(models.into_iter().map(|model| model.id).collect())
-                        }
-                    }
-                })
-                .await;
-            Some((result, warning))
-        } else {
-            None
-        };
+
+        // Discovery is best-effort for four independent providers. Keep each
+        // provider's cache view isolated while the requests run concurrently;
+        // merging whole cloned stores could otherwise let a stale clone
+        // overwrite a fresh result from another provider.
+        let (openai_state, ollama_state, llamacpp_state, lmstudio_state, copilot_state) = tokio::join!(
+            fetch_openai_with_cache(
+                cache_store.for_provider(Provider::OpenAI),
+                endpoints.base_url(Provider::OpenAI),
+                openai_auth,
+            ),
+            fetch_provider_with_cache(
+                cache_store.for_provider(Provider::Ollama),
+                Provider::Ollama,
+                endpoints.base_url(Provider::Ollama),
+                fetch_ollama_models,
+            ),
+            fetch_provider_with_cache(
+                cache_store.for_provider(Provider::LlamaCpp),
+                Provider::LlamaCpp,
+                endpoints.base_url(Provider::LlamaCpp),
+                fetch_llamacpp_models,
+            ),
+            fetch_provider_with_cache(
+                cache_store.for_provider(Provider::LmStudio),
+                Provider::LmStudio,
+                endpoints.base_url(Provider::LmStudio),
+                fetch_lmstudio_models,
+            ),
+            fetch_copilot_with_cache(cache_store.for_provider(Provider::Copilot), copilot_auth_cfg, workspace_root),
+        );
+        let (openai_store, openai_fetch) = openai_state;
+        let (ollama_store, ollama_result) = ollama_state;
+        let (llamacpp_store, llamacpp_result) = llamacpp_state;
+        let (lmstudio_store, lmstudio_result) = lmstudio_state;
+        let (copilot_store, copilot_status, copilot_fetch) = copilot_state;
+        cache_store.merge_provider(Provider::OpenAI, openai_store);
+        cache_store.merge_provider(Provider::Ollama, ollama_store);
+        cache_store.merge_provider(Provider::LlamaCpp, llamacpp_store);
+        cache_store.merge_provider(Provider::LmStudio, lmstudio_store);
+        cache_store.merge_provider(Provider::Copilot, copilot_store);
         if let Err(err) = cache_store.persist().await {
             warn!("Failed to persist dynamic model cache: {err}");
         }
@@ -121,10 +128,12 @@ impl DynamicModelRegistry {
             }
         }
         let storage_mode = vt_cfg.map(|cfg| cfg.agent.credential_storage_mode).unwrap_or_default();
+        let (ollama_result, ollama_warning) = ollama_result;
         registry.process_fetch(Provider::Ollama, ollama_result, ollama_base_url, &static_index, storage_mode, None);
         if let Some(warning) = ollama_warning {
             registry.record_warning(Provider::Ollama, warning);
         }
+        let (llamacpp_result, llamacpp_warning) = llamacpp_result;
         registry.process_fetch(
             Provider::LlamaCpp,
             llamacpp_result,
@@ -136,6 +145,7 @@ impl DynamicModelRegistry {
         if let Some(warning) = llamacpp_warning {
             registry.record_warning(Provider::LlamaCpp, warning);
         }
+        let (lmstudio_result, lmstudio_warning) = lmstudio_result;
         registry.process_fetch(
             Provider::LmStudio,
             lmstudio_result,
@@ -278,6 +288,89 @@ impl DynamicModelRegistry {
     pub(super) fn record_warning(&mut self, provider: Provider, message: String) {
         self.provider_warnings.insert(provider, message);
     }
+}
+
+async fn fetch_provider_with_cache<F, Fut>(
+    mut cache_store: CachedDynamicModelStore,
+    provider: Provider,
+    base_url: Option<String>,
+    fetch_fn: F,
+) -> (CachedDynamicModelStore, (Result<Vec<String>>, Option<String>))
+where
+    F: Fn(Option<String>) -> Fut,
+    Fut: Future<Output = Result<Vec<String>, anyhow::Error>>,
+{
+    let fetched = cache_store.fetch_with_cache(provider, base_url, fetch_fn).await;
+    (cache_store, fetched)
+}
+
+async fn fetch_openai_with_cache(
+    mut cache_store: CachedDynamicModelStore,
+    base_url: Option<String>,
+    api_key: Option<String>,
+) -> (CachedDynamicModelStore, Option<(Result<Vec<String>>, Option<String>)>) {
+    let fetched = if let Some(api_key) = api_key {
+        let (result, warning) = cache_store
+            .fetch_with_cache(Provider::OpenAI, base_url, move |base_url| {
+                fetch_openai_models(base_url, api_key.clone())
+            })
+            .await;
+        Some((result, warning))
+    } else {
+        cache_store
+            .fresh_models(Provider::OpenAI, base_url.as_deref())
+            .map(|models| (Ok(models), None))
+    };
+    (cache_store, fetched)
+}
+
+async fn fetch_copilot_with_cache(
+    mut cache_store: CachedDynamicModelStore,
+    copilot_auth_cfg: Arc<vtcode_config::auth::CopilotAuthConfig>,
+    workspace_root: Arc<PathBuf>,
+) -> (CachedDynamicModelStore, CopilotAuthStatus, Option<(Result<Vec<String>>, Option<String>)>) {
+    let cache_base = copilot_cache_base(&copilot_auth_cfg);
+    // A fresh cache is sufficient to populate the picker. Avoid probing the
+    // Copilot CLI/GitHub authentication path in this case because an optional
+    // `gh auth status` fallback can take several seconds when offline.
+    if let Some(models) = cache_store.fresh_models(Provider::Copilot, Some(&cache_base)) {
+        return (
+            cache_store,
+            CopilotAuthStatus {
+                kind: CopilotAuthStatusKind::Authenticated,
+                message: None,
+            },
+            Some((Ok(models), None)),
+        );
+    }
+
+    let copilot_status = probe_auth_status(&copilot_auth_cfg, Some(workspace_root.as_path())).await;
+    let copilot_fetch = if matches!(copilot_status.kind, CopilotAuthStatusKind::Authenticated) {
+        let copilot_auth_cfg = Arc::clone(&copilot_auth_cfg);
+        let workspace_root = Arc::clone(&workspace_root);
+        let (result, warning) = cache_store
+            .fetch_with_cache(Provider::Copilot, Some(cache_base), move |_| {
+                let copilot_auth_cfg = Arc::clone(&copilot_auth_cfg);
+                let workspace_root = Arc::clone(&workspace_root);
+                async move {
+                    let models = list_available_models(&copilot_auth_cfg, workspace_root.as_path()).await?;
+                    Ok(models.into_iter().map(|model| model.id).collect())
+                }
+            })
+            .await;
+        Some((result, warning))
+    } else {
+        // A recent Copilot cache is still useful when the CLI is unavailable
+        // or authentication has expired. The closure fails immediately, so
+        // stale-cache fallback never starts a process in this path.
+        let (result, warning) = cache_store
+            .fetch_with_cache(Provider::Copilot, Some(cache_base), |_| async {
+                Err::<Vec<String>, anyhow::Error>(anyhow!("Copilot authentication is unavailable"))
+            })
+            .await;
+        result.ok().map(|models| (Ok(models), warning))
+    };
+    (cache_store, copilot_status, copilot_fetch)
 }
 
 fn build_static_model_index(options: &[ModelOption]) -> StaticModelIndex {

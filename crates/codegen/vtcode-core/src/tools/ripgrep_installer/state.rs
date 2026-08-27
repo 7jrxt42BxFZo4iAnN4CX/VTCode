@@ -5,7 +5,8 @@ use std::path::PathBuf;
 use vtcode_commons::VtCodePaths;
 
 use super::super::install_support::{
-    acquire_lock_file, cache_is_stale, load_json_cache, lock_is_active, save_json_cache, unix_timestamp_now,
+    acquire_lock_file, cache_is_stale, load_json_cache_with_legacy_fallback, lock_is_active, save_json_cache,
+    unix_timestamp_now,
 };
 
 const INSTALL_LOCK_MAX_AGE_SECS: u64 = 1_800;
@@ -36,9 +37,19 @@ impl InstallationCache {
     }
 
     fn cache_path() -> Result<PathBuf> {
+        Self::cache_paths().map(|(canonical, _)| canonical)
+    }
+
+    fn cache_paths() -> Result<(PathBuf, Vec<PathBuf>)> {
         let paths = VtCodePaths::resolve()?;
         paths.ensure_cache_child_dir("ripgrep")?;
-        paths.cache_path("ripgrep/ripgrep_install_cache.json")
+        let canonical = paths.cache_path("ripgrep/ripgrep_install_cache.json")?;
+        let mut legacy = vec![
+            paths.legacy_dir().join("ripgrep_install_cache.json"),
+            paths.legacy_dir().join("ripgrep/ripgrep_install_cache.json"),
+        ];
+        legacy.dedup();
+        Ok((canonical, legacy))
     }
 
     pub(super) fn is_stale() -> bool {
@@ -49,7 +60,8 @@ impl InstallationCache {
     }
 
     pub(super) fn load() -> Result<Self> {
-        load_json_cache(&Self::cache_path()?, "ripgrep installation cache")
+        let (canonical, legacy) = Self::cache_paths()?;
+        load_json_cache_with_legacy_fallback(&canonical, &legacy, "ripgrep installation cache")
     }
 
     fn save(&self) -> Result<()> {

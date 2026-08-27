@@ -9,7 +9,7 @@
 use anyhow::Context;
 use chrono::Utc;
 use hashbrown::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -574,34 +574,7 @@ impl ModelsManager {
 
     async fn load_cache_for(&self, provider: Provider) -> Option<ModelsCache> {
         let cache_path = self.cache_path_for(provider);
-        let cache = match cache::load_cache(&cache_path).await {
-            Ok(Some(cache)) => Some(cache),
-            Ok(None) if cache_path != self.legacy_cache_path() => {
-                match cache::load_cache(&self.legacy_cache_path()).await {
-                    Ok(cache) => cache,
-                    Err(err) => {
-                        error!("Failed to load legacy models cache: {err}");
-                        None
-                    }
-                }
-            }
-            Ok(None) => None,
-            Err(err) => {
-                error!("Failed to load models cache: {err}");
-                None
-            }
-        }?;
-
-        if cache.provider != provider.to_string() {
-            debug!(
-                cached_provider = %cache.provider,
-                requested_provider = %provider,
-                "Ignoring model cache for a different provider"
-            );
-            return None;
-        }
-
-        Some(cache)
+        load_cache_from_paths(&cache_path, &self.legacy_cache_paths(provider), provider).await
     }
 
     /// Persist cache to disk
@@ -706,13 +679,23 @@ impl ModelsManager {
         self.vtcode_home.join(format!("models_cache_{provider}.json"))
     }
 
-    fn legacy_cache_path(&self) -> PathBuf {
-        if let Ok(paths) = VtCodePaths::resolve()
+    fn legacy_cache_paths(&self, provider: Provider) -> Vec<PathBuf> {
+        let provider_cache_file = format!("models_cache_{provider}.json");
+        let mut candidates = if let Ok(paths) = VtCodePaths::resolve()
             && self.vtcode_home == paths.cache_dir()
         {
-            return paths.legacy_dir().join(LEGACY_MODEL_CACHE_FILE);
-        }
-        self.vtcode_home.join(LEGACY_MODEL_CACHE_FILE)
+            vec![
+                paths.legacy_dir().join(&provider_cache_file),
+                paths.legacy_dir().join(LEGACY_MODEL_CACHE_FILE),
+            ]
+        } else {
+            vec![
+                self.vtcode_home.join(&provider_cache_file),
+                self.vtcode_home.join(LEGACY_MODEL_CACHE_FILE),
+            ]
+        };
+        candidates.dedup();
+        candidates
     }
 
     /// Set the current provider
@@ -761,6 +744,68 @@ impl ModelsManager {
             env!("CARGO_PKG_VERSION_PATCH")
         )
     }
+}
+
+async fn load_cache_from_paths(
+    canonical_path: &Path,
+    legacy_paths: &[PathBuf],
+    provider: Provider,
+) -> Option<ModelsCache> {
+    let expected_provider = provider.to_string();
+    let canonical_missing = match cache::load_cache(canonical_path).await {
+        Ok(Some(cache)) => {
+            if cache.provider == expected_provider {
+                return Some(cache);
+            }
+            debug!(
+                cached_provider = %cache.provider,
+                requested_provider = %provider,
+                "Ignoring model cache for a different provider"
+            );
+            false
+        }
+        Ok(None) => true,
+        Err(err) if err.kind() == std::io::ErrorKind::InvalidData => {
+            debug!(path = %canonical_path.display(), "Ignoring malformed models cache");
+            false
+        }
+        Err(err) => {
+            error!(path = %canonical_path.display(), "Failed to load models cache: {err}");
+            return None;
+        }
+    };
+
+    for legacy_path in legacy_paths {
+        if legacy_path == canonical_path {
+            continue;
+        }
+        let cache = match cache::load_cache(legacy_path).await {
+            Ok(Some(cache)) => cache,
+            Ok(None) => continue,
+            Err(err) => {
+                debug!(path = %legacy_path.display(), "Ignoring unreadable legacy models cache: {err}");
+                continue;
+            }
+        };
+        if cache.provider != expected_provider {
+            debug!(
+                path = %legacy_path.display(),
+                cached_provider = %cache.provider,
+                requested_provider = %provider,
+                "Ignoring legacy model cache for a different provider"
+            );
+            continue;
+        }
+
+        if canonical_missing {
+            if let Err(err) = cache::save_cache_if_absent(canonical_path, &cache).await {
+                debug!(path = %canonical_path.display(), "Failed to republish legacy models cache: {err}");
+            }
+        }
+        return Some(cache);
+    }
+
+    None
 }
 
 /// Thread-safe reference-counted ModelsManager
@@ -931,6 +976,86 @@ mod tests {
         // Now cache should load
         let cached = manager.try_load_cache().await;
         assert!(cached);
+    }
+
+    #[tokio::test]
+    async fn loads_provider_scoped_legacy_cache_and_republishes_it() {
+        let temp_dir = tempdir().expect("create temp dir");
+        let canonical_path = temp_dir.path().join("current/models_cache_gemini.json");
+        let legacy_path = temp_dir.path().join("legacy/models_cache_gemini.json");
+        let legacy_cache = ModelsCache::new(Provider::Gemini.to_string(), Vec::new());
+        cache::save_cache(&legacy_path, &legacy_cache).await.expect("save legacy cache");
+
+        let loaded = load_cache_from_paths(&canonical_path, std::slice::from_ref(&legacy_path), Provider::Gemini)
+            .await
+            .expect("load legacy cache");
+
+        assert_eq!(loaded.provider, Provider::Gemini.to_string());
+        assert!(
+            cache::load_cache(&canonical_path)
+                .await
+                .expect("load republished cache")
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_canonical_cache_recovers_legacy_without_replacing_it() {
+        let temp_dir = tempdir().expect("create temp dir");
+        let canonical_path = temp_dir.path().join("current/models_cache_gemini.json");
+        let legacy_path = temp_dir.path().join("legacy/models_cache_gemini.json");
+        std::fs::create_dir_all(canonical_path.parent().expect("canonical parent")).expect("canonical directory");
+        std::fs::write(&canonical_path, b"not json").expect("malformed canonical cache");
+        let legacy_cache = ModelsCache::new(Provider::Gemini.to_string(), Vec::new());
+        cache::save_cache(&legacy_path, &legacy_cache).await.expect("save legacy cache");
+
+        let loaded = load_cache_from_paths(&canonical_path, std::slice::from_ref(&legacy_path), Provider::Gemini)
+            .await
+            .expect("recover legacy cache");
+
+        assert_eq!(loaded.provider, Provider::Gemini.to_string());
+        assert_eq!(std::fs::read(&canonical_path).expect("read canonical cache"), b"not json");
+    }
+
+    #[tokio::test]
+    async fn mismatched_canonical_cache_falls_back_to_matching_legacy_cache() {
+        let temp_dir = tempdir().expect("create temp dir");
+        let canonical_path = temp_dir.path().join("current/models_cache_gemini.json");
+        let legacy_path = temp_dir.path().join("legacy/models_cache_gemini.json");
+        let canonical_cache = ModelsCache::new(Provider::OpenAI.to_string(), Vec::new());
+        cache::save_cache(&canonical_path, &canonical_cache)
+            .await
+            .expect("save mismatched cache");
+        let legacy_cache = ModelsCache::new(Provider::Gemini.to_string(), Vec::new());
+        cache::save_cache(&legacy_path, &legacy_cache).await.expect("save legacy cache");
+
+        let loaded = load_cache_from_paths(&canonical_path, std::slice::from_ref(&legacy_path), Provider::Gemini)
+            .await
+            .expect("recover matching legacy cache");
+
+        assert_eq!(loaded.provider, Provider::Gemini.to_string());
+        assert_eq!(
+            cache::load_cache(&canonical_path)
+                .await
+                .expect("read canonical cache")
+                .unwrap()
+                .provider,
+            Provider::OpenAI.to_string()
+        );
+    }
+
+    #[test]
+    fn legacy_cache_paths_preserve_provider_scoped_and_unscoped_names() {
+        let temp_dir = tempdir().expect("create temp dir");
+        let manager = ModelsManager::with_home(temp_dir.path().to_path_buf());
+
+        assert_eq!(
+            manager.legacy_cache_paths(Provider::Gemini),
+            vec![
+                temp_dir.path().join("models_cache_gemini.json"),
+                temp_dir.path().join(LEGACY_MODEL_CACHE_FILE),
+            ]
+        );
     }
 
     #[tokio::test]

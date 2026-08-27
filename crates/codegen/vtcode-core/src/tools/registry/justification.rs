@@ -6,7 +6,7 @@ use crate::tools::registry::risk_scorer::RiskLevel;
 use anyhow::{Context, Result};
 use hashbrown::HashMap;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use vtcode_commons::VtCodePaths;
 
 /// Justification provided by the agent for executing a high-risk tool
@@ -134,17 +134,42 @@ fn merge_pattern_from_disk(local: &mut ApprovalPattern, disk: &ApprovalPattern) 
     }
 }
 
+fn merge_pattern_map(local: &mut HashMap<String, ApprovalPattern>, disk_patterns: HashMap<String, ApprovalPattern>) {
+    for (key, disk) in disk_patterns {
+        local
+            .entry(key)
+            .and_modify(|local| merge_pattern_from_disk(local, &disk))
+            .or_insert(disk);
+    }
+}
+
 /// Manager for approval pattern learning and justifications
 pub struct JustificationManager {
     cache_dir: PathBuf,
+    legacy_pattern_files: Vec<PathBuf>,
     patterns: std::sync::Arc<std::sync::Mutex<HashMap<String, ApprovalPattern>>>,
 }
 
 impl JustificationManager {
     /// Create a new justification manager
     pub fn new(cache_dir: PathBuf) -> Self {
+        Self::new_with_legacy_pattern_files(cache_dir, Vec::new())
+    }
+
+    /// Create a manager that can recover approval patterns from older cache locations.
+    pub(crate) fn new_with_legacy_pattern_files(
+        cache_dir: PathBuf,
+        legacy_pattern_files: impl IntoIterator<Item = PathBuf>,
+    ) -> Self {
+        let canonical_pattern_file = cache_dir.join("approval_patterns.json");
+        let mut legacy_pattern_files = legacy_pattern_files
+            .into_iter()
+            .filter(|path| path != &canonical_pattern_file)
+            .collect::<Vec<_>>();
+        legacy_pattern_files.dedup();
+
         let patterns = std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
-        let manager = Self { cache_dir, patterns };
+        let manager = Self { cache_dir, legacy_pattern_files, patterns };
 
         // Try to load existing patterns
         let _ = manager.load_patterns();
@@ -159,26 +184,60 @@ impl JustificationManager {
     /// auto-approval check while a concurrent vtcode session may have written
     /// newer counts to the same file.
     fn load_patterns(&self) -> Result<()> {
-        let patterns_file = self.cache_dir.join("approval_patterns.json");
-        if !patterns_file.exists() {
+        let canonical_pattern_file = self.cache_dir.join("approval_patterns.json");
+        let canonical_state = read_patterns_file(&canonical_pattern_file)?;
+        let canonical_missing = matches!(&canonical_state, PatternFileState::Missing);
+        let mut load_error = None;
+        match canonical_state {
+            PatternFileState::Valid(patterns) => {
+                self.merge_loaded_patterns([patterns])?;
+                return Ok(());
+            }
+            PatternFileState::Missing => {}
+            PatternFileState::Malformed(error) => load_error = Some(error),
+        }
+
+        let mut loaded_patterns = Vec::new();
+        for patterns_file in &self.legacy_pattern_files {
+            match read_patterns_file(patterns_file) {
+                Ok(PatternFileState::Valid(patterns)) => loaded_patterns.push(patterns),
+                Ok(PatternFileState::Missing) => {}
+                Ok(PatternFileState::Malformed(error)) | Err(error) => load_error = Some(error),
+            }
+        }
+
+        if loaded_patterns.is_empty() {
+            if let Some(error) = load_error {
+                return Err(error);
+            }
             return Ok(());
         }
 
-        let content = String::from_utf8(VtCodePaths::read_file_no_follow(&patterns_file)?)
-            .context("failed to read approval patterns cache")?;
-        let loaded_patterns: HashMap<String, ApprovalPattern> = serde_json::from_str(&content)?;
+        self.merge_loaded_patterns(loaded_patterns)?;
 
+        // The old file remains in place as a rollback source, but make the
+        // recovered data available at the canonical path immediately. This
+        // also prevents every fresh session from re-reading the legacy file.
+        if canonical_missing {
+            self.persist_patterns_if_absent()
+        } else {
+            Ok(())
+        }
+    }
+
+    fn merge_loaded_patterns<I>(&self, loaded_patterns: I) -> Result<()>
+    where
+        I: IntoIterator<Item = HashMap<String, ApprovalPattern>>,
+    {
         let mut patterns = self
             .patterns
             .lock()
             .map_err(|e| anyhow::anyhow!("Failed to lock patterns: {e}"))?;
 
-        for (key, disk) in loaded_patterns {
-            patterns
-                .entry(key)
-                .and_modify(|local| merge_pattern_from_disk(local, &disk))
-                .or_insert(disk);
+        for loaded in loaded_patterns {
+            merge_pattern_map(&mut patterns, loaded);
         }
+        drop(patterns);
 
         Ok(())
     }
@@ -240,13 +299,31 @@ impl JustificationManager {
 
     /// Persist patterns to disk
     ///
-    /// This method clones the patterns under the lock, then writes to disk
-    /// outside the lock to minimize critical section duration.
+    /// Clone the patterns under the mutex, then merge and write under the
+    /// process-shared file lock outside the mutex.
     fn persist_patterns(&self) -> Result<()> {
-        VtCodePaths::ensure_user_dir(&self.cache_dir)?;
-        let patterns_file = self.cache_dir.join("approval_patterns.json");
+        let (patterns_file, mut patterns_snapshot) = self.current_patterns_snapshot()?;
+        VtCodePaths::with_private_file_lock(&patterns_file, || {
+            if let PatternFileState::Valid(disk_patterns) = read_patterns_file(&patterns_file)? {
+                merge_pattern_map(&mut patterns_snapshot, disk_patterns);
+            }
+            let content = serde_json::to_vec_pretty(&patterns_snapshot)?;
+            VtCodePaths::write_private_file_atomic(&patterns_file, &content)
+                .context("failed to write approval patterns cache")?;
+            Ok(())
+        })
+    }
 
-        // Clone patterns under the lock to minimize lock hold time
+    fn persist_patterns_if_absent(&self) -> Result<()> {
+        let (patterns_file, content) = self.serialized_patterns()?;
+        VtCodePaths::with_private_file_lock(&patterns_file, || {
+            VtCodePaths::write_private_file_atomic_if_absent(&patterns_file, &content).map(|_| ())
+        })
+        .context("failed to publish approval patterns cache")
+    }
+
+    fn current_patterns_snapshot(&self) -> Result<(PathBuf, HashMap<String, ApprovalPattern>)> {
+        VtCodePaths::ensure_user_dir(&self.cache_dir)?;
         let patterns_snapshot = {
             let patterns = self
                 .patterns
@@ -254,12 +331,13 @@ impl JustificationManager {
                 .map_err(|e| anyhow::anyhow!("Failed to lock patterns: {e}"))?;
             patterns.clone()
         };
+        Ok((self.cache_dir.join("approval_patterns.json"), patterns_snapshot))
+    }
 
-        // Write to disk outside the lock
-        let content = serde_json::to_string_pretty(&patterns_snapshot)?;
-        VtCodePaths::write_private_file_atomic(&patterns_file, content.as_bytes())
-            .context("failed to write approval patterns cache")?;
-        Ok(())
+    fn serialized_patterns(&self) -> Result<(PathBuf, Vec<u8>)> {
+        let (patterns_file, patterns_snapshot) = self.current_patterns_snapshot()?;
+        let content = serde_json::to_vec_pretty(&patterns_snapshot)?;
+        Ok((patterns_file, content))
     }
 
     /// Get learning summary for a key
@@ -276,6 +354,42 @@ impl JustificationManager {
             pattern.approve_count + pattern.deny_count,
             pattern.approval_rate() * 100.0
         ))
+    }
+}
+
+enum PatternFileState {
+    Missing,
+    Valid(HashMap<String, ApprovalPattern>),
+    Malformed(anyhow::Error),
+}
+
+fn read_patterns_file(path: &Path) -> Result<PatternFileState> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(PatternFileState::Missing),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to inspect approval patterns cache {}", path.display()));
+        }
+    };
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        anyhow::bail!("approval patterns cache is not a regular file: {}", path.display());
+    }
+
+    let content = match String::from_utf8(VtCodePaths::read_file_no_follow(path)?) {
+        Ok(content) => content,
+        Err(error) => {
+            return Ok(PatternFileState::Malformed(anyhow::anyhow!(
+                "failed to read approval patterns cache {} as UTF-8: {error}",
+                path.display()
+            )));
+        }
+    };
+    match serde_json::from_str::<HashMap<String, ApprovalPattern>>(&content) {
+        Ok(patterns) => Ok(PatternFileState::Valid(patterns)),
+        Err(error) => Ok(PatternFileState::Malformed(anyhow::anyhow!(
+            "failed to parse approval patterns cache {}: {error}",
+            path.display()
+        ))),
     }
 }
 

@@ -9,7 +9,7 @@ use std::io::{self, ErrorKind};
 use std::path::Path;
 use std::time::Duration;
 use vtcode_commons::VtCodePaths;
-use vtcode_commons::fs::{read_private_json_file, write_private_json_file};
+use vtcode_commons::fs::{read_private_file_no_follow, with_private_file_lock};
 
 use super::model_presets::ModelInfo;
 
@@ -68,8 +68,10 @@ impl ModelsCache {
 
 /// Read and deserialize the cache file if it exists.
 pub async fn load_cache(path: &Path) -> io::Result<Option<ModelsCache>> {
-    match read_private_json_file(path).await {
-        Ok(cache) => Ok(Some(cache)),
+    match read_private_file_no_follow(path).await {
+        Ok(contents) => serde_json::from_slice(&contents)
+            .map(Some)
+            .map_err(|err| io::Error::new(ErrorKind::InvalidData, err)),
         Err(err) => match err.downcast_ref::<io::Error>() {
             Some(io_err) if io_err.kind() == ErrorKind::NotFound => Ok(None),
             _ => Err(io::Error::other(err.to_string())),
@@ -79,9 +81,24 @@ pub async fn load_cache(path: &Path) -> io::Result<Option<ModelsCache>> {
 
 /// Persist the cache contents to disk, creating parent directories as needed.
 pub async fn save_cache(path: &Path, cache: &ModelsCache) -> io::Result<()> {
-    write_private_json_file(path, cache)
+    let serialized = serde_json::to_vec_pretty(cache).map_err(|err| io::Error::other(err.to_string()))?;
+    let lock_path = path.to_path_buf();
+    let destination = path.to_path_buf();
+    with_private_file_lock(&lock_path, move || VtCodePaths::write_private_file_atomic(&destination, &serialized))
         .await
         .map_err(|err| io::Error::other(err.to_string()))
+}
+
+/// Publish a cache only when its canonical file is still absent.
+pub async fn save_cache_if_absent(path: &Path, cache: &ModelsCache) -> io::Result<bool> {
+    let serialized = serde_json::to_vec_pretty(cache).map_err(|err| io::Error::other(err.to_string()))?;
+    let lock_path = path.to_path_buf();
+    let destination = path.to_path_buf();
+    with_private_file_lock(&lock_path, move || {
+        VtCodePaths::write_private_file_atomic_if_absent(&destination, &serialized)
+    })
+    .await
+    .map_err(|err| io::Error::other(err.to_string()))
 }
 
 /// Load cache synchronously (for initialization)
@@ -89,7 +106,7 @@ pub fn load_cache_sync(path: &Path) -> io::Result<Option<ModelsCache>> {
     match VtCodePaths::read_file_no_follow(path) {
         Ok(contents) => serde_json::from_slice(&contents)
             .map(Some)
-            .map_err(|err| io::Error::other(err.to_string())),
+            .map_err(|err| io::Error::new(ErrorKind::InvalidData, err)),
         Err(err) => match err.downcast_ref::<io::Error>() {
             Some(io_err) if io_err.kind() == ErrorKind::NotFound => Ok(None),
             _ => Err(io::Error::other(err.to_string())),
@@ -100,7 +117,8 @@ pub fn load_cache_sync(path: &Path) -> io::Result<Option<ModelsCache>> {
 /// Save cache synchronously
 pub fn save_cache_sync(path: &Path, cache: &ModelsCache) -> io::Result<()> {
     let serialized = serde_json::to_vec_pretty(cache).map_err(|err| io::Error::other(err.to_string()))?;
-    VtCodePaths::write_private_file_atomic(path, &serialized).map_err(|err| io::Error::other(err.to_string()))
+    VtCodePaths::with_private_file_lock(path, || VtCodePaths::write_private_file_atomic(path, &serialized))
+        .map_err(|err| io::Error::other(err.to_string()))
 }
 
 #[cfg(test)]

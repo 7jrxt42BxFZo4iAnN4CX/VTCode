@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use vtcode_commons::VtCodePaths;
 
 use super::super::install_support::{
-    acquire_lock_file, cache_is_stale, load_json_cache, lock_is_active, save_json_cache, unix_timestamp_now,
+    acquire_lock_file, cache_is_stale, load_json_cache_with_legacy_fallback, lock_is_active, save_json_cache,
+    unix_timestamp_now,
 };
 #[cfg(test)]
 use std::path::Path;
@@ -29,6 +30,7 @@ pub(super) struct InstallPaths {
     pub(super) bin_dir: PathBuf,
     cache_path: PathBuf,
     lock_path: PathBuf,
+    legacy_cache_paths: Vec<PathBuf>,
     pub(super) binary_path: PathBuf,
     pub(super) alias_path: Option<PathBuf>,
 }
@@ -41,7 +43,7 @@ pub(super) struct InstallLockGuard {
 
 impl InstallationCache {
     pub(super) fn load(paths: &InstallPaths) -> Result<Self> {
-        load_json_cache(&paths.cache_path, "ast-grep install cache")
+        load_json_cache_with_legacy_fallback(&paths.cache_path, &paths.legacy_cache_paths, "ast-grep install cache")
     }
 
     fn save(&self, paths: &InstallPaths) -> Result<()> {
@@ -82,7 +84,12 @@ impl InstallPaths {
         let cache_dir = paths.ensure_cache_child_dir("ast-grep")?;
         let runtime_dir = paths.ensure_runtime_child_dir("ast-grep")?;
         let executable_dir = paths.ensure_executable_dir()?.to_path_buf();
-        Ok(Self::from_roots(cache_dir, runtime_dir, executable_dir))
+        let mut legacy_cache_paths = vec![
+            paths.legacy_dir().join("ast_grep_install_cache.json"),
+            paths.legacy_dir().join("ast-grep/install.json"),
+        ];
+        legacy_cache_paths.dedup();
+        Ok(Self::from_roots_with_legacy(cache_dir, runtime_dir, executable_dir, legacy_cache_paths))
     }
 
     #[cfg(test)]
@@ -91,17 +98,24 @@ impl InstallPaths {
         // resolver intentionally ignores HOME and uses the OS application
         // support directories. Production discovery remains centralized in
         // `VtCodePaths::resolve` above.
-        Self::from_roots(
+        Self::from_roots_with_legacy(
             home.join(".cache/vtcode/ast-grep"),
             home.join(".local/state/vtcode/runtime/ast-grep"),
             home.join(".local/bin"),
+            Vec::new(),
         )
     }
 
-    fn from_roots(cache_dir: PathBuf, runtime_dir: PathBuf, bin_dir: PathBuf) -> Self {
+    fn from_roots_with_legacy(
+        cache_dir: PathBuf,
+        runtime_dir: PathBuf,
+        bin_dir: PathBuf,
+        legacy_cache_paths: Vec<PathBuf>,
+    ) -> Self {
         Self {
             cache_path: cache_dir.join("install.json"),
             lock_path: runtime_dir.join("install.lock"),
+            legacy_cache_paths,
             binary_path: bin_dir.join(canonical_ast_grep_binary_name()),
             alias_path: alias_ast_grep_binary_name().map(|name| bin_dir.join(name)),
             state_dir: cache_dir,
@@ -233,5 +247,30 @@ mod tests {
         assert_eq!(loaded.last_attempt, 42);
         assert_eq!(loaded.status, "failed");
         assert_eq!(loaded.failure_reason.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn installation_cache_recovers_legacy_path_and_republishes_it() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let legacy_path = temp_dir.path().join("legacy/ast_grep_install_cache.json");
+        let paths = InstallPaths::from_roots_with_legacy(
+            temp_dir.path().join("cache/ast-grep"),
+            temp_dir.path().join("runtime/ast-grep"),
+            temp_dir.path().join("bin"),
+            vec![legacy_path.clone()],
+        );
+        let cache = InstallationCache {
+            last_attempt: 42,
+            status: "failed".to_string(),
+            release_tag: None,
+            failure_reason: Some("legacy failure".to_string()),
+        };
+        std::fs::create_dir_all(legacy_path.parent().expect("legacy parent")).expect("legacy directory");
+        std::fs::write(&legacy_path, serde_json::to_vec(&cache).expect("serialize legacy cache"))
+            .expect("write legacy cache");
+
+        let loaded = InstallationCache::load(&paths).expect("load legacy cache");
+        assert_eq!(loaded.failure_reason.as_deref(), Some("legacy failure"));
+        assert!(paths.cache_path.is_file());
     }
 }
