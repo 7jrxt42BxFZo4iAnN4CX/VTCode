@@ -2,6 +2,13 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.149.0 - 2026-08-27
+
+### Highlights
+#### Bug Fixes
+
+- Remove obsolete OpenRouter models from build_data and generated metadata (3fa11c79) (@vinhnx)
+### Other Changes
 ## 0.148.0 - 2026-08-27
 
 ### Highlights
