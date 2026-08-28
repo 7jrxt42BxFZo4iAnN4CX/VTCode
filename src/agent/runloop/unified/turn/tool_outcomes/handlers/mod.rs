@@ -715,6 +715,16 @@ pub(crate) async fn validate_tool_call<'a>(
     {
         Ok(Some(PreToolHookPhaseResult::Deny)) => {
             ctx.harness_state.record_denied_tool_call();
+            // Surface the denial to the model so it does not silently retry
+            // the same call; the reason is also rendered for the user.
+            ctx.push_tool_response(
+                tool_call_id,
+                Some(&canonical_tool_name),
+                build_failure_error_content(
+                    format!("Tool '{canonical_tool_name}' denied by PreToolUse hook"),
+                    "policy",
+                ),
+            );
             return Ok(ValidationResult::Blocked);
         }
         Ok(Some(PreToolHookPhaseResult::Proceed { rewritten_args: Some(rewritten), requires_prompt })) => {
@@ -733,6 +743,11 @@ pub(crate) async fn validate_tool_call<'a>(
         Err(err) => {
             ctx.harness_state.record_denied_tool_call();
             ctx.push_system_message(format!("Pre-tool hook phase failed: {err}"));
+            ctx.push_tool_response(
+                tool_call_id,
+                Some(&canonical_tool_name),
+                build_failure_error_content(format!("Pre-tool hook phase failed: {err}"), "policy"),
+            );
             return Ok(ValidationResult::Blocked);
         }
     };

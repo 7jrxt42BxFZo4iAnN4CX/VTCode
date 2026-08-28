@@ -289,15 +289,6 @@ impl<'a> CopilotRuntimeHost<'a> {
             return Ok(tool_not_exposed_response(&canonical_tool_name));
         }
 
-        if self.loop_tracker.as_deref().is_some_and(|tracker| {
-            mutation_blocked_until_verification(tracker, &canonical_tool_name, &effective_arguments)
-        }) {
-            return Ok(denied_tool_response(
-                &canonical_tool_name,
-                "mutating tool call blocked until verification succeeds",
-            ));
-        }
-
         if let Some(response) = self
             .prepare_vtcode_tool_execution(renderer, &request.tool_call_id, &canonical_tool_name, &effective_arguments)
             .await?
@@ -309,6 +300,18 @@ impl<'a> CopilotRuntimeHost<'a> {
             .pending_hook_rewritten_args
             .remove(&request.tool_call_id)
             .unwrap_or(effective_arguments);
+
+        // The mutation guard runs after the hook phase so it evaluates the
+        // arguments that will actually execute: a PreToolUse rewrite could
+        // turn a read-only call into a mutating one (or vice versa).
+        if self.loop_tracker.as_deref().is_some_and(|tracker| {
+            mutation_blocked_until_verification(tracker, &canonical_tool_name, &effective_arguments)
+        }) {
+            return Ok(denied_tool_response(
+                &canonical_tool_name,
+                "mutating tool call blocked until verification succeeds",
+            ));
+        }
 
         self.record_tool_use(&canonical_tool_name);
 
