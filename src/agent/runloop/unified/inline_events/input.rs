@@ -17,6 +17,11 @@ impl<'a, 'state> InlineInputProcessor<'a, 'state> {
         InlineLoopAction::Submit(input.trim_text())
     }
 
+    pub(crate) fn submit_prompt(self, input: SubmittedInput) -> InlineLoopAction {
+        self.state.reset_interrupt_state();
+        InlineLoopAction::SubmitPrompt(input.trim_text())
+    }
+
     pub(crate) fn queue_submit(
         self,
         input: SubmittedInput,
@@ -36,5 +41,46 @@ impl<'a, 'state> InlineInputProcessor<'a, 'state> {
     pub(crate) fn passive(self) -> InlineLoopAction {
         self.state.reset_interrupt_state();
         InlineLoopAction::Continue
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::runloop::unified::inline_events::interrupts::InlineInterruptCoordinator;
+    use crate::agent::runloop::unified::inline_events::state::InlineEventState;
+    use crate::agent::runloop::unified::state::CtrlCState;
+    use vtcode_core::core::interfaces::ui::UiSession;
+    use vtcode_core::utils::ansi::AnsiRenderer;
+    use vtcode_ui::tui::app::{InlineEvent, InlineHandle, InlineSession};
+
+    #[test]
+    fn webmcp_prompt_keeps_slash_commands_as_prompt_text() {
+        let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+        let handle = InlineHandle::new_for_tests(sender);
+        let mut renderer = AnsiRenderer::with_inline_ui(handle, Default::default());
+        let ctrl_c_state = CtrlCState::new();
+        let interrupts = InlineInterruptCoordinator::new(&ctrl_c_state);
+        let mut ctrl_c_notice_displayed = false;
+        let mut state = InlineEventState::new(&mut renderer, interrupts, &mut ctrl_c_notice_displayed);
+
+        let action = InlineInputProcessor::new(&mut state).submit_prompt("/exit".into());
+
+        assert!(matches!(action, InlineLoopAction::SubmitPrompt(input) if input.text == "/exit"));
+    }
+
+    #[tokio::test]
+    async fn deferred_webmcp_prompt_is_available_through_ui_session() {
+        let (command_sender, _command_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let handle = InlineHandle::new_for_tests(command_sender);
+        let (_event_sender, event_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let mut session = InlineSession { handle: handle.clone(), events: event_receiver };
+
+        handle
+            .defer_event(InlineEvent::WebmcpSubmit("/exit".into()))
+            .expect("defer bridge prompt");
+
+        let event = UiSession::next_event(&mut session).await;
+        assert!(matches!(event, Some(InlineEvent::WebmcpSubmit(input)) if input.text == "/exit"));
     }
 }

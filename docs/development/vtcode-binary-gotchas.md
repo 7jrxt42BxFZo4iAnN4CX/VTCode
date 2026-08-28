@@ -25,6 +25,11 @@ allocator, or request assembly.
 - The interview-denied recovery fallback must distinguish "no draft produced" from "draft persisted." `PLANNING_RECOVERY_SYNTHESIS_FALLBACK_NO_INTERVIEW` promises "Review the plan below" and offers `yes`/`implement`/`no`/`edit` — those choices dead-end without a persisted plan and contradict the appended `PLANNING_WORKFLOW_NO_APPROVAL_READY_PLAN_HINT`. When `persisted_plan_ready` is false, use `PLANNING_INTERVIEW_DENIED_NO_DRAFT_NOTICE` instead (turn_902).
 - Permanent `request_user_input` denial is distinct from user cancellation. Mark denial from both execution failure and permission-flow denial, suppress the tool for the rest of the session, and route text replies through the shared planning intent classifier.
 
+## WebMCP bridge boundary
+
+- WebMCP stays opt-in with explicit origins, loopback defaults, in-memory credentials, terminal/full-auto authorization, and the existing full-auto workspace-trust gate before headless mutations/checks. Active bridge replacement and unpair require terminal confirmation.
+- Bridge prompts use a prompt-only inline event and must not enter slash-command parsing. Keep browser authority separate from terminal-owned origins, roots, pairing, and policy.
+
 ## Request assembly and planning
 
 - `turn_processing/llm_request/` uses contract-carrying `pub(super)` submodules (`snapshot`, `tool_shaping`, `context_management`, `response_chain`, `prompt_assembly`, `prompt_sections`, and `prompt_runtime`). Go through `mod.rs` exports.

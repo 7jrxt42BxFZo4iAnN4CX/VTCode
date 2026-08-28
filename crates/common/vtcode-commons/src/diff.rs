@@ -397,10 +397,27 @@ fn split_lines_with_terminator(text: &str) -> Vec<String> {
         return Vec::with_capacity(0);
     }
 
-    let mut lines: Vec<String> = text.split_inclusive('\n').map(|line| line.to_string()).collect();
-
-    if lines.is_empty() {
-        lines.push(text.to_string());
+    let bytes = text.as_bytes();
+    let mut lines = Vec::new();
+    let mut line_start = 0;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte != b'\n' && byte != b'\r' {
+            index += 1;
+            continue;
+        }
+        let line_end = if byte == b'\r' && bytes.get(index + 1) == Some(&b'\n') {
+            index + 2
+        } else {
+            index + 1
+        };
+        lines.push(text[line_start..line_end].to_string());
+        line_start = line_end;
+        index = line_end;
+    }
+    if line_start < text.len() {
+        lines.push(text[line_start..].to_string());
     }
 
     lines
@@ -532,19 +549,9 @@ fn build_hunks(records: &[LineRecord<'_>], context: usize) -> Vec<DiffHunk> {
     for (start, end) in ranges {
         let slice = &records[start..=end];
 
-        let old_start = slice
-            .iter()
-            .filter_map(|r| r.old_line)
-            .min()
-            .or_else(|| slice.iter().map(|r| r.anchor_old).min())
-            .unwrap_or(1) as usize;
-
-        let new_start = slice
-            .iter()
-            .filter_map(|r| r.new_line)
-            .min()
-            .or_else(|| slice.iter().map(|r| r.anchor_new).min())
-            .unwrap_or(1) as usize;
+        let first = &slice[0];
+        let old_start = first.old_line.unwrap_or(first.anchor_old).max(1) as usize;
+        let new_start = first.new_line.unwrap_or(first.anchor_new).max(1) as usize;
 
         let old_lines = slice
             .iter()
@@ -874,6 +881,17 @@ mod tests {
     }
 
     #[test]
+    fn diff_hunk_start_uses_the_first_represented_line() {
+        let result = compute_diff("existing\n", "inserted\nexisting\n", DiffOptions::default(), identity_formatter);
+        let hunk = &result.hunks[0];
+
+        assert_eq!(hunk.old_start, 1);
+        assert_eq!(hunk.new_start, 1);
+        assert_eq!(hunk.old_lines, 1);
+        assert_eq!(hunk.new_lines, 2);
+    }
+
+    #[test]
     fn diff_multiple_hunks() {
         // Insert in first half and insert in second half with small context => two hunks
         let old = "a\nb\nc\nd\ne\nf\ng\nh\n";
@@ -947,6 +965,37 @@ mod tests {
             .collect();
         assert_eq!(additions.len(), 1);
         assert_eq!(additions[0].text, "line2\n");
+    }
+
+    #[test]
+    fn diff_preserves_crlf_and_cr_line_endings() {
+        let crlf = compute_diff("one\r\ntwo\r\n", "one\r\nchanged\r\n", DiffOptions::default(), identity_formatter);
+        assert_eq!(
+            crlf.hunks[0]
+                .lines
+                .iter()
+                .map(|line| (line.kind, line.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (DiffLineKind::Context, "one\r\n"),
+                (DiffLineKind::Deletion, "two\r\n"),
+                (DiffLineKind::Addition, "changed\r\n"),
+            ]
+        );
+
+        let cr = compute_diff("one\rtwo\r", "one\rchanged\r", DiffOptions::default(), identity_formatter);
+        assert_eq!(
+            cr.hunks[0]
+                .lines
+                .iter()
+                .map(|line| (line.kind, line.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (DiffLineKind::Context, "one\r"),
+                (DiffLineKind::Deletion, "two\r"),
+                (DiffLineKind::Addition, "changed\r"),
+            ]
+        );
     }
 
     #[test]

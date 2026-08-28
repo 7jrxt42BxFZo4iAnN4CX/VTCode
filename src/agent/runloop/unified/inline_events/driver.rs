@@ -51,6 +51,7 @@ struct InlineEventLoop<'a> {
     lifecycle_hooks: Option<&'a LifecycleHookEngine>,
     harness_emitter: Option<&'a HarnessEventEmitter>,
     editor_open_sender: &'a EditorOpenRequestSender,
+    webmcp_prompt_receiver: &'a mut Option<tokio::sync::mpsc::Receiver<String>>,
     idle_wake_delay: Duration,
 }
 
@@ -89,6 +90,7 @@ impl<'a> InlineEventLoop<'a> {
             lifecycle_hooks,
             harness_emitter,
             editor_open_sender,
+            webmcp_prompt_receiver,
             idle_wake_delay,
         } = resources;
 
@@ -119,6 +121,7 @@ impl<'a> InlineEventLoop<'a> {
             lifecycle_hooks,
             harness_emitter,
             editor_open_sender,
+            webmcp_prompt_receiver,
             idle_wake_delay,
         }
     }
@@ -166,7 +169,7 @@ impl<'a> InlineEventLoop<'a> {
         // If the TUI event stream has been dropped the session cannot produce
         // further input; polling would spin a 100% CPU busy-loop because
         // next_event() resolves to None instantly on a closed channel. Exit.
-        if session.events.is_closed() {
+        if session.events.is_closed() && !session.handle.has_deferred_event() {
             return Ok(InlineLoopAction::Exit(vtcode_core::hooks::SessionEndReason::Exit));
         }
 
@@ -188,6 +191,9 @@ impl<'a> InlineEventLoop<'a> {
                 }
                 None
             }
+            prompt = recv_webmcp_prompt(self.webmcp_prompt_receiver) => {
+                prompt.map(|prompt| InlineEvent::WebmcpSubmit(prompt.into()))
+            }
             _ = ctrl_c_notify.notified() => None,
             _ = tokio::time::sleep(self.idle_wake_delay) => None,
         };
@@ -208,7 +214,7 @@ impl<'a> InlineEventLoop<'a> {
     }
 
     async fn process_buffered_event(&mut self, event: InlineEvent) -> Result<InlineLoopAction> {
-        if let InlineEvent::Submit(ref input) = event {
+        if let InlineEvent::Submit(ref input) | InlineEvent::WebmcpSubmit(ref input) = event {
             if !input.is_empty() {
                 self.emit_interjected(InterjectionSource::Direct, Self::count_images(input));
             }
@@ -303,6 +309,7 @@ impl<'a> InlineEventLoop<'a> {
             InlineLoopAction::Exit(reason) => Some(InlineLoopAction::Exit(reason)),
             InlineLoopAction::Continue => None,
             InlineLoopAction::Submit(_) => None,
+            InlineLoopAction::SubmitPrompt(_) => None,
             InlineLoopAction::SubmitQueued(_) => None,
             InlineLoopAction::CyclePrimaryAgent => None,
             InlineLoopAction::CyclePrimaryAgentPrevious => None,
@@ -349,6 +356,7 @@ pub(crate) struct InlineEventLoopResources<'a> {
     pub lifecycle_hooks: Option<&'a LifecycleHookEngine>,
     pub harness_emitter: Option<&'a HarnessEventEmitter>,
     pub editor_open_sender: &'a EditorOpenRequestSender,
+    pub webmcp_prompt_receiver: &'a mut Option<tokio::sync::mpsc::Receiver<String>>,
     pub idle_wake_delay: Duration,
 }
 
@@ -369,6 +377,19 @@ async fn recv_startup_update_notice(
             None => {
                 *receiver = None;
                 StartupUpdateEvent::Closed
+            }
+        },
+        None => std::future::pending().await,
+    }
+}
+
+async fn recv_webmcp_prompt(receiver: &mut Option<tokio::sync::mpsc::Receiver<String>>) -> Option<String> {
+    match receiver.as_mut() {
+        Some(rx) => match rx.recv().await {
+            Some(prompt) => Some(prompt),
+            None => {
+                *receiver = None;
+                None
             }
         },
         None => std::future::pending().await,
@@ -500,6 +521,7 @@ mod tests {
         let ctrl_c_notify = Arc::new(Notify::new());
         let (editor_open_sender, _editor_open_receiver) =
             crate::agent::runloop::unified::session_setup::bounded_editor_open_requests();
+        let mut webmcp_prompt_receiver = None;
 
         let resources = InlineEventLoopResources {
             renderer: &mut renderer,
@@ -527,6 +549,7 @@ mod tests {
             lifecycle_hooks: None,
             harness_emitter: None,
             editor_open_sender: &editor_open_sender,
+            webmcp_prompt_receiver: &mut webmcp_prompt_receiver,
             idle_wake_delay: Duration::from_millis(5),
             ctrl_c_state: &ctrl_c_state,
             ctrl_c_notify: &ctrl_c_notify,
@@ -569,6 +592,7 @@ mod tests {
         let ctrl_c_notify = Arc::new(Notify::new());
         let (editor_open_sender, _editor_open_receiver) =
             crate::agent::runloop::unified::session_setup::bounded_editor_open_requests();
+        let mut webmcp_prompt_receiver = None;
 
         let resources = InlineEventLoopResources {
             renderer: &mut renderer,
@@ -596,6 +620,7 @@ mod tests {
             lifecycle_hooks: None,
             harness_emitter: None,
             editor_open_sender: &editor_open_sender,
+            webmcp_prompt_receiver: &mut webmcp_prompt_receiver,
             idle_wake_delay: Duration::from_millis(5),
             ctrl_c_state: &ctrl_c_state,
             ctrl_c_notify: &ctrl_c_notify,

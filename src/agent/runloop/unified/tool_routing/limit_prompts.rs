@@ -180,6 +180,9 @@ async fn prompt_limit_increase_modal<S: UiSession + ?Sized>(
 
     Ok(match outcome {
         OverlayWaitOutcome::Submitted(increment) => Some(increment),
-        OverlayWaitOutcome::Cancelled | OverlayWaitOutcome::Interrupted | OverlayWaitOutcome::Exit => None,
+        OverlayWaitOutcome::Cancelled
+        | OverlayWaitOutcome::Interrupted
+        | OverlayWaitOutcome::Deferred
+        | OverlayWaitOutcome::Exit => None,
     })
 }

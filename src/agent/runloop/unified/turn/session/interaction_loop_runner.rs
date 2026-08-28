@@ -161,6 +161,7 @@ pub(super) async fn run_interaction_loop_impl(
             lifecycle_hooks: ctx.lifecycle_hooks.as_ref(),
             harness_emitter: ctx.harness_emitter,
             editor_open_sender: ctx.editor_open_sender,
+            webmcp_prompt_receiver: ctx.webmcp_prompt_receiver,
             idle_wake_delay,
         };
 
@@ -256,11 +257,13 @@ pub(super) async fn run_interaction_loop_impl(
             }
         }
 
-        let mut submitted_input = match resolve_inline_loop_action(ctx, state, inline_action).await? {
-            InlineLoopActionResolution::ContinueLoop => continue,
-            InlineLoopActionResolution::Submit(input) => input,
-            InlineLoopActionResolution::Outcome(outcome) => return Ok(outcome),
-        };
+        let (mut submitted_input, process_slash_commands) =
+            match resolve_inline_loop_action(ctx, state, inline_action).await? {
+                InlineLoopActionResolution::ContinueLoop => continue,
+                InlineLoopActionResolution::Submit(input) => (input, true),
+                InlineLoopActionResolution::SubmitPrompt(input) => (input, false),
+                InlineLoopActionResolution::Outcome(outcome) => return Ok(outcome),
+            };
         let mut input_owned = submitted_input.text.clone();
 
         if submitted_input.is_empty() {
@@ -310,14 +313,16 @@ pub(super) async fn run_interaction_loop_impl(
             *ctx.default_placeholder = Some(next_placeholder);
         }
 
-        match slash_command_handler::handle_input_commands(input_owned.as_str(), ctx, state).await? {
-            slash_command_handler::CommandProcessingResult::Outcome(outcome) => return Ok(outcome),
-            slash_command_handler::CommandProcessingResult::ContinueLoop => continue,
-            slash_command_handler::CommandProcessingResult::UpdateInput(new_input) => {
-                replace_submitted_input_text(&mut submitted_input, new_input);
-                input_owned.clone_from(&submitted_input.text);
+        if process_slash_commands {
+            match slash_command_handler::handle_input_commands(input_owned.as_str(), ctx, state).await? {
+                slash_command_handler::CommandProcessingResult::Outcome(outcome) => return Ok(outcome),
+                slash_command_handler::CommandProcessingResult::ContinueLoop => continue,
+                slash_command_handler::CommandProcessingResult::UpdateInput(new_input) => {
+                    replace_submitted_input_text(&mut submitted_input, new_input);
+                    input_owned.clone_from(&submitted_input.text);
+                }
+                slash_command_handler::CommandProcessingResult::NotHandled => {}
             }
-            slash_command_handler::CommandProcessingResult::NotHandled => {}
         }
 
         if submitted_images_are_unsupported(

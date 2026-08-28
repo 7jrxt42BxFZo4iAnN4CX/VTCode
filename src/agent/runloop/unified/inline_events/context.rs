@@ -114,6 +114,7 @@ impl<'a> InlineEventContext<'a> {
     ) -> Result<InlineLoopAction> {
         let action = match event {
             InlineEvent::Submit(text) => self.input_processor().submit(text),
+            InlineEvent::WebmcpSubmit(text) => self.input_processor().submit_prompt(text),
             InlineEvent::QueueSubmit(text) => {
                 let primary_agent = self.modal.active_primary_agent_name();
                 self.input_processor().queue_submit(text, queue, primary_agent)

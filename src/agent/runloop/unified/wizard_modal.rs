@@ -46,7 +46,7 @@ pub(crate) async fn show_wizard_modal_and_wait(
 
     Ok(match outcome {
         OverlayWaitOutcome::Submitted(selections) => WizardModalOutcome::Submitted(selections),
-        OverlayWaitOutcome::Cancelled => WizardModalOutcome::Cancelled { signal: None },
+        OverlayWaitOutcome::Cancelled | OverlayWaitOutcome::Deferred => WizardModalOutcome::Cancelled { signal: None },
         OverlayWaitOutcome::Interrupted => WizardModalOutcome::Cancelled { signal: Some("cancel") },
         OverlayWaitOutcome::Exit => WizardModalOutcome::Cancelled { signal: Some("exit") },
     })

@@ -99,6 +99,7 @@ pub(crate) async fn present_start_planning_confirmation(
         Ok(OverlayWaitOutcome::Submitted(choice)) => choice,
         Ok(OverlayWaitOutcome::Cancelled)
         | Ok(OverlayWaitOutcome::Interrupted)
+        | Ok(OverlayWaitOutcome::Deferred)
         | Ok(OverlayWaitOutcome::Exit)
         | Err(_) => StartPlanningDecision::Stay,
     })

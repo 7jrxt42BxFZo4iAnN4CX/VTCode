@@ -78,6 +78,46 @@ fn streaming_segments_render_incrementally() {
 }
 
 #[test]
+fn appended_info_lines_refresh_the_cached_info_block() {
+    let mut session = Session::new(InlineTheme::default(), None, VIEW_ROWS);
+
+    session.push_line(InlineMessageKind::Info, vec![make_segment("Active WebMCP bridge started.")]);
+    let _ = rendered_transcript_widget_lines(&mut session, VIEW_WIDTH, VIEW_ROWS);
+
+    session.push_line(InlineMessageKind::Info, vec![make_segment("WebSocket: ws://127.0.0.1:57759/webmcp")]);
+    session.push_line(InlineMessageKind::Info, vec![make_segment("Pairing code: 1AF23A43F9C4")]);
+
+    let rendered = rendered_transcript_widget_lines(&mut session, VIEW_WIDTH, VIEW_ROWS);
+    assert!(
+        rendered
+            .iter()
+            .any(|line| line.contains("WebSocket: ws://127.0.0.1:57759/webmcp")),
+        "appended WebSocket line should be visible in the refreshed info block: {rendered:?}"
+    );
+    assert!(
+        rendered.iter().any(|line| line.contains("Pairing code: 1AF23A43F9C4")),
+        "appended pairing line should be visible in the refreshed info block: {rendered:?}"
+    );
+}
+
+#[test]
+fn info_box_after_tool_summary_invalidates_its_own_cached_head() {
+    let mut session = Session::new(InlineTheme::default(), None, VIEW_ROWS);
+
+    session.push_line(InlineMessageKind::Info, vec![make_segment("• Ran cargo check")]);
+    session.push_line(InlineMessageKind::Info, vec![make_segment("First info line")]);
+    let _ = rendered_transcript_widget_lines(&mut session, VIEW_WIDTH, VIEW_ROWS);
+
+    session.push_line(InlineMessageKind::Info, vec![make_segment("Second info line")]);
+
+    let rendered = rendered_transcript_widget_lines(&mut session, VIEW_WIDTH, VIEW_ROWS);
+    assert!(
+        rendered.iter().any(|line| line.contains("Second info line")),
+        "the info box after a tool summary should reflow from its own head: {rendered:?}"
+    );
+}
+
+#[test]
 fn page_up_reveals_prior_lines_until_buffer_start() {
     let mut session = Session::new(InlineTheme::default(), None, VIEW_ROWS);
 

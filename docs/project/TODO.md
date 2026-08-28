@@ -7,46 +7,13 @@
     - **Expected:** A sufficiently specific, user-approved fact should be persisted to the session-independent memory store and be available in later turns.
     - **Reproduction context:** The request followed a conversation in which `vinhnx` was identified from local repository metadata and public profiles. The save attempt failed before any confirmation that a memory file or durable store entry was created.
     - **Acceptance criteria:** - Saving a clear user preference or identity alias does not require unrelated planner information. - The user receives an actionable error when persistence fails, including what additional information is required. - A successful save is verified by reading the memory through the supported memory path in a subsequent turn. - Add regression coverage for the planner/memory-save path and the failure message above.
-      log: /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/checkpoints/turn_995.json /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/checkpoints/turn_994.json /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/checkpoints/turn_993.json /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/checkpoints/turn_992.json /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/checkpoints/turn_991.json
+      log: local `.vtcode/checkpoints/` artifacts (`turn_995.json` through `turn_991.json`)
 
-session: /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/sessions/session-vtcode-20260825T035810Z_038177-75164
-
----
-
-CRITICAL: check vtcode post-amble summaried session is not gone/missing. it was working before. context: when user control+c or quit the program, there is the summarization turn/context shown in the CLI. Currently it showing a blank space. This is a regression from the previous behavior. The summarization turn/context should be shown in the CLI after the user quits the program.
+session: local `.vtcode/sessions/` artifact for the reproduction
 
 ---
 
-The full benchmark command began a lengthy release-profile compilation and did not complete within the available
-execution window. The broader deferral/help-path optimizations were not implemented because the measured benchmark
-evidence and relevant startup call paths require further investigation.
-
------------------------------------------------------- Info -------------------------------------------------------
-Execution summary: blocked; changed files: Cargo.toml, benches/startup.rs,
-crates/codegen/vtcode-config/src/loader/manager.rs, crates/common/vtcode-commons/src/startup_trace.rs,
-docs/development/testing.md, docs/development/vtcode-binary-gotchas.md, src/main.rs,
-src/main_helpers/bootstrap.rs, src/startup/config_loading.rs; verification: see the final response and task
-tracker; blockers: pending checklist items: Add a repeatable launch benchmark covering cold and warm invocations
-of `--version`, `--help`, and a non-interactive command, recording median and p95 process duration -> files: [
-benches/startup.rs, Cargo.toml] -> verify: [cargo bench --bench startup], Defer or skip startup work that cannot
-affect the selected command, especially theme persistence, dot-folder initialization, update checks, spool
-cleanup, and provider/auth probing for metadata-only commands; retain runtime security initialization for
-commands that execute tools -> files: [src/startup/mod.rs, src/main.rs, src/startup/theme.rs] -> verify: [cargo
-nextest run -p vtcode --all-targets], Reduce repeated filesystem/config work on the help path by reusing the
-already parsed command context where possible and avoiding duplicate config probing in `
-    build_augmented_cli_command` -> files: [src/main_helpers/bootstrap.rs,
-crates/codegen/vtcode-core/src/cli/args/mod.rs] -> verify: [VTCODE_STARTUP_TRACE=1 target/release/vtcode --help],
-Optimize the measured dominant phase only after benchmark evidence, keeping changes surgical and documenting the
-resulting behavior in the binary startup guide -> files: [docs/development/vtcode-binary-gotchas.md,
-docs/development/testing.md] -> verify: [./scripts/check-dev.sh --changed].
-
----
-
-log:
-/Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/checkpoints/turn_1002.json
-/Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/checkpoints/turn_1001.json
-
-/Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/sessions/session-vtcode-20260826T024326Z_049248-14625 /Users/vinhnguyenxuan/Developer/learn-by-doing/vtcode/.vtcode/sessions/session-vtcode-20260826T024235Z_031640-09364
+CRITICAL: check vtcode post-amble summarized session is sometimes gone/missing. it was working before. context: when user control+c or quit the program, there is the summarization turn/context shown in the CLI. Currently it showing a blank space. This is a regression from the previous behavior. The summarization turn/context should be shown in the CLI after the user quits the program.
 
 ===
 
@@ -57,12 +24,12 @@ References: [OpenAI challenge](https://openai.com/webmcp-challenge/), [Devpost r
 ### Immediate reminders
 
 - [x] **REMINDER — Register:** Create or join the Devpost submission before implementation begins.
-- [ ] **REMINDER — Implement:** Start the WebMCP companion app immediately after registration and preserve a baseline commit proving the new work was added after August 25, 2026.
+- [x] **REMINDER — Implement:** The WebMCP reference client and first-class VT Code bridge were added after August 25, 2026; the commit history preserves that work.
 - [ ] **REMINDER — Submit:** Submit before September 3, 2026 at 1:00 PM PDT (September 4 at 3:00 AM ICT), then freeze the submitted repository, deployment, and video.
 
 ### Product direction
 
-Build a companion browser app that demonstrates VT Code's safe human-agent coding workflow. Use an embedded sample project so the live demo needs no credentials or backend access.
+The WebMCP reference client demonstrates VT Code's safe human-agent coding workflow. It uses an embedded sample project so the live client needs no credentials or backend access, while the authenticated bridge remains available for a real VT Code session.
 
 The agent should inspect files, search code, propose a reversible patch, show the diff, wait for human approval, run deterministic checks, and record an audit entry. The app should make the collaboration visible rather than presenting an autonomous editor.
 
@@ -75,15 +42,19 @@ Choose the public project name manually; do not treat a generated name as final.
 | `list_project_files`   | List the embedded project tree   | Read-only                          |
 | `search_code`          | Search bounded file contents     | Read-only                          |
 | `read_file`            | Read a bounded file segment      | Read-only                          |
-| `propose_patch`        | Create an unapplied diff         | No mutation                        |
-| `run_checks`           | Run deterministic project checks | Read-only                          |
-| `apply_approved_patch` | Apply the reviewed patch         | Register only after human approval |
-| `revert_last_change`   | Restore the prior snapshot       | Confirmation required              |
+| `get_editor_state`     | Inspect editor workflow state    | Read-only                          |
+| `open_file`            | Open a selected file             | Browser UI state                   |
+| `stage_text_edit`      | Stage one exact draft replacement | Browser draft only                 |
+| `review_draft`         | Show the current draft diff      | Read-only preview                  |
+| `open_panel`           | Navigate editor panels           | Browser UI state                   |
+
+Approval, apply, check, and revert remain UI or bridge operations outside the
+browser WebMCP tool set; the browser agent cannot authorize a filesystem write.
 
 ### Implementation phases
 
 1. **Scaffold and deploy**
-    - Create a separate public companion repository or challenge-only branch; avoid adding a new browser runtime to the Rust workspace during the sprint.
+    - Keep the reference browser client isolated under `examples/webmcp-challenge` and ship the authenticated bridge in the main Rust workspace.
     - Add a visible open-source license, setup instructions, and a static deployment.
     - Register one read-only WebMCP tool and verify it in ChatGPT's in-app browser and Chrome with WebMCP enabled.
 
@@ -92,9 +63,9 @@ Choose the public project name manually; do not treat a generated name as final.
     - Keep tool descriptions, parameter descriptions, and outputs short and deterministic.
 
 3. **Add human approval and dynamic tools**
-    - Make `propose_patch` produce a staged diff only.
-    - Require a visible human approval action before registering `apply_approved_patch`.
-    - Unregister mutation tools after application, rejection, navigation, or revert.
+    - Make `stage_text_edit` produce a staged browser draft only.
+    - Keep approval, application, checks, and revert outside the browser WebMCP tool set.
+    - Unregister the browser registration through its `AbortSignal` and observe `toolchange` notifications.
     - Provide clear failure responses for invalid paths, malformed patches, stale snapshots, and failed checks.
 
 4. **Harden and evaluate**
@@ -129,13 +100,21 @@ Choose the public project name manually; do not treat a generated name as final.
 ### Scope guardrails
 
 - Do not build a generic WebMCP-to-MCP proxy for this challenge.
-- Do not connect the live demo to a real authenticated repository or allow the agent to approve its own mutations.
+- Do not connect the live reference client to an unbounded repository or allow the agent to approve its own mutations.
 - Do not make the challenge depend on an LLM API key; the browser agent should be enough to demonstrate the workflow.
-- Keep any VT Code repository changes limited to documentation, a browser-testing skill/fixture, or clearly isolated challenge assets until the demo is proven.
+- Keep challenge-specific browser assets isolated, document the first-class bridge clearly, and avoid unrelated repository changes.
 
 ===
 
-implement intelligent container width for dislay table/blocks
+implement intelligent container width for display table/blocks
 
-if width is enough use table format: '/Users/vinhnguyenxuan/Documents/vtcode-resources/bugs/Screenshot 2026-08-26 at 12.55.47.png'
-if not use heading block: '/Users/vinhnguyenxuan/Documents/vtcode-resources/bugs/Screenshot 2026-08-26 at 12.55.40.png'
+if width is enough use the wide table-layout regression screenshot
+if not use the narrow heading-block regression screenshot
+
+===
+
+implement /secret filter
+
+===
+
+on /config, revise the UI and when go back from section -> keep previous selected entry. also revamp the /config UI to be more user friendly and intuitive. implement live reload of config changes without needing to restart the program. implement a /config reset command to reset all config to default values. Both in TUI and CLI.
