@@ -1003,6 +1003,16 @@ function webMcpFileNotFoundError(path) {
   return error;
 }
 
+function webMcpEnvironmentState() {
+  return {
+    browsing_context_required: true,
+    origin_agent_cluster: typeof window.originAgentCluster === "boolean" ? window.originAgentCluster : null,
+    tools_permission_allowed: typeof document.permissionsPolicy?.allowsFeature === "function"
+      ? document.permissionsPolicy.allowsFeature("tools")
+      : null,
+  };
+}
+
 function editorStateForWebMcp() {
   const dirtyFiles = dirtyPaths();
   const workflowState = dirtyFiles.length
@@ -1029,6 +1039,7 @@ function editorStateForWebMcp() {
     active_panel: document.querySelector("[data-terminal].active")?.dataset.terminal || "activity",
     workflow_state: workflowState,
     recommended_next_tools: recommendedNextTools,
+    webmcp_context: webMcpEnvironmentState(),
   };
 }
 
@@ -1114,8 +1125,17 @@ function openPanelForWebMcp(panel) {
 
 async function registerWebMcp() {
   const modelContext = document.modelContext;
+  const environment = webMcpEnvironmentState();
+  if (environment.origin_agent_cluster === false) {
+    $("webmcpCapability").textContent = "WebMCP unavailable: this document is not origin-isolated; open the top-level page in a supported browser. Editor fallback remains active.";
+    return;
+  }
+  if (environment.tools_permission_allowed === false) {
+    $("webmcpCapability").textContent = "WebMCP unavailable: the tools Permissions Policy denies this browsing context; open the page directly or delegate tools from a trusted embedder. Editor fallback remains active.";
+    return;
+  }
   if (!modelContext?.registerTool) {
-    $("webmcpCapability").textContent = "WebMCP browser API unavailable; the editor remains fully usable.";
+    $("webmcpCapability").textContent = "WebMCP browser API unavailable in this browsing context; use Chrome 149+ with the origin trial or testing flag. The editor remains fully usable.";
     return;
   }
   const searchCode = async (query = "", { signal } = {}) => {

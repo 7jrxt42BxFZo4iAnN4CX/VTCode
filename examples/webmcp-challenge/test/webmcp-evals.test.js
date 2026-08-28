@@ -31,7 +31,13 @@ test("WebMCP eval corpus covers direct, open-ended, journey, and failure cases",
       "dirty_files",
       "open_tabs",
       "selected",
+      "webmcp_context",
     ]);
+    assert.deepEqual(testCase.initialState.webmcp_context, {
+      browsing_context_required: true,
+      origin_agent_cluster: true,
+      tools_permission_allowed: true,
+    });
     assert.ok(testCase.boundaries.length > 0);
     assert.ok(testCase.messages.length > 0);
     assert.equal(testCase.messages[0].role, "user");

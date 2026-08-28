@@ -72,6 +72,14 @@ deployed editor. Chrome's [WebMCP documentation](https://developer.chrome.com/do
 links to the Model Context Tool Inspector, which can list tools, execute a tool
 with JSON input, and display structured output or errors.
 
+WebMCP is page-scoped: keep the editor open in a browser tab or webview while
+the agent uses it. Current Chrome also gates the API on an origin-isolated
+document and a `tools` Permissions Policy that allows the browsing context.
+The editor reports those observed prerequisites in `get_editor_state` as
+`webmcp_context`; the fallback remains usable when a prerequisite is missing.
+The optional VT Code bridge is a separate authenticated adapter and does not
+make WebMCP calls headlessly.
+
 Run this sequence and record the selected tool, arguments, result, and visible
 page effect:
 
@@ -86,8 +94,8 @@ page effect:
    expect `review_draft` followed by `open_panel` with `changes`.
 5. Execute a long-file or many-match request and confirm the response stays
    bounded and reports truncation.
-6. Ask for the current editor state and verify it reports the workflow state and
-   recommended next tools.
+6. Ask for the current editor state and verify it reports the workflow state,
+   recommended next tools, and `webmcp_context` prerequisites.
 7. Try a stale digest, an ambiguous replacement, an empty search term, and an
    invalid panel. Confirm each error explains how to recover.
 8. Confirm no exposed browser tool can approve, apply, or revert a filesystem

@@ -5,6 +5,11 @@ const FRESH_FALLBACK_STATE = Object.freeze({
   open_tabs: ["README.md"],
   dirty_files: [],
   active_panel: "activity",
+  webmcp_context: {
+    browsing_context_required: true,
+    origin_agent_cluster: true,
+    tools_permission_allowed: true,
+  },
 });
 
 function initialState(overrides = {}) {

@@ -26,6 +26,13 @@ For a real agent turn, pairing has two sides:
 The browser cannot start or approve the bridge. Keep the TUI running while the
 browser is connected.
 
+Browser WebMCP is available only while this page is open in a supported browser
+tab or webview. Chrome gates the page API on origin isolation and the `tools`
+Permissions Policy; the demo reports the observed values in
+`get_editor_state.webmcp_context` and keeps its normal fallback active when the
+API is unavailable. The authenticated VT Code bridge is separate and can still
+be used for workspace operations when explicitly paired.
+
 ## Two integration paths
 
 The demo has two interfaces that are easy to confuse:
@@ -67,8 +74,9 @@ a review journey:
    `review_draft`, then `open_panel` with `changes`.
 
 Check that long file/search results are explicitly truncated, untrusted file
-content is marked with `untrustedContentHint`, page-only actions update the
-editor, and no browser tool can approve, apply, or revert a filesystem change.
+content is marked with `untrustedContentHint`, `get_editor_state` reports the
+workflow and `webmcp_context`, page-only actions update the editor, and no
+browser tool can approve, apply, or revert a filesystem change.
 The deterministic corpus and contract checks live in
 `examples/webmcp-challenge/evals/webmcp-evals.js` and run with `npm test`.
 Model tool selection remains probabilistic and needs the real browser-agent pass.

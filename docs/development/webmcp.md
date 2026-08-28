@@ -48,6 +48,14 @@ directly. A future VT Code-to-page tool-call relay would therefore need an
 explicit, separately documented bridge extension and must retain terminal
 approval; it must not be presented as native WebMCP.
 
+WebMCP calls also require the page to remain open in a supported browser
+browsing context. Current Chrome gates the page API on origin isolation and the
+`tools` Permissions Policy. The demo exposes the observed prerequisites through
+`get_editor_state.webmcp_context` and shows a recovery message when the context
+is not eligible; its in-memory editor fallback remains available. The
+imperative API is used because this editor has stateful search, selection, draft,
+and review actions rather than a standard HTML-form submission surface.
+
 ## Browser tool contracts and evals
 
 The example keeps its browser tool surface intentionally small: eight tools for

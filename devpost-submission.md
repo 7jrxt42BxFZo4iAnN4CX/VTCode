@@ -87,8 +87,11 @@ bounded to a 1,500-character serialized result budget and include truncation
 metadata when an agent should narrow its request. The app listens for WebMCP
 `toolchange` events and unregisters tools through an `AbortSignal`. The
 `get_editor_state` tool reports a small workflow state and recommended next
-tools, while invalid states return recovery-oriented errors instead of generic
-failures.
+tools, plus the current browsing-context, origin-isolation, and `tools`
+Permissions Policy diagnostics. WebMCP calls require the page to remain open in
+an eligible browser tab or webview; invalid states return recovery-oriented
+errors instead of generic failures, and the editor fallback remains usable when
+WebMCP is unavailable.
 
 `stage_text_edit` is intentionally narrow: it requires a current digest,
 rejects stale or dirty drafts, requires exactly one match, and returns the base
