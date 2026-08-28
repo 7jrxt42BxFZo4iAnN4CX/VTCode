@@ -188,7 +188,7 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/development/webmcp.md`
   - **Content**: WebMCP bridge development guide
-  - **Topics**: Boundaries, WebMCP API versus the VT Code bridge, Transport and pairing, Running the headless bridge, Runtime adapters
+  - **Topics**: Boundaries, WebMCP API versus the VT Code bridge, Browser tool contracts and evals, Transport and pairing, Running the headless bridge
   - **User Questions**: "What can you tell me about WebMCP bridge development guide?", "How does Boundaries work?", "How does WebMCP API versus the VT Code bridge work?"
 
 - **File**: `docs/development/model-profiles.md`
@@ -296,8 +296,8 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/user-guide/webmcp-demo.md`
   - **Content**: WebMCP Demo User Guide
-  - **Topics**: Two integration paths, Run the fallback demo, Connect to a real workspace, Edit, review, and apply in headless mode, Send a draft to an active VT Code session
-  - **User Questions**: "What can you tell me about WebMCP Demo User Guide?", "How does Two integration paths work?", "How does Run the fallback demo work?"
+  - **Topics**: Two integration paths, Evaluate the browser tool surface, Run the fallback demo, Connect to a real workspace, Edit, review, and apply in headless mode
+  - **User Questions**: "What can you tell me about WebMCP Demo User Guide?", "How does Two integration paths work?", "How does Evaluate the browser tool surface work?"
 
 ### Integrations & Tooling
 

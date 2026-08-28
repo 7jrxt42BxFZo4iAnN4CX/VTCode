@@ -48,6 +48,26 @@ directly. A future VT Code-to-page tool-call relay would therefore need an
 explicit, separately documented bridge extension and must retain terminal
 approval; it must not be presented as native WebMCP.
 
+## Browser tool contracts and evals
+
+The example keeps its browser tool surface intentionally small: eight tools for
+inspection, navigation, and draft review. It does not expose apply, write, or
+revert as WebMCP tools. Each input is checked against its JSON Schema at runtime
+before the application callback runs, and every result is bounded to 1,500
+characters, following Chrome's current WebMCP security guidance. File and diff
+results include truncation flags; collection results include an omitted count.
+This keeps model context useful without turning a file or workspace listing into
+an unbounded data channel.
+
+`examples/webmcp-challenge/evals/webmcp-evals.js` is the checked-in eval corpus.
+It includes direct intents, open-ended output-dependent tool selection, a
+multi-step review journey, and an invalid-argument failure case.
+`test/webmcp-evals.test.js` validates tool names, metadata budgets, input errors,
+and the browser-only authority boundary. These are deterministic contract
+checks. Probabilistic selection and end-to-end model behavior must additionally
+be tested in Chrome's Model Context Tool Inspector or another WebMCP-compatible
+agent using the prompts in the example guide.
+
 ## Transport and pairing
 
 `WebmcpServer` exposes one WebSocket endpoint at `/webmcp`. Every connection must send an allowed `Origin` header. The first JSON message consumes a short-lived one-time pairing code. The response returns an in-memory session token; subsequent messages include that token and a request ID. The configured pairing TTL is the session inactivity lease: authenticated requests refresh it, while an idle session expires. Tokens are never written to URLs, logs, or persistent storage.

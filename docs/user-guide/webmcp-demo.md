@@ -31,10 +31,11 @@ browser is connected.
 The demo has two interfaces that are easy to confuse:
 
 - **Browser WebMCP:** When the browser provides `document.modelContext`, the
-  page registers seven bounded tools for browser/in-page agents. They can list
-  and read visible files, search buffers, inspect editor state, open files,
-  review a draft, and switch panels. Page-only actions update the browser UI;
-  they cannot approve or apply a filesystem change.
+  page registers eight bounded tools for browser/in-page agents. They can list
+  and read visible files, search buffers, inspect editor state, open files, stage
+  one exact edit in a clean browser draft, review a draft, and switch panels.
+  Draft edits update browser memory only; they cannot approve or apply a
+  filesystem change.
 - **VT Code bridge:** The paired editor uses VT Code's authenticated custom
   WebSocket protocol. The browser sends workspace, patch, check, and turn
   requests; VT Code sends responses and runtime events back. This is the path
@@ -45,6 +46,32 @@ browser-agent tool invocation), not the second. A browser WebMCP agent cannot
 automatically call the Rust VT Code process, and VT Code cannot directly call
 `document.modelContext.executeTool()` without a separate bridge extension.
 Keeping the interfaces separate preserves the terminal approval boundary.
+
+## Evaluate the browser tool surface
+
+For a real browser-agent pass, use Chrome 149 or newer, enable
+`chrome://flags/#enable-webmcp-testing`, relaunch Chrome, and open the deployed
+editor. The [Chrome WebMCP documentation](https://developer.chrome.com/docs/ai/webmcp)
+links to the Model Context Tool Inspector for listing tools, executing JSON
+inputs, and inspecting structured output or errors.
+
+Use these prompts to cover direct selection, an output-dependent sequence, and
+a review journey:
+
+1. “What files are available in this workspace?” → `list_project_files`.
+2. “Find the file that defines the greeting and open it in the editor.” →
+   `search_code`, then `open_file` with the path returned by the search.
+3. “Change Hello to Hi in the greeting and prepare the draft for my review.” →
+   `read_file`, `stage_text_edit` with the returned digest, then `review_draft`.
+4. “Show me the current draft diff, then open the changes panel.” →
+   `review_draft`, then `open_panel` with `changes`.
+
+Check that long file/search results are explicitly truncated, untrusted file
+content is marked with `untrustedContentHint`, page-only actions update the
+editor, and no browser tool can approve, apply, or revert a filesystem change.
+The deterministic corpus and contract checks live in
+`examples/webmcp-challenge/evals/webmcp-evals.js` and run with `npm test`.
+Model tool selection remains probabilistic and needs the real browser-agent pass.
 
 ## Run the fallback demo
 

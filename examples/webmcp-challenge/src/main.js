@@ -1,7 +1,7 @@
 import { buildTurnPrompt, connectVtCode, createBackend, createUnifiedDiff, digest, MAX_FILE_BYTES } from "./backend.js";
 import { CodeEditor } from "./editor.js";
 import { loadBrowserSettings, loadBrowserState, saveBrowserSettings, saveBrowserState } from "./persistence.js";
-import { createWebMcpTools, registerWebMcpTools } from "./webmcp.js";
+import { createWebMcpTools, registerWebMcpTools, replaceExactText } from "./webmcp.js";
 import "../styles.css";
 
 const $ = (id) => document.getElementById(id);
@@ -1012,6 +1012,62 @@ function editorStateForWebMcp() {
   };
 }
 
+async function stageTextEditForWebMcp({ path, find, replace, expected_digest: expectedDigest }, { signal } = {}) {
+  if (!state.files.has(path)) throw new Error(`Unknown project file: ${path}`);
+  if (!snapshot(path)) await openFile(path, false);
+  if (signal?.aborted) throw signal.reason || new Error("The WebMCP edit was aborted");
+  if (isDirty(path)) {
+    const error = new Error(`Draft already contains changes for ${path}; review or discard it first`);
+    error.code = "draft_conflict";
+    throw error;
+  }
+  const base = snapshot(path);
+  if (base.digest !== expectedDigest) {
+    const error = new Error(`Stale edit: refresh ${path} before staging a replacement`);
+    error.code = "conflict";
+    throw error;
+  }
+  const content = base.content;
+  let next;
+  try {
+    next = replaceExactText(content, find, replace);
+  } catch (error) {
+    error.message = `${error.message} in ${path}`;
+    throw error;
+  }
+  if (contentSizeBytes(next) > MAX_FILE_BYTES) {
+    const error = new Error(`Edited file exceeds the browser size limit: ${path}`);
+    error.code = "limit_exceeded";
+    throw error;
+  }
+  const draftDigest = await digest(next);
+  if (signal?.aborted) throw signal.reason || new Error("The WebMCP edit was aborted");
+
+  state.drafts.set(path, next);
+  state.clientProposal = null;
+  state.serverProposal = null;
+  state.approved = false;
+  state.pendingTerminalApproval = false;
+  editor.open(path, next, true);
+  persistBrowserWorkspace();
+  renderTree();
+  renderTabs();
+  renderProposal();
+  updateEditorFooter();
+  selectTerminal("changes");
+  log(`Staged browser draft edit for ${path}`);
+  status("Agent draft staged", "Review the unified diff before requesting VT Code approval.");
+  toast("Agent draft ready for review");
+  return {
+    staged: true,
+    path,
+    base_digest: base.digest,
+    draft_digest: draftDigest,
+    replacement_count: 1,
+    requires_review: true,
+  };
+}
+
 async function reviewDraftForWebMcp() {
   await reviewChanges();
   const diff = truncateUtf8(state.clientProposal?.unified_diff || "", MAX_WEBMCP_RESULT_BYTES);
@@ -1044,9 +1100,19 @@ async function registerWebMcp() {
     let scannedFiles = 0;
     let scannedBytes = 0;
     let resultBytes = 0;
+    let truncated = false;
+    const output = () => ({
+      matches: results,
+      truncated,
+      scanned_files: scannedFiles,
+      scanned_bytes: scannedBytes,
+    });
     for (const path of paths()) {
       if (signal?.aborted) throw signal.reason || new Error("The WebMCP search was aborted");
-      if (scannedFiles >= MAX_SEARCH_FILES || scannedBytes >= MAX_SEARCH_BYTES) break;
+      if (scannedFiles >= MAX_SEARCH_FILES || scannedBytes >= MAX_SEARCH_BYTES) {
+        truncated = true;
+        break;
+      }
       let content = current(path);
       if (!snapshot(path)) {
         const file = await backend.readFile(path);
@@ -1054,21 +1120,30 @@ async function registerWebMcp() {
         content = file.content;
       }
       const bytes = contentSizeBytes(content);
-      if (scannedBytes + bytes > MAX_SEARCH_BYTES) break;
+      if (scannedBytes + bytes > MAX_SEARCH_BYTES) {
+        truncated = true;
+        break;
+      }
       scannedFiles += 1;
       scannedBytes += bytes;
       for (const [line, text] of content.split("\n").entries()) {
         if (text.toLowerCase().includes(normalizedQuery)) {
           const result = { path, line: line + 1, text };
           const nextBytes = contentSizeBytes(JSON.stringify(result));
-          if (resultBytes + nextBytes > MAX_WEBMCP_RESULT_BYTES) return results;
+          if (resultBytes + nextBytes > MAX_WEBMCP_RESULT_BYTES) {
+            truncated = true;
+            return output();
+          }
           resultBytes += nextBytes;
           results.push(result);
         }
-        if (results.length >= 200) return results;
+        if (results.length >= 200) {
+          truncated = true;
+          return output();
+        }
       }
     }
-    return results;
+    return output();
   };
   const tools = createWebMcpTools({
     listFiles: () => backend.listFiles(),
@@ -1076,6 +1151,7 @@ async function registerWebMcp() {
     searchCode,
     getEditorState: editorStateForWebMcp,
     openFile: (path) => openFile(path),
+    stageTextEdit: stageTextEditForWebMcp,
     reviewDraft: reviewDraftForWebMcp,
     openPanel: openPanelForWebMcp,
   });

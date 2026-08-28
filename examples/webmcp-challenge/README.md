@@ -193,19 +193,54 @@ not available for the current editor state or backend.
 ## WebMCP browser API
 
 When the browser exposes `document.modelContext.registerTool`, the page
-registers seven standard WebMCP tools: bounded file listing, current-file
-reading, code search, editor-state inspection, file opening, draft review, and
-panel navigation. The last three change only the browser view or draft-review
-state; they do not approve, apply, or revert filesystem changes. Each tool has
+registers eight standard WebMCP tools: bounded file listing, current-file
+reading, code search, editor-state inspection, file opening, exact text editing
+of a browser draft, draft review, and panel navigation. Browser-only edits change
+the draft buffer and never approve, apply, or revert filesystem changes. Each tool has
 a display title, JSON Schema input, read-only/untrusted-content annotations,
-and an abort-aware callback. The registration listens for `toolchange` and can
-be unregistered with its `AbortSignal`.
+an abort-aware callback, and a 1,500-character result budget. Truncated file,
+diff, and collection results carry explicit metadata so an agent can decide
+whether to narrow the request. The registration listens for `toolchange` and
+can be unregistered with its `AbortSignal`.
 
 This is the browser-agent direction described by WebMCP: a browser-integrated
 or in-page agent discovers tools registered by the page and invokes them in the
 page's execution context. The normal UI remains usable when that API is
 unavailable. Browser WebMCP tools do not bypass the VT Code WebSocket pairing
 or terminal approval boundary.
+
+## WebMCP evaluation workflow
+
+The deterministic eval corpus in `evals/webmcp-evals.js` covers direct requests,
+open-ended search-and-open requests, the review journey, and invalid tool
+arguments. `test/webmcp-evals.test.js` checks that every expected tool exists,
+metadata stays within Chrome's recommended discoverability budgets, and browser
+tools never gain a write or revert authority. Run it with the rest of the demo
+tests:
+
+```sh
+npm test
+```
+
+For a real browser-agent pass, use Chrome 149 or newer, enable
+`chrome://flags/#enable-webmcp-testing`, relaunch Chrome, and open this page.
+Use the [Model Context Tool Inspector](https://developer.chrome.com/docs/ai/webmcp)
+to inspect `getTools()` and manually execute the `list_project_files`,
+`search_code`, `read_file`, `open_file`, `stage_text_edit`, `review_draft`, and
+`open_panel` calls.
+Then try these natural-language prompts:
+
+1. "What files are available in this workspace?"
+2. "Find the file that defines the greeting and open it in the editor."
+3. "Change Hello to Hi in the greeting and prepare the draft for my review."
+4. "Show me the current draft diff, then open the changes panel."
+
+Record the selected tool, arguments, returned structure, and whether the UI
+changed as expected. Also verify that a long file or search result reports
+truncation, and that no browser tool can approve, apply, or revert a filesystem
+change. This manual model pass is intentionally separate from the deterministic
+tests: model tool selection is probabilistic and the repository does not bundle
+a browser-agent model runner.
 
 The VT Code connection is a separate authenticated bridge. The browser sends
 workspace, patch, check, and turn requests over that WebSocket; VT Code sends

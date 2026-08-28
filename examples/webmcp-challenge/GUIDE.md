@@ -50,6 +50,37 @@ require active mode.
 Use `--port 5174` if port `5173` is already in use. Use the same port in the
 browser URL and `/webmcp pair` command.
 
+## Test browser WebMCP tools
+
+The public editor is usable without a bridge, so it is the easiest target for a
+real browser-agent check. Use Chrome 149 or newer, enable
+`chrome://flags/#enable-webmcp-testing`, relaunch Chrome, and open the deployed
+editor. Chrome's [WebMCP documentation](https://developer.chrome.com/docs/ai/webmcp)
+links to the Model Context Tool Inspector, which can list tools, execute a tool
+with JSON input, and display structured output or errors.
+
+Run this sequence and record the selected tool, arguments, result, and visible
+page effect:
+
+1. Ask, “What files are available in this workspace?” and expect
+   `list_project_files`.
+2. Ask, “Find the file that defines the greeting and open it in the editor,” and
+   expect `search_code` followed by `open_file` using the returned path.
+3. Ask, “Change Hello to Hi in the greeting and prepare the draft for my
+   review,” and expect `read_file`, `stage_text_edit`, then `review_draft` using
+   the digest returned by `read_file`.
+4. Ask, “Show me the current draft diff, then open the changes panel,” and
+   expect `review_draft` followed by `open_panel` with `changes`.
+5. Execute a long-file or many-match request and confirm the response stays
+   bounded and reports truncation.
+6. Confirm no exposed browser tool can approve, apply, or revert a filesystem
+   change; those operations remain behind VT Code's separate approval boundary.
+
+The repository's deterministic version of these checks is in
+`evals/webmcp-evals.js` and runs as part of `npm test`. It validates the tool
+contract and failure behavior; the Chrome inspector pass is still needed to
+measure probabilistic tool selection.
+
 ## Edit and apply a change
 
 1. Open a file in **EXPLORER** and edit it. A `*` marks a dirty draft.
