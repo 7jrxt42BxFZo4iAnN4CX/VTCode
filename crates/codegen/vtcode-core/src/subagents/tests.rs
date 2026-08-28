@@ -2102,6 +2102,24 @@ async fn spawn_is_rejected_after_close_begins() {
 }
 
 #[tokio::test]
+async fn resume_rejected_after_shutdown() {
+    let temp = TempDir::new().expect("tempdir");
+    let controller =
+        SubagentController::new(test_controller_config(temp.path().to_path_buf(), VTCodeConfig::default()))
+            .await
+            .expect("controller");
+
+    controller.signal_shutdown().await;
+
+    let err = controller
+        .resume("some-agent")
+        .await
+        .expect_err("resume after shutdown must be rejected");
+
+    assert!(err.to_string().contains("shutting down"));
+}
+
+#[tokio::test]
 async fn resume_restores_closed_grandchildren() {
     let temp = TempDir::new().expect("tempdir");
     let parent = SubagentController::new(test_controller_config(temp.path().to_path_buf(), VTCodeConfig::default()))

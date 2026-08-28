@@ -252,6 +252,9 @@ impl SubagentController {
         let self_owned = self.clone();
         let target_owned = target.to_string();
         Box::pin(async move {
+            if self_owned.shutdown_requested.load(Ordering::Relaxed) {
+                bail!("Subagent controller is shutting down; cannot resume subagents");
+            }
             let subtree_ids = self_owned.collect_spawn_subtree_ids(&target_owned).await?;
             let mut restart_ids = Vec::new();
             for node_id in subtree_ids.iter() {
@@ -272,6 +275,12 @@ impl SubagentController {
                         tracing::warn!(node_id = id.as_str(), error = %err, "Failed to resume nested subagent subtree");
                     }
                 }
+            }
+            // Re-check shutdown before launching: a concurrent signal_shutdown
+            // between reopen and restart would otherwise start a child after
+            // shutdown aborted the subtree.
+            if self_owned.shutdown_requested.load(Ordering::Relaxed) {
+                bail!("Subagent controller is shutting down; cannot resume subagents");
             }
             for restart_id in restart_ids {
                 self_owned.restart_child(&restart_id).await?;
