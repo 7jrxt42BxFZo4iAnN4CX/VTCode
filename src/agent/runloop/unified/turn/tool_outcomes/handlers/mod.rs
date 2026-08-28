@@ -728,6 +728,25 @@ pub(crate) async fn validate_tool_call<'a>(
             return Ok(ValidationResult::Blocked);
         }
         Ok(Some(PreToolHookPhaseResult::Proceed { rewritten_args: Some(rewritten), requires_prompt })) => {
+            // Re-validate the rewritten arguments: preflight ran on the
+            // original payload, so a rewrite could otherwise bypass schema
+            // checks. A hook-produced invalid payload is a hook error — block
+            // with a clear message instead of executing malformed input.
+            if let Err(err) = ctx
+                .tool_registry
+                .preflight_validate_harness_call(&canonical_tool_name, &rewritten)
+            {
+                ctx.harness_state.record_denied_tool_call();
+                ctx.push_tool_response(
+                    tool_call_id,
+                    Some(&canonical_tool_name),
+                    build_failure_error_content(
+                        format!("PreToolUse hook produced invalid arguments for '{canonical_tool_name}': {err}"),
+                        "policy",
+                    ),
+                );
+                return Ok(ValidationResult::Blocked);
+            }
             prepared.effective_args = rewritten;
             // Re-derive the intent classification for the rewritten arguments:
             // the parallel-readonly grouping and the mutation bookkeeping below

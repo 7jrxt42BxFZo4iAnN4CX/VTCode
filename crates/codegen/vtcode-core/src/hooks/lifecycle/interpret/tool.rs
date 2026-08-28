@@ -8,6 +8,8 @@ use super::common::{
     looks_like_json, matches_hook_event, parse_json_output, trimmed_non_empty,
 };
 
+/// Human-readable JSON value kind used in diagnostics for rejected
+/// `updatedInput` payloads.
 fn kind_of(value: &Value) -> &'static str {
     match value {
         Value::Null => "null",

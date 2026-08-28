@@ -202,6 +202,22 @@ pub(crate) async fn run_tool_call_with_args(
                 ));
             }
             Ok(Some(PreToolHookPhaseResult::Proceed { rewritten_args: Some(rewritten), requires_prompt })) => {
+                // Re-validate the rewritten arguments: preflight ran on the
+                // original payload, so a rewrite could otherwise bypass schema
+                // checks. A hook-produced invalid payload is a hook error —
+                // block instead of executing malformed input.
+                if let Err(err) = ctx.tool_registry.preflight_validate_harness_call(name, &rewritten) {
+                    return Ok(finish_with_status(
+                        ToolExecutionStatus::Failure {
+                            error: structured_failure(
+                                name,
+                                &anyhow!("PreToolUse hook produced invalid arguments: {err}"),
+                            ),
+                        },
+                        false,
+                        effective_args.as_ref(),
+                    ));
+                }
                 effective_args = std::borrow::Cow::Owned(rewritten);
                 // Forward the phase with the rewrite stripped so the
                 // permission flow neither re-runs hooks (double invocation,

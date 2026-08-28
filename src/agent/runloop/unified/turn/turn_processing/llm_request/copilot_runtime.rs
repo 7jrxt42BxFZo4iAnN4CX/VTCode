@@ -426,6 +426,18 @@ impl<'a> CopilotRuntimeHost<'a> {
             None => None,
         };
 
+        // Re-validate rewritten arguments against the tool schema: preflight
+        // ran on the original payload, so a hook rewrite could otherwise
+        // bypass schema checks.
+        if let Some(rewritten) = rewritten_arguments.as_ref()
+            && let Err(err) = self.tool_registry.preflight_validate_harness_call(tool_name, rewritten)
+        {
+            return Ok(Some(denied_tool_response(
+                tool_name,
+                &format!("PreToolUse hook produced invalid arguments: {err}"),
+            )));
+        }
+
         let invocation_id = invocation_id_from_call_id(tool_call_id);
         let safety_args = rewritten_arguments.as_ref().unwrap_or(arguments);
         let safety_approval_justification = match validate_tool_call_with_limit_prompt(

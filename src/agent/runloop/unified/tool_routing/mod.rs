@@ -924,6 +924,8 @@ pub(crate) fn ensure_tool_permission<'a, S: UiSession + ?Sized>(
 }
 
 #[cfg(test)]
+/// Test-only entry that forwards a precomputed PreToolUse hook phase into the
+/// permission flow, mirroring the pipeline/validate/copilot callers.
 pub(crate) fn ensure_tool_permission_forwarded<'a, S: UiSession + ?Sized>(
     ctx: ToolPermissionsContext<'a, S>,
     tool_name: &'a str,
