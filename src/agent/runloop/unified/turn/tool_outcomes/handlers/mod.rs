@@ -696,23 +696,9 @@ pub(crate) async fn validate_tool_call<'a>(
 
     prepared.effective_args =
         maybe_apply_spool_read_offset_hint(ctx.tool_registry, &canonical_tool_name, &prepared.effective_args);
-    if !prepared.readonly_classification {
-        ctx.harness_state.reset_file_read_family_streak();
-    }
     prepared.parallel_safe_after_preflight =
         vtcode_core::tools::tool_intent::is_parallel_safe_call(&canonical_tool_name, &prepared.effective_args);
-    let fallback_recommendation =
-        recovery_fallback_for_tool(&canonical_tool_name, &prepared.effective_args).map(|(tool_name, args)| {
-            vtcode_core::core::agent::harness_kernel::FallbackRecommendation { tool_name, args, chain: Vec::new() }
-        });
-    prepared = prepared.with_fallback_recommendation(fallback_recommendation);
     let effective_args = &prepared.effective_args;
-
-    if let Some(outcome) =
-        enforce_duplicate_task_tracker_create_guard(ctx, tool_call_id, &canonical_tool_name, effective_args)
-    {
-        return Ok(outcome);
-    }
 
     // PreToolUse hooks run before the argument-dependent guards, the safety
     // gateway, and permission evaluation so rewritten arguments are what every
@@ -750,7 +736,25 @@ pub(crate) async fn validate_tool_call<'a>(
             return Ok(ValidationResult::Blocked);
         }
     };
+
+    // Only after the hook phase (and possible rewrite) do the argument- and
+    // classification-dependent bookkeeping and guards run, so they observe the
+    // arguments that will actually execute.
+    if !prepared.readonly_classification {
+        ctx.harness_state.reset_file_read_family_streak();
+    }
+    let fallback_recommendation =
+        recovery_fallback_for_tool(&canonical_tool_name, &prepared.effective_args).map(|(tool_name, args)| {
+            vtcode_core::core::agent::harness_kernel::FallbackRecommendation { tool_name, args, chain: Vec::new() }
+        });
+    prepared = prepared.with_fallback_recommendation(fallback_recommendation);
     let effective_args = &prepared.effective_args;
+
+    if let Some(outcome) =
+        enforce_duplicate_task_tracker_create_guard(ctx, tool_call_id, &canonical_tool_name, effective_args)
+    {
+        return Ok(outcome);
+    }
 
     if let Some(outcome) = enforce_read_after_write_guard(ctx, tool_call_id, &canonical_tool_name, effective_args) {
         return Ok(outcome);

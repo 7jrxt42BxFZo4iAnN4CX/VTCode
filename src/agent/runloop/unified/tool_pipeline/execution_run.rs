@@ -192,6 +192,7 @@ pub(crate) async fn run_tool_call_with_args(
         .await;
         let hook_phase = match hook_phase {
             Ok(Some(PreToolHookPhaseResult::Deny)) => {
+                ctx.harness_state.record_denied_tool_call();
                 return Ok(finish_with_status(
                     ToolExecutionStatus::Failure {
                         error: structured_failure_from_message(name, "Tool permission denied"),
