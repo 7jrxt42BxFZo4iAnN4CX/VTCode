@@ -284,7 +284,7 @@ is the WebMCP API.
 
 The repository workflow at `../../.github/workflows/webmcp-demo.yml` runs
 `bun install --frozen-lockfile`, typechecks and tests the Vite app, then builds
-and publishes `dist/` when the reference-client branch is
+and publishes `dist/` when the `main` branch is
 pushed or the workflow is started manually. Configure Pages to use **GitHub
 Actions**.
 

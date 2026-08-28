@@ -24,12 +24,12 @@ References: [OpenAI challenge](https://openai.com/webmcp-challenge/), [Devpost r
 ### Immediate reminders
 
 - [x] **REMINDER — Register:** Create or join the Devpost submission before implementation begins.
-- [ ] **REMINDER — Implement:** Start the WebMCP companion app immediately after registration and preserve a baseline commit proving the new work was added after August 25, 2026.
+- [x] **REMINDER — Implement:** The WebMCP reference client and first-class VT Code bridge were added after August 25, 2026; the commit history preserves that work.
 - [ ] **REMINDER — Submit:** Submit before September 3, 2026 at 1:00 PM PDT (September 4 at 3:00 AM ICT), then freeze the submitted repository, deployment, and video.
 
 ### Product direction
 
-Build a companion browser app that demonstrates VT Code's safe human-agent coding workflow. Use an embedded sample project so the live demo needs no credentials or backend access.
+The WebMCP reference client demonstrates VT Code's safe human-agent coding workflow. It uses an embedded sample project so the live client needs no credentials or backend access, while the authenticated bridge remains available for a real VT Code session.
 
 The agent should inspect files, search code, propose a reversible patch, show the diff, wait for human approval, run deterministic checks, and record an audit entry. The app should make the collaboration visible rather than presenting an autonomous editor.
 
@@ -42,15 +42,19 @@ Choose the public project name manually; do not treat a generated name as final.
 | `list_project_files`   | List the embedded project tree   | Read-only                          |
 | `search_code`          | Search bounded file contents     | Read-only                          |
 | `read_file`            | Read a bounded file segment      | Read-only                          |
-| `propose_patch`        | Create an unapplied diff         | No mutation                        |
-| `run_checks`           | Run deterministic project checks | Read-only                          |
-| `apply_approved_patch` | Apply the reviewed patch         | Register only after human approval |
-| `revert_last_change`   | Restore the prior snapshot       | Confirmation required              |
+| `get_editor_state`     | Inspect editor workflow state    | Read-only                          |
+| `open_file`            | Open a selected file             | Browser UI state                   |
+| `stage_text_edit`      | Stage one exact draft replacement | Browser draft only                 |
+| `review_draft`         | Show the current draft diff      | Read-only preview                  |
+| `open_panel`           | Navigate editor panels           | Browser UI state                   |
+
+Approval, apply, check, and revert remain UI or bridge operations outside the
+browser WebMCP tool set; the browser agent cannot authorize a filesystem write.
 
 ### Implementation phases
 
 1. **Scaffold and deploy**
-    - Create a separate public companion repository or challenge-only branch; avoid adding a new browser runtime to the Rust workspace during the sprint.
+    - Keep the reference browser client isolated under `examples/webmcp-challenge` and ship the authenticated bridge in the main Rust workspace.
     - Add a visible open-source license, setup instructions, and a static deployment.
     - Register one read-only WebMCP tool and verify it in ChatGPT's in-app browser and Chrome with WebMCP enabled.
 
@@ -59,9 +63,9 @@ Choose the public project name manually; do not treat a generated name as final.
     - Keep tool descriptions, parameter descriptions, and outputs short and deterministic.
 
 3. **Add human approval and dynamic tools**
-    - Make `propose_patch` produce a staged diff only.
-    - Require a visible human approval action before registering `apply_approved_patch`.
-    - Unregister mutation tools after application, rejection, navigation, or revert.
+    - Make `stage_text_edit` produce a staged browser draft only.
+    - Keep approval, application, checks, and revert outside the browser WebMCP tool set.
+    - Unregister the browser registration through its `AbortSignal` and observe `toolchange` notifications.
     - Provide clear failure responses for invalid paths, malformed patches, stale snapshots, and failed checks.
 
 4. **Harden and evaluate**
@@ -96,9 +100,9 @@ Choose the public project name manually; do not treat a generated name as final.
 ### Scope guardrails
 
 - Do not build a generic WebMCP-to-MCP proxy for this challenge.
-- Do not connect the live demo to a real authenticated repository or allow the agent to approve its own mutations.
+- Do not connect the live reference client to an unbounded repository or allow the agent to approve its own mutations.
 - Do not make the challenge depend on an LLM API key; the browser agent should be enough to demonstrate the workflow.
-- Keep any VT Code repository changes limited to documentation, a browser-testing skill/fixture, or clearly isolated challenge assets until the demo is proven.
+- Keep challenge-specific browser assets isolated, document the first-class bridge clearly, and avoid unrelated repository changes.
 
 ===
 

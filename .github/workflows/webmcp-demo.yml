@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - feat/webmcp-challenge-demo
+      - main
     paths:
       - .github/workflows/webmcp-demo.yml
       - examples/webmcp-challenge/**
