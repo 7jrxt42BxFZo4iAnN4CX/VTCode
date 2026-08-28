@@ -92,9 +92,7 @@ impl FileOpsTool {
         // canonical containment check below passes for the root — a recursive
         // delete would erase the entire workspace. Reject it explicitly.
         if trimmed.is_empty() || trimmed == "." || trimmed == "./" || trimmed == "/" {
-            return Err(anyhow!(
-                "Error: Path '{path}' refers to the workspace root and cannot be deleted."
-            ));
+            return Err(anyhow!("Error: Path '{path}' refers to the workspace root and cannot be deleted."));
         }
 
         let target_path = self.workspace_root.join(&path);
@@ -122,9 +120,7 @@ impl FileOpsTool {
         }
 
         if canonical == *self.canonical_workspace_root() {
-            return Err(anyhow!(
-                "Error: Path '{path}' refers to the workspace root and cannot be deleted."
-            ));
+            return Err(anyhow!("Error: Path '{path}' refers to the workspace root and cannot be deleted."));
         }
 
         if self.should_exclude(&canonical).await {

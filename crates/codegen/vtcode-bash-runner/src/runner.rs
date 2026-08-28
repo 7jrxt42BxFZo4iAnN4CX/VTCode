@@ -393,10 +393,7 @@ where
     /// canonicalized target against the canonical workspace root.
     fn ensure_not_workspace_root(&self, canonical_candidate: &Path) -> Result<()> {
         if canonical_candidate == self.workspace_root {
-            bail!(
-                "refusing to operate on the workspace root itself (`{}`)",
-                canonical_candidate.display()
-            );
+            bail!("refusing to operate on the workspace root itself (`{}`)", canonical_candidate.display());
         }
         Ok(())
     }

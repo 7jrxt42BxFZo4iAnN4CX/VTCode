@@ -104,11 +104,7 @@ impl FileOpsTool {
         // traversal; this tier closes the escape-by-symlink case.
         vtcode_commons::paths::ensure_path_within_workspace_resolved(&normalized, &self.workspace_root)
             .await
-            .map_err(|err| {
-                anyhow!(
-                    "Error: Path '{original_display}' is not accessible inside the workspace: {err}"
-                )
-            })?;
+            .map_err(|err| anyhow!("Error: Path '{original_display}' is not accessible inside the workspace: {err}"))?;
 
         let canonical = self.canonicalize_allow_missing(&normalized).await?;
         Ok(canonical)
@@ -273,8 +269,7 @@ mod tests {
         fs::create_dir_all(temp_dir.path().join("sub")).expect("create sub");
         fs::write(outside.path().join("secret.txt"), "top secret").expect("write outside");
 
-        std::os::unix::fs::symlink(outside.path(), temp_dir.path().join("sub/link"))
-            .expect("create symlink");
+        std::os::unix::fs::symlink(outside.path(), temp_dir.path().join("sub/link")).expect("create symlink");
 
         let file_ops = make_tool(&temp_dir);
 
