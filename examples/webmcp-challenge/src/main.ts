@@ -1,10 +1,87 @@
-import { buildTurnPrompt, connectVtCode, createBackend, createUnifiedDiff, digest, MAX_FILE_BYTES } from "./backend.js";
-import { CodeEditor } from "./editor.js";
-import { loadBrowserSettings, loadBrowserState, saveBrowserSettings, saveBrowserState } from "./persistence.js";
-import { createWebMcpTools, registerWebMcpTools, replaceExactText } from "./webmcp.js";
+import { InMemoryBackend, VtCodeBackend, buildTurnPrompt, connectVtCode, createBackend, createUnifiedDiff, digest, MAX_FILE_BYTES } from "./backend.ts";
+import { CodeEditor } from "./editor.ts";
+import { loadBrowserSettings, loadBrowserState, saveBrowserSettings, saveBrowserState, type StorageLike } from "./persistence.ts";
+import { createWebMcpTools, registerWebMcpTools, replaceExactText, type ModelContext, type StageTextEditInput, type ToolExecutionOptions, type WebMcpRegistration } from "./webmcp.ts";
+import { BackendError, errorCode, errorMessage, isRecord, type BackendConnectionEvent, type BackendEvent, type ClientProposal, type EditorStateForWebMcp, type FileSnapshot, type Panel, type PatchProposal, type PersistedBrowserState, type RuntimeStatus, type SearchMatch, type SearchResult, type StatusPayload, type TreeNode, type WebMcpEnvironmentState, type WorkspaceFile } from "./types.ts";
 import "../styles.css";
 
-const $ = (id) => document.getElementById(id);
+interface DemoElements {
+  readonly [id: string]: HTMLElement;
+  readonly editor: HTMLDivElement;
+  readonly toast: HTMLDivElement;
+  readonly activityLog: HTMLOListElement;
+  readonly fileTree: HTMLDivElement;
+  readonly fileTabs: HTMLDivElement;
+  readonly diffView: HTMLDivElement;
+  readonly quickActionList: HTMLDivElement;
+  readonly workspacePath: HTMLInputElement;
+  readonly bridgeUrl: HTMLInputElement;
+  readonly pairingCode: HTMLInputElement;
+  readonly searchInput: HTMLInputElement;
+  readonly quickActionSearch: HTMLInputElement;
+  readonly promptInput: HTMLTextAreaElement;
+  readonly settingsDialog: HTMLDialogElement;
+  readonly confirmDialog: HTMLDialogElement;
+  readonly quickActionDialog: HTMLDialogElement;
+  readonly helpDialog: HTMLDialogElement;
+  readonly connectionPanel: HTMLDetailsElement;
+  readonly workspaceSetupPanel: HTMLDetailsElement;
+  readonly reviewChanges: HTMLButtonElement;
+  readonly approvePatch: HTMLButtonElement;
+  readonly applyPatch: HTMLButtonElement;
+  readonly revertPatch: HTMLButtonElement;
+  readonly reloadFile: HTMLButtonElement;
+  readonly discardDraft: HTMLButtonElement;
+  readonly runChecks: HTMLButtonElement;
+  readonly requestTurn: HTMLButtonElement;
+  readonly connectBridge: HTMLButtonElement;
+  readonly closeSettings: HTMLButtonElement;
+  readonly copyPairingCommand: HTMLButtonElement;
+  readonly settingsButton: HTMLButtonElement;
+  readonly copyActiveSetup: HTMLButtonElement;
+  readonly copyHeadlessSetup: HTMLButtonElement;
+  readonly showConnection: HTMLButtonElement;
+  readonly selfCheck: HTMLButtonElement;
+  readonly quickActions: HTMLButtonElement;
+  readonly helpButton: HTMLButtonElement;
+  readonly dialogConfirm: HTMLButtonElement;
+}
+
+function $<K extends keyof DemoElements>(id: K): DemoElements[K];
+function $(id: string): HTMLElement;
+function $(id: string): HTMLElement {
+  const element = document.getElementById(id);
+  if (!element) throw new Error(`Required demo element is missing: ${id}`);
+  return element;
+}
+
+type Backend = InMemoryBackend | VtCodeBackend;
+
+interface LastChangeView {
+  readonly change_id: string;
+  readonly paths: string[];
+  readonly before: Array<Pick<FileSnapshot, "path" | "content">>;
+}
+
+interface DemoState {
+  readonly files: Map<string, WorkspaceFile>;
+  readonly snapshots: Map<string, FileSnapshot>;
+  readonly drafts: Map<string, string>;
+  openTabs: string[];
+  selected: string | null;
+  expandedDirs: Set<string>;
+  filter: string;
+  clientProposal: ClientProposal | null;
+  serverProposal: PatchProposal | null;
+  approved: boolean;
+  pendingTerminalApproval: boolean;
+  lastChange: LastChangeView | null;
+  readonly conflicts: Set<string>;
+  unsubscribe: (() => void) | null;
+  unsubscribeConnection: (() => void) | null;
+  unsubscribeStatus: (() => void) | null;
+}
+
 const MAX_HYDRATION_EVENTS = 256;
 const MAX_SEARCH_FILES = 128;
 const MAX_SEARCH_BYTES = 8 * 1024 * 1024;
@@ -12,21 +89,21 @@ const MAX_WEBMCP_RESULT_BYTES = 128 * 1024;
 const PERSIST_DEBOUNCE_MS = 250;
 const APP_INSTANCE = typeof __VTCODE_APP_INSTANCE__ === "string" ? __VTCODE_APP_INSTANCE__ : "development";
 
-function browserStorage() {
+function browserStorage(): StorageLike | null {
   try { return globalThis.localStorage; } catch { return null; }
 }
 
 const persistedBrowserState = loadBrowserState(browserStorage(), APP_INSTANCE);
 const persistedBrowserSettings = loadBrowserSettings(browserStorage(), APP_INSTANCE);
-let backend = createBackend(persistedBrowserState?.fallback_files);
-let toastTimer;
+let backend: Backend = createBackend(persistedBrowserState?.fallback_files);
+let toastTimer: ReturnType<typeof setTimeout> | null = null;
 let openRequest = 0;
-let webMcpRegistration = null;
-let fallbackPersistenceTimer = null;
+let webMcpRegistration: WebMcpRegistration | null = null;
+let fallbackPersistenceTimer: ReturnType<typeof setTimeout> | null = null;
 let persistenceWarningShown = false;
 let settingsPersistenceWarningShown = false;
 
-const state = {
+const state: DemoState = {
   files: new Map(),
   snapshots: new Map(),
   drafts: new Map(),
@@ -65,32 +142,32 @@ const editor = new CodeEditor($("editor"), {
   onSelectionChange: () => updateEditorFooter(),
 });
 
-function message(error) { return error instanceof Error ? error.message : String(error); }
+function message(error: unknown): string { return errorMessage(error); }
 
-const contentSizeBytes = (content) => new TextEncoder().encode(typeof content === "string" ? content : "").length;
-const snapshotSizeBytes = (file) => {
-  const size = Number(file?.size_bytes);
-  return Number.isSafeInteger(size) && size >= 0 ? size : contentSizeBytes(file?.content);
+const contentSizeBytes = (content: unknown): number => new TextEncoder().encode(typeof content === "string" ? content : "").length;
+const snapshotSizeBytes = (file: unknown): number => {
+  const size = Number(isRecord(file) ? file.size_bytes : undefined);
+  return Number.isSafeInteger(size) && size >= 0 ? size : contentSizeBytes(isRecord(file) ? file.content : undefined);
 };
 
-function truncateUtf8(text, maxBytes) {
+function truncateUtf8(text: string, maxBytes: number): { text: string; truncated: boolean } {
   const bytes = new TextEncoder().encode(text);
   if (bytes.length <= maxBytes) return { text, truncated: false };
   const suffix = "\n[output truncated by the browser tool limit]";
   const suffixBytes = new TextEncoder().encode(suffix).length;
   let end = Math.max(0, maxBytes - suffixBytes);
-  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end -= 1;
+  while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end -= 1;
   return { text: `${new TextDecoder().decode(bytes.slice(0, end))}${suffix}`, truncated: true };
 }
 
-function toast(text) {
+function toast(text: string): void {
   $("toast").textContent = text;
   $("toast").classList.add("show");
-  clearTimeout(toastTimer);
+  if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => $("toast").classList.remove("show"), 2800);
 }
 
-function log(text) {
+function log(text: string): void {
   const item = document.createElement("li");
   item.textContent = text;
   const time = document.createElement("time");
@@ -99,22 +176,22 @@ function log(text) {
   $("activityLog").prepend(item);
 }
 
-function recordRuntimeEvent(event) {
-  const sequence = event.sequence ? ` #${event.sequence}` : "";
+function recordRuntimeEvent(event: BackendEvent): void {
+  const sequence = event.type === "event" ? ` #${event.sequence}` : "";
   log(`Runtime event${sequence}`);
   status("Runtime event received", "Refresh a clean file to inspect the latest backend snapshot.");
 }
 
-function status(title, detail) {
+function status(title: string, detail: string): void {
   $("statusText").textContent = title;
   $("statusDetail").textContent = detail;
 }
 
-function browserOrigin() {
+function browserOrigin(): string {
   return globalThis.location?.origin || "http://localhost:5173";
 }
 
-function formatBytes(bytes) {
+function formatBytes(bytes: unknown): string {
   const value = Number(bytes);
   if (!Number.isFinite(value) || value < 0) return "not reported";
   if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(value % (1024 * 1024) ? 1 : 0)} MiB`;
@@ -122,7 +199,7 @@ function formatBytes(bytes) {
   return `${Math.round(value)} B`;
 }
 
-function renderSettings() {
+function renderSettings(): void {
   const runtime = runtimeStatus();
   const settings = backend.statusPayload?.settings;
   const paired = backend.kind === "websocket" && backend.connected;
@@ -161,15 +238,15 @@ function renderSettings() {
       : "The previous bridge is not connected. Enter a fresh one-time code; bridge settings will appear after pairing.";
 }
 
-function shellQuote(value) {
+function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function workspacePathValue() {
+function workspacePathValue(): string {
   return $("workspacePath").value.trim() || "/absolute/path/to/workspace";
 }
 
-function renderWorkspaceSetup() {
+function renderWorkspaceSetup(): void {
   const origin = browserOrigin();
   $("pairingCommand").textContent = `/webmcp pair ${origin}`;
   const path = shellQuote(workspacePathValue());
@@ -178,7 +255,7 @@ function renderWorkspaceSetup() {
   $("headlessSetupCommand").textContent = `vtcode webmcp serve \\\n  --origin ${origin} \\\n  --allowed-root ${path}`;
 }
 
-function openSettings(section = null) {
+function openSettings(section: "connection" | "workspace" | null = null): void {
   if ($("confirmDialog").open) return;
   if ($("quickActionDialog").open) $("quickActionDialog").close();
   if ($("helpDialog").open) $("helpDialog").close();
@@ -195,52 +272,52 @@ function openSettings(section = null) {
   renderSettings();
 }
 
-function openWorkspaceSetup() {
+function openWorkspaceSetup(): void {
   openSettings("workspace");
   $("workspacePath").focus();
 }
 
-function openConnectionPanel() {
+function openConnectionPanel(): void {
   openSettings("connection");
   const field = $("bridgeUrl").value.trim() ? $("pairingCode") : $("bridgeUrl");
   field.focus();
 }
 
-function openSettingsDialog() {
+function openSettingsDialog(): void {
   if ($("settingsDialog").open) $("settingsDialog").close();
   else openSettings();
 }
 
-function selectTerminal(panel) {
-  for (const tab of document.querySelectorAll("[data-terminal]")) {
+function selectTerminal(panel: Panel): void {
+  for (const tab of document.querySelectorAll<HTMLElement>("[data-terminal]")) {
     const active = tab.dataset.terminal === panel;
     tab.classList.toggle("active", active);
     tab.setAttribute("aria-selected", String(active));
   }
-  for (const pane of ["activity", "changes", "turn"]) {
-    const element = $(`terminal${pane[0].toUpperCase()}${pane.slice(1)}`);
+  for (const pane of ["activity", "changes", "turn"] as const) {
+    const element = $(`terminal${pane.charAt(0).toUpperCase()}${pane.slice(1)}`);
     const active = pane === panel;
     element.hidden = !active;
     element.classList.toggle("active", active);
   }
 }
 
-function openTurnComposer() {
+function openTurnComposer(): void {
   selectTerminal("turn");
   $("promptInput").focus();
 }
 
-function runtimeStatus() { return backend.statusPayload?.runtime; }
-function isBridgeConnected() { return backend.kind !== "websocket" || backend.connected; }
-function isHeadlessBridge() {
+function runtimeStatus(): RuntimeStatus | undefined { return backend.statusPayload?.runtime; }
+function isBridgeConnected(): boolean { return backend.kind !== "websocket" || backend.connected; }
+function isHeadlessBridge(): boolean {
   const runtime = runtimeStatus();
   return isBridgeConnected() && backend.kind === "websocket" && runtime?.mutations_allowed === false && runtime.approval_authority?.startsWith("headless");
 }
-function isActiveRuntime() {
+function isActiveRuntime(): boolean {
   return isBridgeConnected() && backend.kind === "websocket" && runtimeStatus()?.turns_available === true;
 }
 
-function updateTurnControl() {
+function updateTurnControl(): void {
   const detail = $("promptDetail");
   const button = $("requestTurn");
   const label = $("requestTurnLabel");
@@ -268,7 +345,7 @@ function updateTurnControl() {
   }
 }
 
-function handleBackendConnection(event) {
+function handleBackendConnection(event: BackendConnectionEvent): void {
   if (backend.kind !== "websocket") return;
   if (event.state === "connected") {
     $("supportStatus").textContent = "VT Code connected";
@@ -298,23 +375,23 @@ function handleBackendConnection(event) {
   renderProposal();
 }
 
-function handleBackendStatus() {
+function handleBackendStatus(_payload: StatusPayload | null): void {
   if (backend.kind !== "websocket") return;
   renderSettings();
   updateTurnControl();
   renderProposal();
 }
 
-function paths() { return [...state.files.keys()].sort(); }
-function snapshot(path) { return state.snapshots.get(path); }
-function current(path) { return state.drafts.get(path) ?? snapshot(path)?.content ?? ""; }
-function isDirty(path) { return state.drafts.has(path) && state.drafts.get(path) !== snapshot(path)?.content; }
-function dirtyPaths() { return paths().filter(isDirty); }
+function paths(): string[] { return [...state.files.keys()].sort(); }
+function snapshot(path: string): FileSnapshot | undefined { return state.snapshots.get(path); }
+function current(path: string): string { return state.drafts.get(path) ?? snapshot(path)?.content ?? ""; }
+function isDirty(path: string): boolean { return state.drafts.has(path) && state.drafts.get(path) !== snapshot(path)?.content; }
+function dirtyPaths(): string[] { return paths().filter(isDirty); }
 
-function persistBrowserSettings() {
+function persistBrowserSettings(): boolean {
   const saved = saveBrowserSettings(browserStorage(), APP_INSTANCE, {
-    workspace_path: $("workspacePath")?.value.trim() || "",
-    bridge_url: $("bridgeUrl")?.value.trim() || "",
+    workspace_path: $("workspacePath").value.trim(),
+    bridge_url: $("bridgeUrl").value.trim(),
   });
   if (!saved && !settingsPersistenceWarningShown) {
     settingsPersistenceWarningShown = true;
@@ -326,8 +403,8 @@ function persistBrowserSettings() {
   return saved;
 }
 
-function saveFallbackWorkspaceNow(silent = false) {
-  if (backend.kind !== "fallback" || typeof backend.exportFiles !== "function") return true;
+function saveFallbackWorkspaceNow(silent = false): boolean {
+  if (backend.kind !== "fallback") return true;
   const saved = saveBrowserState(browserStorage(), APP_INSTANCE, {
     fallback_files: backend.exportFiles(),
     drafts: Object.fromEntries(state.drafts),
@@ -335,7 +412,7 @@ function saveFallbackWorkspaceNow(silent = false) {
     selected: state.selected,
     expanded_dirs: [...state.expandedDirs],
     filter: state.filter,
-    workspace_path: $("workspacePath")?.value.trim() || "",
+    workspace_path: $("workspacePath").value.trim(),
   });
   if (!saved && !silent && !persistenceWarningShown) {
     persistenceWarningShown = true;
@@ -348,14 +425,14 @@ function saveFallbackWorkspaceNow(silent = false) {
   return saved;
 }
 
-function flushBrowserPersistence({ silent = false } = {}) {
+function flushBrowserPersistence({ silent = false }: { readonly silent?: boolean } = {}): boolean {
   if (fallbackPersistenceTimer) clearTimeout(fallbackPersistenceTimer);
   fallbackPersistenceTimer = null;
   return saveFallbackWorkspaceNow(silent);
 }
 
-function persistBrowserWorkspace({ flush = false, silent = false } = {}) {
-  if (backend.kind !== "fallback" || typeof backend.exportFiles !== "function") return true;
+function persistBrowserWorkspace({ flush = false, silent = false }: { readonly flush?: boolean; readonly silent?: boolean } = {}): boolean {
+  if (backend.kind !== "fallback") return true;
   if (flush) return flushBrowserPersistence({ silent });
   if (fallbackPersistenceTimer) clearTimeout(fallbackPersistenceTimer);
   fallbackPersistenceTimer = setTimeout(() => {
@@ -365,31 +442,36 @@ function persistBrowserWorkspace({ flush = false, silent = false } = {}) {
   return true;
 }
 
-function fileName(path) { return path.split("/").at(-1) || path; }
+function fileName(path: string): string { return path.split("/").at(-1) || path; }
 
-function expandAncestors(path) {
+function expandAncestors(path: string): void {
   const parts = path.split("/");
   for (let index = 1; index < parts.length; index += 1) {
     state.expandedDirs.add(parts.slice(0, index).join("/"));
   }
 }
 
-function treeFor(filePaths) {
-  const root = { directories: new Map(), files: [] };
+function treeFor(filePaths: readonly string[]): TreeNode {
+  const root: TreeNode = { directories: new Map(), files: [] };
   for (const path of filePaths) {
     const parts = path.split("/");
     let node = root;
     for (let index = 0; index < parts.length - 1; index += 1) {
       const name = parts[index];
-      if (!node.directories.has(name)) node.directories.set(name, { directories: new Map(), files: [] });
-      node = node.directories.get(name);
+      if (name === undefined) continue;
+      let directory = node.directories.get(name);
+      if (!directory) {
+        directory = { directories: new Map(), files: [] };
+        node.directories.set(name, directory);
+      }
+      node = directory;
     }
     node.files.push(path);
   }
   return root;
 }
 
-function appendTreeNode(parent, node, prefix, depth, filterActive) {
+function appendTreeNode(parent: HTMLElement, node: TreeNode, prefix: string, depth: number, filterActive: boolean): void {
   for (const [name, directory] of [...node.directories.entries()].sort(([left], [right]) => left.localeCompare(right))) {
     const path = prefix ? `${prefix}/${name}` : name;
     const expanded = filterActive || state.expandedDirs.has(path);
@@ -438,7 +520,7 @@ function appendTreeNode(parent, node, prefix, depth, filterActive) {
   }
 }
 
-function renderTree() {
+function renderTree(): void {
   const tree = $("fileTree");
   tree.replaceChildren();
   const query = state.filter.toLowerCase();
@@ -455,7 +537,7 @@ function renderTree() {
   filterStatus.textContent = query ? `${visiblePaths.length} matching files` : "Filter files by name or path";
 }
 
-function renderTabs() {
+function renderTabs(): void {
   const tabs = $("fileTabs");
   tabs.replaceChildren();
   for (const path of state.openTabs) {
@@ -475,7 +557,7 @@ function renderTabs() {
   }
 }
 
-function updateEditorFooter() {
+function updateEditorFooter(): void {
   if (!editor.view) return;
   const line = editor.view.state.doc.lineAt(editor.view.state.selection.main.head);
   $("cursorPosition").textContent = `Ln ${line.number}, Col ${editor.view.state.selection.main.head - line.from + 1}`;
@@ -485,16 +567,16 @@ function updateEditorFooter() {
   $("editorState").classList.toggle("dirty", Boolean(changed || conflict));
 }
 
-function renderSelectedEditor() {
+function renderSelectedEditor(): void {
   if (!state.selected || !snapshot(state.selected)) return;
   const path = state.selected;
   editor.open(path, current(path), isDirty(path));
   $("fileTitle").textContent = path;
-  $("fileType").textContent = path.includes(".") ? path.split(".").pop().toUpperCase() : "TEXT";
+  $("fileType").textContent = path.includes(".") ? path.split(".").pop()?.toUpperCase() || "TEXT" : "TEXT";
   updateEditorFooter();
 }
 
-async function openFile(path, record = true) {
+async function openFile(path: string, record = true): Promise<void> {
   if (!state.files.has(path)) throw webMcpFileNotFoundError(path);
   const request = ++openRequest;
   state.selected = path;
@@ -513,15 +595,14 @@ async function openFile(path, record = true) {
   persistBrowserWorkspace();
 }
 
-function collectChanges() {
-  return dirtyPaths().map((path) => ({
-    path,
-    base_digest: snapshot(path).digest,
-    content: current(path),
-  }));
+function collectChanges(): Array<{ path: string; base_digest: string; content: string }> {
+  return dirtyPaths().flatMap((path) => {
+    const base = snapshot(path);
+    return base ? [{ path, base_digest: base.digest, content: current(path) }] : [];
+  });
 }
 
-function renderProposal() {
+function renderProposal(): void {
   const view = $("diffView");
   view.replaceChildren();
   const proposal = state.serverProposal || state.clientProposal;
@@ -574,10 +655,13 @@ function renderProposal() {
   }
 }
 
-async function reviewChanges() {
+async function reviewChanges(): Promise<void> {
   const changes = collectChanges();
   if (!changes.length) throw new Error("No browser draft is ready to review; edit a file or call stage_text_edit first");
-  const beforeByPath = Object.fromEntries(changes.map((change) => [change.path, snapshot(change.path).content]));
+  const beforeByPath = Object.fromEntries(changes.flatMap((change) => {
+    const base = snapshot(change.path);
+    return base ? [[change.path, base.content] as const] : [];
+  }));
   state.clientProposal = { changes, unified_diff: createUnifiedDiff(changes, beforeByPath) };
   state.serverProposal = null;
   state.approved = false;
@@ -589,13 +673,13 @@ async function reviewChanges() {
   toast("Unified diff ready for review");
 }
 
-function proposalPaths(proposal) {
+function proposalPaths(proposal: ClientProposal | PatchProposal | null | undefined): string[] {
   return [...new Set((proposal?.changes || [])
-    .map((change) => change?.path)
-    .filter((path) => typeof path === "string" && path.length > 0))];
+    .map((change) => change.path)
+    .filter((path) => path.length > 0))];
 }
 
-async function recoverStaleProposal(proposal) {
+async function recoverStaleProposal(proposal: ClientProposal | PatchProposal | null | undefined): Promise<string> {
   const affectedPaths = proposalPaths(proposal);
   state.clientProposal = null;
   state.serverProposal = null;
@@ -617,12 +701,12 @@ async function recoverStaleProposal(proposal) {
       if (state.drafts.get(path) === fresh.content) state.drafts.delete(path);
       state.conflicts.delete(path);
       refreshed += 1;
-    } catch (error) {
+    } catch (error: unknown) {
       log(`Could not refresh ${path} after the stale proposal: ${message(error)}`);
     }
   }
 
-  if (refreshed > 0 && affectedPaths.includes(state.selected)) renderSelectedEditor();
+  if (refreshed > 0 && state.selected !== null && affectedPaths.includes(state.selected)) renderSelectedEditor();
   renderTree();
   renderTabs();
   updateEditorFooter();
@@ -635,14 +719,16 @@ async function recoverStaleProposal(proposal) {
   return detail;
 }
 
-async function requestApproval() {
+async function requestApproval(): Promise<void> {
   if (!state.clientProposal) await reviewChanges();
   if (state.serverProposal) throw new Error("This proposal has already been sent");
+  const clientProposal = state.clientProposal;
+  if (!clientProposal) throw new Error("No browser draft is ready to request approval");
   selectTerminal("changes");
   try {
-    state.serverProposal = await backend.proposeChanges(state.clientProposal.changes);
-  } catch (error) {
-    if (error?.code === "conflict") error.proposalRecovery = await recoverStaleProposal(state.clientProposal);
+    state.serverProposal = await backend.proposeChanges(clientProposal.changes);
+  } catch (error: unknown) {
+    if (error instanceof BackendError && error.code === "conflict") error.proposalRecovery = await recoverStaleProposal(clientProposal);
     throw error;
   }
   if (backend.kind === "fallback") {
@@ -664,18 +750,22 @@ async function requestApproval() {
   if (isActiveRuntime()) openTurnComposer();
 }
 
-async function applyProposal() {
-  if (!state.serverProposal) throw new Error("Send a proposal before applying it");
+async function applyProposal(): Promise<void> {
+  const serverProposal = state.serverProposal;
+  if (!serverProposal) throw new Error("Send a proposal before applying it");
   if (backend.kind === "fallback" && !state.approved) throw new Error("Explicit approval is required");
   if (isActiveRuntime() && runtimeStatus()?.mutations_allowed === false) {
     throw new Error("Ask the active VT Code session to apply this proposal through a turn");
   }
   selectTerminal("changes");
-  const before = state.serverProposal.changes.map((change) => ({ path: change.path, content: snapshot(change.path).content }));
+  const before = serverProposal.changes.flatMap((change) => {
+    const file = snapshot(change.path);
+    return file ? [{ path: change.path, content: file.content }] : [];
+  });
   try {
-    const result = await backend.applyProposal(state.serverProposal.proposal_id);
+    const result = await backend.applyProposal(serverProposal.proposal_id);
     state.lastChange = { change_id: result.change_id, paths: result.paths, before };
-    for (const path of state.serverProposal.changes.map((change) => change.path)) await refreshFile(path, true);
+    for (const path of serverProposal.changes.map((change) => change.path)) await refreshFile(path, true);
     state.clientProposal = null;
     state.serverProposal = null;
     state.approved = false;
@@ -685,8 +775,8 @@ async function applyProposal() {
     log(`Applied approved patch (${backend.kind === "fallback" ? "in memory" : "VT Code"})`);
     status("Change applied", backend.kind === "fallback" ? "Only the deterministic in-memory project changed." : "VT Code completed the authorized workspace change.");
     toast("Patch applied");
-  } catch (error) {
-    if (error?.code === "approval_required") {
+  } catch (error: unknown) {
+    if (errorCode(error) === "approval_required") {
       state.pendingTerminalApproval = true;
       renderProposal();
       status("Still awaiting terminal approval", "VT Code rejected browser-only authorization; no file was changed.");
@@ -695,7 +785,7 @@ async function applyProposal() {
   }
 }
 
-async function revertLastChange() {
+async function revertLastChange(): Promise<void> {
   if (!state.lastChange) throw new Error("There is no applied change to revert");
   selectTerminal("changes");
   const result = await backend.revertLastChange(state.lastChange.change_id);
@@ -708,7 +798,7 @@ async function revertLastChange() {
   toast("Last change reverted");
 }
 
-async function runChecks() {
+async function runChecks(): Promise<void> {
   if (isHeadlessBridge()) {
     throw new Error("Checks are unavailable in the headless bridge; enable explicit full-auto policy for a disposable workspace");
   }
@@ -720,7 +810,7 @@ async function runChecks() {
   toast(result.exit_code === 0 ? "Checks passed" : "A check failed");
 }
 
-async function requestTurn() {
+async function requestTurn(): Promise<void> {
   openTurnComposer();
   if (backend.kind === "fallback") openConnectionPanel();
   if (dirtyPaths().length && !state.clientProposal) await reviewChanges();
@@ -731,9 +821,12 @@ async function requestTurn() {
     : buildTurnPrompt($("promptInput").value, proposal?.unified_diff);
   let result;
   try {
-    result = await backend.requestTurn(prompt, proposal?.proposal_id);
-  } catch (error) {
-    if (error?.code === "conflict") error.proposalRecovery = await recoverStaleProposal(proposal);
+    const proposalId = proposal && "proposal_id" in proposal && typeof proposal.proposal_id === "string"
+      ? proposal.proposal_id
+      : undefined;
+    result = await backend.requestTurn(prompt, proposalId);
+  } catch (error: unknown) {
+    if (error instanceof BackendError && error.code === "conflict") error.proposalRecovery = await recoverStaleProposal(proposal);
     throw error;
   }
   if (!result.accepted) {
@@ -751,11 +844,12 @@ async function requestTurn() {
   toast("VT Code turn requested");
 }
 
-async function refreshFile(path, force = false, render = true) {
+async function refreshFile(path: string, force = false, render = true): Promise<void> {
   const fresh = await backend.readFile(path);
   if (typeof fresh?.content !== "string") throw new Error(`Backend returned invalid content for ${path}`);
   if (snapshotSizeBytes(fresh) > MAX_FILE_BYTES) throw new Error(`File exceeds the browser size limit: ${path}`);
-  if (isDirty(path) && !force && snapshot(path) && fresh.digest !== snapshot(path).digest) {
+  const previous = snapshot(path);
+  if (isDirty(path) && !force && previous && fresh.digest !== previous.digest) {
     state.conflicts.add(path);
     throw new Error(`External change conflict for ${path}; discard the draft before reloading`);
   }
@@ -768,14 +862,14 @@ async function refreshFile(path, force = false, render = true) {
   persistBrowserWorkspace();
 }
 
-async function reloadFile() {
+async function reloadFile(): Promise<void> {
   if (!state.selected) return;
   await refreshFile(state.selected);
   log(`Reloaded ${state.selected} from ${backend.kind}`);
   status("File reloaded", "The draft buffer was compared with the backend snapshot.");
 }
 
-function discardDraft() {
+function discardDraft(): void {
   if (!state.selected || !isDirty(state.selected)) throw new Error("The selected file has no draft");
   const path = state.selected;
   state.drafts.delete(path);
@@ -783,7 +877,9 @@ function discardDraft() {
   state.clientProposal = null;
   state.serverProposal = null;
   state.approved = false;
-  editor.open(path, snapshot(path).content, false);
+  const base = snapshot(path);
+  if (!base) throw new Error(`No snapshot is loaded for ${path}`);
+  editor.open(path, base.content, false);
   persistBrowserWorkspace();
   renderTree();
   renderTabs();
@@ -793,7 +889,7 @@ function discardDraft() {
   status("Draft discarded", "The editor now shows the last backend snapshot.");
 }
 
-async function runSelfCheck() {
+async function runSelfCheck(): Promise<void> {
   if (dirtyPaths().length || state.serverProposal || state.lastChange) {
     throw new Error("Finish the current change before running the self-check");
   }
@@ -809,13 +905,13 @@ async function runSelfCheck() {
   toast("Editor self-check passed");
 }
 
-function search() {
+function search(): void {
   state.filter = $("searchInput").value.trim();
   renderTree();
   persistBrowserWorkspace();
 }
 
-async function connect() {
+async function connect(): Promise<void> {
   const url = $("bridgeUrl").value.trim();
   const code = $("pairingCode").value.trim().toUpperCase();
   if (!url || !code) throw new Error("Enter the WebMCP WebSocket URL and the terminal pairing code");
@@ -841,18 +937,18 @@ async function connect() {
   editor.focus();
 }
 
-async function loadWorkspace(nextBackend, restoreState = null) {
-  const nextFiles = new Map();
-  const hydrationEvents = [];
+async function loadWorkspace(nextBackend: Backend, restoreState: PersistedBrowserState | null = null): Promise<void> {
+  const nextFiles = new Map<string, WorkspaceFile>();
+  const hydrationEvents: BackendEvent[] = [];
   let hydrationOverflow = false;
   let hydrationComplete = false;
-  const stopHydration = nextBackend.subscribeToEvents?.((event) => {
+  const stopHydration = nextBackend.subscribeToEvents((event: BackendEvent) => {
     if (hydrationComplete) recordRuntimeEvent(event);
     else if (hydrationEvents.length < MAX_HYDRATION_EVENTS) hydrationEvents.push(event);
     else hydrationOverflow = true;
   });
-  const stopConnection = nextBackend.subscribeToConnection?.(handleBackendConnection);
-  const stopStatus = nextBackend.subscribeToStatus?.(handleBackendStatus);
+  const stopConnection = nextBackend.subscribeToConnection(handleBackendConnection);
+  const stopStatus = nextBackend.subscribeToStatus(handleBackendStatus);
   try {
     for (const entry of await nextBackend.listFiles()) {
       const path = typeof entry === "string" ? entry : entry?.path;
@@ -860,9 +956,9 @@ async function loadWorkspace(nextBackend, restoreState = null) {
       nextFiles.set(path, typeof entry === "string" ? { path } : entry);
     }
   } catch (error) {
-    stopHydration?.();
-    stopConnection?.();
-    stopStatus?.();
+    stopHydration();
+    stopConnection();
+    stopStatus();
     throw error;
   }
   state.unsubscribe?.();
@@ -889,7 +985,7 @@ async function loadWorkspace(nextBackend, restoreState = null) {
   $("turnOutput").textContent = "No VT Code turn requested.";
   const restoreFallback = nextBackend.kind === "fallback" && restoreState?.app_instance === APP_INSTANCE;
   if (restoreFallback) {
-    const available = (items) => Array.isArray(items) ? items.filter((path) => nextFiles.has(path)) : [];
+    const available = (items: readonly string[]): string[] => items.filter((path) => nextFiles.has(path));
     const nextDirectories = new Set();
     for (const path of nextFiles.keys()) {
       let separator = path.indexOf("/");
@@ -898,11 +994,9 @@ async function loadWorkspace(nextBackend, restoreState = null) {
         separator = path.indexOf("/", separator + 1);
       }
     }
-    const availableDirectories = (items) => Array.isArray(items)
-      ? items.filter((path) => typeof path === "string" && nextDirectories.has(path))
-      : [];
+    const availableDirectories = (items: readonly string[]): string[] => items.filter((path) => nextDirectories.has(path));
     state.openTabs = available(restoreState.open_tabs);
-    state.selected = nextFiles.has(restoreState.selected) ? restoreState.selected : null;
+    state.selected = restoreState.selected !== null && nextFiles.has(restoreState.selected) ? restoreState.selected : null;
     state.expandedDirs = new Set(availableDirectories(restoreState.expanded_dirs));
     state.filter = restoreState.filter;
     $("searchInput").value = state.filter;
@@ -968,7 +1062,7 @@ async function loadWorkspace(nextBackend, restoreState = null) {
   }
 }
 
-async function readCurrentFile(path) {
+async function readCurrentFile(path: string): Promise<FileSnapshot> {
   if (!state.files.has(path)) throw webMcpFileNotFoundError(path);
   const draft = state.drafts.get(path);
   const base = snapshot(path);
@@ -997,23 +1091,29 @@ async function readCurrentFile(path) {
   return { ...file, draft: false };
 }
 
-function webMcpFileNotFoundError(path) {
-  const error = new Error(`No workspace file named "${path}"; call list_project_files or search_code and retry with a returned path`);
-  error.code = "not_found";
-  return error;
+function webMcpFileNotFoundError(path: string): BackendError {
+  return new BackendError(`No workspace file named "${path}"; call list_project_files or search_code and retry with a returned path`, "not_found");
 }
 
-function webMcpEnvironmentState() {
+function webMcpEnvironmentState(): WebMcpEnvironmentState {
+  const originAgentCluster = (window as Window & { readonly originAgentCluster?: unknown }).originAgentCluster;
+  const permissionsPolicy = (document as Document & {
+    readonly permissionsPolicy?: { readonly allowsFeature?: (feature: string) => boolean };
+  }).permissionsPolicy;
   return {
     browsing_context_required: true,
-    origin_agent_cluster: typeof window.originAgentCluster === "boolean" ? window.originAgentCluster : null,
-    tools_permission_allowed: typeof document.permissionsPolicy?.allowsFeature === "function"
-      ? document.permissionsPolicy.allowsFeature("tools")
+    origin_agent_cluster: typeof originAgentCluster === "boolean" ? originAgentCluster : null,
+    tools_permission_allowed: typeof permissionsPolicy?.allowsFeature === "function"
+      ? permissionsPolicy.allowsFeature("tools")
       : null,
   };
 }
 
-function editorStateForWebMcp() {
+function panelFromValue(value: string | undefined): Panel | null {
+  return value === "activity" || value === "changes" || value === "turn" ? value : null;
+}
+
+function editorStateForWebMcp(): EditorStateForWebMcp {
   const dirtyFiles = dirtyPaths();
   const workflowState = dirtyFiles.length
     ? "draft_needs_review"
@@ -1036,40 +1136,37 @@ function editorStateForWebMcp() {
     dirty_files: dirtyFiles,
     has_client_proposal: Boolean(state.clientProposal),
     has_server_proposal: Boolean(state.serverProposal),
-    active_panel: document.querySelector("[data-terminal].active")?.dataset.terminal || "activity",
+    active_panel: panelFromValue(document.querySelector<HTMLElement>("[data-terminal].active")?.dataset.terminal) || "activity",
     workflow_state: workflowState,
     recommended_next_tools: recommendedNextTools,
     webmcp_context: webMcpEnvironmentState(),
   };
 }
 
-async function stageTextEditForWebMcp({ path, find, replace, expected_digest: expectedDigest }, { signal } = {}) {
+async function stageTextEditForWebMcp(
+  { path, find, replace, expected_digest: expectedDigest }: StageTextEditInput,
+  { signal }: ToolExecutionOptions = {},
+): Promise<Record<string, unknown>> {
   if (!state.files.has(path)) throw webMcpFileNotFoundError(path);
   if (!snapshot(path)) await openFile(path, false);
   if (signal?.aborted) throw signal.reason || new Error("The WebMCP edit was aborted");
   if (isDirty(path)) {
-    const error = new Error(`Draft already contains changes for ${path}; call review_draft or discard the draft before staging another edit`);
-    error.code = "draft_conflict";
-    throw error;
+    throw new BackendError(`Draft already contains changes for ${path}; call review_draft or discard the draft before staging another edit`, "draft_conflict");
   }
   const base = snapshot(path);
+  if (!base) throw new BackendError(`No snapshot is loaded for ${path}; read the file and retry`, "not_found");
   if (base.digest !== expectedDigest) {
-    const error = new Error(`Stale edit for ${path}; call read_file again and use its fresh digest before retrying`);
-    error.code = "conflict";
-    throw error;
+    throw new BackendError(`Stale edit for ${path}; call read_file again and use its fresh digest before retrying`, "conflict");
   }
   const content = base.content;
-  let next;
+  let next: string;
   try {
     next = replaceExactText(content, find, replace);
-  } catch (error) {
-    error.message = `${error.message} in ${path}`;
-    throw error;
+  } catch (error: unknown) {
+    throw new BackendError(`${message(error)} in ${path}`, errorCode(error) || "text_not_found");
   }
   if (contentSizeBytes(next) > MAX_FILE_BYTES) {
-    const error = new Error(`Edited file exceeds the browser size limit: ${path}; shorten the replacement and retry`);
-    error.code = "limit_exceeded";
-    throw error;
+    throw new BackendError(`Edited file exceeds the browser size limit: ${path}; shorten the replacement and retry`, "limit_exceeded");
   }
   const draftDigest = await digest(next);
   if (signal?.aborted) throw signal.reason || new Error("The WebMCP edit was aborted");
@@ -1099,32 +1196,29 @@ async function stageTextEditForWebMcp({ path, find, replace, expected_digest: ex
   };
 }
 
-async function reviewDraftForWebMcp() {
+async function reviewDraftForWebMcp(): Promise<Record<string, unknown>> {
   await reviewChanges();
-  const diff = truncateUtf8(state.clientProposal?.unified_diff || "", MAX_WEBMCP_RESULT_BYTES);
+  const proposal = state.clientProposal;
+  if (!proposal) throw new Error("No browser draft is ready to review");
+  const diff = truncateUtf8(proposal.unified_diff, MAX_WEBMCP_RESULT_BYTES);
   return {
     reviewed: true,
-    files: state.clientProposal?.changes.map(({ path, base_digest, content }) => ({
+    files: proposal.changes.map(({ path, base_digest, content }) => ({
       path,
       base_digest,
       size_bytes: contentSizeBytes(content),
-    })) || [],
+    })),
     unified_diff: diff.text,
     diff_truncated: diff.truncated,
   };
 }
 
-function openPanelForWebMcp(panel) {
-  if (!["activity", "changes", "turn"].includes(panel)) {
-    const error = new Error(`Unknown editor panel "${panel}"; choose one of: activity, changes, turn`);
-    error.code = "invalid_input";
-    throw error;
-  }
+function openPanelForWebMcp(panel: Panel): void {
   selectTerminal(panel);
 }
 
-async function registerWebMcp() {
-  const modelContext = document.modelContext;
+async function registerWebMcp(): Promise<void> {
+  const modelContext = document.modelContext as ModelContext | undefined;
   const environment = webMcpEnvironmentState();
   if (environment.origin_agent_cluster === false) {
     $("webmcpCapability").textContent = "WebMCP unavailable: this document is not origin-isolated; open the top-level page in a supported browser. Editor fallback remains active.";
@@ -1138,8 +1232,8 @@ async function registerWebMcp() {
     $("webmcpCapability").textContent = "WebMCP browser API unavailable in this browsing context; use Chrome 149+ with the origin trial or testing flag. The editor remains fully usable.";
     return;
   }
-  const searchCode = async (query = "", { signal } = {}) => {
-    const results = [];
+  const searchCode = async (query = "", { signal }: ToolExecutionOptions = {}): Promise<SearchResult> => {
+    const results: SearchMatch[] = [];
     const normalizedQuery = typeof query === "string" ? query.toLowerCase() : "";
     let scannedFiles = 0;
     let scannedBytes = 0;
@@ -1177,7 +1271,7 @@ async function registerWebMcp() {
       scannedBytes += bytes;
       for (const [line, text] of content.split("\n").entries()) {
         if (text.toLowerCase().includes(normalizedQuery)) {
-          const result = { path, line: line + 1, text };
+          const result: SearchMatch = { path, line: line + 1, text };
           const nextBytes = contentSizeBytes(JSON.stringify(result));
           if (resultBytes + nextBytes > MAX_WEBMCP_RESULT_BYTES) {
             truncated = true;
@@ -1195,11 +1289,11 @@ async function registerWebMcp() {
     return output();
   };
   const tools = createWebMcpTools({
-    listFiles: () => backend.listFiles(),
+    listFiles: async () => (await backend.listFiles()).map((entry) => typeof entry === "string" ? entry : entry.path),
     readFile: readCurrentFile,
     searchCode,
     getEditorState: editorStateForWebMcp,
-    openFile: (path) => openFile(path),
+    openFile: (path: string) => openFile(path),
     stageTextEdit: stageTextEditForWebMcp,
     reviewDraft: reviewDraftForWebMcp,
     openPanel: openPanelForWebMcp,
@@ -1207,51 +1301,64 @@ async function registerWebMcp() {
   webMcpRegistration?.dispose();
   webMcpRegistration = null;
   try {
-    webMcpRegistration = await registerWebMcpTools(modelContext, tools, {
+    const registration = await registerWebMcpTools(modelContext, tools, {
       onToolChange: (names) => {
         $("webmcpCapability").textContent = `WebMCP tools available: ${names.length}; browser agent tool set changed.`;
       },
     });
-    $("webmcpCapability").textContent = `WebMCP tools registered: ${webMcpRegistration.names.length} editor and workspace tools.`;
-  } catch (error) {
+    webMcpRegistration = registration;
+    $("webmcpCapability").textContent = registration
+      ? `WebMCP tools registered: ${registration.names.length} editor and workspace tools.`
+      : "WebMCP browser API unavailable in this browsing context; editor fallback remains active.";
+  } catch (error: unknown) {
     $("webmcpCapability").textContent = `WebMCP registration failed; editor fallback remains active (${message(error)}).`;
   }
 }
 
-async function run(action) {
+async function run(action: () => void | Promise<void>): Promise<void> {
   try {
     await action();
   } catch (error) {
     const detail = message(error);
-    if (error?.code === "unsupported") $("turnOutput").textContent = detail;
+    const code = errorCode(error);
+    if (code === "unsupported") $("turnOutput").textContent = detail;
     log(`Action failed: ${detail}`);
-    if (error?.code === "unauthorized" || error?.code === "pairing_expired") {
+    if (code === "unauthorized" || code === "pairing_expired") {
       openConnectionPanel();
       $("connectionSummary").textContent = "New pairing required";
       $("pairingCode").value = "";
       status("VT Code pairing expired", `For an active session rerun \`/webmcp pair ${browserOrigin()}\`; for a standalone bridge restart \`vtcode webmcp serve\`. Then enter the new URL and one-time code.`);
-    } else if (error?.code === "connection_closed") {
+    } else if (code === "connection_closed") {
       status("VT Code bridge disconnected", "Keep the current bridge running; the browser will reconnect automatically. If it was restarted, pair again with its newest URL and code.");
-    } else if (error?.proposalRecovery) {
+    } else if (error instanceof BackendError && error.proposalRecovery) {
       status("Proposal became stale", error.proposalRecovery);
     } else {
-      status(error?.code === "unsupported" ? "VT Code turn unavailable" : "Action could not complete", detail);
+      status(code === "unsupported" ? "VT Code turn unavailable" : "Action could not complete", detail);
     }
     toast(detail);
   }
 }
 
-function confirmAction(title, copy, label, action) {
+function confirmAction(title: string, copy: string, label: string, action: () => void | Promise<void>): void {
   const dialog = $("confirmDialog");
   if ($("settingsDialog").open) $("settingsDialog").close();
   $("dialogTitle").textContent = title;
   $("dialogCopy").textContent = copy;
   $("dialogConfirm").textContent = label;
-  $("dialogConfirm").onclick = (event) => { event.preventDefault(); dialog.close(); void run(action); };
+  $("dialogConfirm").onclick = (event: MouseEvent) => { event.preventDefault(); dialog.close(); void run(action); };
   dialog.showModal();
 }
 
-const QUICK_ACTIONS = [
+interface QuickAction {
+  readonly id: string;
+  readonly label: string;
+  readonly description: string;
+  readonly shortcut?: string;
+  readonly enabled?: () => boolean;
+  readonly execute: () => void | Promise<void>;
+}
+
+const QUICK_ACTIONS: readonly QuickAction[] = [
   {
     id: "review",
     label: "Review changes",
@@ -1339,11 +1446,11 @@ const QUICK_ACTIONS = [
   },
 ];
 
-function actionEnabled(action) {
+function actionEnabled(action: QuickAction): boolean {
   return !action.enabled || action.enabled();
 }
 
-function executeQuickAction(action) {
+function executeQuickAction(action: QuickAction): void {
   if (!actionEnabled(action)) {
     renderQuickActions($("quickActionSearch").value);
     return;
@@ -1352,7 +1459,7 @@ function executeQuickAction(action) {
   void run(action.execute);
 }
 
-function renderQuickActions(query = "") {
+function renderQuickActions(query = ""): void {
   const normalized = query.trim().toLowerCase();
   const actions = QUICK_ACTIONS.filter((action) => {
     const searchable = `${action.id} ${action.label} ${action.description}`.toLowerCase();
@@ -1423,13 +1530,14 @@ function openHelp() {
   dialog.querySelector("button")?.focus();
 }
 
-function isTypingTarget(target) {
-  return Boolean(target?.matches?.("input, textarea, select, [contenteditable='true']")
-    || target?.closest?.(".cm-editor"));
+function isTypingTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && Boolean(
+    target.matches("input, textarea, select, [contenteditable='true']") || target.closest(".cm-editor"),
+  );
 }
 
-async function copyPairingCommand() {
-  const command = $("pairingCommand").textContent.trim();
+async function copyPairingCommand(): Promise<void> {
+  const command = $("pairingCommand").textContent?.trim() || "";
   try {
     await copyText(command);
     log("Copied the active pairing command");
@@ -1440,15 +1548,15 @@ async function copyPairingCommand() {
   }
 }
 
-async function copyText(value) {
+async function copyText(value: string): Promise<void> {
   if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable");
   await navigator.clipboard.writeText(value);
 }
 
-async function copySetupCommand(id, label) {
+async function copySetupCommand(id: keyof DemoElements, label: string): Promise<void> {
   renderWorkspaceSetup();
   try {
-    await copyText($(id).textContent.trim());
+    await copyText($(id).textContent?.trim() || "");
     log(`Copied ${label} setup command`);
     toast(`${label} setup copied`);
   } catch {
@@ -1468,8 +1576,11 @@ $("bridgeUrl").oninput = persistBrowserSettings;
 renderWorkspaceSetup();
 renderSettings();
 $("searchInput").oninput = search;
-for (const tab of document.querySelectorAll("[data-terminal]")) {
-  tab.onclick = () => selectTerminal(tab.dataset.terminal);
+for (const tab of document.querySelectorAll<HTMLElement>("[data-terminal]")) {
+  tab.onclick = () => {
+    const panel = panelFromValue(tab.dataset.terminal);
+    if (panel) selectTerminal(panel);
+  };
 }
 $("reviewChanges").onclick = () => run(reviewChanges);
 $("approvePatch").onclick = () => backend.kind === "fallback"
@@ -1496,15 +1607,15 @@ $("selfCheck").onclick = () => run(runSelfCheck);
 $("quickActions").onclick = openQuickActions;
 $("helpButton").onclick = openHelp;
 $("quickActionSearch").oninput = () => renderQuickActions($("quickActionSearch").value);
-$("quickActionSearch").onkeydown = (event) => {
+$("quickActionSearch").onkeydown = (event: KeyboardEvent) => {
   if (event.key === "ArrowDown") {
     event.preventDefault();
-    $("quickActionList").querySelector(".quick-action:not(:disabled)")?.focus();
+    $("quickActionList").querySelector<HTMLElement>(".quick-action:not(:disabled)")?.focus();
   } else if (event.key === "Enter") {
-    const available = [...$("quickActionList").querySelectorAll(".quick-action:not(:disabled)")];
+    const available = [...$("quickActionList").querySelectorAll<HTMLButtonElement>(".quick-action:not(:disabled)")];
     if (available.length === 1) {
       event.preventDefault();
-      available[0].click();
+      available[0]?.click();
     }
   }
 };

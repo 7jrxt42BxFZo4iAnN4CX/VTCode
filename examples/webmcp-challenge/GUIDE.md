@@ -102,7 +102,7 @@ page effect:
    change; those operations remain behind VT Code's separate approval boundary.
 
 The repository's deterministic version of these checks is in
-`evals/webmcp-evals.js` and runs as part of `npm test`. It validates the tool
+`evals/webmcp-evals.ts` and runs as part of `bun run test`. It validates the tool
 contract and failure behavior; the Chrome inspector pass is still needed to
 measure probabilistic tool selection.
 
@@ -193,8 +193,10 @@ command from a current VT Code checkout with
 From `examples/webmcp-challenge`:
 
 ```sh
-npm test
-npm run build
+bun install --frozen-lockfile
+bun run typecheck
+bun run test
+bun run build
 ```
 
 See the [WebMCP demo user guide](../../docs/user-guide/webmcp-demo.md) for the

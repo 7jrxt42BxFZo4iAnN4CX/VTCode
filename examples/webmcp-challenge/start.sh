@@ -85,10 +85,10 @@ workspace="$(cd -- "$workspace" && pwd)"
 origin="http://${host}:${port}"
 vite_bin="$script_dir/node_modules/.bin/vite"
 
-command -v npm >/dev/null 2>&1 || fail "npm is required to run the browser demo"
+command -v bun >/dev/null 2>&1 || fail "bun is required to run the browser demo"
 if [[ ! -x "$vite_bin" ]]; then
     echo "Installing browser dependencies..."
-    (cd "$script_dir" && npm ci)
+    (cd "$script_dir" && bun install --frozen-lockfile)
 fi
 [[ -x "$vite_bin" ]] || fail "Vite was not installed at $vite_bin"
 

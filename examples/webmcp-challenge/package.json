@@ -6,7 +6,8 @@
     "dev": "vite",
     "start": "bash ./start.sh",
     "build": "vite build",
-    "test": "node --test test/*.test.js"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@codemirror/commands": "^6.8.1",
@@ -24,5 +25,10 @@
     "@lezer/highlight": "^1.2.1",
     "codemirror": "^6.0.1",
     "vite": "^6.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
   }
 }

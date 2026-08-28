@@ -1,4 +1,47 @@
-const FRESH_FALLBACK_STATE = Object.freeze({
+export interface EvalWebMcpContext {
+  readonly browsing_context_required: true;
+  readonly origin_agent_cluster: boolean;
+  readonly tools_permission_allowed: boolean;
+}
+
+export interface EvalState {
+  readonly backend: "fallback";
+  readonly connected: boolean;
+  readonly selected: string;
+  readonly open_tabs: string[];
+  readonly dirty_files: string[];
+  readonly active_panel: "activity" | "changes" | "turn";
+  readonly webmcp_context: EvalWebMcpContext;
+}
+
+export interface EvalMessage {
+  readonly role: "user";
+  readonly content: string;
+}
+
+export interface EvalExpectedCall {
+  readonly functionName: string;
+  readonly arguments: Record<string, unknown>;
+  readonly expected_ui?: string;
+  readonly depends_on?: string;
+  readonly expected_error?: string;
+  readonly recovery?: string;
+}
+
+export interface WebMcpEvalCase {
+  readonly id: string;
+  readonly category: "direct" | "open-ended" | "journey" | "failure";
+  readonly goal: string;
+  readonly initialState: EvalState;
+  readonly boundaries: string[];
+  readonly messages: EvalMessage[];
+  readonly expectedCall: EvalExpectedCall[];
+  readonly expectedState: EvalState;
+  readonly successCriteria: string[];
+  readonly recovery: string;
+}
+
+const FRESH_FALLBACK_STATE: EvalState = Object.freeze({
   backend: "fallback",
   connected: false,
   selected: "README.md",
@@ -6,20 +49,20 @@ const FRESH_FALLBACK_STATE = Object.freeze({
   dirty_files: [],
   active_panel: "activity",
   webmcp_context: {
-    browsing_context_required: true,
-    origin_agent_cluster: true,
-    tools_permission_allowed: true,
+    browsing_context_required: true as const,
+    origin_agent_cluster: true as const,
+    tools_permission_allowed: true as const,
   },
 });
 
-function initialState(overrides = {}) {
+function initialState(overrides: Partial<EvalState> = {}): EvalState {
   return { ...FRESH_FALLBACK_STATE, ...overrides };
 }
 
 const NO_DIRECT_FILESYSTEM_AUTHORITY =
   "The browser tool set never approves, applies, or reverts a filesystem change.";
 
-export const WEBMCP_EVAL_CASES = Object.freeze([
+export const WEBMCP_EVAL_CASES: readonly WebMcpEvalCase[] = Object.freeze([
   {
     id: "list-workspace",
     category: "direct",

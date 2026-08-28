@@ -34,19 +34,28 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: examples/webmcp-challenge/package-lock.json
+          bun-version: 1.3.14
+
+      - name: Install browser dependencies
+        working-directory: examples/webmcp-challenge
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck browser editor
+        working-directory: examples/webmcp-challenge
+        run: bun run typecheck
+
+      - name: Test browser editor
+        working-directory: examples/webmcp-challenge
+        run: bun run test
 
       - name: Build Vite editor
+        working-directory: examples/webmcp-challenge
         env:
           VITE_WEBMCP_ORIGIN_TRIAL_TOKEN: ${{ vars.WEBMCP_ORIGIN_TRIAL_TOKEN }}
-        run: |
-          npm ci --prefix examples/webmcp-challenge
-          npm run build --prefix examples/webmcp-challenge
+        run: bun run build
 
       - name: Configure Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0

@@ -5,6 +5,11 @@ workspace. It supports editable drafts, syntax highlighting, tabs, line
 numbers, dirty state, unified diff review, checks, prompt requests, and
 backend events.
 
+The app-owned runtime, tests, evals, and Vite configuration use strict
+TypeScript. Bun is the supported package manager and script runner. The
+JavaScript files shown in the fallback workspace are intentional virtual
+sample-project files.
+
 For the click-by-click setup and fallback/connected workflow, see the
 [local demo guide](GUIDE.md) or the [repository WebMCP demo user
 guide](../../docs/user-guide/webmcp-demo.md).
@@ -61,8 +66,10 @@ WebSocket URL and pairing code into the browser. Add `--port 5174` when port
 Build and test the example with:
 
 ```sh
-npm test
-npm run build
+bun install --frozen-lockfile
+bun run typecheck
+bun run test
+bun run build
 ```
 
 ### Optional Chrome origin trial
@@ -73,7 +80,7 @@ token without storing a token in the repository. Register the exact production o
 as `VITE_WEBMCP_ORIGIN_TRIAL_TOKEN` when building:
 
 ```sh
-VITE_WEBMCP_ORIGIN_TRIAL_TOKEN='<token for https://vinhnx.github.io>' npm run build
+VITE_WEBMCP_ORIGIN_TRIAL_TOKEN='<token for https://vinhnx.github.io>' bun run build
 ```
 
 The GitHub Pages workflow reads the optional repository Actions variable
@@ -232,18 +239,18 @@ or terminal approval boundary.
 
 ## WebMCP evaluation workflow
 
-The deterministic eval corpus in `evals/webmcp-evals.js` covers direct requests,
+The deterministic eval corpus in `evals/webmcp-evals.ts` covers direct requests,
 open-ended search-and-open requests, the review journey, and invalid tool
 arguments. Each case records the user goal, initial editor state, boundaries,
 expected UI effects, success criteria, and recovery guidance. Runtime errors
 name the next safe action, such as rereading a stale file or choosing one of
-the allowed panels. `test/webmcp-evals.test.js` checks that every expected tool
+the allowed panels. `test/webmcp-evals.test.ts` checks that every expected tool
 exists, metadata stays within Chrome's recommended discoverability budgets, and
 browser tools never gain a write or revert authority. Run it with the rest of
 the demo tests:
 
 ```sh
-npm test
+bun run test
 ```
 
 For a real browser-agent pass, use Chrome 149 or newer with either a valid
@@ -276,7 +283,8 @@ is the WebMCP API.
 ## GitHub Pages
 
 The repository workflow at `../../.github/workflows/webmcp-demo.yml` runs
-`npm ci`, builds the Vite app, and publishes `dist/` when the demo branch is
+`bun install --frozen-lockfile`, typechecks and tests the Vite app, then builds
+and publishes `dist/` when the demo branch is
 pushed or the workflow is started manually. Configure Pages to use **GitHub
 Actions**.
 

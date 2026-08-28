@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { InMemoryBackend, MAX_TURN_PROMPT_BYTES, VtCodeBackend, buildTurnPrompt, createUnifiedDiff, digest } from "../src/backend.js";
+import { InMemoryBackend, MAX_TURN_PROMPT_BYTES, VtCodeBackend, buildTurnPrompt, createUnifiedDiff, digest } from "../src/backend.ts";
 import {
   BROWSER_SETTINGS_STORAGE_KEY,
   BROWSER_WORKSPACE_STORAGE_KEY,
@@ -8,24 +8,45 @@ import {
   loadBrowserState,
   saveBrowserSettings,
   saveBrowserState,
-} from "../src/persistence.js";
+} from "../src/persistence.ts";
+import { isRecord, type BackendConnectionEvent, type StatusPayload } from "../src/types.ts";
+import type { StorageLike } from "../src/persistence.ts";
 
-class MemoryStorage {
-  #values = new Map();
+class MemoryStorage implements StorageLike {
+  #values = new Map<string, string>();
 
-  getItem(key) { return this.#values.get(key) ?? null; }
-  setItem(key, value) { this.#values.set(key, value); }
-  removeItem(key) { this.#values.delete(key); }
+  getItem(key: string): string | null { return this.#values.get(key) ?? null; }
+  setItem(key: string, value: string): void { this.#values.set(key, value); }
+  removeItem(key: string): void { this.#values.delete(key); }
+}
+
+interface FakeMessageEvent {
+  readonly data: unknown;
+}
+
+type FakeMessageHandler = (event: FakeMessageEvent) => void;
+
+function requestRecord(serialized: string): Record<string, unknown> {
+  const request: unknown = JSON.parse(serialized);
+  if (!isRecord(request)) throw new Error("fake WebSocket received a non-object request");
+  return request;
 }
 
 class LoopbackWebSocket {
-  static OPEN = 1;
-  static CLOSED = 3;
-  static instances = [];
-  static requests = [];
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
+  static instances: LoopbackWebSocket[] = [];
+  static requests: Record<string, unknown>[] = [];
 
-  constructor() {
-    this.readyState = 0;
+  readyState = LoopbackWebSocket.CONNECTING;
+  onopen: (() => void) | null = null;
+  onmessage: FakeMessageHandler | null = null;
+  onerror: (() => void) | null = null;
+  onclose: (() => void) | null = null;
+
+  constructor(_url: string | URL, _protocols?: string | string[]) {
     LoopbackWebSocket.instances.push(this);
     queueMicrotask(() => {
       this.readyState = LoopbackWebSocket.OPEN;
@@ -33,26 +54,10 @@ class LoopbackWebSocket {
     });
   }
 
-  send(serialized) {
-    const request = JSON.parse(serialized);
+  send(serialized: string): void {
+    const request = requestRecord(serialized);
     LoopbackWebSocket.requests.push(request);
-    const payload = request.type === "pair"
-      ? { token: "session-token", protocol_version: "1", expires_in_secs: 300 }
-      : {
-        protocol_version: "1",
-        connected: true,
-        authenticated_origin: "http://localhost:5173",
-        runtime: { turns_available: true },
-        settings: {
-          host: "127.0.0.1",
-          port: 4321,
-          pairing_ttl_secs: 300,
-          max_frame_bytes: 1048576,
-          max_in_flight_requests: 8,
-          remote_enabled: false,
-        },
-        latest_sequence: 0,
-      };
+    const payload = this.responsePayload(request);
     queueMicrotask(() => {
       if (this.readyState === LoopbackWebSocket.OPEN) {
         this.onmessage?.({ data: JSON.stringify({ type: "response", request_id: request.request_id, ok: true, payload }) });
@@ -60,7 +65,38 @@ class LoopbackWebSocket {
     });
   }
 
-  close() {
+  protected responsePayload(request: Record<string, unknown>): unknown {
+    if (request.type === "pair") return { token: "session-token", protocol_version: "1", expires_in_secs: 300 };
+    if (request.type === "turn.request") return { accepted: true, turn_id: "turn-1", output: "accepted" };
+    return {
+      protocol_version: "1",
+      connected: true,
+      authenticated_origin: "http://localhost:5173",
+      runtime: {
+        workspace_root: "/workspace",
+        connected: true,
+        turns_available: true,
+        mutations_allowed: true,
+        checks_allowed: true,
+        approval_authority: "terminal",
+      },
+      settings: {
+        host: "127.0.0.1",
+        port: 4321,
+        pairing_ttl_secs: 300,
+        max_frame_bytes: 1048576,
+        max_in_flight_requests: 8,
+        remote_enabled: false,
+      },
+      latest_sequence: 0,
+    } satisfies StatusPayload;
+  }
+
+  emitFrame(frame: unknown): void {
+    if (this.readyState === LoopbackWebSocket.OPEN) this.onmessage?.({ data: frame });
+  }
+
+  close(): void {
     if (this.readyState === LoopbackWebSocket.CLOSED) return;
     this.readyState = LoopbackWebSocket.CLOSED;
     this.onclose?.();
@@ -68,8 +104,8 @@ class LoopbackWebSocket {
 }
 
 class MalformedResponseWebSocket extends LoopbackWebSocket {
-  send(serialized) {
-    const request = JSON.parse(serialized);
+  override send(serialized: string): void {
+    const request = requestRecord(serialized);
     if (request.type === "pair") {
       super.send(serialized);
       return;
@@ -78,6 +114,58 @@ class MalformedResponseWebSocket extends LoopbackWebSocket {
       if (this.readyState === LoopbackWebSocket.OPEN) this.onmessage?.({ data: "{" });
     });
   }
+}
+
+class InvalidPayloadWebSocket extends LoopbackWebSocket {
+  protected override responsePayload(request: Record<string, unknown>): unknown {
+    return request.type === "status" ? {} : super.responsePayload(request);
+  }
+}
+
+class InvalidEnvelopeWebSocket extends LoopbackWebSocket {
+  override send(serialized: string): void {
+    const request = requestRecord(serialized);
+    if (request.type === "pair") {
+      super.send(serialized);
+      return;
+    }
+    queueMicrotask(() => {
+      if (this.readyState === LoopbackWebSocket.OPEN) {
+        this.onmessage?.({ data: JSON.stringify({ type: "response", request_id: request.request_id, ok: true, payload: {}, error: { code: "bad", message: "bad" } }) });
+      }
+    });
+  }
+}
+
+function installWebSocket(implementation: typeof LoopbackWebSocket): typeof WebSocket | undefined {
+  const previous = globalThis.WebSocket as typeof WebSocket | undefined;
+  globalThis.WebSocket = implementation as unknown as typeof WebSocket;
+  return previous;
+}
+
+function restoreWebSocket(previous: typeof WebSocket | undefined): void {
+  if (previous) globalThis.WebSocket = previous;
+  else Reflect.deleteProperty(globalThis, "WebSocket");
+}
+
+function instanceAt(index: number): LoopbackWebSocket {
+  const instance = LoopbackWebSocket.instances[index];
+  assert.ok(instance);
+  return instance;
+}
+
+function requestAt(index: number): Record<string, unknown> {
+  const request = LoopbackWebSocket.requests[index];
+  assert.ok(request);
+  return request;
+}
+
+function nextMicrotask(): Promise<void> {
+  return new Promise((resolve) => queueMicrotask(resolve));
+}
+
+function runtimeEventFrame(sequence: number, event: Record<string, unknown> = { type: "error", message: "runtime" }): string {
+  return JSON.stringify({ type: "event", sequence, event: { schema_version: "1", event } });
 }
 
 test("fallback backend is deterministic and memory-only", async () => {
@@ -208,7 +296,7 @@ test("fallback multi-file apply validates every file before mutating any file", 
 test("fallback turn explains that no VT Code runtime is connected", async () => {
   const result = await new InMemoryBackend().requestTurn("review this draft");
   assert.equal(result.accepted, false);
-  assert.match(result.reason, /agent turns require an active VT Code runtime/i);
+  assert.match(result.reason ?? "", /agent turns require an active VT Code runtime/i);
 });
 
 test("turn prompt includes a bounded draft diff", () => {
@@ -258,14 +346,15 @@ test("browser settings persist setup values but never pairing credentials", () =
     workspace_path: "/tmp/demo",
     bridge_url: "ws://127.0.0.1:4321/webmcp",
   });
-  assert.equal(storage.getItem(BROWSER_SETTINGS_STORAGE_KEY).includes("SECRET-CODE"), false);
+  const serializedSettings = storage.getItem(BROWSER_SETTINGS_STORAGE_KEY);
+  assert.ok(serializedSettings);
+  assert.equal(serializedSettings.includes("SECRET-CODE"), false);
   assert.equal(loadBrowserSettings(storage, "vite-2"), null);
   assert.equal(storage.getItem(BROWSER_SETTINGS_STORAGE_KEY), null);
 });
 
 test("websocket backend resumes the in-memory session after a dropped socket", async () => {
-  const previousWebSocket = globalThis.WebSocket;
-  globalThis.WebSocket = LoopbackWebSocket;
+  const previousWebSocket = installWebSocket(LoopbackWebSocket);
   LoopbackWebSocket.instances = [];
   LoopbackWebSocket.requests = [];
   const backend = new VtCodeBackend("ws://127.0.0.1:4321/webmcp");
@@ -273,14 +362,18 @@ test("websocket backend resumes the in-memory session after a dropped socket", a
     await backend.pair("ABCD");
     assert.equal(backend.connected, true);
     assert.equal(backend.heartbeatIntervalMs(), 30_000);
-    const statusUpdates = [];
-    const stopStatus = backend.subscribeToStatus((payload) => statusUpdates.push(payload));
+    const statusUpdates: StatusPayload[] = [];
+    const stopStatus = backend.subscribeToStatus((payload) => {
+      if (payload) statusUpdates.push(payload);
+    });
     const status = await backend.status();
     assert.equal(status.settings.port, 4321);
-    assert.equal(statusUpdates.at(-1).authenticated_origin, "http://localhost:5173");
+    const latestStatus = statusUpdates.at(-1);
+    assert.ok(latestStatus);
+    assert.equal(latestStatus.authenticated_origin, "http://localhost:5173");
     stopStatus();
 
-    LoopbackWebSocket.instances[0].close();
+    instanceAt(0).close();
     assert.equal(backend.connected, false);
 
     const resumedStatus = await backend.status();
@@ -289,23 +382,21 @@ test("websocket backend resumes the in-memory session after a dropped socket", a
     assert.equal(LoopbackWebSocket.instances.length, 2);
 
     await backend.requestTurn("Implement the staged change", "proposal-1");
-    const request = LoopbackWebSocket.requests.at(-1);
+    const request = requestAt(LoopbackWebSocket.requests.length - 1);
     assert.equal(request.type, "turn.request");
     assert.equal(request.token, "session-token");
     assert.equal(request.prompt, "Implement the staged change");
     assert.equal(request.proposal_id, "proposal-1");
   } finally {
     backend.close();
-    if (previousWebSocket === undefined) delete globalThis.WebSocket;
-    else globalThis.WebSocket = previousWebSocket;
+    restoreWebSocket(previousWebSocket);
   }
 });
 
 test("protocol errors invalidate the session and notify connection listeners", async () => {
-  const previousWebSocket = globalThis.WebSocket;
-  globalThis.WebSocket = MalformedResponseWebSocket;
+  const previousWebSocket = installWebSocket(MalformedResponseWebSocket);
   const backend = new VtCodeBackend("ws://127.0.0.1:4321/webmcp");
-  const connectionStates = [];
+  const connectionStates: BackendConnectionEvent[] = [];
   const stopConnection = backend.subscribeToConnection((event) => connectionStates.push(event));
   try {
     await backend.pair("ABCD");
@@ -313,11 +404,84 @@ test("protocol errors invalidate the session and notify connection listeners", a
     assert.equal(backend.connected, false);
     assert.equal(backend.token, null);
     assert.equal(backend.connectionState, "reauthorize");
-    assert.equal(connectionStates.at(-1).state, "reauthorize");
+    const latestConnection = connectionStates.at(-1);
+    assert.ok(latestConnection);
+    assert.equal(latestConnection.state, "reauthorize");
   } finally {
     stopConnection();
     backend.close();
-    if (previousWebSocket === undefined) delete globalThis.WebSocket;
-    else globalThis.WebSocket = previousWebSocket;
+    restoreWebSocket(previousWebSocket);
+  }
+});
+
+test("malformed response envelopes reject the pending request and fail closed", async () => {
+  const previousWebSocket = installWebSocket(InvalidEnvelopeWebSocket);
+  LoopbackWebSocket.instances = [];
+  const backend = new VtCodeBackend("ws://127.0.0.1:4321/webmcp");
+  try {
+    await backend.pair("ABCD");
+    await assert.rejects(backend.status(), { code: "protocol_error" });
+    assert.equal(backend.connected, false);
+    assert.equal(backend.token, null);
+  } finally {
+    backend.close();
+    restoreWebSocket(previousWebSocket);
+  }
+});
+
+test("invalid operation payloads reject the request and invalidate the session", async () => {
+  const previousWebSocket = installWebSocket(InvalidPayloadWebSocket);
+  LoopbackWebSocket.instances = [];
+  const backend = new VtCodeBackend("ws://127.0.0.1:4321/webmcp");
+  try {
+    await backend.pair("ABCD");
+    await assert.rejects(backend.status(), { code: "protocol_error" });
+    assert.equal(backend.connected, false);
+    assert.equal(backend.connectionState, "reauthorize");
+  } finally {
+    backend.close();
+    restoreWebSocket(previousWebSocket);
+  }
+});
+
+test("invalid event wrappers invalidate the authenticated session", async () => {
+  const previousWebSocket = installWebSocket(LoopbackWebSocket);
+  LoopbackWebSocket.instances = [];
+  const backend = new VtCodeBackend("ws://127.0.0.1:4321/webmcp");
+  try {
+    await backend.pair("ABCD");
+    instanceAt(0).emitFrame(runtimeEventFrame(1, { type: "error" }));
+    await nextMicrotask();
+    assert.equal(backend.connected, false);
+    assert.equal(backend.token, null);
+  } finally {
+    backend.close();
+    restoreWebSocket(previousWebSocket);
+  }
+});
+
+test("runtime event sequences must remain contiguous after the first observed event", async () => {
+  const previousWebSocket = installWebSocket(LoopbackWebSocket);
+  LoopbackWebSocket.instances = [];
+  const backend = new VtCodeBackend("ws://127.0.0.1:4321/webmcp");
+  const events: number[] = [];
+  const stopEvents = backend.subscribeToEvents((event) => {
+    if (event.type === "event") events.push(event.sequence);
+  });
+  try {
+    await backend.pair("ABCD");
+    const socket = instanceAt(0);
+    socket.emitFrame(runtimeEventFrame(5));
+    await nextMicrotask();
+    assert.deepEqual(events, [5]);
+    assert.equal(backend.connected, true);
+    socket.emitFrame(runtimeEventFrame(7));
+    await nextMicrotask();
+    assert.equal(backend.connected, false);
+    assert.equal(backend.token, null);
+  } finally {
+    stopEvents();
+    backend.close();
+    restoreWebSocket(previousWebSocket);
   }
 });

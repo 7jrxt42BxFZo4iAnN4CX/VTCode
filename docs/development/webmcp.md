@@ -67,7 +67,7 @@ results include truncation flags; collection results include an omitted count.
 This keeps model context useful without turning a file or workspace listing into
 an unbounded data channel.
 
-`examples/webmcp-challenge/evals/webmcp-evals.js` is the checked-in eval corpus.
+`examples/webmcp-challenge/evals/webmcp-evals.ts` is the checked-in eval corpus.
 It includes direct intents, open-ended output-dependent tool selection, a
 multi-step review journey, and an invalid-argument failure case. Each case
 defines the user goal, initial editor state, boundaries, expected UI effects,
@@ -75,7 +75,7 @@ success criteria, and recovery guidance. `get_editor_state` exposes the live
 workflow state and bounded recommended next tools so an agent can recover its
 place after a refresh or a failed step. Browser errors include the next safe
 action, such as rereading a stale file or selecting an allowed panel.
-`test/webmcp-evals.test.js` validates tool names, metadata budgets, input errors,
+`test/webmcp-evals.test.ts` validates tool names, metadata budgets, input errors,
 and the browser-only authority boundary. These are deterministic contract
 checks. Probabilistic selection and end-to-end model behavior must additionally
 be tested in Chrome's Model Context Tool Inspector or another WebMCP-compatible
@@ -180,8 +180,11 @@ Run the focused checks with:
 ```sh
 RUSTFLAGS='-D warnings' cargo check --locked -p vtcode-webmcp -p vtcode
 cargo nextest run -p vtcode-webmcp -p vtcode-core -p vtcode
-node --check examples/webmcp-challenge/src/main.js
-npm run build --prefix examples/webmcp-challenge
+cd examples/webmcp-challenge
+bun install --frozen-lockfile
+bun run typecheck
+bun run test
+bun run build
 ```
 
 Keep adversarial coverage for path traversal, symlink escapes, stale changes, command injection, environment leakage, pairing reuse/expiry, origin rejection, malformed frames, sequence gaps, and slow clients.

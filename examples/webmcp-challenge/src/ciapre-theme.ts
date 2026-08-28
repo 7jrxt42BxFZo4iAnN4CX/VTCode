@@ -1,6 +1,6 @@
 import { tags } from "@lezer/highlight";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { EditorState } from "@codemirror/state";
+import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
 export const CIAPRE_COLORS = Object.freeze({
@@ -54,7 +54,7 @@ export const ciapreTheme = EditorView.theme({
   ".cm-panels": { backgroundColor: CIAPRE_COLORS.surfaceRaised, color: CIAPRE_COLORS.foreground },
 });
 
-export const editorDefaults = [
+export const editorDefaults: Extension[] = [
   EditorState.tabSize.of(4),
   EditorView.lineWrapping,
   ciapreTheme,

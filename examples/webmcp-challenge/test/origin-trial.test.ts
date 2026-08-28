@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { webmcpOriginTrialPlugin } from "../vite.config.js";
+import { webmcpOriginTrialPlugin } from "../vite.config.ts";
 
 test("origin-trial injection is disabled without an explicit token", () => {
   const html = "<head></head>";
@@ -10,6 +10,7 @@ test("origin-trial injection is disabled without an explicit token", () => {
 
 test("origin-trial injection prepends a token to the document head", () => {
   const result = webmcpOriginTrialPlugin("trial-token").transformIndexHtml("<head></head>");
+  assert.notEqual(typeof result, "string");
   assert.deepEqual(result, {
     html: "<head></head>",
     tags: [{
@@ -25,5 +26,8 @@ test("origin-trial injection prepends a token to the document head", () => {
 
 test("origin-trial tokens are trimmed before injection", () => {
   const result = webmcpOriginTrialPlugin("  trial-token  ").transformIndexHtml("<head></head>");
-  assert.equal(result.tags[0].attrs.content, "trial-token");
+  if (typeof result === "string") throw new Error("expected an origin-trial transform result");
+  const tag = result.tags?.[0];
+  assert.ok(tag);
+  assert.equal(tag.attrs?.content, "trial-token");
 });

@@ -102,7 +102,7 @@ the authenticated VT Code bridge.
 
 OpenAI Codex was used to inspect the existing VT Code bridge and demo, apply the
 WebMCP tool-contract and security improvements, add deterministic browser evals,
-update user/developer documentation, run focused Rust and JavaScript checks,
+update user/developer documentation, run focused Rust and TypeScript checks,
 and deploy the public GitHub Pages demo. The application itself does not bundle
 or claim a particular model runner: model tool selection is evaluated through a
 WebMCP-capable browser client.
@@ -128,8 +128,8 @@ WebMCP-capable browser client.
 ## Architecture
 
 The Vite app in `examples/webmcp-challenge/` contains the editor UI, fallback
-backend, bridge client, and WebMCP registration. `src/webmcp.js` owns the
-browser tool contracts and bounded result handling. `src/main.js` adapts those
+backend, bridge client, and WebMCP registration. `src/webmcp.ts` owns the
+browser tool contracts and bounded result handling. `src/main.ts` adapts those
 tools to the editor state and bridge. The Rust `vtcode-webmcp` crate owns
 loopback WebSocket pairing, origin checks, token authentication, bounded
 workspace operations, digest validation, and event replay. The connected
@@ -167,8 +167,10 @@ tools, then try:
 The repository's deterministic checks are run from the example directory:
 
 ```sh
-npm test
-npm run build
+bun install --frozen-lockfile
+bun run typecheck
+bun run test
+bun run build
 ```
 
 Focused Rust checks from the repository root are:
@@ -255,7 +257,7 @@ until the participant replaces the TODO values with truthful answers.
 - [x] Public repository and open-source license are available.
 - [x] WebMCP implementation, security boundary, deterministic evals, and
   documentation are in the pushed branch.
-- [x] Focused JavaScript and Rust checks pass.
+- [x] Focused TypeScript and Rust checks pass.
 - [ ] Confirm final title; the assistant has not chosen it.
 - [ ] Run and record a real Chrome or ChatGPT in-app browser-agent pass.
 - [ ] Capture screenshots.

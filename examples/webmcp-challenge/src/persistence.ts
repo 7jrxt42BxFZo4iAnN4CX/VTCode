@@ -1,22 +1,37 @@
+import {
+  isRecord,
+  type BrowserSettingsToSave,
+  type BrowserStateToSave,
+  type PersistedBrowserSettings,
+  type PersistedBrowserState,
+} from "./types.ts";
+
 const STORAGE_KEY = "vtcode-webmcp:browser-workspace";
 const SETTINGS_STORAGE_KEY = "vtcode-webmcp:settings";
-const STORAGE_VERSION = 1;
-const SETTINGS_VERSION = 1;
+const STORAGE_VERSION = 1 as const;
+const SETTINGS_VERSION = 1 as const;
 const MAX_STATE_BYTES = 8 * 1024 * 1024;
 
-function isObject(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+export interface StorageLike {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
 }
 
-function validText(value, maxBytes = 2 * 1024 * 1024) {
+function validText(value: unknown, maxBytes = 2 * 1024 * 1024): value is string {
   return typeof value === "string" && new TextEncoder().encode(value).length <= maxBytes;
 }
 
-function validPath(path) {
-  return typeof path === "string" && path.length > 0 && path.length <= 4096 && !path.includes("\0") && !path.startsWith("/") && !path.split("/").includes("..");
+function validPath(value: unknown): value is string {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= 4096
+    && !value.includes("\0")
+    && !value.startsWith("/")
+    && !value.split("/").includes("..");
 }
 
-function validBridgeUrl(value) {
+function validBridgeUrl(value: unknown): value is string {
   if (typeof value !== "string" || value.length === 0 || value.length > 2048) return false;
   try {
     const url = new URL(value);
@@ -30,14 +45,20 @@ function validBridgeUrl(value) {
   }
 }
 
-function sanitizeFiles(value) {
-  if (!isObject(value)) return {};
-  return Object.fromEntries(Object.entries(value).filter(([path, content]) => validPath(path) && validText(content)));
+function sanitizeFiles(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {};
+  const files: Record<string, string> = {};
+  for (const [path, content] of Object.entries(value)) {
+    if (validPath(path) && validText(content)) {
+      Object.defineProperty(files, path, { value: content, enumerable: true, writable: true, configurable: true });
+    }
+  }
+  return files;
 }
 
-function sanitizeState(value) {
-  if (!isObject(value) || value.version !== STORAGE_VERSION || typeof value.app_instance !== "string") return null;
-  const paths = (items) => Array.isArray(items) ? items.filter(validPath).slice(0, 256) : [];
+function sanitizeState(value: unknown): PersistedBrowserState | null {
+  if (!isRecord(value) || value.version !== STORAGE_VERSION || typeof value.app_instance !== "string") return null;
+  const paths = (items: unknown): string[] => Array.isArray(items) ? items.filter(validPath).slice(0, 256) : [];
   return {
     version: STORAGE_VERSION,
     app_instance: value.app_instance,
@@ -51,12 +72,12 @@ function sanitizeState(value) {
   };
 }
 
-export function loadBrowserState(storage, appInstance) {
-  if (!storage || typeof appInstance !== "string" || !appInstance) return null;
+export function loadBrowserState(storage: StorageLike | null, appInstance: string): PersistedBrowserState | null {
+  if (!storage || !appInstance) return null;
   try {
     const raw = storage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    const state = sanitizeState(JSON.parse(raw));
+    const state = sanitizeState(JSON.parse(raw) as unknown);
     if (!state || state.app_instance !== appInstance) {
       storage.removeItem(STORAGE_KEY);
       return null;
@@ -67,8 +88,8 @@ export function loadBrowserState(storage, appInstance) {
   }
 }
 
-export function saveBrowserState(storage, appInstance, state) {
-  if (!storage || typeof appInstance !== "string" || !appInstance || !isObject(state)) return false;
+export function saveBrowserState(storage: StorageLike | null, appInstance: string, state: BrowserStateToSave): boolean {
+  if (!storage || !appInstance) return false;
   const value = {
     version: STORAGE_VERSION,
     app_instance: appInstance,
@@ -90,8 +111,8 @@ export function saveBrowserState(storage, appInstance, state) {
   }
 }
 
-function sanitizeSettings(value) {
-  if (!isObject(value) || value.version !== SETTINGS_VERSION || typeof value.app_instance !== "string") return null;
+function sanitizeSettings(value: unknown): PersistedBrowserSettings | null {
+  if (!isRecord(value) || value.version !== SETTINGS_VERSION || typeof value.app_instance !== "string") return null;
   return {
     version: SETTINGS_VERSION,
     app_instance: value.app_instance,
@@ -100,12 +121,12 @@ function sanitizeSettings(value) {
   };
 }
 
-export function loadBrowserSettings(storage, appInstance) {
-  if (!storage || typeof appInstance !== "string" || !appInstance) return null;
+export function loadBrowserSettings(storage: StorageLike | null, appInstance: string): PersistedBrowserSettings | null {
+  if (!storage || !appInstance) return null;
   try {
     const raw = storage.getItem(SETTINGS_STORAGE_KEY);
     if (!raw) return null;
-    const settings = sanitizeSettings(JSON.parse(raw));
+    const settings = sanitizeSettings(JSON.parse(raw) as unknown);
     if (!settings || settings.app_instance !== appInstance) {
       storage.removeItem(SETTINGS_STORAGE_KEY);
       return null;
@@ -116,8 +137,8 @@ export function loadBrowserSettings(storage, appInstance) {
   }
 }
 
-export function saveBrowserSettings(storage, appInstance, settings) {
-  if (!storage || typeof appInstance !== "string" || !appInstance || !isObject(settings)) return false;
+export function saveBrowserSettings(storage: StorageLike | null, appInstance: string, settings: BrowserSettingsToSave): boolean {
+  if (!storage || !appInstance) return false;
   const value = {
     version: SETTINGS_VERSION,
     app_instance: appInstance,

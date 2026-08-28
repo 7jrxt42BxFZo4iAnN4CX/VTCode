@@ -1,36 +1,102 @@
-const MAX_FILE_BYTES = 2 * 1024 * 1024;
+import {
+  MAX_FRAME_BYTES as MAX_BRIDGE_FRAME_BYTES,
+  parseBridgeFrame,
+  PROTOCOL_VERSION,
+  validateResponsePayload,
+  type BridgeOperation,
+  type BridgeRequest,
+  type OperationPayloads,
+  type PairPayload,
+  type RequestPayloads,
+} from "./protocol.ts";
+import {
+  BackendError,
+  errorCode,
+  isRecord,
+  type AppliedChange,
+  type BackendConnectionEvent,
+  type BackendEvent,
+  type BackendKind,
+  type CheckResult,
+  type FileChange,
+  type FileChangeInput,
+  type FileSnapshot,
+  type PatchProposal,
+  type StatusPayload,
+  type TurnResult,
+  type WorkspaceFileEntry,
+  type WriteFileInput,
+} from "./types.ts";
+
+export const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_CHANGES = 32;
-const MAX_FRAME_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 const MIN_HEARTBEAT_INTERVAL_MS = 250;
 const MAX_HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_SESSION_TTL_SECS = 300;
-const MAX_TURN_PROMPT_BYTES = 16 * 1024;
+export const MAX_TURN_PROMPT_BYTES = 16 * 1024;
 const TURN_DIFF_PREFIX = "\n\nReview this browser draft unified diff:\n\n```diff\n";
 const TURN_DIFF_SUFFIX = "\n```";
 const TURN_DIFF_TRUNCATION = "\n[diff truncated by the browser prompt limit]\n";
 const DIFF_CONTEXT_LINES = 3;
 const MAX_DIFF_TRACE_CELLS = 1_000_000;
 
-const SEED_FILES = Object.freeze({
+const SEED_FILES: Readonly<Record<string, string>> = Object.freeze({
   "README.md": "# hello-world\n\nA tiny project for the VT Code WebMCP Challenge.\n\nThe workflow is inspect → edit → review → approve → verify.",
   "src/greeting.js": "import { name } from './config.js';\n\nexport function greeting() {\n  return `Hello, ${name}!`;\n}\n",
   "src/config.js": "export const name = 'WebMCP';\n",
 });
 
-const cloneFiles = (files) => {
-  const clone = Object.create(null);
-  for (const [path, content] of Object.entries(files)) clone[path] = content;
-  return clone;
-};
-
-function backendError(message, code = "backend_error") {
-  const error = new Error(message);
-  error.code = code;
-  return error;
+interface DiffLine {
+  readonly text: string;
+  readonly ending: string;
 }
 
-function validatePath(path) {
+type DiffOperationType = "equal" | "delete" | "insert";
+
+interface DiffOperation {
+  readonly type: DiffOperationType;
+  readonly line: DiffLine;
+}
+
+interface DiffHunk {
+  start: number;
+  end: number;
+}
+
+interface StoredProposal {
+  readonly proposal: PatchProposal;
+  readonly beforeByPath: Record<string, string>;
+}
+
+interface LastChange {
+  readonly applied: AppliedChange;
+  readonly before: FileSnapshot[];
+  readonly after: FileSnapshot[];
+}
+
+type BackendListener = (event: BackendEvent) => void;
+type ConnectionListener = (event: BackendConnectionEvent) => void;
+type StatusListener = (payload: StatusPayload | null) => void;
+
+interface PendingRequest {
+  readonly operation: BridgeOperation;
+  readonly resolve: (payload: unknown) => void;
+  readonly reject: (error: unknown) => void;
+  readonly timeout: ReturnType<typeof setTimeout>;
+}
+
+function cloneFiles(files: Readonly<Record<string, string>>): Record<string, string> {
+  const clone: Record<string, string> = Object.create(null) as Record<string, string>;
+  for (const [path, content] of Object.entries(files)) clone[path] = content;
+  return clone;
+}
+
+function backendError(message: string, code = "backend_error"): BackendError {
+  return new BackendError(message, code);
+}
+
+function validatePath(path: unknown): asserts path is string {
   if (typeof path !== "string" || path.length === 0 || path.length > 4096 || path.includes("\0")) {
     throw backendError("Workspace path is invalid", "path_rejected");
   }
@@ -39,7 +105,17 @@ function validatePath(path) {
   }
 }
 
-export async function digest(text) {
+function normalizeChange(change: unknown): FileChangeInput {
+  if (!isRecord(change)) return {};
+  return {
+    path: typeof change.path === "string" ? change.path : undefined,
+    base_digest: typeof change.base_digest === "string" ? change.base_digest : undefined,
+    baseDigest: typeof change.baseDigest === "string" ? change.baseDigest : undefined,
+    content: typeof change.content === "string" ? change.content : undefined,
+  };
+}
+
+export async function digest(text: string): Promise<string> {
   const bytes = new TextEncoder().encode(text);
   if (globalThis.crypto?.subtle) {
     const hash = await globalThis.crypto.subtle.digest("SHA-256", bytes);
@@ -50,8 +126,8 @@ export async function digest(text) {
   return `sha256:fallback-${(hash >>> 0).toString(16)}`;
 }
 
-function splitDiffLines(text) {
-  const lines = [];
+function splitDiffLines(text: string): DiffLine[] {
+  const lines: DiffLine[] = [];
   let lineStart = 0;
   for (let index = 0; index < text.length; index += 1) {
     const character = text[index];
@@ -65,28 +141,33 @@ function splitDiffLines(text) {
   return lines;
 }
 
-function sameDiffLine(left, right) {
+function sameDiffLine(left: DiffLine, right: DiffLine): boolean {
   return left.text === right.text && left.ending === right.ending;
 }
 
-function equalOperations(lines) {
+function equalOperations(lines: readonly DiffLine[]): DiffOperation[] {
   return lines.map((line) => ({ type: "equal", line }));
 }
 
-function replaceOperations(before, after) {
+function replaceOperations(before: readonly DiffLine[], after: readonly DiffLine[]): DiffOperation[] {
   return [
-    ...before.map((line) => ({ type: "delete", line })),
-    ...after.map((line) => ({ type: "insert", line })),
+    ...before.map((line) => ({ type: "delete" as const, line })),
+    ...after.map((line) => ({ type: "insert" as const, line })),
   ];
 }
 
-function backtrackDiff(trace, before, after) {
+function backtrackDiff(
+  trace: readonly Map<number, number>[],
+  before: readonly DiffLine[],
+  after: readonly DiffLine[],
+): DiffOperation[] | null {
   let beforeIndex = before.length;
   let afterIndex = after.length;
-  const reversed = [];
+  const reversed: DiffOperation[] = [];
 
   for (let distance = trace.length - 1; distance > 0; distance -= 1) {
     const previous = trace[distance - 1];
+    if (!previous) return null;
     const diagonal = beforeIndex - afterIndex;
     const shouldInsert = diagonal === -distance
       || (diagonal !== distance
@@ -97,47 +178,59 @@ function backtrackDiff(trace, before, after) {
     const previousAfterIndex = previousBeforeIndex - previousDiagonal;
 
     while (beforeIndex > previousBeforeIndex && afterIndex > previousAfterIndex) {
-      reversed.push({ type: "equal", line: before[beforeIndex - 1] });
+      const line = before[beforeIndex - 1];
+      if (!line) return null;
+      reversed.push({ type: "equal", line });
       beforeIndex -= 1;
       afterIndex -= 1;
     }
 
     if (beforeIndex === previousBeforeIndex) {
-      reversed.push({ type: "insert", line: after[afterIndex - 1] });
+      const line = after[afterIndex - 1];
+      if (!line) return null;
+      reversed.push({ type: "insert", line });
       afterIndex -= 1;
     } else {
-      reversed.push({ type: "delete", line: before[beforeIndex - 1] });
+      const line = before[beforeIndex - 1];
+      if (!line) return null;
+      reversed.push({ type: "delete", line });
       beforeIndex -= 1;
     }
   }
 
   while (beforeIndex > 0 && afterIndex > 0) {
-    reversed.push({ type: "equal", line: before[beforeIndex - 1] });
+    const line = before[beforeIndex - 1];
+    if (!line) return null;
+    reversed.push({ type: "equal", line });
     beforeIndex -= 1;
     afterIndex -= 1;
   }
   while (beforeIndex > 0) {
-    reversed.push({ type: "delete", line: before[beforeIndex - 1] });
+    const line = before[beforeIndex - 1];
+    if (!line) return null;
+    reversed.push({ type: "delete", line });
     beforeIndex -= 1;
   }
   while (afterIndex > 0) {
-    reversed.push({ type: "insert", line: after[afterIndex - 1] });
+    const line = after[afterIndex - 1];
+    if (!line) return null;
+    reversed.push({ type: "insert", line });
     afterIndex -= 1;
   }
   return reversed.reverse();
 }
 
-function myersDiff(before, after) {
+function myersDiff(before: readonly DiffLine[], after: readonly DiffLine[]): DiffOperation[] | null {
   if (!before.length) return after.map((line) => ({ type: "insert", line }));
   if (!after.length) return before.map((line) => ({ type: "delete", line }));
 
   const maxDistance = before.length + after.length;
-  const trace = [];
+  const trace: Map<number, number>[] = [];
   let traceCells = 0;
-  let frontier = new Map([[0, 0]]);
+  let frontier = new Map<number, number>([[0, 0]]);
 
   for (let distance = 0; distance <= maxDistance; distance += 1) {
-    const next = new Map();
+    const next = new Map<number, number>();
     for (let diagonal = -distance; diagonal <= distance; diagonal += 2) {
       const shouldInsert = diagonal === -distance
         || (diagonal !== distance
@@ -146,8 +239,10 @@ function myersDiff(before, after) {
         ? frontier.get(diagonal + 1) ?? 0
         : (frontier.get(diagonal - 1) ?? 0) + 1;
       let afterIndex = beforeIndex - diagonal;
-      while (beforeIndex < before.length && afterIndex < after.length
-        && sameDiffLine(before[beforeIndex], after[afterIndex])) {
+      while (beforeIndex < before.length && afterIndex < after.length) {
+        const beforeLine = before[beforeIndex];
+        const afterLine = after[afterIndex];
+        if (!beforeLine || !afterLine || !sameDiffLine(beforeLine, afterLine)) break;
         beforeIndex += 1;
         afterIndex += 1;
       }
@@ -164,13 +259,22 @@ function myersDiff(before, after) {
   return null;
 }
 
-function diffOperations(before, after) {
+function diffOperations(before: readonly DiffLine[], after: readonly DiffLine[]): DiffOperation[] {
   let prefix = 0;
-  while (prefix < before.length && prefix < after.length && sameDiffLine(before[prefix], after[prefix])) prefix += 1;
+  while (prefix < before.length && prefix < after.length) {
+    const beforeLine = before[prefix];
+    const afterLine = after[prefix];
+    if (!beforeLine || !afterLine || !sameDiffLine(beforeLine, afterLine)) break;
+    prefix += 1;
+  }
 
   let suffix = 0;
-  while (before.length - suffix > prefix && after.length - suffix > prefix
-    && sameDiffLine(before[before.length - suffix - 1], after[after.length - suffix - 1])) suffix += 1;
+  while (before.length - suffix > prefix && after.length - suffix > prefix) {
+    const beforeLine = before[before.length - suffix - 1];
+    const afterLine = after[after.length - suffix - 1];
+    if (!beforeLine || !afterLine || !sameDiffLine(beforeLine, afterLine)) break;
+    suffix += 1;
+  }
 
   const beforeMiddle = before.slice(prefix, before.length - suffix);
   const afterMiddle = after.slice(prefix, after.length - suffix);
@@ -182,17 +286,17 @@ function diffOperations(before, after) {
   ];
 }
 
-function formatDiffRange(start, count) {
+function formatDiffRange(start: number, count: number): string {
   return count === 1 ? `${start}` : `${start},${count}`;
 }
 
-function renderDiffHunks(operations) {
+function renderDiffHunks(operations: readonly DiffOperation[]): string[] {
   const changed = operations
     .map((operation, index) => operation.type === "equal" ? -1 : index)
     .filter((index) => index >= 0);
   if (!changed.length) return [];
 
-  const hunks = [];
+  const hunks: DiffHunk[] = [];
   for (const index of changed) {
     const start = Math.max(0, index - DIFF_CONTEXT_LINES);
     const end = Math.min(operations.length, index + DIFF_CONTEXT_LINES + 1);
@@ -204,16 +308,16 @@ function renderDiffHunks(operations) {
   const beforeOffsets = [0];
   const afterOffsets = [0];
   for (const operation of operations) {
-    beforeOffsets.push(beforeOffsets.at(-1) + (operation.type === "insert" ? 0 : 1));
-    afterOffsets.push(afterOffsets.at(-1) + (operation.type === "delete" ? 0 : 1));
+    beforeOffsets.push((beforeOffsets.at(-1) ?? 0) + (operation.type === "insert" ? 0 : 1));
+    afterOffsets.push((afterOffsets.at(-1) ?? 0) + (operation.type === "delete" ? 0 : 1));
   }
 
-  const lines = [];
+  const lines: string[] = [];
   for (const hunk of hunks) {
-    const beforeStartCount = beforeOffsets[hunk.start];
-    const afterStartCount = afterOffsets[hunk.start];
-    const beforeCount = beforeOffsets[hunk.end] - beforeStartCount;
-    const afterCount = afterOffsets[hunk.end] - afterStartCount;
+    const beforeStartCount = beforeOffsets[hunk.start] ?? 0;
+    const afterStartCount = afterOffsets[hunk.start] ?? 0;
+    const beforeCount = (beforeOffsets[hunk.end] ?? 0) - beforeStartCount;
+    const afterCount = (afterOffsets[hunk.end] ?? 0) - afterStartCount;
     const beforeStart = beforeCount === 0 ? beforeStartCount : beforeStartCount + 1;
     const afterStart = afterCount === 0 ? afterStartCount : afterStartCount + 1;
     lines.push(`@@ -${formatDiffRange(beforeStart, beforeCount)} +${formatDiffRange(afterStart, afterCount)} @@`);
@@ -227,12 +331,15 @@ function renderDiffHunks(operations) {
   return lines;
 }
 
-export function createUnifiedDiff(changes, beforeByPath) {
-  const lines = [];
+export function createUnifiedDiff(
+  changes: readonly Pick<FileChange, "path" | "content">[],
+  beforeByPath: Readonly<Record<string, string>> = {},
+): string {
+  const lines: string[] = [];
   for (const change of changes) {
-    const beforeContent = typeof beforeByPath?.[change.path] === "string" ? beforeByPath[change.path] : "";
-    const afterContent = typeof change?.content === "string" ? change.content : "";
-    const operations = diffOperations(splitDiffLines(beforeContent), splitDiffLines(afterContent));
+    const beforeValue = beforeByPath[change.path];
+    const beforeContent = typeof beforeValue === "string" ? beforeValue : "";
+    const operations = diffOperations(splitDiffLines(beforeContent), splitDiffLines(change.content));
     const hunks = renderDiffHunks(operations);
     if (!hunks.length) continue;
     lines.push(`--- a/${change.path}`, `+++ b/${change.path}`, ...hunks);
@@ -240,15 +347,15 @@ export function createUnifiedDiff(changes, beforeByPath) {
   return lines.join("\n");
 }
 
-export function buildTurnPrompt(prompt, unifiedDiff = "") {
+export function buildTurnPrompt(prompt: string, unifiedDiff = ""): string {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
-  const requestedBase = typeof prompt === "string" && prompt.trim() ? prompt.trim() : "Review the staged WebMCP patch";
+  const requestedBase = prompt.trim() ? prompt.trim() : "Review the staged WebMCP patch";
   const baseBytes = encoder.encode(requestedBase);
   const base = baseBytes.length <= MAX_TURN_PROMPT_BYTES
     ? requestedBase
     : decoder.decode(baseBytes.slice(0, MAX_TURN_PROMPT_BYTES));
-  if (typeof unifiedDiff !== "string" || unifiedDiff.length === 0) return base;
+  if (!unifiedDiff.length) return base;
 
   const baseSizeBytes = encoder.encode(base).length;
   const framingBytes = encoder.encode(`${TURN_DIFF_PREFIX}${TURN_DIFF_SUFFIX}`).length;
@@ -261,80 +368,120 @@ export function buildTurnPrompt(prompt, unifiedDiff = "") {
   const truncationBytes = encoder.encode(TURN_DIFF_TRUNCATION).length;
   const contentBytes = Math.max(0, availableDiffBytes - truncationBytes);
   let clippedEnd = contentBytes;
-  while (clippedEnd > 0 && (diffBytes[clippedEnd] & 0xc0) === 0x80) clippedEnd -= 1;
+  while (clippedEnd > 0 && ((diffBytes[clippedEnd] ?? 0) & 0xc0) === 0x80) clippedEnd -= 1;
   const clipped = decoder.decode(diffBytes.slice(0, clippedEnd));
   return `${base}${TURN_DIFF_PREFIX}${clipped}${TURN_DIFF_TRUNCATION}${TURN_DIFF_SUFFIX}`;
 }
 
-function validateChanges(changes) {
-  if (!Array.isArray(changes) || changes.length === 0 || changes.length > MAX_CHANGES) {
+function validateChanges(changes: readonly FileChangeInput[]): FileChange[] {
+  if (changes.length === 0 || changes.length > MAX_CHANGES) {
     throw backendError("A proposal must contain between one and 32 file changes", "limit_exceeded");
   }
-  const seen = new Set();
+  const seen = new Set<string>();
+  const validated: FileChange[] = [];
   for (const change of changes) {
-    validatePath(change?.path);
-    if (seen.has(change.path)) throw backendError(`Duplicate change path: ${change.path}`, "invalid_request");
+    validatePath(change.path);
+    const path = change.path;
+    if (seen.has(path)) throw backendError(`Duplicate change path: ${path}`, "invalid_request");
     if (typeof change.content !== "string" || new TextEncoder().encode(change.content).length > MAX_FILE_BYTES) {
       throw backendError("Proposed file content exceeds the size limit", "limit_exceeded");
     }
-    if (typeof change.base_digest !== "string" || change.base_digest.length > 200) {
-      throw backendError(`Missing base digest for ${change.path}`, "invalid_request");
+    const baseDigest = change.base_digest ?? change.baseDigest;
+    if (typeof baseDigest !== "string" || baseDigest.length === 0 || baseDigest.length > 200) {
+      throw backendError(`Missing base digest for ${path}`, "invalid_request");
     }
-    seen.add(change.path);
+    validated.push({ path, base_digest: baseDigest, content: change.content });
+    seen.add(path);
   }
-}
-
-function normalizeChange(change) {
-  return { path: change?.path, base_digest: change?.base_digest ?? change?.baseDigest, content: change?.content };
+  return validated;
 }
 
 export class WorkspaceBackend {
-  listFiles() { throw new Error("WorkspaceBackend.listFiles is not implemented"); }
-  readFile() { throw new Error("WorkspaceBackend.readFile is not implemented"); }
-  proposeChanges() { throw new Error("WorkspaceBackend.proposeChanges is not implemented"); }
-  applyProposal() { throw new Error("WorkspaceBackend.applyProposal is not implemented"); }
-  runChecks() { throw new Error("WorkspaceBackend.runChecks is not implemented"); }
-  revertLastChange() { throw new Error("WorkspaceBackend.revertLastChange is not implemented"); }
-  requestTurn(_prompt, _proposalId) { throw new Error("WorkspaceBackend.requestTurn is not implemented"); }
-  subscribeToEvents() { return () => {}; }
-  subscribeToConnection() { return () => {}; }
-  subscribeToStatus() { return () => {}; }
+  readonly kind: BackendKind = "fallback";
+  connected = false;
+  statusPayload: StatusPayload | null = null;
+
+  listFiles(): Promise<WorkspaceFileEntry[]> {
+    throw new Error("WorkspaceBackend.listFiles is not implemented");
+  }
+
+  readFile(_path: string): Promise<FileSnapshot> {
+    throw new Error("WorkspaceBackend.readFile is not implemented");
+  }
+
+  proposeChanges(_rawChanges: readonly unknown[]): Promise<PatchProposal> {
+    throw new Error("WorkspaceBackend.proposeChanges is not implemented");
+  }
+
+  applyProposal(_proposalId: string): Promise<AppliedChange> {
+    throw new Error("WorkspaceBackend.applyProposal is not implemented");
+  }
+
+  runChecks(_command?: string): Promise<CheckResult> {
+    throw new Error("WorkspaceBackend.runChecks is not implemented");
+  }
+
+  revertLastChange(_changeId: string): Promise<AppliedChange> {
+    throw new Error("WorkspaceBackend.revertLastChange is not implemented");
+  }
+
+  requestTurn(_prompt: string, _proposalId?: string): Promise<TurnResult> {
+    throw new Error("WorkspaceBackend.requestTurn is not implemented");
+  }
+
+  writeFile(_input: WriteFileInput): Promise<FileSnapshot | AppliedChange> {
+    throw new Error("WorkspaceBackend.writeFile is not implemented");
+  }
+
+  check(): Promise<CheckResult> {
+    throw new Error("WorkspaceBackend.check is not implemented");
+  }
+
+  exportFiles(): Record<string, string> {
+    throw new Error("WorkspaceBackend.exportFiles is not implemented");
+  }
+
+  subscribeToEvents(_listener: BackendListener): () => void { return () => {}; }
+  subscribeToConnection(_listener: ConnectionListener): () => void { return () => {}; }
+  subscribeToStatus(_listener: StatusListener): () => void { return () => {}; }
+  close(): void {}
 }
 
 export class InMemoryBackend extends WorkspaceBackend {
-  constructor(initialFiles = SEED_FILES) {
+  override readonly kind = "fallback" as const;
+  override connected = false;
+  private readonly files: Record<string, string>;
+  private readonly proposals = new Map<string, StoredProposal>();
+  private lastChange: LastChange | null = null;
+  private readonly listeners = new Set<BackendListener>();
+  private mutationTail: Promise<void> = Promise.resolve();
+
+  constructor(initialFiles: Readonly<Record<string, string>> = SEED_FILES) {
     super();
     this.files = cloneFiles(initialFiles);
-    this.proposals = new Map();
-    this.lastChange = null;
-    this.listeners = new Set();
-    this.kind = "fallback";
-    this.connected = false;
-    this.mutationTail = Promise.resolve();
   }
 
-  async listFiles() { return Object.keys(this.files).sort(); }
+  override async listFiles(): Promise<string[]> { return Object.keys(this.files).sort(); }
 
-  exportFiles() { return cloneFiles(this.files); }
+  override exportFiles(): Record<string, string> { return cloneFiles(this.files); }
 
-  async readFile(path) {
+  override async readFile(path: string): Promise<FileSnapshot> {
     validatePath(path);
-    if (!(path in this.files)) throw backendError(`Unknown project file: ${path}`, "not_found");
     const content = this.files[path];
+    if (typeof content !== "string") throw backendError(`Unknown project file: ${path}`, "not_found");
     return { path, content, digest: await digest(content), size_bytes: new TextEncoder().encode(content).length };
   }
 
-  async proposeChanges(rawChanges) {
+  override async proposeChanges(rawChanges: readonly unknown[]): Promise<PatchProposal> {
     return this.withMutation(async () => {
-      const changes = Array.isArray(rawChanges) ? rawChanges.map(normalizeChange) : [];
-      validateChanges(changes);
-      const beforeByPath = Object.create(null);
+      const changes = validateChanges(rawChanges.map(normalizeChange));
+      const beforeByPath: Record<string, string> = Object.create(null) as Record<string, string>;
       for (const change of changes) {
         const snapshot = await this.readFile(change.path);
         if (snapshot.digest !== change.base_digest) throw backendError(`Stale patch: external change detected for ${change.path}`, "conflict");
         beforeByPath[change.path] = snapshot.content;
       }
-      const proposal = {
+      const proposal: PatchProposal = {
         proposal_id: `fallback-${cryptoRandomId()}`,
         changes,
         unified_diff: createUnifiedDiff(changes, beforeByPath),
@@ -344,20 +491,23 @@ export class InMemoryBackend extends WorkspaceBackend {
     });
   }
 
-  async applyProposal(proposalId) {
+  override async applyProposal(proposalId: string): Promise<AppliedChange> {
     return this.withMutation(async () => {
       const stored = this.proposals.get(proposalId);
       if (!stored) throw backendError("Proposal was not found", "proposal_not_found");
-      const before = [];
+      const before: FileSnapshot[] = [];
       for (const change of stored.proposal.changes) {
         const current = await this.readFile(change.path);
         if (current.digest !== change.base_digest) throw backendError(`Stale patch: external change detected for ${change.path}`, "conflict");
         before.push(current);
       }
       for (const change of stored.proposal.changes) this.files[change.path] = change.content;
-      const after = [];
+      const after: FileSnapshot[] = [];
       for (const change of stored.proposal.changes) after.push(await this.readFile(change.path));
-      const applied = { change_id: `fallback-${cryptoRandomId()}`, paths: stored.proposal.changes.map((change) => change.path) };
+      const applied: AppliedChange = {
+        change_id: `fallback-${cryptoRandomId()}`,
+        paths: stored.proposal.changes.map((change) => change.path),
+      };
       this.lastChange = { applied, before, after };
       this.proposals.delete(proposalId);
       this.emit({ type: "workspace.updated", paths: applied.paths });
@@ -365,22 +515,23 @@ export class InMemoryBackend extends WorkspaceBackend {
     });
   }
 
-  async runChecks() {
+  override async runChecks(): Promise<CheckResult> {
     const greeting = await this.readFile("src/greeting.js");
     const config = await this.readFile("src/config.js");
     const checks = [greeting.content.includes("return `Hello, ${name}!"), config.content.includes("export const name =")];
+    const passed = checks.every(Boolean);
     return {
       command: "in-memory deterministic checks",
-      passed: checks.every(Boolean),
+      passed,
       checks: checks.length,
       failures: checks.flatMap((ok, index) => ok ? [] : [`assertion_${index + 1}`]),
-      stdout: checks.every(Boolean) ? "2 checks passed" : "deterministic check failed",
+      stdout: passed ? "2 checks passed" : "deterministic check failed",
       stderr: "",
-      exit_code: checks.every(Boolean) ? 0 : 1,
+      exit_code: passed ? 0 : 1,
     };
   }
 
-  async revertLastChange(changeId) {
+  override async revertLastChange(changeId: string): Promise<AppliedChange> {
     return this.withMutation(async () => {
       if (!this.lastChange || this.lastChange.applied.change_id !== changeId) throw backendError("Last change was not found", "change_not_found");
       for (const snapshot of this.lastChange.after) {
@@ -395,8 +546,8 @@ export class InMemoryBackend extends WorkspaceBackend {
     });
   }
 
-  async requestTurn(prompt, _proposalId) {
-    if (typeof prompt !== "string" || new TextEncoder().encode(prompt).length > MAX_TURN_PROMPT_BYTES) {
+  override async requestTurn(prompt: string, _proposalId?: string): Promise<TurnResult> {
+    if (new TextEncoder().encode(prompt).length > MAX_TURN_PROMPT_BYTES) {
       throw backendError("Prompt is too long", "limit_exceeded");
     }
     return {
@@ -407,105 +558,110 @@ export class InMemoryBackend extends WorkspaceBackend {
     };
   }
 
-  subscribeToEvents(listener) {
+  override subscribeToEvents(listener: BackendListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  async writeFile({ path, content, baseDigest, base_digest }) {
+  override async writeFile({ path, content, baseDigest, base_digest }: WriteFileInput): Promise<FileSnapshot> {
     const current = await this.readFile(path);
     const proposal = await this.proposeChanges([{ path, content, base_digest: base_digest ?? baseDigest ?? current.digest }]);
     await this.applyProposal(proposal.proposal_id);
     return this.readFile(path);
   }
 
-  async check() { return this.runChecks(); }
+  override check(): Promise<CheckResult> { return this.runChecks(); }
 
-  async withMutation(operation) {
+  private async withMutation<T>(operation: () => Promise<T>): Promise<T> {
     const previous = this.mutationTail;
-    let release;
-    this.mutationTail = new Promise((resolve) => { release = resolve; });
+    let release!: () => void;
+    this.mutationTail = new Promise<void>((resolve) => { release = resolve; });
     await previous;
     try { return await operation(); } finally { release(); }
   }
 
-  emit(event) { for (const listener of this.listeners) listener(event); }
+  private emit(event: BackendEvent): void {
+    for (const listener of this.listeners) listener(event);
+  }
 }
 
 export class VtCodeBackend extends WorkspaceBackend {
-  constructor(url) {
+  override readonly kind = "websocket" as const;
+  override connected = false;
+  readonly url: string;
+  private socket: WebSocket | null = null;
+  token: string | null = null;
+  private nextId = 1;
+  private readonly pending = new Map<string, PendingRequest>();
+  private readonly listeners = new Set<BackendListener>();
+  private sequence = 0;
+  private expectedEventSequence: number | null = null;
+  private opening: Promise<void> | null = null;
+  private openingReject: ((reason?: unknown) => void) | null = null;
+  private resuming: Promise<PairPayload> | null = null;
+  private sessionExpiresInSecs = DEFAULT_SESSION_TTL_SECS;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatInFlight: Promise<StatusPayload> | null = null;
+  private readonly connectionListeners = new Set<ConnectionListener>();
+  private readonly statusListeners = new Set<StatusListener>();
+  connectionState: BackendConnectionEvent["state"] = "disconnected";
+
+  constructor(url: string) {
     super();
     if (!/^wss?:\/\//.test(url)) throw backendError("WebMCP URL must use ws:// or wss://", "invalid_request");
     this.url = url;
-    this.kind = "websocket";
-    this.connected = false;
-    this.socket = null;
-    this.token = null;
-    this.nextId = 1;
-    this.pending = new Map();
-    this.listeners = new Set();
-    this.sequence = 0;
-    this.opening = null;
-    this.openingReject = null;
-    this.resuming = null;
-    this.statusPayload = null;
-    this.sessionExpiresInSecs = DEFAULT_SESSION_TTL_SECS;
-    this.heartbeatTimer = null;
-    this.heartbeatInFlight = null;
-    this.connectionListeners = new Set();
-    this.statusListeners = new Set();
-    this.connectionState = "disconnected";
   }
 
-  setConnectionState(state, error = null) {
+  private setConnectionState(state: BackendConnectionEvent["state"], error: BackendError | null = null): void {
     if (this.connectionState === state && !error) return;
     this.connectionState = state;
     for (const listener of this.connectionListeners) listener({ state, error });
   }
 
-  setStatusPayload(payload) {
+  private setStatusPayload(payload: StatusPayload | null): void {
     this.statusPayload = payload;
     for (const listener of this.statusListeners) listener(payload);
   }
 
-  updateSessionLease(payload) {
-    const seconds = Number(payload?.expires_in_secs);
-    if (Number.isSafeInteger(seconds) && seconds >= 0) this.sessionExpiresInSecs = Math.max(1, seconds);
+  private updateSessionLease(payload: PairPayload): void {
+    if (Number.isSafeInteger(payload.expires_in_secs) && payload.expires_in_secs >= 0) {
+      this.sessionExpiresInSecs = Math.max(1, payload.expires_in_secs);
+    }
   }
 
-  heartbeatIntervalMs() {
+  heartbeatIntervalMs(): number {
     return Math.max(MIN_HEARTBEAT_INTERVAL_MS, Math.min(MAX_HEARTBEAT_INTERVAL_MS, Math.floor(this.sessionExpiresInSecs * 1000 / 3)));
   }
 
-  startHeartbeat() {
+  private startHeartbeat(): void {
     this.stopHeartbeat();
     this.heartbeatTimer = setInterval(() => { void this.keepAlive(); }, this.heartbeatIntervalMs());
   }
 
-  stopHeartbeat() {
+  private stopHeartbeat(): void {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = null;
   }
 
-  async keepAlive() {
+  private async keepAlive(): Promise<void> {
     if (!this.token || this.heartbeatInFlight) return;
     const heartbeat = this.status();
     this.heartbeatInFlight = heartbeat;
     try {
       await heartbeat;
       if (this.connected) this.setConnectionState("connected");
-    } catch (error) {
-      if (error?.code === "unauthorized" || error?.code === "pairing_expired") return;
-      if (error?.code === "request_in_progress") return;
-      if (this.token && ["connection_closed", "connection_failed", "request_timeout"].includes(error?.code)) {
-        this.disconnectSocket(error, "reconnecting");
+    } catch (error: unknown) {
+      const code = errorCode(error);
+      if (code === "unauthorized" || code === "pairing_expired" || code === "request_in_progress") return;
+      if (this.token && ["connection_closed", "connection_failed", "request_timeout"].includes(code ?? "")) {
+        this.disconnectSocket(error instanceof BackendError ? error : backendError(String(error), code), "reconnecting");
       }
     } finally {
       if (this.heartbeatInFlight === heartbeat) this.heartbeatInFlight = null;
     }
   }
 
-  disconnectSocket(error, state = "disconnected") {
+  private disconnectSocket(error: BackendError, state: BackendConnectionEvent["state"] = "disconnected"): void {
     const socket = this.socket;
     this.socket = null;
     this.connected = false;
@@ -513,9 +669,10 @@ export class VtCodeBackend extends WorkspaceBackend {
     this.rejectPending(error);
     socket?.close();
     this.setConnectionState(state, error);
+    if (this.sequence > 0 && this.expectedEventSequence === null) this.expectedEventSequence = this.sequence + 1;
   }
 
-  invalidateSession(error) {
+  private invalidateSession(error: BackendError): void {
     const socket = this.socket;
     this.socket = null;
     this.token = null;
@@ -527,11 +684,13 @@ export class VtCodeBackend extends WorkspaceBackend {
     this.setConnectionState("reauthorize", error);
   }
 
-  protocolError(detail) {
-    this.invalidateSession(backendError(`VT Code sent an invalid WebMCP frame: ${detail}`, "protocol_error"));
+  private protocolError(detail: string): BackendError {
+    const error = backendError(`VT Code sent an invalid WebMCP frame: ${detail}`, "protocol_error");
+    this.invalidateSession(error);
+    return error;
   }
 
-  rejectPending(error) {
+  private rejectPending(error: BackendError): void {
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeout);
       pending.reject(error);
@@ -539,8 +698,8 @@ export class VtCodeBackend extends WorkspaceBackend {
     this.pending.clear();
   }
 
-  async pair(code) {
-    if (typeof code !== "string" || !/^[A-Z0-9-]{4,64}$/.test(code)) throw backendError("Enter the pairing code shown by VT Code", "invalid_request");
+  async pair(code: string): Promise<PairPayload> {
+    if (!/^[A-Z0-9-]{4,64}$/.test(code)) throw backendError("Enter the pairing code shown by VT Code", "invalid_request");
     await this.open();
     const payload = await this.send("pair", {
       code,
@@ -549,13 +708,14 @@ export class VtCodeBackend extends WorkspaceBackend {
     }, false);
     this.token = payload.token;
     this.updateSessionLease(payload);
+    this.expectedEventSequence = this.sequence > 0 ? this.sequence + 1 : null;
     this.connected = true;
     this.startHeartbeat();
     this.setConnectionState("connected");
     return payload;
   }
 
-  async resume() {
+  private async resume(): Promise<PairPayload> {
     if (!this.token) throw backendError("Pair this browser with VT Code first", "unauthorized");
     if (this.resuming) return this.resuming;
     const token = this.token;
@@ -568,6 +728,7 @@ export class VtCodeBackend extends WorkspaceBackend {
     const resuming = request.then((payload) => {
       if (this.token === token) {
         this.updateSessionLease(payload);
+        this.expectedEventSequence = this.sequence > 0 ? this.sequence + 1 : null;
         this.connected = true;
         this.startHeartbeat();
         this.setConnectionState("connected");
@@ -578,15 +739,15 @@ export class VtCodeBackend extends WorkspaceBackend {
     try { return await resuming; } finally { if (this.resuming === resuming) this.resuming = null; }
   }
 
-  async open() {
+  private async open(): Promise<void> {
     if (this.socket?.readyState === WebSocket.OPEN) return;
     if (this.opening) return this.opening;
-    const opening = new Promise((resolve, reject) => {
+    const opening = new Promise<void>((resolve, reject) => {
       const socket = new WebSocket(this.url);
       this.socket = socket;
       let settled = false;
       this.openingReject = reject;
-      const fail = (error) => {
+      const fail = (error: BackendError): void => {
         if (!settled) {
           settled = true;
           if (this.openingReject === reject) this.openingReject = null;
@@ -612,65 +773,104 @@ export class VtCodeBackend extends WorkspaceBackend {
         this.disconnectSocket(error);
         fail(backendError("VT Code WebSocket closed before pairing", "connection_closed"));
       };
-      socket.onmessage = (event) => this.receive(event.data);
+      socket.onmessage = (event) => this.receive(event.data as unknown);
     });
     this.opening = opening;
     try { await opening; } finally { if (this.opening === opening) this.opening = null; }
   }
 
-  receive(raw) {
-    if (typeof raw !== "string" || new TextEncoder().encode(raw).length > MAX_FRAME_BYTES) {
-      this.protocolError("frame is missing or exceeds the configured limit");
+  private receive(raw: unknown): void {
+    let message: ReturnType<typeof parseBridgeFrame>;
+    try {
+      message = parseBridgeFrame(raw, MAX_BRIDGE_FRAME_BYTES);
+    } catch (error: unknown) {
+      const detail = error instanceof BackendError
+        ? error.message.replace("VT Code sent an invalid WebMCP frame: ", "")
+        : String(error);
+      this.protocolError(detail);
       return;
     }
-    let message;
-    try { message = JSON.parse(raw); } catch {
-      this.protocolError("frame is not valid JSON");
-      return;
-    }
-    if (!message || typeof message !== "object") {
-      this.protocolError("frame must be a JSON object");
-      return;
-    }
+
     if (message.type === "event") {
-      if (!Number.isSafeInteger(message.sequence) || message.sequence < 1 || (this.sequence > 0 && message.sequence !== this.sequence + 1)) {
+      if (this.expectedEventSequence !== null && message.sequence !== this.expectedEventSequence) {
         this.protocolError("runtime event sequence is invalid or has a gap");
         return;
       }
+      if (message.sequence >= Number.MAX_SAFE_INTEGER) {
+        this.protocolError("runtime event sequence is outside the browser-safe range");
+        return;
+      }
       this.sequence = message.sequence;
+      this.expectedEventSequence = message.sequence + 1;
       for (const listener of this.listeners) listener(message);
       return;
     }
+
     const pending = this.pending.get(message.request_id);
     if (!pending) return;
     this.pending.delete(message.request_id);
     clearTimeout(pending.timeout);
-    if (message.ok) pending.resolve(message.payload);
-    else {
-      const error = backendError(message.error?.message || "VT Code request failed", message.error?.code || "runtime_error");
+    if (!message.ok) {
+      const error = backendError(message.error?.message ?? "VT Code request failed", message.error?.code ?? "runtime_error");
       if (error.code === "unauthorized" || error.code === "pairing_expired") this.invalidateSession(error);
       pending.reject(error);
+      return;
+    }
+    try {
+      pending.resolve(validateResponsePayload(pending.operation, message.payload));
+    } catch (error: unknown) {
+      const detail = error instanceof BackendError
+        ? error.message.replace("VT Code sent an invalid WebMCP frame: ", "")
+        : String(error);
+      const protocolError = this.protocolError(detail);
+      pending.reject(protocolError);
     }
   }
 
-  async send(type, payload = {}, authenticated = true) {
+  private async send<K extends BridgeOperation>(
+    type: K,
+    payload: RequestPayloads[K] = {} as RequestPayloads[K],
+    authenticated = true,
+  ): Promise<OperationPayloads[K]> {
     await this.open();
     if (authenticated && this.token && !this.connected) await this.resume();
     if (authenticated && !this.token) throw backendError("Pair this browser with VT Code first", "unauthorized");
     const requestId = `browser-${this.nextId++}`;
-    const request = { type, request_id: requestId, ...(authenticated ? { token: this.token } : {}), ...payload };
+    const token = this.token;
+    const request = {
+      type,
+      request_id: requestId,
+      ...(authenticated && token ? { token } : {}),
+      ...payload,
+    } as BridgeRequest;
     const serialized = JSON.stringify(request);
-    if (new TextEncoder().encode(serialized).length > MAX_FRAME_BYTES) throw backendError("Request exceeds the frame limit", "limit_exceeded");
-    return new Promise((resolve, reject) => {
+    if (new TextEncoder().encode(serialized).length > MAX_BRIDGE_FRAME_BYTES) throw backendError("Request exceeds the frame limit", "limit_exceeded");
+
+    return new Promise<OperationPayloads[K]>((resolve, reject) => {
       const timeout = setTimeout(() => {
         const pending = this.pending.get(requestId);
         if (!pending) return;
         this.pending.delete(requestId);
         pending.reject(backendError("VT Code request timed out", "request_timeout"));
       }, REQUEST_TIMEOUT_MS);
-      this.pending.set(requestId, { resolve, reject, timeout });
+      const pending: PendingRequest = {
+        operation: type,
+        resolve: (responsePayload) => resolve(responsePayload as OperationPayloads[K]),
+        reject,
+        timeout,
+      };
+      this.pending.set(requestId, pending);
+      const socket = this.socket;
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        clearTimeout(timeout);
+        this.pending.delete(requestId);
+        const connectionError = backendError("VT Code WebSocket could not send the request", "connection_closed");
+        this.disconnectSocket(connectionError, "reconnecting");
+        reject(connectionError);
+        return;
+      }
       try {
-        this.socket.send(serialized);
+        socket.send(serialized);
       } catch {
         clearTimeout(timeout);
         this.pending.delete(requestId);
@@ -681,35 +881,45 @@ export class VtCodeBackend extends WorkspaceBackend {
     });
   }
 
-  listFiles() { return this.send("workspace.list_files"); }
-  readFile(path) { return this.send("workspace.read_file", { path }); }
-  proposeChanges(changes) {
-    const normalized = Array.isArray(changes) ? changes.map(normalizeChange) : [];
-    return this.send("patch.propose", { changes: normalized });
+  override listFiles(): Promise<WorkspaceFileEntry[]> { return this.send("workspace.list_files"); }
+  override readFile(path: string): Promise<FileSnapshot> { return this.send("workspace.read_file", { path }); }
+
+  override proposeChanges(rawChanges: readonly unknown[]): Promise<PatchProposal> {
+    const changes = validateChanges(rawChanges.map(normalizeChange));
+    return this.send("patch.propose", { changes });
   }
-  applyProposal(proposalId) { return this.send("patch.apply", { proposal_id: proposalId }); }
-  runChecks(command = "cargo check --locked") { return this.send("checks.run", { command }); }
-  revertLastChange(changeId) { return this.send("patch.revert", { change_id: changeId }); }
-  async status() {
+
+  override applyProposal(proposalId: string): Promise<AppliedChange> { return this.send("patch.apply", { proposal_id: proposalId }); }
+  override runChecks(command = "cargo check --locked"): Promise<CheckResult> { return this.send("checks.run", { command }); }
+  override revertLastChange(changeId: string): Promise<AppliedChange> { return this.send("patch.revert", { change_id: changeId }); }
+
+  async status(): Promise<StatusPayload> {
     const payload = await this.send("status");
     this.setStatusPayload(payload);
     return payload;
   }
-  requestTurn(prompt, proposalId) {
-    const payload = { prompt };
-    if (proposalId) payload.proposal_id = proposalId;
+
+  override requestTurn(prompt: string, proposalId?: string): Promise<TurnResult> {
+    const payload: RequestPayloads["turn.request"] = proposalId ? { prompt, proposal_id: proposalId } : { prompt };
     return this.send("turn.request", payload);
   }
-  subscribeToEvents(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  subscribeToConnection(listener) {
+
+  override subscribeToEvents(listener: BackendListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  override subscribeToConnection(listener: ConnectionListener): () => void {
     this.connectionListeners.add(listener);
     return () => this.connectionListeners.delete(listener);
   }
-  subscribeToStatus(listener) {
+
+  override subscribeToStatus(listener: StatusListener): () => void {
     this.statusListeners.add(listener);
     return () => this.statusListeners.delete(listener);
   }
-  close() {
+
+  override close(): void {
     const socket = this.socket;
     this.socket = null;
     this.stopHeartbeat();
@@ -717,6 +927,7 @@ export class VtCodeBackend extends WorkspaceBackend {
     this.token = null;
     this.connected = false;
     this.connectionState = "closed";
+    this.expectedEventSequence = null;
     this.setStatusPayload(null);
     this.openingReject?.(backendError("VT Code WebSocket disconnected", "connection_closed"));
     this.openingReject = null;
@@ -724,34 +935,36 @@ export class VtCodeBackend extends WorkspaceBackend {
     socket?.close();
   }
 
-  async writeFile({ path, content, baseDigest, base_digest }) {
+  override async writeFile({ path, content, baseDigest, base_digest }: WriteFileInput): Promise<AppliedChange> {
     const current = await this.readFile(path);
     const proposal = await this.proposeChanges([{ path, content, base_digest: base_digest ?? baseDigest ?? current.digest }]);
     return this.applyProposal(proposal.proposal_id);
   }
 
-  async check() { return this.runChecks(); }
+  override check(): Promise<CheckResult> { return this.runChecks(); }
 }
 
 export const WebSocketVtCodeBackend = VtCodeBackend;
 
-export function createBackend(initialFiles = SEED_FILES) { return new InMemoryBackend(initialFiles); }
+export function createBackend(initialFiles: Readonly<Record<string, string>> = SEED_FILES): InMemoryBackend {
+  return new InMemoryBackend(initialFiles);
+}
 
-export async function connectVtCode(url, code) {
+export async function connectVtCode(url: string, code: string): Promise<VtCodeBackend> {
   const backend = new VtCodeBackend(url);
   try {
     await backend.pair(code);
     await backend.status();
     return backend;
-  } catch (error) {
+  } catch (error: unknown) {
     backend.close();
     throw error;
   }
 }
 
-function cryptoRandomId() {
+function cryptoRandomId(): string {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-export { MAX_FILE_BYTES, MAX_TURN_PROMPT_BYTES, SEED_FILES };
+export { MAX_BRIDGE_FRAME_BYTES as MAX_FRAME_BYTES, PROTOCOL_VERSION, SEED_FILES };

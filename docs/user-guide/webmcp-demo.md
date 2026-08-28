@@ -78,7 +78,7 @@ content is marked with `untrustedContentHint`, `get_editor_state` reports the
 workflow and `webmcp_context`, page-only actions update the editor, and no
 browser tool can approve, apply, or revert a filesystem change.
 The deterministic corpus and contract checks live in
-`examples/webmcp-challenge/evals/webmcp-evals.js` and run with `npm test`.
+`examples/webmcp-challenge/evals/webmcp-evals.ts` and run with `bun run test`.
 Model tool selection remains probabilistic and needs the real browser-agent pass.
 
 ### Optional Chrome origin trial
@@ -475,8 +475,10 @@ proposal.
 From `examples/webmcp-challenge`:
 
 ```sh
-npm test
-npm run build
+bun install --frozen-lockfile
+bun run typecheck
+bun run test
+bun run build
 ```
 
 The implementation details, protocol boundaries, configuration, and security

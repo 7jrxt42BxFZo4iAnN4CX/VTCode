@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { WEBMCP_EVAL_CASES } from "../evals/webmcp-evals.js";
-import { createWebMcpTools } from "../src/webmcp.js";
+import { WEBMCP_EVAL_CASES } from "../evals/webmcp-evals.ts";
+import { createWebMcpTools, type WebMcpTool } from "../src/webmcp.ts";
 
-function toolsForEval() {
+function toolsForEval(): WebMcpTool[] {
   return createWebMcpTools({
     listFiles: async () => [],
     readFile: async (path) => ({ path, content: "draft\n" }),
@@ -40,8 +40,10 @@ test("WebMCP eval corpus covers direct, open-ended, journey, and failure cases",
     });
     assert.ok(testCase.boundaries.length > 0);
     assert.ok(testCase.messages.length > 0);
-    assert.equal(testCase.messages[0].role, "user");
-    assert.ok(testCase.messages[0].content.length > 0);
+    const message = testCase.messages[0];
+    assert.ok(message);
+    assert.equal(message.role, "user");
+    assert.ok(message.content.length > 0);
     assert.ok(testCase.successCriteria.length > 0);
     assert.ok(testCase.recovery.length > 0);
     for (const expectedCall of testCase.expectedCall) {
@@ -56,7 +58,9 @@ test("WebMCP eval corpus covers direct, open-ended, journey, and failure cases",
 test("WebMCP eval corpus keeps write authority outside the browser tool set", () => {
   const names = toolsForEval().map((tool) => tool.name);
   assert.equal(names.some((name) => /apply|write|revert/i.test(name)), false);
-  assert.equal(toolsForEval().find((tool) => tool.name === "read_file").annotations.untrustedContentHint, true);
+  const readFileTool = toolsForEval().find((tool) => tool.name === "read_file");
+  assert.ok(readFileTool);
+  assert.equal(readFileTool.annotations.untrustedContentHint, true);
 });
 
 test("WebMCP metadata stays within the recommended discoverability budgets", () => {
@@ -64,12 +68,13 @@ test("WebMCP metadata stays within the recommended discoverability budgets", () 
     assert.ok(tool.name.length <= 30, `${tool.name} name is too long`);
     assert.ok(tool.description.length <= 500, `${tool.name} description is too long`);
     for (const property of Object.values(tool.inputSchema.properties)) {
-      assert.ok(property.description.length <= 150, `${tool.name} parameter description is too long`);
+      assert.ok((property.description ?? "").length <= 150, `${tool.name} parameter description is too long`);
     }
   }
 });
 
 test("failure evals exercise clear runtime errors", async () => {
   const tool = toolsForEval().find((candidate) => candidate.name === "open_panel");
+  assert.ok(tool);
   await assert.rejects(tool.execute({ panel: "debugger" }, {}), /open_panel\.panel has an unsupported value/);
 });
