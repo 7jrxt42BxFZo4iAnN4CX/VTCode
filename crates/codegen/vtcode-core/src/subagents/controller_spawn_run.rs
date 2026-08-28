@@ -282,7 +282,9 @@ impl SubagentController {
             for (controller, session_id) in nested {
                 let ids = controller.spawn_child_ids_for_parent(&session_id).await;
                 for id in ids {
-                    let _ = controller.resume_tree(&id).await;
+                    if let Err(err) = controller.resume_tree(&id).await {
+                        tracing::warn!(node_id = id.as_str(), error = %err, "Failed to resume nested subagent subtree");
+                    }
                 }
             }
             for restart_id in restart_ids {
@@ -349,7 +351,9 @@ impl SubagentController {
             for (controller, session_id) in nested {
                 let ids = controller.spawn_child_ids_for_parent(&session_id).await;
                 for id in ids {
-                    let _ = controller.close_tree(&id).await;
+                    if let Err(err) = controller.close_tree(&id).await {
+                        tracing::warn!(node_id = id.as_str(), error = %err, "Failed to close nested subagent subtree");
+                    }
                 }
             }
             self_owned.status_for(&target_owned).await
@@ -753,7 +757,9 @@ impl SubagentController {
         for (controller, session_id) in nested {
             let ids = controller.spawn_child_ids_for_parent(&session_id).await;
             for id in ids {
-                let _ = controller.close_tree(&id).await;
+                if let Err(err) = controller.close_tree(&id).await {
+                    tracing::warn!(node_id = id.as_str(), error = %err, "Failed to close nested subagent subtree during shutdown");
+                }
             }
         }
     }
