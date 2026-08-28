@@ -152,10 +152,12 @@ fn test_unified_client_creation() {
         assert_eq!(client.name(), "moonshot");
     }
 
-    let opencode_zen_client = create_provider_for_model("opencode/gpt-5.4", "test_key".to_string(), None, None);
-    assert!(opencode_zen_client.is_ok());
-    if let Ok(client) = opencode_zen_client {
-        assert_eq!(client.name(), "opencode-zen");
+    // The legacy OpenCode GPT-5.4 alias now resolves to the current canonical
+    // GPT-5.6 OpenAI model after the model-catalog refresh.
+    let openai_alias_client = create_provider_for_model("opencode/gpt-5.4", "test_key".to_string(), None, None);
+    assert!(openai_alias_client.is_ok());
+    if let Ok(client) = openai_alias_client {
+        assert_eq!(client.name(), "openai");
     }
 
     let opencode_go_client = create_provider_for_model("opencode-go/kimi-k2.5", "test_key".to_string(), None, None);
