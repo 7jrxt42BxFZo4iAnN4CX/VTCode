@@ -1988,10 +1988,10 @@ async fn once_approval_for_one_command_does_not_approve_other_commands() {
     let ctrl_c_notify = Arc::new(Notify::new());
     let permission_cache = Arc::new(RwLock::new(ToolPermissionCache::new()));
 
-    // Simulate the exact cache entries a user's "Approve Once" on
+    // Simulate the cache entries a user's "Approve Once" on
     // `unified_exec {action:"run", command:"ls src"}` writes:
     //   - the command-scoped cache key (`tool:command`),
-    //   - the exact shell learning key (`command|scope`),
+    //   - the learned shell-family key (`shell-pattern:ls|scope`),
     // and, under the pre-fix behavior, additionally the bare tool name.
     let scope_suffix = "sandbox_permissions=\"use_default\"|additional_permissions=null";
     let approved_command = "ls src";
@@ -2000,7 +2000,7 @@ async fn once_approval_for_one_command_does_not_approve_other_commands() {
         format!("{}:{approved_command}", tools::UNIFIED_EXEC),
         PermissionGrant::Once,
     );
-    cache.cache_grant(format!("{approved_command}|{scope_suffix}"), PermissionGrant::Once);
+    cache.cache_grant(format!("shell-pattern:ls|{scope_suffix}"), PermissionGrant::Once);
     cache.cache_grant(tools::UNIFIED_EXEC.to_string(), PermissionGrant::Once);
     drop(cache);
 

@@ -184,6 +184,18 @@ where
 
     pub fn rm(&self, path: &str, recursive: bool, force: bool) -> Result<()> {
         let target = self.resolve_path(path)?;
+        // rm replaces its target itself, so the target must not be (or
+        // resolve through a symlink to) the workspace root. The canonical
+        // comparison closes the traversal (`rm ..` from a subdirectory),
+        // alias (`/tmp` vs `/private/tmp`) and symlink-to-root cases.
+        let target_canonical = if target.exists() {
+            Some(self.cached_canonicalize(&target)?)
+        } else {
+            None
+        };
+        if let Some(canonical) = &target_canonical {
+            self.ensure_not_workspace_root(canonical)?;
+        }
         self.ensure_mutation_target_within_workspace(&target)?;
 
         let command = match self.shell_kind {
@@ -358,16 +370,6 @@ where
     }
 
     fn ensure_mutation_target_within_workspace(&self, candidate: &Path) -> Result<()> {
-        // A mutation target equal to the workspace root itself (e.g. `rm -r -f .`,
-        // `mkdir .`) passes the containment check but destroys/recreates the
-        // whole workspace. Reject it for every mutating operation.
-        if candidate == self.working_dir {
-            bail!(
-                "refusing to mutate the workspace root itself (`{}`)",
-                candidate.display()
-            );
-        }
-
         if let Ok(metadata) = fs::symlink_metadata(candidate)
             && metadata.file_type().is_symlink()
         {
@@ -382,6 +384,21 @@ where
             let parent = self.canonicalize_existing_parent(candidate)?;
             self.ensure_within_workspace(&parent)
         }
+    }
+
+    /// Refuse to operate on the workspace root itself. A recursive delete of
+    /// the root erases the entire workspace; the root can be reached
+    /// lexically (`rm -r .` from the root, `rm -r ..` from a subdirectory)
+    /// or through a symlink/absolute alias, so the check compares the
+    /// canonicalized target against the canonical workspace root.
+    fn ensure_not_workspace_root(&self, canonical_candidate: &Path) -> Result<()> {
+        if canonical_candidate == self.workspace_root {
+            bail!(
+                "refusing to operate on the workspace root itself (`{}`)",
+                canonical_candidate.display()
+            );
+        }
+        Ok(())
     }
 
     fn canonicalize_existing_parent(&self, candidate: &Path) -> Result<PathBuf> {
@@ -541,7 +558,6 @@ mod tests {
         let dir = TempDir::new()?;
         let executor = RecordingExecutor::default();
         let runner = BashRunner::new(dir.path().to_path_buf(), executor.clone(), AllowAllPolicy)?;
-        let runner = runner;
 
         for empty in ["", "   ", "."] {
             let result = runner.rm(empty, true, true);
@@ -550,6 +566,49 @@ mod tests {
         assert!(
             executor.invocations.lock().expect("invocations lock").is_empty(),
             "no command must be built for empty paths"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rm_rejects_workspace_root_via_parent_traversal_and_absolute_alias() -> Result<()> {
+        let dir = TempDir::new()?;
+        let executor = RecordingExecutor::default();
+        let runner = BashRunner::new(dir.path().to_path_buf(), executor.clone(), AllowAllPolicy)?;
+        let mut runner = runner;
+        let canonical_root = runner.working_dir().to_path_buf();
+
+        // rm .. from a subdirectory resolves to the workspace root.
+        fs::create_dir_all(runner.working_dir().join("sub"))?;
+        runner.cd("sub")?;
+        assert!(runner.rm("..", true, true).is_err(), "rm('..') from sub must be rejected");
+        // Absolute path written through the non-canonical alias of the root.
+        let alias = dir.path().to_path_buf();
+        if alias != canonical_root {
+            assert!(
+                runner.rm(&alias.to_string_lossy(), true, true).is_err(),
+                "rm via non-canonical absolute alias must be rejected"
+            );
+        }
+        // The canonical root itself (rm is run from a subdirectory on purpose).
+        assert!(
+            runner.rm(&canonical_root.to_string_lossy(), true, true).is_err(),
+            "rm on the canonical root must be rejected"
+        );
+        // A symlink to the workspace root placed inside it.
+        let link = runner.working_dir().join("root-link");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&canonical_root, &link).expect("create root symlink");
+        #[cfg(unix)]
+        assert!(
+            runner.rm(&link.to_string_lossy(), true, true).is_err(),
+            "rm through a symlink to the root must be rejected"
+        );
+        #[cfg(not(unix))]
+        let _ = &link;
+        assert!(
+            executor.invocations.lock().expect("invocations lock").is_empty(),
+            "no command must be built for root targets"
         );
         Ok(())
     }

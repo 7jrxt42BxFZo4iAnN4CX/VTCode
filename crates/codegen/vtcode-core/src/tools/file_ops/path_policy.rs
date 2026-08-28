@@ -104,7 +104,11 @@ impl FileOpsTool {
         // traversal; this tier closes the escape-by-symlink case.
         vtcode_commons::paths::ensure_path_within_workspace_resolved(&normalized, &self.workspace_root)
             .await
-            .map_err(|_| anyhow!("Error: Path '{original_display}' resolves outside the workspace."))?;
+            .map_err(|err| {
+                anyhow!(
+                    "Error: Path '{original_display}' is not accessible inside the workspace: {err}"
+                )
+            })?;
 
         let canonical = self.canonicalize_allow_missing(&normalized).await?;
         Ok(canonical)
@@ -248,6 +252,7 @@ mod tests {
     use super::super::FileOpsTool;
     use crate::tools::grep_file::GrepSearchManager;
     use std::fs;
+    use std::path::PathBuf;
     use std::sync::Arc;
     use tempfile::TempDir;
 
@@ -256,6 +261,11 @@ mod tests {
         FileOpsTool::new(workspace.path().to_path_buf(), grep_manager)
     }
 
+    fn canonical_root(workspace: &TempDir) -> PathBuf {
+        dunce::canonicalize(workspace.path()).expect("canonicalize workspace root")
+    }
+
+    #[cfg(unix)]
     #[tokio::test]
     async fn symlink_inside_workspace_pointing_outside_is_rejected() {
         let temp_dir = TempDir::new().expect("workspace tempdir");
@@ -263,8 +273,8 @@ mod tests {
         fs::create_dir_all(temp_dir.path().join("sub")).expect("create sub");
         fs::write(outside.path().join("secret.txt"), "top secret").expect("write outside");
 
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(outside.path(), temp_dir.path().join("sub/link")).expect("create symlink");
+        std::os::unix::fs::symlink(outside.path(), temp_dir.path().join("sub/link"))
+            .expect("create symlink");
 
         let file_ops = make_tool(&temp_dir);
 
@@ -277,6 +287,7 @@ mod tests {
         let temp_dir = TempDir::new().expect("workspace tempdir");
         fs::create_dir_all(temp_dir.path().join("sub")).expect("create sub");
         fs::write(temp_dir.path().join("sub/file.txt"), "ok").expect("write file");
+        let root = canonical_root(&temp_dir);
 
         let file_ops = make_tool(&temp_dir);
 
@@ -284,14 +295,14 @@ mod tests {
             .normalize_user_path("sub/file.txt")
             .await
             .expect("existing in-workspace path must validate");
-        assert!(resolved.starts_with(temp_dir.path()));
+        assert!(resolved.starts_with(&root));
 
         // Missing files inside the workspace remain allowed (create flows).
         let created = file_ops
             .normalize_user_path("sub/new-file.txt")
             .await
             .expect("missing in-workspace path must validate");
-        assert!(created.starts_with(temp_dir.path()));
+        assert!(created.starts_with(&root));
 
         // Plain traversal stays rejected.
         assert!(file_ops.normalize_user_path("../outside.txt").await.is_err());
