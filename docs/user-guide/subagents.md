@@ -43,7 +43,7 @@ Notes:
 
 - `explorer` also matches `explore`
 - `worker` also matches `general` and `general-purpose`
-- child threads do not spawn more subagents
+- child threads spawn more subagents only when `subagents.max_depth` allows another nesting level (read-only children and background subprocesses stay excluded)
 
 Completed child threads are expected to return a fixed Markdown handoff that VT Code can merge back into the parent session memory:
 

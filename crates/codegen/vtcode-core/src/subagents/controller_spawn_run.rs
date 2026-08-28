@@ -320,6 +320,7 @@ impl SubagentController {
             // Close the target's own subtree (deepest first) on this
             // controller. Aborting the owning child's handle first stops it
             // from spawning further descendants.
+            let subtree_ids_for_rescan = subtree_ids.clone();
             for node_id in subtree_ids.into_iter().rev() {
                 self_owned.close_single(node_id.as_str()).await?;
             }
@@ -334,6 +335,20 @@ impl SubagentController {
                 for id in ids {
                     if let Err(err) = controller.close_tree(&id).await {
                         tracing::warn!(node_id = id.as_str(), error = %err, "Failed to close nested subagent subtree");
+                    }
+                }
+            }
+            // A child may have attached a freshly created controller between
+            // the snapshot above and its handle abort. Re-scan and cascade
+            // again so no grandchild outlives the close; the second pass is a
+            // no-op in the common case because close_tree is idempotent.
+            let late = self_owned.nested_controllers_in_subtree(&subtree_ids_for_rescan).await;
+            for (controller, session_id) in late {
+                controller.begin_close().await;
+                let ids = controller.spawn_child_ids_for_parent(&session_id).await;
+                for id in ids {
+                    if let Err(err) = controller.close_tree(&id).await {
+                        tracing::warn!(node_id = id.as_str(), error = %err, "Failed to close late nested subagent subtree");
                     }
                 }
             }
