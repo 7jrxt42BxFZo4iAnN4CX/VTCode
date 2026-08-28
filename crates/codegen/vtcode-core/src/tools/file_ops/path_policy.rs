@@ -1,6 +1,6 @@
 use super::FileOpsTool;
 use crate::tools::jaro_winkler_similarity;
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use ignore::DirEntry;
 use std::cmp::Ordering;
 use std::future::Future;
@@ -93,8 +93,9 @@ impl FileOpsTool {
         let absolute = self.absolute_candidate(path);
         let normalized = normalize_path(&absolute);
         let normalized_root = normalize_path(&self.workspace_root);
+        let canonical_root = normalize_path(self.canonical_workspace_root());
 
-        if !normalized.starts_with(&normalized_root) {
+        if !normalized.starts_with(&normalized_root) && !normalized.starts_with(&canonical_root) {
             return Err(anyhow!("Error: Path '{original_display}' resolves outside the workspace."));
         }
 
@@ -102,11 +103,16 @@ impl FileOpsTool {
         // symlink committed inside the workspace cannot resolve outside it.
         // The lexical tier above gives precise error messages for plain
         // traversal; this tier closes the escape-by-symlink case.
-        vtcode_commons::paths::ensure_path_within_workspace_resolved(&normalized, &self.workspace_root)
-            .await
-            .map_err(|err| anyhow!("Error: Path '{original_display}' is not accessible inside the workspace: {err}"))?;
+        if normalized.starts_with(&normalized_root) {
+            vtcode_commons::paths::ensure_path_within_workspace_resolved(&normalized, &self.workspace_root)
+                .await
+                .with_context(|| format!("Error: Path '{original_display}' is not accessible inside the workspace"))?;
+        }
 
         let canonical = self.canonicalize_allow_missing(&normalized).await?;
+        if !canonical.starts_with(&canonical_root) {
+            return Err(anyhow!("Error: Path '{original_display}' resolves outside the workspace."));
+        }
         Ok(canonical)
     }
 
@@ -301,5 +307,55 @@ mod tests {
 
         // Plain traversal stays rejected.
         assert!(file_ops.normalize_user_path("../outside.txt").await.is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn canonical_alias_of_workspace_root_is_accepted() {
+        let temp_dir = TempDir::new().expect("workspace tempdir");
+        let canonical_root = canonical_root(&temp_dir);
+        if canonical_root == temp_dir.path() {
+            // No alias on this platform layout; nothing to test.
+            return;
+        }
+        fs::create_dir_all(temp_dir.path().join("sub")).expect("create sub");
+        fs::write(temp_dir.path().join("sub/file.txt"), "ok").expect("write file");
+
+        let file_ops = make_tool(&temp_dir);
+
+        // An absolute path written through the canonical (resolved) alias of
+        // the workspace root must be accepted: it resolves inside the
+        // workspace even though it does not start with the raw root.
+        let alias_path = canonical_root.join("sub/file.txt");
+        let resolved = file_ops
+            .normalize_user_path(&alias_path.to_string_lossy())
+            .await
+            .expect("canonical alias path must validate");
+        assert!(resolved.starts_with(&canonical_root));
+
+        // A missing file through the alias stays allowed (create flows).
+        let created = file_ops
+            .normalize_user_path(&canonical_root.join("sub/new.txt").to_string_lossy())
+            .await
+            .expect("missing path via alias must validate");
+        assert!(created.starts_with(&canonical_root));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn canonical_alias_escape_is_still_rejected() {
+        let temp_dir = TempDir::new().expect("workspace tempdir");
+        let outside = TempDir::new().expect("outside tempdir");
+        let canonical_root = canonical_root(&temp_dir);
+        if canonical_root == temp_dir.path() {
+            return;
+        }
+
+        let file_ops = make_tool(&temp_dir);
+        let outside_path = outside.path().join("secret.txt");
+        fs::write(&outside_path, "top secret").expect("write outside");
+
+        let result = file_ops.normalize_user_path(&outside_path.to_string_lossy()).await;
+        assert!(result.is_err(), "outside canonical path must be rejected");
     }
 }
