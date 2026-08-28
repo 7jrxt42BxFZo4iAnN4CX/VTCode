@@ -369,7 +369,7 @@ mod tests {
         struct OverrideGuard;
 
         impl OverrideGuard {
-            fn set(path: Option<std::path::PathBuf>) -> Self {
+            fn set(path: Option<PathBuf>) -> Self {
                 set_explicit_config_path(path);
                 Self
             }
