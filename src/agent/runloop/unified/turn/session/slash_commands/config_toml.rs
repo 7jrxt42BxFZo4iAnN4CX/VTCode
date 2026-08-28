@@ -5,7 +5,6 @@ use anyhow::{Context, Result};
 use toml::Value as TomlValue;
 use vtcode_commons::VtCodePaths;
 use vtcode_core::config::loader::ConfigManager;
-use vtcode_core::config::loader::layers::ConfigLayerSource;
 
 pub(super) fn ensure_child_table<'a>(
     table: &'a mut toml::map::Map<String, TomlValue>,
@@ -104,14 +103,5 @@ fn parse_toml_value(path: &Path, content: &str) -> Result<TomlValue> {
 }
 
 pub(super) fn preferred_workspace_config_path(manager: &ConfigManager, workspace: &Path) -> PathBuf {
-    manager
-        .layer_stack()
-        .layers()
-        .iter()
-        .rev()
-        .find_map(|layer| match &layer.source {
-            ConfigLayerSource::Workspace { file } if layer.is_enabled() => Some(file.clone()),
-            _ => None,
-        })
-        .unwrap_or_else(|| workspace.join(manager.config_file_name()))
+    manager.preferred_workspace_config_path(workspace)
 }

@@ -72,7 +72,12 @@ vtcode --config agent.provider=ollama
 
 Inline key/value overrides are applied above file-based layers. The
 `VTCODE_CONFIG_PATH` environment variable selects the same explicit-file layer
-when a command-line path is not supplied.
+when a command-line path is not supplied. Relative paths and `~` are resolved
+identically for both forms. The resolved file is captured as a session override:
+configuration reloads and config writes made during that session (settings
+palette, slash-command persistence, live reload) target the same explicit file.
+Global-only operations such as `vtcode mcp login` always use the canonical user
+config file and ignore the session override.
 
 ## Configuration precedence
 

@@ -283,6 +283,7 @@ fn describe_array_change(path: &str, added: bool) -> String {
 mod tests {
     use super::*;
     use crate::agent::runloop::unified::config_section_headings::normalize_config_path;
+    use serial_test::serial;
     use vtcode_commons::canonicalize;
 
     #[test]
@@ -358,6 +359,46 @@ mod tests {
         assert_eq!(state.draft.ui.tool_display_mode, vtcode_core::config::ToolDisplayMode::Compact);
         let persisted = std::fs::read_to_string(&source_path).expect("persisted config");
         assert!(persisted.contains("tool_display_mode = \"compact\""));
+    }
+
+    #[test]
+    #[serial]
+    fn settings_palette_uses_explicit_session_override_as_source() {
+        use vtcode_config::loader::set_explicit_config_path;
+
+        struct OverrideGuard;
+
+        impl OverrideGuard {
+            fn set(path: Option<std::path::PathBuf>) -> Self {
+                set_explicit_config_path(path);
+                Self
+            }
+        }
+
+        impl Drop for OverrideGuard {
+            fn drop(&mut self) {
+                set_explicit_config_path(None);
+            }
+        }
+
+        let temp = tempfile::tempdir().expect("temp dir");
+        let workspace = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace).expect("workspace dir");
+        std::fs::write(workspace.join("vtcode.toml"), "agent.provider = \"anthropic\"\n").expect("workspace config");
+
+        let override_path = temp.path().join("custom-night.toml");
+        std::fs::write(&override_path, "agent.provider = \"openai\"\n").expect("override config");
+
+        let _guard = OverrideGuard::set(Some(override_path.clone()));
+        let state = create_settings_palette_state(&workspace, &None);
+
+        let state = state.expect("settings state with override");
+        assert_eq!(
+            canonicalize(&state.source_path).expect("canonical source path"),
+            canonicalize(&override_path).expect("canonical override path"),
+            "settings palette must treat the explicit override file as its source"
+        );
+        assert_eq!(state.draft.agent.provider, "openai");
     }
 
     #[test]

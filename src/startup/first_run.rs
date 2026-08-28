@@ -63,6 +63,13 @@ enum SetupMode {
 }
 
 fn is_fresh_workspace(workspace: &Path) -> bool {
+    let explicit_override = vtcode_config::loader::explicit_config_path();
+    if let Some(path) = explicit_override {
+        // A session-explicit config file is the workspace's config source:
+        // when it exists the workspace is not fresh, regardless of whether
+        // the default `vtcode.toml` paths exist.
+        return !path.exists();
+    }
     let config_path = workspace.join("vtcode.toml");
     let dot_dir = workspace.join(".vtcode");
     !config_path.exists() && !dot_dir.exists()
@@ -173,7 +180,7 @@ async fn run_first_run_setup(workspace: &Path, config: &mut VTCodeConfig, mode: 
     config.agent.api_key_env = provider.default_api_key_env().to_owned();
     apply_selection(config, &provider_key, &model, &lightweight_model, reasoning, persistent_memory);
 
-    let config_path = workspace.join("vtcode.toml");
+    let config_path = vtcode_config::loader::explicit_config_path().unwrap_or_else(|| workspace.join("vtcode.toml"));
     ConfigManager::save_config_to_path(&config_path, config)
         .with_context(|| format!("Failed to write initial configuration to {}", config_path.display()))?;
 
