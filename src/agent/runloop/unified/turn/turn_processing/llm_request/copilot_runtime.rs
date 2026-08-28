@@ -484,6 +484,15 @@ impl<'a> CopilotRuntimeHost<'a> {
             ToolPermissionFlow::Approved { updated_args } => {
                 let final_args = updated_args.or(rewritten_arguments);
                 if let Some(updated) = final_args {
+                    // A PermissionRequest hook may supply its own rewrite via
+                    // `updated_input`; validate it so no rewritten arguments
+                    // reach execution without admission checks.
+                    if let Err(err) = self.tool_registry.preflight_validate_harness_call(tool_name, &updated) {
+                        return Ok(Some(denied_tool_response(
+                            tool_name,
+                            &format!("PermissionRequest hook produced invalid arguments: {err}"),
+                        )));
+                    }
                     self.pending_hook_rewritten_args.insert(CompactStr::from(tool_call_id), updated);
                 }
             }

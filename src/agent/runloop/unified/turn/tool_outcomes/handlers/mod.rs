@@ -872,6 +872,26 @@ pub(crate) async fn validate_tool_call<'a>(
     match permission_result {
         Ok(ToolPermissionFlow::Approved { updated_args }) => {
             if let Some(updated_args) = updated_args {
+                // A PermissionRequest hook may supply its own rewrite via
+                // `updated_input`; validate it against the tool schema so no
+                // rewritten arguments reach execution without admission checks.
+                if let Err(err) = ctx
+                    .tool_registry
+                    .preflight_validate_harness_call(&canonical_tool_name, &updated_args)
+                {
+                    ctx.harness_state.record_denied_tool_call();
+                    ctx.push_tool_response(
+                        tool_call_id,
+                        Some(&canonical_tool_name),
+                        build_failure_error_content(
+                            format!(
+                                "PermissionRequest hook produced invalid arguments for '{canonical_tool_name}': {err}"
+                            ),
+                            "policy",
+                        ),
+                    );
+                    return Ok(ValidationResult::Blocked);
+                }
                 prepared.effective_args = updated_args;
             }
             if canonical_tool_name == tool_names::START_PLANNING {
