@@ -613,15 +613,17 @@ async function registerWebMcp() {
       let scannedFiles = 0;
       let scannedBytes = 0;
       for (const path of paths()) {
+        if (scannedFiles >= MAX_SEARCH_FILES || scannedBytes >= MAX_SEARCH_BYTES) break;
         let content = current(path);
         if (!snapshot(path)) {
-          if (scannedFiles >= MAX_SEARCH_FILES || scannedBytes >= MAX_SEARCH_BYTES) break;
           const file = await backend.readFile(path);
           if (typeof file?.content !== "string") throw new Error(`Backend returned invalid content for ${path}`);
           content = file.content;
-          scannedFiles += 1;
-          scannedBytes += snapshotSizeBytes(file);
         }
+        const bytes = contentSizeBytes(content);
+        if (scannedBytes + bytes > MAX_SEARCH_BYTES) break;
+        scannedFiles += 1;
+        scannedBytes += bytes;
         for (const [line, text] of content.split("\n").entries()) {
           if (text.toLowerCase().includes(normalizedQuery)) results.push({ path, line: line + 1, text });
           if (results.length >= 200) return results;

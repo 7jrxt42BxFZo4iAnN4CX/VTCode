@@ -1216,6 +1216,21 @@ mod tests {
         assert!(matches!(adapter.read_file(".env.secrets/token.txt").await, Err(WebmcpError::PathRejected(_))));
     }
 
+    #[test]
+    fn webmcp_check_sandbox_blocks_case_variants_of_sensitive_files() {
+        let temp = TempDir::new().expect("workspace");
+        for name in ["ID_ECDSA", ".ENV", "credentials.JSON"] {
+            std::fs::write(temp.path().join(name), "secret").expect("sensitive file");
+        }
+        let policy = check_sandbox_policy(temp.path());
+
+        for name in ["ID_ECDSA", ".ENV", "credentials.JSON"] {
+            let path = temp.path().join(name);
+            assert!(!policy.is_path_readable(&path), "check sandbox read allowed: {path:?}");
+            assert!(!policy.is_path_writable(&path, temp.path()), "check sandbox write allowed: {path:?}");
+        }
+    }
+
     #[cfg(any(unix, windows))]
     #[tokio::test]
     async fn stale_and_traversal_requests_fail_closed() {
