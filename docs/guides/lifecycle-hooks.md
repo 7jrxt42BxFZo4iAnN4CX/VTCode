@@ -187,9 +187,16 @@ decision to the normal permission flow:
 Hooks run in configuration order. When a hook returns `updatedInput`, later
 hooks receive the rewritten tool input in their payload, so policy hooks placed
 after rewrite hooks observe the final command. The first `allow` or `deny`
-decision short-circuits the remaining hooks as before. Because permission
-checks always evaluate the rewritten arguments, approval prompts show exactly
-the command that will run.
+decision short-circuits the remaining hooks as before. Because the PreToolUse
+phase runs before the safety gateway and permission checks, approval prompts
+show exactly the command that will run.
+
+> Note: a `PermissionRequest` hook may additionally return its own
+> `updatedInput`, which replaces the PreToolUse rewrite. That value is applied
+> at finalization, after safety validation of the PreToolUse-rewritten
+> arguments — so it is not re-validated by the gateway. PermissionRequest
+> hooks only run when a prompt is already warranted, and hook content is
+> gated by workspace approval; treat this as a trusted-rewrite path.
 
 ### PostToolUse
 

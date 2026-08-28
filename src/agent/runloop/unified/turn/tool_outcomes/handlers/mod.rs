@@ -714,6 +714,44 @@ pub(crate) async fn validate_tool_call<'a>(
         return Ok(outcome);
     }
 
+    // PreToolUse hooks run before the argument-dependent guards, the safety
+    // gateway, and permission evaluation so rewritten arguments are what every
+    // downstream check sees (read-after-write, repeated-read-only, mutation
+    // bookkeeping, parallel grouping). Mirrors the pipeline path.
+    let hook_phase = match crate::agent::runloop::unified::tool_routing::pipeline_pre_tool_hooks(
+        ctx.lifecycle_hooks,
+        ctx.renderer,
+        &canonical_tool_name,
+        effective_args,
+        tool_call_id,
+    )
+    .await
+    {
+        Ok(Some(PreToolHookPhaseResult::Deny)) => {
+            ctx.harness_state.record_denied_tool_call();
+            return Ok(ValidationResult::Blocked);
+        }
+        Ok(Some(PreToolHookPhaseResult::Proceed { rewritten_args: Some(rewritten), requires_prompt })) => {
+            prepared.effective_args = rewritten;
+            // Re-derive the intent classification for the rewritten arguments:
+            // the parallel-readonly grouping and the mutation bookkeeping below
+            // must see what will actually execute, not the pre-rewrite form.
+            prepared.readonly_classification =
+                !vtcode_core::tools::tool_intent::classify_tool_intent(&canonical_tool_name, &prepared.effective_args)
+                    .mutating;
+            prepared.parallel_safe_after_preflight =
+                vtcode_core::tools::tool_intent::is_parallel_safe_call(&canonical_tool_name, &prepared.effective_args);
+            Some(PreToolHookPhaseResult::Proceed { rewritten_args: None, requires_prompt })
+        }
+        Ok(phase) => phase,
+        Err(err) => {
+            ctx.harness_state.record_denied_tool_call();
+            ctx.push_system_message(format!("Pre-tool hook phase failed: {err}"));
+            return Ok(ValidationResult::Blocked);
+        }
+    };
+    let effective_args = &prepared.effective_args;
+
     if let Some(outcome) = enforce_read_after_write_guard(ctx, tool_call_id, &canonical_tool_name, effective_args) {
         return Ok(outcome);
     }
@@ -770,32 +808,6 @@ pub(crate) async fn validate_tool_call<'a>(
     // the turn balancer. The legacy core loop detector remains available for
     // non-unified autonomous execution paths only.
 
-    // PreToolUse hooks run before the safety gateway so rewritten arguments
-    // are what every downstream check evaluates, mirroring the pipeline path.
-    let hook_phase = match crate::agent::runloop::unified::tool_routing::pipeline_pre_tool_hooks(
-        ctx.lifecycle_hooks,
-        ctx.renderer,
-        &canonical_tool_name,
-        effective_args,
-        tool_call_id,
-    )
-    .await
-    {
-        Ok(Some(PreToolHookPhaseResult::Deny)) => {
-            ctx.harness_state.record_denied_tool_call();
-            return Ok(ValidationResult::Blocked);
-        }
-        Ok(Some(PreToolHookPhaseResult::Proceed { rewritten_args: Some(rewritten), requires_prompt })) => {
-            prepared.effective_args = rewritten;
-            Some(PreToolHookPhaseResult::Proceed { rewritten_args: None, requires_prompt })
-        }
-        Ok(phase) => phase,
-        Err(err) => {
-            ctx.harness_state.record_denied_tool_call();
-            ctx.push_system_message(format!("Pre-tool hook phase failed: {err}"));
-            return Ok(ValidationResult::Blocked);
-        }
-    };
     let effective_args = &prepared.effective_args;
 
     let mut safety_approval_justification = None;

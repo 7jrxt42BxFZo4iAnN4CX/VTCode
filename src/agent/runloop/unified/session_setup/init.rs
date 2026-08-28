@@ -197,6 +197,10 @@ pub(crate) async fn initialize_session(
         && let Some(cfg) = vt_cfg
         && cfg.subagents.enabled
     {
+        // The subagent lifecycle engine must be workspace-gated exactly like
+        // the main session: workspace-controlled hook content must not run
+        // without user approval in a subagent context either.
+        let workspace_gated = cfg.workspace_lifecycle_hooks.as_ref().is_some_and(|hooks| !hooks.is_empty());
         match SubagentController::new(SubagentControllerConfig {
             workspace_root: config.workspace.clone(),
             parent_session_id: parent_session_id.to_string(),
@@ -207,6 +211,7 @@ pub(crate) async fn initialize_session(
             vt_cfg: cfg.clone(),
             openai_chatgpt_auth: config.openai_chatgpt_auth.clone(),
             depth: 0,
+            workspace_gated,
             exec_sessions: tool_registry.exec_session_manager(),
             pty_manager: tool_registry.pty_manager().clone(),
             managed_background_runtime: false,

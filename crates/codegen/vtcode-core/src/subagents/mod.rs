@@ -130,6 +130,13 @@ pub struct SubagentControllerConfig {
     pub openai_chatgpt_auth: Option<OpenAIChatGptAuthHandle>,
     /// Current nesting depth of the subagent hierarchy.
     pub depth: usize,
+    /// Whether the subagent lifecycle engine must be workspace-gated. Mirrors
+    /// the main-session rule: pass `true` whenever workspace-controlled hook
+    /// content is present (workspace vtcode.toml/.vtcode layers OR a primary
+    /// agent spec contributing workspace-controlled hooks). Failing to gate
+    /// here would let workspace hooks run without user approval in a
+    /// subagent context.
+    pub workspace_gated: bool,
     /// Manager for exec sessions (PTY and pipe).
     pub exec_sessions: ExecSessionManager,
     /// PTY session manager.
@@ -152,11 +159,7 @@ impl SubagentController {
     /// Creates a new controller, discovering subagent specs and loading persisted background state.
     pub async fn new(config: SubagentControllerConfig) -> Result<Self> {
         let discovered = discover_controller_subagents(&config.workspace_root).await?;
-        let workspace_gated = config
-            .vt_cfg
-            .workspace_lifecycle_hooks
-            .as_ref()
-            .is_some_and(|hooks| !hooks.is_empty());
+        let workspace_gated = config.workspace_gated;
         let lifecycle_hooks = LifecycleHookEngine::new_with_session_gated(
             config.workspace_root.clone(),
             &config.vt_cfg.hooks,

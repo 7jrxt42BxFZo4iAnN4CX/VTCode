@@ -46,6 +46,7 @@ pub(crate) async fn handle_background_subagent_command(
         vt_cfg,
         openai_chatgpt_auth: startup.agent_config.openai_chatgpt_auth.clone(),
         depth: 0,
+        workspace_gated: true,
         exec_sessions,
         pty_manager: pty_sessions.manager().clone(),
         managed_background_runtime: true,
