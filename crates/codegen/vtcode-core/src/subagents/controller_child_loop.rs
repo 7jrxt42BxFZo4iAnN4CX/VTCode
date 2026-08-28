@@ -155,6 +155,27 @@ impl SubagentController {
                 continue;
             }
 
+            // The child is terminal and no queued work remains. Tear down its
+            // child-scoped controller so any running grandchildren are aborted
+            // instead of continuing detached after the child reports done.
+            let nested = {
+                let state = self.state.read().await;
+                state.children.get(child_id).and_then(|record| {
+                    record
+                        .child_controller
+                        .clone()
+                        .map(|controller| (controller, record.session_id.clone()))
+                })
+            };
+            if let Some((controller, session_id)) = nested {
+                let ids = controller.spawn_child_ids_for_parent(&session_id).await;
+                for id in ids {
+                    if let Err(err) = controller.close(&id).await {
+                        tracing::warn!(child_id, node_id = id.as_str(), error = %err, "Failed to close nested subagent subtree on child completion");
+                    }
+                }
+            }
+
             {
                 let mut state = self.state.write().await;
                 if let Some(record) = state.children.get_mut(child_id) {

@@ -429,7 +429,7 @@ impl SubagentController {
         Ok(record.build_status_entry())
     }
 
-    async fn spawn_child_ids_for_parent(&self, parent_thread_id: &str) -> Vec<String> {
+    pub(super) async fn spawn_child_ids_for_parent(&self, parent_thread_id: &str) -> Vec<String> {
         let state = self.state.read().await;
         let mut child_ids = state
             .children
@@ -992,7 +992,7 @@ impl SubagentController {
             child_max_turns,
             model_override.as_deref(),
             reasoning_override.as_deref(),
-            self.config.depth.saturating_add(2) <= self.config.vt_cfg.subagents.max_depth,
+            !spec.is_read_only() && self.config.depth.saturating_add(2) <= self.config.vt_cfg.subagents.max_depth,
             resolve_effective_subagent_model,
         )?;
 
