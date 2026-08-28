@@ -191,6 +191,19 @@ pub(crate) async fn run_tool_call_with_args(
         )
         .await;
         let hook_phase = match hook_phase {
+            Ok(Some(PreToolHookPhaseResult::Deny)) => {
+                return Ok(finish_with_status(
+                    ToolExecutionStatus::Failure {
+                        error: structured_failure_from_message(name, "Tool permission denied"),
+                    },
+                    false,
+                    effective_args.as_ref(),
+                ));
+            }
+            Ok(Some(PreToolHookPhaseResult::Proceed { rewritten_args: Some(rewritten), .. })) => {
+                effective_args = std::borrow::Cow::Owned(rewritten);
+                None
+            }
             Ok(phase) => phase,
             Err(err) => {
                 return Ok(finish_with_status(
@@ -200,9 +213,6 @@ pub(crate) async fn run_tool_call_with_args(
                 ));
             }
         };
-        if let Some((Some(rewritten), _)) = hook_phase.as_ref() {
-            effective_args = std::borrow::Cow::Owned(rewritten.clone());
-        }
 
         let safety_approval_justification = match check_tool_safety(
             ctx,
@@ -228,6 +238,7 @@ pub(crate) async fn run_tool_call_with_args(
             ctrl_c_state,
             ctrl_c_notify,
             default_placeholder,
+            lifecycle_hooks,
             skip_confirmations,
             vt_cfg,
             safety_approval_justification.as_deref(),
@@ -463,20 +474,22 @@ async fn check_tool_permission(
     ctrl_c_state: &Arc<CtrlCState>,
     ctrl_c_notify: &Arc<Notify>,
     default_placeholder: Option<String>,
+    lifecycle_hooks: Option<&LifecycleHookEngine>,
     skip_confirmations: bool,
     vt_cfg: Option<&VTCodeConfig>,
     safety_approval_justification: Option<&str>,
     hook_phase: Option<PreToolHookPhaseResult>,
 ) -> Result<Option<Value>, ToolExecutionStatus> {
     // PreToolUse hooks already ran upstream (see run_tool_call_with_args), so
-    // the permission flow must not run them again; it consumes the forwarded
-    // phase result instead.
+    // the permission flow consumes the forwarded phase result instead of
+    // running them again. The engine is still passed through for the later
+    // PermissionRequest hook phase.
     let permissions_ctx = build_tool_permissions_context(
         ctx,
         ctrl_c_state,
         ctrl_c_notify,
         default_placeholder,
-        None,
+        lifecycle_hooks,
         skip_confirmations,
         vt_cfg,
         safety_approval_justification,

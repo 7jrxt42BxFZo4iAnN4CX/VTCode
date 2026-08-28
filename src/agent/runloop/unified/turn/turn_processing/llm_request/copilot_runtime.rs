@@ -48,8 +48,8 @@ use crate::agent::runloop::unified::tool_pipeline::{
     validation::{SafetyValidationFailure, validate_tool_call_with_limit_prompt},
 };
 use crate::agent::runloop::unified::tool_routing::{
-    HitlDecision, ToolPermissionFlow, ToolPermissionsContext, ensure_tool_permission_with_call_id,
-    prompt_external_tool_permission,
+    HitlDecision, PreToolHookPhaseResult, ToolPermissionFlow, ToolPermissionsContext,
+    ensure_tool_permission_with_call_id, prompt_external_tool_permission,
 };
 use crate::agent::runloop::unified::turn::tool_outcomes::error_handling::tool_denial_diagnostic;
 use crate::agent::runloop::unified::turn::tool_outcomes::helpers::{
@@ -398,7 +398,33 @@ impl<'a> CopilotRuntimeHost<'a> {
         tool_name: &str,
         arguments: &Value,
     ) -> Result<Option<CopilotToolCallResponse>> {
+        // PreToolUse hooks run before the safety gateway so rewritten
+        // arguments are what every downstream check evaluates, mirroring the
+        // non-prevalidated pipeline path.
+        let hook_phase = match crate::agent::runloop::unified::tool_routing::pipeline_pre_tool_hooks(
+            self.lifecycle_hooks,
+            renderer,
+            tool_name,
+            arguments,
+            tool_call_id,
+        )
+        .await
+        {
+            Ok(phase) => phase,
+            Err(err) => {
+                return Ok(Some(denied_tool_response(tool_name, &format!("pre-tool hook phase failed: {err}"))));
+            }
+        };
+        let rewritten_arguments = match &hook_phase {
+            Some(PreToolHookPhaseResult::Deny) => {
+                return Ok(Some(denied_tool_response(tool_name, "Tool permission denied")));
+            }
+            Some(PreToolHookPhaseResult::Proceed { rewritten_args, .. }) => rewritten_args.clone(),
+            None => None,
+        };
+
         let invocation_id = invocation_id_from_call_id(tool_call_id);
+        let safety_args = rewritten_arguments.as_ref().unwrap_or(arguments);
         let safety_approval_justification = match validate_tool_call_with_limit_prompt(
             self.safety_validator,
             self.handle,
@@ -406,7 +432,7 @@ impl<'a> CopilotRuntimeHost<'a> {
             self.ctrl_c_state,
             self.ctrl_c_notify,
             tool_name,
-            arguments,
+            safety_args,
             invocation_id,
         )
         .await
@@ -433,14 +459,15 @@ impl<'a> CopilotRuntimeHost<'a> {
         match ensure_tool_permission_with_call_id(
             self.tool_permissions_context_with_safety(renderer, safety_approval_justification.as_deref()),
             tool_name,
-            Some(arguments),
+            Some(rewritten_arguments.as_ref().unwrap_or(arguments)),
             Some(tool_call_id),
-            None,
+            hook_phase,
         )
         .await?
         {
             ToolPermissionFlow::Approved { updated_args } => {
-                if let Some(updated) = updated_args {
+                let final_args = updated_args.or(rewritten_arguments);
+                if let Some(updated) = final_args {
                     self.pending_hook_rewritten_args.insert(tool_call_id.to_string(), updated);
                 }
             }

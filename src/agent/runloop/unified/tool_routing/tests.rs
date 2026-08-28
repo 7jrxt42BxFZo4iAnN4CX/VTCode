@@ -1,8 +1,8 @@
 use super::{
-    AutoPermissionRuntimeContext, SessionStats, ToolPermissionFlow, ToolPermissionsContext, approval_learning_target,
-    approval_persistence::shell_command_has_persisted_approval_prefix, approval_policy_rejects_prompt,
-    ensure_tool_permission, persist_segment_approval_cache_keys, persist_shell_approval_prefix_rule,
-    persisted_segment_approval_hit_key, tool_display_labels,
+    AutoPermissionRuntimeContext, PreToolHookPhaseResult, SessionStats, ToolPermissionFlow, ToolPermissionsContext,
+    approval_learning_target, approval_persistence::shell_command_has_persisted_approval_prefix,
+    approval_policy_rejects_prompt, ensure_tool_permission, persist_segment_approval_cache_keys,
+    persist_shell_approval_prefix_rule, persisted_segment_approval_hit_key, tool_display_labels,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -710,7 +710,13 @@ async fn pre_tool_use_hook_rewrite_survives_forwarded_hook_phase() {
                 matcher: Some(tools::READ_FILE.into()),
                 hooks: vec![HookCommandConfig {
                     kind: Default::default(),
-                    command: "exit 0".into(),
+                    // Fail closed on a second invocation: if the permission
+                    // flow re-ran the hook phase, this returns exit 2 (deny)
+                    // and the flow below would not be Approved.
+                    command: format!(
+                        "f=\"{}/marker\"; [ -f \"$f\" ] && exit 2; touch \"$f\"; exit 0",
+                        temp_dir.path().display()
+                    ),
                     timeout_seconds: None,
                 }],
             }],
@@ -759,7 +765,10 @@ async fn pre_tool_use_hook_rewrite_survives_forwarded_hook_phase() {
         tools::READ_FILE,
         Some(&json!({"path": "README.md"})),
         Some("call-forwarded"),
-        Some((Some(rewritten.clone()), false)),
+        Some(PreToolHookPhaseResult::Proceed {
+            rewritten_args: Some(rewritten.clone()),
+            requires_prompt: false,
+        }),
     )
     .await
     .expect("permission flow");

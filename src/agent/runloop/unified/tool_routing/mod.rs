@@ -474,7 +474,6 @@ async fn reuse_saved_approval(
     exact_shell_approval_target: Option<&shell_approval::ApprovalLearningTarget>,
     hook_rewritten_args: Option<Value>,
 ) -> Option<ToolPermissionFlow> {
-    let hook_rewritten_args = hook_rewritten_args.clone();
     if let Some(approval_key) = persisted_segment_approval_hit_key(tool_registry, normalized_tool_name, tool_args).await
     {
         tracing::debug!(
@@ -488,7 +487,7 @@ async fn reuse_saved_approval(
                 &[cache_key],
                 tool_permission_cache,
                 Some(PermissionGrant::Permanent),
-                hook_rewritten_args,
+                hook_rewritten_args.clone(),
             )
             .await,
         );
@@ -935,12 +934,21 @@ pub(crate) fn ensure_tool_permission_forwarded<'a, S: UiSession + ?Sized>(
     ensure_tool_permission_with_call_id(ctx, tool_name, tool_args, tool_call_id, hook_phase)
 }
 
-/// Outcome of the PreToolUse hook phase: rewritten args (if any) and whether
-/// a hook requested the mandatory prompt path.
-pub(crate) type PreToolHookPhaseResult = (Option<Value>, bool);
+/// Outcome of the PreToolUse hook phase.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum PreToolHookPhaseResult {
+    /// A hook denied the tool call; downstream checks must refuse it.
+    Deny,
+    /// Hooks allowed or did not decide; carries rewritten args (if any) and
+    /// whether a hook requested the mandatory prompt path.
+    Proceed {
+        rewritten_args: Option<Value>,
+        requires_prompt: bool,
+    },
+}
 
-/// Run the PreToolUse hook phase. Deny short-circuits to a no-rewrite
-/// result; callers must still consult the returned prompt requirement.
+/// Run the PreToolUse hook phase, surfacing Deny decisions explicitly so
+/// callers can refuse the tool call.
 pub(crate) async fn run_pre_tool_hook_phase(
     hooks: Option<&LifecycleHookEngine>,
     renderer: &mut AnsiRenderer,
@@ -957,7 +965,7 @@ pub(crate) async fn run_pre_tool_hook_phase(
                 rewritten = outcome.updated_input;
                 match outcome.decision {
                     PreToolHookDecision::Allow => {}
-                    PreToolHookDecision::Deny => return Ok((None, false)),
+                    PreToolHookDecision::Deny => return Ok(PreToolHookPhaseResult::Deny),
                     PreToolHookDecision::Ask => requires_prompt = true,
                     PreToolHookDecision::Continue => {}
                 }
@@ -967,7 +975,7 @@ pub(crate) async fn run_pre_tool_hook_phase(
             }
         }
     }
-    Ok((rewritten, requires_prompt))
+    Ok(PreToolHookPhaseResult::Proceed { rewritten_args: rewritten, requires_prompt })
 }
 
 /// Run the PreToolUse hook phase and return the phase result for
@@ -981,9 +989,8 @@ pub(crate) async fn pipeline_pre_tool_hooks(
     args_val: &Value,
     tool_call_id: &str,
 ) -> Result<Option<PreToolHookPhaseResult>> {
-    let (rewritten, requires_prompt) =
-        run_pre_tool_hook_phase(hooks, renderer, tool_name, Some(args_val), Some(tool_call_id)).await?;
-    Ok(Some((rewritten.or_else(|| Some(args_val.clone())), requires_prompt)))
+    let phase = run_pre_tool_hook_phase(hooks, renderer, tool_name, Some(args_val), Some(tool_call_id)).await?;
+    Ok(Some(phase))
 }
 
 /// Runs the full permission flow for a tool call.
@@ -1028,11 +1035,15 @@ pub(crate) async fn ensure_tool_permission_with_call_id<S: UiSession + ?Sized>(
 
     // PreToolUse hooks may rewrite tool input (e.g. wrapping shell commands in
     // an output compressor). When the pipeline already ran the hook phase
-    // upstream (for safety-gateway visibility), it passes the rewritten args
+    // upstream (for safety-gateway visibility), it passes the phase result
     // here; otherwise we run the phase ourselves.
-    let (hook_rewritten_args, hook_requires_prompt) = match pipeline_pre_tool_hook_result {
+    let phase = match pipeline_pre_tool_hook_result {
         Some(precomputed) => precomputed,
         None => run_pre_tool_hook_phase(hooks, renderer, tool_name, tool_args, tool_call_id).await?,
+    };
+    let (hook_rewritten_args, hook_requires_prompt) = match phase {
+        PreToolHookPhaseResult::Deny => return Ok(ToolPermissionFlow::Denied),
+        PreToolHookPhaseResult::Proceed { rewritten_args, requires_prompt } => (rewritten_args, requires_prompt),
     };
 
     let effective_args: Option<Value> = match (&hook_rewritten_args, tool_args) {

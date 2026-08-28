@@ -49,10 +49,11 @@ pub(crate) fn interpret_pre_tool(
             }
             return;
         } else if code != 0 {
-            // A failing process is not a trusted source for input rewrites;
-            // surface the warning but do not apply its output.
-            outcome.updated_input = None;
+            // A failing process is not a trusted source for input rewrites or
+            // decisions: surface the warning and ignore its output entirely.
+            // Early return also preserves a rewrite made by an earlier hook.
             handle_non_zero_exit(command, result, code, &mut outcome.messages, true);
+            return;
         }
     }
 
