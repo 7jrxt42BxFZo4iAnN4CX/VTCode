@@ -652,7 +652,7 @@ pub(super) async fn prompt_tool_permission<S: UiSession + ?Sized>(
 
     match outcome {
         OverlayWaitOutcome::Submitted(decision) => Ok(decision),
-        OverlayWaitOutcome::Cancelled => Ok(cancelled_prompt_decision(prompt_kind)),
+        OverlayWaitOutcome::Cancelled | OverlayWaitOutcome::Deferred => Ok(cancelled_prompt_decision(prompt_kind)),
         OverlayWaitOutcome::Interrupted => Ok(HitlDecision::Interrupt),
         OverlayWaitOutcome::Exit => Ok(HitlDecision::Exit),
     }
@@ -750,7 +750,7 @@ pub(super) async fn prompt_policy_denied_tool<S: UiSession + ?Sized>(
 
     match result {
         OverlayWaitOutcome::Submitted(decision) => Ok(decision),
-        OverlayWaitOutcome::Cancelled => Ok(HitlDecision::DeniedOnce),
+        OverlayWaitOutcome::Cancelled | OverlayWaitOutcome::Deferred => Ok(HitlDecision::DeniedOnce),
         OverlayWaitOutcome::Interrupted => Ok(HitlDecision::Interrupt),
         OverlayWaitOutcome::Exit => Ok(HitlDecision::Exit),
     }

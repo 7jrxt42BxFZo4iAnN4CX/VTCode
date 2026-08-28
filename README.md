@@ -27,6 +27,11 @@ terminal.
 > Local inference and some automation workflows are experimental, and
 > interfaces and configuration may change between releases.
 
+The WebMCP browser bridge is a first-class, opt-in VT Code integration. It
+connects a supported browser editor to the current VT Code session or to a
+bounded standalone workspace bridge while keeping pairing, origins, workspace
+roots, and write approval under terminal control.
+
 ## Contents
 
 - [Overview](#overview)
@@ -46,7 +51,7 @@ terminal.
 
 ### Runtime and coding
 
-- **Agent runtime**: interactive TUI, slash commands, streaming, `ask`/`exec` CLI, session resume, and review workflows
+- **Agent runtime**: interactive TUI, slash commands, streaming, `ask`/`exec` CLI, session resume, review workflows, and the authenticated WebMCP browser bridge
 - **Coding tools**: safe file operations, [ripgrep](https://github.com/BurntSushi/ripgrep) search, [ast-grep](https://ast-grep.github.io/) symbol maps, fuzzy discovery, code intelligence, project indexing, and terminal execution
 
 ### Extensibility and providers
@@ -56,7 +61,7 @@ terminal.
 
 ### Safety and protocols
 
-- **Safety**: restricted shell sandbox, tool guardrails, subprocess isolation, audit logging, and per-workspace approval before lifecycle hooks defined in workspace configuration (`vtcode.toml`, `.vtcode`, or agent-spec files) can run shell commands
+- **Safety**: restricted shell sandbox, tool guardrails, subprocess isolation, audit logging, per-workspace approval before lifecycle hooks defined in workspace configuration (`vtcode.toml`, `.vtcode`, or agent-spec files) can run shell commands, and terminal-owned WebMCP pairing/write boundaries
 - **Provider governance**: `providers_whitelist` restricts which LLM providers VT Code can access, preventing accidental data leakage to unapproved endpoints
 - **Protocols**: Open Responses, Agent2Agent (A2A), ATIF, and Anthropic Messages API
 
@@ -134,7 +139,14 @@ vtcode ask "explain Rc vs Arc" # one-shot question
 vtcode exec "refactor main.rs" # headless task with full tool access
 vtcode review                  # review uncommitted changes
 vtcode update                  # self-update
+vtcode webmcp serve --origin http://localhost:5173 --allowed-root /path/to/project
 ```
+
+To connect a browser editor to the current interactive session, start `vtcode`
+in the target workspace and run `/webmcp pair http://localhost:5173` in the
+TUI. For workspace-only browser access, use the `vtcode webmcp serve` command
+shown above. Both paths are disabled until explicitly started and keep browser
+writes behind the existing VT Code terminal or full-auto policy.
 
 ## Documentation
 
@@ -151,6 +163,7 @@ guide, integration guide, or reference.
 
 - [**Interactive TUI**](./docs/user-guide/interactive-mode.md): primary agents, slash commands (`/model`, `/review`, `/mcp`, `/skills`, `/theme`, `/compact`)
 - [**CLI commands**](./docs/user-guide/commands.md): command reference for interactive, headless, review, and automation workflows
+- [**WebMCP browser bridge**](./docs/user-guide/webmcp.md): connect a supported browser editor to an active VT Code session or a bounded standalone workspace bridge
 - [**Full automation**](./docs/guides/full-automation.md): `--full-auto` CLI, plan-build-evaluate harness, subagents, and scheduled tasks
 - [**Providers**](./docs/providers/PROVIDER_GUIDES.md): setup guides for all built-in providers
 - [**Configuration**](./docs/config/CONFIG_FIELD_REFERENCE.md): `vtcode.toml`, tool config, and lifecycle hooks

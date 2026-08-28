@@ -8,7 +8,6 @@
 - Display: `ansi/`, `colors/`, `styling/`, `diff_preview/`, `color256_theme/`, `color_policy/`; LLM: `llm/`.
 - Filesystem: `fs/`, `paths/`, `vtcode_paths/`, `diff/`, `diff_paths/`, `vtcodegitignore/`, `workspace_snapshot/`; text: `tokens/`, `unicode/`, `sanitizer/`, `slug/`, `formatting/`.
 - Async: `async_utils/`, `thread_safety/`; interjection: `interjection/`; UI protocol: `ui_protocol/` (including global activity state); other: `editor/`, `http/`, `project/`, `validation/`, `serde_helpers/`, `env_lock/`.
-
 ## Rules
 
 - Re-export key types from `lib.rs`: `WorkspacePaths`, `TelemetrySink`, `ErrorFormatter`, `BackendKind`, etc.
@@ -26,5 +25,5 @@
 - `env_lock/` is macOS-specific env mutex — used by `vtcode` binary, not by library crates; `startup_trace/` is an opt-in pre-tracing phase recorder whose `record_duration` calls must stay silent unless `VTCODE_STARTUP_TRACE=1`; `sanitizer::StreamingSecretRedactor` carries a bounded suffix across pipe/PTY chunks, so use it for streamed spool writes.
 - `utils/` contains `calculate_sha256()` used by `vtcode-indexer`.
 - `formatting/` owns the canonical middle-truncation helpers `truncate_middle` (head+tail, control chars sanitized) and `truncate_path_middle` (separator-aware, for path display). Downstream crates delegate here — do not re-implement per crate.
-- `ui_protocol::SessionSurface` defaults to `Inline`; callers requiring alternate-screen detection must request `Auto` or `Alternate` explicitly.
+- `ui_protocol::SessionSurface` defaults to `Inline`; callers requiring alternate-screen detection must request `Auto` or `Alternate` explicitly. `diff::compute_diff` preserves CR, CRLF, and LF line records and derives hunk starts from the first represented record; downstream formatters own newline normalization and EOF markers.
 - `ui_protocol::tool_summary` contains renderer-independent compact summary data and grouping; keep fingerprints, statuses, and output boundaries independent of TUI/runtime types. `MessageMetadata.intent_id` is optional wire metadata for durable steering recovery; preserve it through message serialization.

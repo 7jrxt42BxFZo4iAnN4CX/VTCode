@@ -5,6 +5,7 @@ use vtcode_ui::tui::app::SubmittedInput;
 pub(crate) enum InlineLoopAction {
     Continue,
     Submit(SubmittedInput),
+    SubmitPrompt(SubmittedInput),
     SubmitQueued(super::queue::QueuedInput),
     CyclePrimaryAgent,
     CyclePrimaryAgentPrevious,

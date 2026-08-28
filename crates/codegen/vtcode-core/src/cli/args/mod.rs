@@ -22,6 +22,7 @@ mod schema;
 mod secret;
 mod session_store;
 mod skills;
+mod webmcp;
 
 pub use acp::AgentClientProtocolTarget;
 pub use ask::{AskCommandOptions, AskOutputFormat};
@@ -40,6 +41,7 @@ pub use schema::{SchemaCommands, SchemaMode, SchemaOutputFormat};
 pub use secret::{MigrateArgs, SecretArgs, SecretProvider, SecretSubcommand};
 pub use session_store::SessionStoreCommand;
 pub use skills::{SkillsRefSubcommand, SkillsSubcommand};
+pub use webmcp::{WebmcpCommand, WebmcpPairArgs, WebmcpServeArgs};
 
 #[derive(Parser, Debug, Clone)]
 pub struct Cli {
@@ -650,6 +652,13 @@ pub enum Commands {
     A2a {
         #[command(subcommand)]
         command: super::super::a2a::cli::A2aCommands,
+    },
+
+    /// Authenticated browser editor bridge
+    #[command(name = "webmcp")]
+    Webmcp {
+        #[command(subcommand)]
+        command: WebmcpCommand,
     },
 
     /// Proxy to the official Codex app-server

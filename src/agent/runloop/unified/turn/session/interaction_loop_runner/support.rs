@@ -63,6 +63,7 @@ pub(super) struct LiveIdeContextUpdate {
 pub(super) enum InlineLoopActionResolution {
     ContinueLoop,
     Submit(SubmittedInput),
+    SubmitPrompt(SubmittedInput),
     Outcome(InteractionOutcome),
 }
 
@@ -791,6 +792,7 @@ pub(super) async fn resolve_inline_loop_action(
     let resolution = match inline_action {
         InlineLoopAction::Continue => InlineLoopActionResolution::ContinueLoop,
         InlineLoopAction::Submit(text) => InlineLoopActionResolution::Submit(text),
+        InlineLoopAction::SubmitPrompt(text) => InlineLoopActionResolution::SubmitPrompt(text),
         InlineLoopAction::SubmitQueued(queued) => {
             if let Some(primary_agent) = queued.primary_agent {
                 handle_select_primary_agent(ctx, state, Some(primary_agent)).await?;

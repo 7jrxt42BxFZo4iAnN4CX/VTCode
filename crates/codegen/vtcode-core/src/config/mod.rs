@@ -62,6 +62,7 @@ pub use telemetry::TelemetryConfig;
 pub use types::{ReasoningEffortLevel, SystemPromptMode, ToolDocumentationMode, UiSurfacePreference, VerbosityLevel};
 pub use validation::{ValidationResult, validate_config, validate_model_exists};
 pub use validator::ConfigValidator;
+pub use vtcode_config::WebmcpConfig;
 pub use vtcode_config::root::{
     KeyboardProtocolConfig, KeyboardProtocolMode, LayoutModeOverride, PtyConfig, ReasoningDisplayMode, ToolDisplayMode,
     ToolOutputMode, UiConfig, UiDisplayMode,

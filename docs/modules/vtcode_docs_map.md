@@ -186,6 +186,11 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Summary, Auto-Allowed Commands, Tool Policies, Key Safety Features, Dangerous Operations (Blocked)
   - **User Questions**: "What can you tell me about VT Code Execution Policy?", "How does Summary work?", "How does Auto-Allowed Commands work?"
 
+- **File**: `docs/development/webmcp.md`
+  - **Content**: WebMCP bridge development guide
+  - **Topics**: Boundaries, WebMCP API versus the VT Code bridge, Browser tool contracts and evals, Transport and pairing, Running the headless bridge
+  - **User Questions**: "What can you tell me about WebMCP bridge development guide?", "How does Boundaries work?", "How does WebMCP API versus the VT Code bridge work?"
+
 - **File**: `docs/development/model-profiles.md`
   - **Content**: model-profiles.md
   - **User Questions**: "What can you tell me about model-profiles.md?"
@@ -197,7 +202,7 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/development/vtcode-binary-gotchas.md`
   - **Content**: vtcode Binary Gotchas
-  - **Topics**: Startup, updates, and allocation, Tool-budget and recovery contracts, Request assembly and planning, Startup benchmark guidance
+  - **Topics**: Startup, updates, and allocation, Tool-budget and recovery contracts, WebMCP bridge boundary, Request assembly and planning, Startup benchmark guidance
   - **User Questions**: "What can you tell me about vtcode Binary Gotchas?", "How does Startup, updates, and allocation work?", "How does Tool-budget and recovery contracts work?"
 
 - **File**: `docs/development/vtcode-crate-audit.md`
@@ -288,6 +293,15 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Content**: VT Code Platform Compatibility Matrix
   - **Topics**: Quick Reference, Minimum Supported Rust Version (MSRV), Platform-Specific Features, LLM Provider Compatibility, Feature Flags Matrix
   - **User Questions**: "What can you tell me about VT Code Platform Compatibility Matrix?", "How does Quick Reference work?", "How does Minimum Supported Rust Version (MSRV) work?"
+
+- **File**: `docs/user-guide/webmcp.md`
+  - **Content**: WebMCP Browser Bridge User Guide
+  - **Topics**: Two integration paths, Evaluate the browser tool surface, Run the reference editor without a bridge, Connect to a real workspace, Edit, review, and apply in headless mode
+  - **User Questions**: "What can you tell me about WebMCP Browser Bridge User Guide?", "How does Two integration paths work?", "How does Evaluate the browser tool surface work?"
+
+- **File**: `docs/user-guide/webmcp-demo.md`
+  - **Content**: WebMCP browser bridge guide (legacy link)
+  - **User Questions**: "What can you tell me about WebMCP browser bridge guide (legacy link)?"
 
 ### Integrations & Tooling
 

@@ -146,7 +146,8 @@ vtcode schema tools --format ndjson --name code_search
 ```
 
 Run every case as both a cold and warm sample. Cold means copying the
-executable to a new temporary path for each launch, then timing that copy;
+executable to a new temporary path for each launch, then timing the launch of
+that freshly copied executable;
 this approximates fresh executable loader/relocation work. Warm means timing
 repeated launches of the same executable after warm-up. Cold does not mean
 flushing the operating system's page cache: the harness never flushes or

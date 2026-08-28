@@ -98,6 +98,11 @@ impl CommandTool {
             path_env::compute_extra_search_paths(&commands_config.extra_path_entries, &self.workspace_root);
     }
 
+    /// Check the configured command policy for an argv request.
+    pub fn policy_allows(&self, command: &[String]) -> bool {
+        self.policy.allows(command)
+    }
+
     #[cfg_attr(
         not(test),
         expect(

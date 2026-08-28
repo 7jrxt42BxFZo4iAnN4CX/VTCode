@@ -44,7 +44,7 @@ apple-native-keyring-store = { version = "1.0.0", features = ["keychain"] }
 windows-native-keyring-store = "1.1.0"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", features = ["user"] }
+nix = { workspace = true, features = ["user"] }
 
 [features]
 default = []

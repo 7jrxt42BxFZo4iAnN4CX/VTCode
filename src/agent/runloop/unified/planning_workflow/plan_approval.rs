@@ -430,9 +430,10 @@ pub(crate) async fn execute_plan_confirmation_with_context(
 
     Ok(match outcome {
         OverlayWaitOutcome::Submitted(outcome) => outcome,
-        OverlayWaitOutcome::Cancelled | OverlayWaitOutcome::Interrupted | OverlayWaitOutcome::Exit => {
-            PlanConfirmationOutcome::Cancel
-        }
+        OverlayWaitOutcome::Cancelled
+        | OverlayWaitOutcome::Interrupted
+        | OverlayWaitOutcome::Deferred
+        | OverlayWaitOutcome::Exit => PlanConfirmationOutcome::Cancel,
     })
 }
 

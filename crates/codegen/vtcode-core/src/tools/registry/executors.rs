@@ -310,6 +310,13 @@ impl ToolRegistry {
             prepare_exec_command(payload, &shell_program, login_shell, command, auto_raw_command);
         let is_git_diff = is_git_diff_command(&prepared_command.requested_command);
 
+        if !self.inventory.command_policy_allows(&prepared_command.requested_command) {
+            return Err(anyhow!(
+                "command '{}' is not permitted by the execution policy",
+                prepared_command.requested_command_display
+            ));
+        }
+
         let sandbox_request = self.resolve_exec_sandbox_request(payload).await?;
         let output_config = exec_run_output_config(payload, &prepared_command.display_command);
 

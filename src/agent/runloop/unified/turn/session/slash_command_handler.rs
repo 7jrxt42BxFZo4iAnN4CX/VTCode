@@ -88,6 +88,8 @@ pub(crate) async fn handle_input_commands(
                         ctrl_c_state: ctx.ctrl_c_state,
                         ctrl_c_notify: ctx.ctrl_c_notify,
                         full_auto: ctx.full_auto,
+                        webmcp_prompt_sender: ctx.webmcp_prompt_sender,
+                        webmcp_bridge: ctx.webmcp_bridge,
                         loaded_skills: ctx.loaded_skills,
                         checkpoint_manager: ctx.checkpoint_manager,
                         lifecycle_hooks: ctx.lifecycle_hooks.as_ref(),

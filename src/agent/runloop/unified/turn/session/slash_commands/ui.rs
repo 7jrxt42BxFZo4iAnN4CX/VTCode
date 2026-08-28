@@ -57,7 +57,10 @@ pub(crate) async fn wait_for_list_modal_selection(ctx: &mut SlashCommandContext<
 
     match outcome {
         OverlayWaitOutcome::Submitted(selection) => Some(selection),
-        OverlayWaitOutcome::Cancelled | OverlayWaitOutcome::Interrupted | OverlayWaitOutcome::Exit => None,
+        OverlayWaitOutcome::Cancelled
+        | OverlayWaitOutcome::Interrupted
+        | OverlayWaitOutcome::Deferred
+        | OverlayWaitOutcome::Exit => None,
     }
 }
 

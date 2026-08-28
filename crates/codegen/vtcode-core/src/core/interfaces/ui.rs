@@ -11,6 +11,14 @@ pub trait UiSession {
         self.inline_handle().clone()
     }
 
+    fn defer_event(&self, event: InlineEvent) -> anyhow::Result<()> {
+        self.inline_handle().defer_event(event)
+    }
+
+    fn has_deferred_event(&self) -> bool {
+        self.inline_handle().has_deferred_event()
+    }
+
     async fn next_event(&mut self) -> Option<InlineEvent>;
 
     fn request_redraw(&self) {
@@ -29,6 +37,6 @@ impl UiSession for InlineSession {
     }
 
     async fn next_event(&mut self) -> Option<InlineEvent> {
-        self.events.recv().await
+        InlineSession::next_event(self).await
     }
 }

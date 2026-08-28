@@ -24,6 +24,7 @@ use crate::agent::runloop::unified::session_setup::IdeContextBridge;
 use crate::agent::runloop::unified::state::{CtrlCState, SessionStats};
 use crate::agent::runloop::unified::status_line::InputStatusState;
 use crate::agent::runloop::unified::tool_catalog::ToolCatalogState;
+use crate::agent::runloop::unified::webmcp::ActiveWebmcpBridge;
 use crate::agent::runloop::unified::workspace_links::LinkedDirectory;
 use crate::agent::runloop::welcome::SessionBootstrap;
 use vtcode_core::utils::ansi::AnsiRenderer;
@@ -72,6 +73,8 @@ pub(crate) struct SlashCommandContext<'a> {
     pub(crate) ctrl_c_state: &'a Arc<CtrlCState>,
     pub(crate) ctrl_c_notify: &'a Arc<Notify>,
     pub(crate) full_auto: bool,
+    pub(crate) webmcp_prompt_sender: &'a tokio::sync::mpsc::Sender<String>,
+    pub(crate) webmcp_bridge: &'a mut Option<ActiveWebmcpBridge>,
     pub(crate) loaded_skills: &'a Arc<RwLock<hashbrown::HashMap<String, vtcode_core::skills::types::Skill>>>,
     pub(crate) checkpoint_manager: Option<&'a vtcode_core::core::agent::snapshots::SnapshotManager>,
     pub(crate) lifecycle_hooks: Option<&'a LifecycleHookEngine>,
@@ -111,6 +114,8 @@ impl<'a> SlashCommandContext<'a> {
             ctrl_c_state: self.ctrl_c_state,
             ctrl_c_notify: self.ctrl_c_notify,
             full_auto: self.full_auto,
+            webmcp_prompt_sender: self.webmcp_prompt_sender,
+            webmcp_bridge: self.webmcp_bridge,
             loaded_skills: self.loaded_skills,
             checkpoint_manager: self.checkpoint_manager,
             lifecycle_hooks: self.lifecycle_hooks,

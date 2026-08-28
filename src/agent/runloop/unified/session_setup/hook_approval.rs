@@ -107,8 +107,9 @@ pub(crate) async fn prompt_workspace_hook_approval<S: UiSession + ?Sized>(
 
     Ok(match outcome {
         OverlayWaitOutcome::Submitted(decision) => decision,
-        OverlayWaitOutcome::Cancelled | OverlayWaitOutcome::Interrupted | OverlayWaitOutcome::Exit => {
-            HookApprovalDecision::Denied
-        }
+        OverlayWaitOutcome::Cancelled
+        | OverlayWaitOutcome::Interrupted
+        | OverlayWaitOutcome::Deferred
+        | OverlayWaitOutcome::Exit => HookApprovalDecision::Denied,
     })
 }

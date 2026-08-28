@@ -56,6 +56,15 @@ impl TranscriptReflowCache {
         cached.revision != current_revision
     }
 
+    /// Invalidates one cached message without dropping unrelated transcript
+    /// entries. This is used when grouped message reflow depends on a later
+    /// line that has not changed the group's head revision.
+    pub(crate) fn invalidate_message(&mut self, index: usize) {
+        if let Some(message) = self.messages.get_mut(index) {
+            message.revision = 0;
+        }
+    }
+
     /// Updates a cached message with new reflowed content
     pub fn update_message(&mut self, index: usize, revision: u64, lines: Vec<TranscriptLine>) {
         // Ensure we have enough space in the messages vector

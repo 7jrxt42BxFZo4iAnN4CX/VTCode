@@ -27,6 +27,7 @@ mod sessions;
 pub(crate) mod skills_index;
 mod snapshots;
 mod trajectory;
+mod webmcp;
 
 pub mod analyze;
 pub mod bench_allocator;

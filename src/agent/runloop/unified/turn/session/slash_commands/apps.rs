@@ -135,7 +135,7 @@ pub(crate) async fn handle_open_donate_links(ctx: SlashCommandContext<'_>) -> Re
         OverlayWaitOutcome::Exit => {
             return Ok(SlashCommandControl::BreakWithReason(SessionEndReason::Exit));
         }
-        OverlayWaitOutcome::Cancelled | OverlayWaitOutcome::Interrupted => {
+        OverlayWaitOutcome::Cancelled | OverlayWaitOutcome::Interrupted | OverlayWaitOutcome::Deferred => {
             ctx.renderer.line(MessageStyle::Info, "Cancelled opening support link.")?;
         }
     }

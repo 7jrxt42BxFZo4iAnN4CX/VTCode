@@ -73,7 +73,8 @@ pub(crate) async fn request_external_url_guard(
         OverlayWaitOutcome::Submitted(UrlGuardDecision::Approve) => ExternalUrlGuardOutcome::Approved,
         OverlayWaitOutcome::Submitted(UrlGuardDecision::Deny)
         | OverlayWaitOutcome::Cancelled
-        | OverlayWaitOutcome::Interrupted => ExternalUrlGuardOutcome::Cancelled,
+        | OverlayWaitOutcome::Interrupted
+        | OverlayWaitOutcome::Deferred => ExternalUrlGuardOutcome::Cancelled,
         OverlayWaitOutcome::Exit => ExternalUrlGuardOutcome::Exit,
     })
 }

@@ -1,0 +1,42 @@
+[package]
+name = "vtcode-webmcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors = ["Vinh Nguyen <vinhnguyen2308@gmail.com>"]
+description = "Authenticated WebMCP bridge and workspace adapter for VT Code"
+license.workspace = true
+readme = "README.md"
+homepage = "https://github.com/vinhnx/vtcode"
+repository = "https://github.com/vinhnx/vtcode"
+documentation = "https://docs.rs/vtcode-webmcp"
+keywords = ["vtcode", "webmcp", "websocket", "workspace", "security"]
+categories = ["development-tools", "web-programming"]
+
+[dependencies]
+async-trait = { workspace = true }
+axum = { workspace = true, features = ["ws"] }
+futures = { workspace = true }
+hashbrown = { workspace = true }
+libc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+shell-words = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+tracing = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+vtcode-commons = { workspace = true }
+vtcode-exec-events = { workspace = true }
+vtcode-safety = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true, features = ["fs"] }
+
+[lints]
+workspace = true

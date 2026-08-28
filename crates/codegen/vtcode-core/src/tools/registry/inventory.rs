@@ -143,6 +143,10 @@ impl ToolInventory {
         self.command_tool.write().update_commands_config(commands_config);
     }
 
+    pub(super) fn command_policy_allows(&self, command: &[String]) -> bool {
+        self.command_tool.read().policy_allows(command)
+    }
+
     pub fn grep_file_manager(&self) -> Arc<GrepSearchManager> {
         self.grep_search.clone()
     }
