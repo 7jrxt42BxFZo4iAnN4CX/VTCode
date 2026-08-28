@@ -269,9 +269,11 @@ pub(crate) async fn run_tool_call_with_args(
         {
             Ok(Some(updated_args)) => {
                 // A PermissionRequest hook may supply its own rewrite via
-                // `updated_input`; validate it against the tool schema just
-                // like a PreToolUse rewrite so no rewritten arguments reach
-                // execution without admission checks.
+                // `updated_input`; it replaces the arguments the safety
+                // gateway, policy checks, approvals, and argument-dependent
+                // guards evaluated. Validate the schema and re-run the safety
+                // gateway against the final arguments so the replacement does
+                // not execute under decisions made for earlier arguments.
                 if let Err(err) = ctx.tool_registry.preflight_validate_harness_call(name, &updated_args) {
                     return Ok(finish_with_status(
                         ToolExecutionStatus::Failure {
@@ -284,7 +286,21 @@ pub(crate) async fn run_tool_call_with_args(
                         effective_args.as_ref(),
                     ));
                 }
+                let rewritten_differ = effective_args.as_ref() != &updated_args;
                 effective_args = std::borrow::Cow::Owned(updated_args);
+                if rewritten_differ
+                    && let Err(safety_failure) = check_tool_safety(
+                        ctx,
+                        name,
+                        effective_args.as_ref(),
+                        safety_invocation_id,
+                        ctrl_c_state,
+                        ctrl_c_notify,
+                    )
+                    .await
+                {
+                    return Ok(finish_with_status(safety_failure, false, effective_args.as_ref()));
+                }
             }
             Ok(None) => {}
             Err(permission_failure) => {

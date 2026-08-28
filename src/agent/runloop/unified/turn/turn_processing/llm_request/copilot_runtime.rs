@@ -482,16 +482,59 @@ impl<'a> CopilotRuntimeHost<'a> {
         .await?
         {
             ToolPermissionFlow::Approved { updated_args } => {
-                let final_args = updated_args.or(rewritten_arguments);
+                let final_args = updated_args.or_else(|| rewritten_arguments.clone());
                 if let Some(updated) = final_args {
                     // A PermissionRequest hook may supply its own rewrite via
-                    // `updated_input`; validate it so no rewritten arguments
-                    // reach execution without admission checks.
+                    // `updated_input`; validate the schema and re-run the
+                    // safety gateway against the final arguments so the
+                    // replacement does not execute under decisions made for
+                    // earlier arguments.
                     if let Err(err) = self.tool_registry.preflight_validate_harness_call(tool_name, &updated) {
                         return Ok(Some(denied_tool_response(
                             tool_name,
                             &format!("PermissionRequest hook produced invalid arguments: {err}"),
                         )));
+                    }
+                    if safety_args != &updated {
+                        let invocation_id = invocation_id_from_call_id(tool_call_id);
+                        match validate_tool_call_with_limit_prompt(
+                            self.safety_validator,
+                            self.handle,
+                            self.session,
+                            self.ctrl_c_state,
+                            self.ctrl_c_notify,
+                            tool_name,
+                            &updated,
+                            invocation_id,
+                        )
+                        .await
+                        {
+                            Ok(()) => {}
+                            Err(SafetyValidationFailure::SessionLimitNotIncreased) => {
+                                return Ok(Some(denied_tool_response(
+                                    tool_name,
+                                    "session tool limit reached and not increased by user",
+                                )));
+                            }
+                            Err(SafetyValidationFailure::SessionLimitPromptFailed(error)) => {
+                                return Ok(Some(denied_tool_response(
+                                    tool_name,
+                                    &format!("failed while requesting a session tool-limit increase: {error}"),
+                                )));
+                            }
+                            Err(SafetyValidationFailure::NeedsApproval(_)) => {
+                                // The user already approved the final arguments
+                                // in the PermissionRequest prompt; the gateway's
+                                // NeedsApproval for the rewritten command is
+                                // subsumed by that human approval.
+                            }
+                            Err(SafetyValidationFailure::Validation(error)) => {
+                                return Ok(Some(denied_tool_response(
+                                    tool_name,
+                                    &format!("safety validation failed: {error}"),
+                                )));
+                            }
+                        }
                     }
                     self.pending_hook_rewritten_args.insert(CompactStr::from(tool_call_id), updated);
                 }

@@ -886,8 +886,11 @@ pub(crate) async fn validate_tool_call<'a>(
         Ok(ToolPermissionFlow::Approved { updated_args }) => {
             if let Some(updated_args) = updated_args {
                 // A PermissionRequest hook may supply its own rewrite via
-                // `updated_input`; validate it against the tool schema so no
-                // rewritten arguments reach execution without admission checks.
+                // `updated_input`; it replaces the arguments the safety
+                // gateway and argument-dependent guards evaluated. Validate
+                // the schema and re-run the safety gateway against the final
+                // arguments so the replacement does not execute under
+                // decisions made for earlier arguments.
                 if let Err(err) = ctx
                     .tool_registry
                     .preflight_validate_harness_call(&canonical_tool_name, &updated_args)
@@ -905,7 +908,17 @@ pub(crate) async fn validate_tool_call<'a>(
                     );
                     return Ok(ValidationResult::Blocked);
                 }
+                let rewritten_differ = *effective_args != updated_args;
                 prepared.effective_args = updated_args;
+                if rewritten_differ
+                    && let Some((outcome, _)) =
+                        run_safety_validation_loop(ctx, tool_call_id, &canonical_tool_name, &prepared.effective_args)
+                            .await?
+                    && matches!(outcome, ValidationResult::Blocked)
+                {
+                    ctx.harness_state.record_denied_tool_call();
+                    return Ok(outcome);
+                }
             }
             if canonical_tool_name == tool_names::START_PLANNING {
                 ctx.harness_state.clear_task_tracker_create_signatures();
