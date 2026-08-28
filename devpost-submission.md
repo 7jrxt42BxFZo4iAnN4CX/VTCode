@@ -3,13 +3,13 @@
 ### ⏳ Not submitted yet
 Nothing has been sent to Devpost.
 
-This is a working draft for the WebMCP Challenge. Personal form answers,
-the final project title, a public demo video, and a real browser-agent pass
-still need participant confirmation before submission.
+This is a working draft for the existing Devpost project `VT`. Personal form
+answers, a public demo video, and a real browser-agent pass still need
+participant confirmation before the live draft is updated or submitted.
 
 ## Submission metadata
 
-- **Working title — confirm before submission:** `VT Code WebMCP editor`
+- **Project title from the current Devpost draft:** `VT`
 - **One-line summary:** A browser editor where WebMCP agents inspect a
   workspace, stage one digest-checked draft edit, and hand it to VT Code for
   human-reviewed approval.
@@ -24,7 +24,7 @@ still need participant confirmation before submission.
 
 ### What it is
 
-VT Code WebMCP editor is an IDE-shaped browser workspace for safe
+VT is an IDE-shaped browser workspace for safe
 human-and-agent collaboration. A visitor can explore a small in-memory project
 without credentials, open files in CodeMirror, edit a draft, inspect a unified
 diff, and use the browser's WebMCP surface to ask an agent to perform the same
