@@ -687,6 +687,87 @@ async fn pre_tool_use_hook_rewrite_reaches_approved_args() {
 }
 
 #[tokio::test]
+async fn pre_tool_use_hook_rewrite_survives_forwarded_hook_phase() {
+    use vtcode_core::config::{HookCommandConfig, HookGroupConfig, HooksConfig, LifecycleHooksConfig};
+    use vtcode_core::hooks::LifecycleHookEngine;
+
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    isolate_workspace_config(temp_dir.path());
+    let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;
+    let mut session = create_headless_session();
+    let handle = session.clone_inline_handle();
+    let mut renderer = AnsiRenderer::with_inline_ui(handle.clone(), Default::default());
+    let ctrl_c_state = Arc::new(crate::agent::runloop::unified::state::CtrlCState::new());
+    let ctrl_c_notify = Arc::new(Notify::new());
+    let permissions = PermissionsConfig {
+        allow: vec![tools::READ_FILE.to_string()],
+        ..PermissionsConfig::default()
+    };
+
+    let hooks_config = HooksConfig {
+        lifecycle: LifecycleHooksConfig {
+            pre_tool_use: vec![HookGroupConfig {
+                matcher: Some(tools::READ_FILE.into()),
+                hooks: vec![HookCommandConfig {
+                    kind: Default::default(),
+                    command: "exit 0".into(),
+                    timeout_seconds: None,
+                }],
+            }],
+            ..Default::default()
+        },
+    };
+    let hooks = LifecycleHookEngine::new_with_session_gated(
+        temp_dir.path().to_path_buf(),
+        &hooks_config,
+        vtcode_core::hooks::SessionStartTrigger::Startup,
+        "test-session",
+        false,
+    )
+    .expect("hook engine")
+    .unwrap();
+
+    let rewritten = json!({"path": "docs/index.md"});
+    let flow = crate::agent::runloop::unified::tool_routing::ensure_tool_permission_forwarded(
+        ToolPermissionsContext {
+            tool_registry: &registry,
+            renderer: &mut renderer,
+            handle: &handle,
+            session: &mut session,
+            default_placeholder: None,
+            ctrl_c_state: &ctrl_c_state,
+            ctrl_c_notify: &ctrl_c_notify,
+            // The pipeline already ran the hook phase upstream; hooks here
+            // must not run again (command above would double-fire).
+            hooks: Some(&hooks),
+            justification: None,
+            approval_recorder: None,
+            decision_ledger: None,
+            tool_permission_cache: None,
+            permissions_state: None,
+            active_agent_permissions: None,
+            hitl_notification_bell: false,
+            approval_policy: AskForApproval::OnRequest,
+            skip_confirmations: false,
+            permissions_config: Some(&permissions),
+            auto_permission_runtime: None,
+            active_thread_label: None,
+            session_stats: None,
+            safety_approval_justification: None,
+            harness_emitter: None,
+        },
+        tools::READ_FILE,
+        Some(&json!({"path": "README.md"})),
+        Some("call-forwarded"),
+        Some((Some(rewritten.clone()), false)),
+    )
+    .await
+    .expect("permission flow");
+
+    assert_eq!(flow, ToolPermissionFlow::Approved { updated_args: Some(rewritten) });
+}
+
+#[tokio::test]
 async fn active_agent_auto_rule_enters_classifier_review() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let registry = ToolRegistry::new(temp_dir.path().to_path_buf()).await;

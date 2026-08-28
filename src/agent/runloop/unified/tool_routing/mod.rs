@@ -474,6 +474,7 @@ async fn reuse_saved_approval(
     exact_shell_approval_target: Option<&shell_approval::ApprovalLearningTarget>,
     hook_rewritten_args: Option<Value>,
 ) -> Option<ToolPermissionFlow> {
+    let hook_rewritten_args = hook_rewritten_args.clone();
     if let Some(approval_key) = persisted_segment_approval_hit_key(tool_registry, normalized_tool_name, tool_args).await
     {
         tracing::debug!(
@@ -487,7 +488,7 @@ async fn reuse_saved_approval(
                 &[cache_key],
                 tool_permission_cache,
                 Some(PermissionGrant::Permanent),
-                None,
+                hook_rewritten_args,
             )
             .await,
         );
@@ -507,7 +508,7 @@ async fn reuse_saved_approval(
                 &[cache_key],
                 tool_permission_cache,
                 Some(PermissionGrant::Permanent),
-                None,
+                hook_rewritten_args,
             )
             .await,
         );
@@ -920,14 +921,84 @@ pub(crate) fn ensure_tool_permission<'a, S: UiSession + ?Sized>(
     tool_name: &'a str,
     tool_args: Option<&'a Value>,
 ) -> impl Future<Output = Result<ToolPermissionFlow>> + 'a {
-    ensure_tool_permission_with_call_id(ctx, tool_name, tool_args, None)
+    ensure_tool_permission_with_call_id(ctx, tool_name, tool_args, None, None)
 }
 
+#[cfg(test)]
+pub(crate) fn ensure_tool_permission_forwarded<'a, S: UiSession + ?Sized>(
+    ctx: ToolPermissionsContext<'a, S>,
+    tool_name: &'a str,
+    tool_args: Option<&'a Value>,
+    tool_call_id: Option<&'a str>,
+    hook_phase: Option<PreToolHookPhaseResult>,
+) -> impl Future<Output = Result<ToolPermissionFlow>> + 'a {
+    ensure_tool_permission_with_call_id(ctx, tool_name, tool_args, tool_call_id, hook_phase)
+}
+
+/// Outcome of the PreToolUse hook phase: rewritten args (if any) and whether
+/// a hook requested the mandatory prompt path.
+pub(crate) type PreToolHookPhaseResult = (Option<Value>, bool);
+
+/// Run the PreToolUse hook phase. Deny short-circuits to a no-rewrite
+/// result; callers must still consult the returned prompt requirement.
+pub(crate) async fn run_pre_tool_hook_phase(
+    hooks: Option<&LifecycleHookEngine>,
+    renderer: &mut AnsiRenderer,
+    tool_name: &str,
+    tool_args: Option<&Value>,
+    tool_call_id: Option<&str>,
+) -> Result<PreToolHookPhaseResult> {
+    let mut rewritten: Option<Value> = None;
+    let mut requires_prompt = false;
+    if let Some(hooks) = hooks {
+        match hooks.run_pre_tool_use(tool_name, tool_args, tool_call_id).await {
+            Ok(outcome) => {
+                render_hook_messages(renderer, &outcome.messages)?;
+                rewritten = outcome.updated_input;
+                match outcome.decision {
+                    PreToolHookDecision::Allow => {}
+                    PreToolHookDecision::Deny => return Ok((None, false)),
+                    PreToolHookDecision::Ask => requires_prompt = true,
+                    PreToolHookDecision::Continue => {}
+                }
+            }
+            Err(err) => {
+                renderer.line(MessageStyle::Error, &format!("Failed to run pre-tool hooks: {err}"))?;
+            }
+        }
+    }
+    Ok((rewritten, requires_prompt))
+}
+
+/// Run the PreToolUse hook phase and return the phase result for
+/// [`ensure_tool_permission_with_call_id`]. The tool pipeline calls this
+/// before safety validation so the gateway evaluates rewritten arguments,
+/// then forwards the result into the permission flow.
+pub(crate) async fn pipeline_pre_tool_hooks(
+    hooks: Option<&LifecycleHookEngine>,
+    renderer: &mut AnsiRenderer,
+    tool_name: &str,
+    args_val: &Value,
+    tool_call_id: &str,
+) -> Result<Option<PreToolHookPhaseResult>> {
+    let (rewritten, requires_prompt) =
+        run_pre_tool_hook_phase(hooks, renderer, tool_name, Some(args_val), Some(tool_call_id)).await?;
+    Ok(Some((rewritten.or_else(|| Some(args_val.clone())), requires_prompt)))
+}
+
+/// Runs the full permission flow for a tool call.
+///
+/// `pipeline_pre_tool_hook_result` carries the PreToolUse hook phase result
+/// when the caller (the tool pipeline) already ran it before safety
+/// validation, so hooks see exactly one invocation per call and the safety
+/// gateway evaluates the rewritten arguments. Pass `None` when the caller has
+/// not run the hook phase.
 pub(crate) async fn ensure_tool_permission_with_call_id<S: UiSession + ?Sized>(
     ctx: ToolPermissionsContext<'_, S>,
     tool_name: &str,
     tool_args: Option<&Value>,
     tool_call_id: Option<&str>,
+    pipeline_pre_tool_hook_result: Option<PreToolHookPhaseResult>,
 ) -> Result<ToolPermissionFlow> {
     let ToolPermissionsContext {
         tool_registry,
@@ -956,30 +1027,13 @@ pub(crate) async fn ensure_tool_permission_with_call_id<S: UiSession + ?Sized>(
     } = ctx;
 
     // PreToolUse hooks may rewrite tool input (e.g. wrapping shell commands in
-    // an output compressor). Rewritten arguments replace the original ones for
-    // every downstream step — policy checks, permission evaluation, and the
-    // tool call itself — so approval decisions always describe what will run.
-    let mut hook_rewritten_args: Option<Value> = None;
-    let mut hook_requires_prompt = false;
-    if let Some(hooks) = hooks {
-        match hooks.run_pre_tool_use(tool_name, tool_args, tool_call_id).await {
-            Ok(outcome) => {
-                render_hook_messages(renderer, &outcome.messages)?;
-                hook_rewritten_args = outcome.updated_input;
-                match outcome.decision {
-                    PreToolHookDecision::Allow => {}
-                    PreToolHookDecision::Deny => return Ok(ToolPermissionFlow::Denied),
-                    PreToolHookDecision::Ask => {
-                        hook_requires_prompt = true;
-                    }
-                    PreToolHookDecision::Continue => {}
-                }
-            }
-            Err(err) => {
-                renderer.line(MessageStyle::Error, &format!("Failed to run pre-tool hooks: {err}"))?;
-            }
-        }
-    }
+    // an output compressor). When the pipeline already ran the hook phase
+    // upstream (for safety-gateway visibility), it passes the rewritten args
+    // here; otherwise we run the phase ourselves.
+    let (hook_rewritten_args, hook_requires_prompt) = match pipeline_pre_tool_hook_result {
+        Some(precomputed) => precomputed,
+        None => run_pre_tool_hook_phase(hooks, renderer, tool_name, tool_args, tool_call_id).await?,
+    };
 
     let effective_args: Option<Value> = match (&hook_rewritten_args, tool_args) {
         (Some(updated), _) => Some(updated.clone()),
@@ -1302,7 +1356,7 @@ pub(crate) async fn ensure_tool_permission_with_call_id<S: UiSession + ?Sized>(
                         exact_shell_approval_target.as_ref(),
                         &persistent_approval_target,
                         map_permission_decision(decision.behavior, decision.scope, decision.interrupt),
-                        decision.updated_input,
+                        decision.updated_input.or_else(|| hook_rewritten_args.clone()),
                     )
                     .await;
                 }
@@ -1386,7 +1440,7 @@ pub(crate) async fn ensure_tool_permission_with_call_id<S: UiSession + ?Sized>(
         exact_shell_approval_target.as_ref(),
         &persistent_approval_target,
         decision,
-        None,
+        hook_rewritten_args,
     )
     .await
 }

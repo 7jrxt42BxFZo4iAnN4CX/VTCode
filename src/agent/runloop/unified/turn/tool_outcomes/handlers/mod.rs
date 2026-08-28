@@ -778,12 +778,14 @@ pub(crate) async fn validate_tool_call<'a>(
         }
     }
 
-    // Ensure tool permission
+    // Ensure tool permission. The PreToolUse hook phase has not run yet on
+    // this path; `None` makes the permission flow run it itself.
     let permission_result = ensure_tool_permission_with_call_id(
         build_tool_permissions_context_with_safety(ctx, safety_approval_justification.as_deref()),
         &canonical_tool_name,
         Some(effective_args),
         Some(tool_call_id),
+        None,
     )
     .await;
 

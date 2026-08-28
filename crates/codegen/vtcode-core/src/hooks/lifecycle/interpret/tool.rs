@@ -8,6 +8,17 @@ use super::common::{
     looks_like_json, matches_hook_event, parse_json_output, trimmed_non_empty,
 };
 
+fn kind_of(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
 pub(crate) fn interpret_pre_tool(
     command: &HookCommandConfig,
     result: &HookCommandResult,
@@ -38,6 +49,9 @@ pub(crate) fn interpret_pre_tool(
             }
             return;
         } else if code != 0 {
+            // A failing process is not a trusted source for input rewrites;
+            // surface the warning but do not apply its output.
+            outcome.updated_input = None;
             handle_non_zero_exit(command, result, code, &mut outcome.messages, true);
         }
     }
@@ -82,8 +96,14 @@ pub(crate) fn interpret_pre_tool(
                 outcome.messages.push(HookMessage::info(reason.trim().to_owned()));
             }
 
-            if spec.get("updatedInput").is_some_and(|value| !value.is_null()) {
-                outcome.updated_input = spec.get("updatedInput").cloned();
+            match spec.get("updatedInput") {
+                Some(value) if value.is_object() => outcome.updated_input = Some(value.clone()),
+                Some(value) if !value.is_null() => outcome.messages.push(HookMessage::warning(format!(
+                    "PreToolUse hook `{}` returned non-object updatedInput ({}); ignoring rewrite",
+                    command.command,
+                    kind_of(value)
+                ))),
+                _ => {}
             }
         }
 

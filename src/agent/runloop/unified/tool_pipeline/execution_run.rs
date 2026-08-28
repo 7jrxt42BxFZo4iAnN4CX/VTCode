@@ -20,7 +20,9 @@ use crate::agent::runloop::unified::inline_events::harness::{HarnessEventEmitter
 use crate::agent::runloop::unified::run_loop_context::RunLoopContext;
 use crate::agent::runloop::unified::state::CtrlCState;
 use crate::agent::runloop::unified::tool_call_safety::invocation_id_from_call_id;
-use crate::agent::runloop::unified::tool_routing::{ToolPermissionFlow, ensure_tool_permission_with_call_id};
+use crate::agent::runloop::unified::tool_routing::{
+    PreToolHookPhaseResult, ToolPermissionFlow, ensure_tool_permission_with_call_id,
+};
 
 use super::execute_hitl_tool;
 use super::execution_events::{emit_tool_completion_for_status, emit_tool_completion_status};
@@ -177,6 +179,31 @@ pub(crate) async fn run_tool_call_with_args(
     };
 
     if !prevalidated {
+        // PreToolUse hooks run before the safety gateway so that rewritten
+        // arguments (e.g. hook-wrapped commands) are what every downstream
+        // check — safety, policy, permissions — evaluates and approves.
+        let hook_phase = crate::agent::runloop::unified::tool_routing::pipeline_pre_tool_hooks(
+            lifecycle_hooks,
+            ctx.renderer,
+            name,
+            effective_args.as_ref(),
+            tool_call_id,
+        )
+        .await;
+        let hook_phase = match hook_phase {
+            Ok(phase) => phase,
+            Err(err) => {
+                return Ok(finish_with_status(
+                    ToolExecutionStatus::Failure { error: structured_failure(name, &err) },
+                    false,
+                    effective_args.as_ref(),
+                ));
+            }
+        };
+        if let Some((Some(rewritten), _)) = hook_phase.as_ref() {
+            effective_args = std::borrow::Cow::Owned(rewritten.clone());
+        }
+
         let safety_approval_justification = match check_tool_safety(
             ctx,
             name,
@@ -201,10 +228,10 @@ pub(crate) async fn run_tool_call_with_args(
             ctrl_c_state,
             ctrl_c_notify,
             default_placeholder,
-            lifecycle_hooks,
             skip_confirmations,
             vt_cfg,
             safety_approval_justification.as_deref(),
+            hook_phase,
         )
         .await
         {
@@ -436,23 +463,28 @@ async fn check_tool_permission(
     ctrl_c_state: &Arc<CtrlCState>,
     ctrl_c_notify: &Arc<Notify>,
     default_placeholder: Option<String>,
-    lifecycle_hooks: Option<&LifecycleHookEngine>,
     skip_confirmations: bool,
     vt_cfg: Option<&VTCodeConfig>,
     safety_approval_justification: Option<&str>,
+    hook_phase: Option<PreToolHookPhaseResult>,
 ) -> Result<Option<Value>, ToolExecutionStatus> {
+    // PreToolUse hooks already ran upstream (see run_tool_call_with_args), so
+    // the permission flow must not run them again; it consumes the forwarded
+    // phase result instead.
     let permissions_ctx = build_tool_permissions_context(
         ctx,
         ctrl_c_state,
         ctrl_c_notify,
         default_placeholder,
-        lifecycle_hooks,
+        None,
         skip_confirmations,
         vt_cfg,
         safety_approval_justification,
     );
 
-    match ensure_tool_permission_with_call_id(permissions_ctx, name, Some(args_val), Some(tool_call_id)).await {
+    match ensure_tool_permission_with_call_id(permissions_ctx, name, Some(args_val), Some(tool_call_id), hook_phase)
+        .await
+    {
         Ok(ToolPermissionFlow::Approved { updated_args }) => Ok(updated_args),
         Ok(ToolPermissionFlow::Denied) => Err(ToolExecutionStatus::Failure {
             error: structured_failure_from_message(name, "Tool permission denied"),

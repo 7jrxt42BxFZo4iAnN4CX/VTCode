@@ -91,6 +91,7 @@ pub(super) struct CopilotRuntimeHost<'a> {
     observed_tool_calls: HashMap<String, ObservedToolCallState>,
     local_terminal_sessions: HashMap<String, LocalTerminalSession>,
     compatibility_notice_shown: bool,
+    pending_hook_rewritten_args: HashMap<String, Value>,
 }
 
 impl<'a> CopilotRuntimeHost<'a> {
@@ -178,6 +179,7 @@ impl<'a> CopilotRuntimeHost<'a> {
             observed_tool_calls: HashMap::new(),
             local_terminal_sessions: HashMap::new(),
             compatibility_notice_shown: false,
+            pending_hook_rewritten_args: HashMap::new(),
         }
     }
 
@@ -302,6 +304,11 @@ impl<'a> CopilotRuntimeHost<'a> {
         {
             return Ok(response);
         }
+
+        let effective_arguments = self
+            .pending_hook_rewritten_args
+            .remove(&request.tool_call_id)
+            .unwrap_or(effective_arguments);
 
         self.record_tool_use(&canonical_tool_name);
 
@@ -428,10 +435,15 @@ impl<'a> CopilotRuntimeHost<'a> {
             tool_name,
             Some(arguments),
             Some(tool_call_id),
+            None,
         )
         .await?
         {
-            ToolPermissionFlow::Approved { .. } => {}
+            ToolPermissionFlow::Approved { updated_args } => {
+                if let Some(updated) = updated_args {
+                    self.pending_hook_rewritten_args.insert(tool_call_id.to_string(), updated);
+                }
+            }
             ToolPermissionFlow::Denied => {
                 let diagnostic = tool_denial_diagnostic(tool_name);
                 let text = if let Some(diag) = diagnostic.as_ref() {
