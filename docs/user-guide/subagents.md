@@ -286,7 +286,7 @@ When one or more child threads are active, VT Code shows each active agent name 
 - Prefer the exact VT Code tool ids returned by `vtcode schema tools`.
 - For new VT Code-native agent files, do not use Claude-style tool names such as `Read`, `Grep`, `Glob`, `Write`, `Edit`, or `Bash`.
 - Use the narrowest VT Code tool set that fits the job instead of granting broad umbrella access by default.
-- VT Code always strips child access to `spawn_agent`, `send_input`, `wait_agent`, `resume_agent`, and `close_agent`.
+- Delegation tools (`spawn_agent`, `send_input`, `wait_agent`, `resume_agent`, `close_agent`) are available to a child only while `subagents.max_depth` permits deeper nesting; read-only children never receive them. `spawn_background_subprocess` stays unavailable to children at any depth.
 - If the agent is effectively read-only, VT Code strips mutating tools at runtime even if they are listed.
 
 ### Permissions

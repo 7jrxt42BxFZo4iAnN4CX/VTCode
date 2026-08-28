@@ -126,6 +126,20 @@ fn apply_subagent_lightweight_profile(child: &mut VTCodeConfig) {
     child.agent.tool_documentation_mode = ToolDocumentationMode::Minimal;
 }
 
+/// Returns the subagent-internal tool names blocked from a child at the given
+/// nesting policy. When nested delegation is allowed only the background
+/// subprocess alias is blocked; otherwise every subagent-lifecycle tool is.
+///
+/// Single source of truth so the deny-list, allow-list, and wire-definition
+/// filters cannot diverge on the blocked set.
+fn blocked_child_tool_names(allow_nested_delegation: bool) -> &'static [&'static str] {
+    if allow_nested_delegation {
+        CHILD_BLOCKED_BACKGROUND_TOOL_NAMES
+    } else {
+        SUBAGENT_TOOL_NAMES
+    }
+}
+
 /// Resolves the child's allow-list. When the spec declares tools, the child
 /// allow-list is the intersection of the parent allow-list and the declared
 /// tools (with subagent-internal tools removed unless nested delegation is
@@ -136,11 +150,7 @@ fn resolve_child_allowed_tools(
     runtime: &ResolvedAgentRuntimeView,
     allow_nested_delegation: bool,
 ) -> Vec<String> {
-    let blocked: &[&str] = if allow_nested_delegation {
-        CHILD_BLOCKED_BACKGROUND_TOOL_NAMES
-    } else {
-        SUBAGENT_TOOL_NAMES
-    };
+    let blocked = blocked_child_tool_names(allow_nested_delegation);
     let allowed_tools = runtime.tools.clone().unwrap_or_default();
     if allowed_tools.is_empty() {
         return parent.permissions.allow.clone();
@@ -162,11 +172,7 @@ fn resolve_child_denied_tools(
     runtime: &ResolvedAgentRuntimeView,
     allow_nested_delegation: bool,
 ) -> Vec<String> {
-    let blocked: &[&str] = if allow_nested_delegation {
-        CHILD_BLOCKED_BACKGROUND_TOOL_NAMES
-    } else {
-        SUBAGENT_TOOL_NAMES
-    };
+    let blocked = blocked_child_tool_names(allow_nested_delegation);
     let mut denied = parent.permissions.deny.clone();
     denied.extend(runtime.disallowed_tools.clone());
     for tool in blocked {
@@ -546,11 +552,7 @@ pub fn filter_child_tools(
         .iter()
         .map(|tool| tool.to_ascii_lowercase())
         .collect::<Vec<_>>();
-    let blocked: &[&str] = if allow_nested_delegation {
-        CHILD_BLOCKED_BACKGROUND_TOOL_NAMES
-    } else {
-        SUBAGENT_TOOL_NAMES
-    };
+    let blocked = blocked_child_tool_names(allow_nested_delegation);
 
     definitions
         .into_iter()

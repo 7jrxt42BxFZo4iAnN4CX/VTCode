@@ -265,19 +265,16 @@ impl SubagentController {
     /// Unlike [`Self::close`] this is recursive over child-scoped controllers,
     /// so it works for arbitrary `max_depth`. The recursion is boxed to satisfy
     /// Rust's async-fn recursion requirement.
+    ///
+    /// Ordering prevents a race where a still-running child spawns a new
+    /// descendant after the descendant snapshot: each child-scoped controller
+    /// is marked as closing (which rejects new spawns via `spawn_with_spec`)
+    /// before the owning child's handle is aborted and its subtree is closed.
     fn close_tree(&self, target: &str) -> BoxFuture<'static, Result<SubagentStatusEntry>> {
         let self_owned = self.clone();
         let target_owned = target.to_string();
         Box::pin(async move {
-            // Close the target's own subtree (deepest first) on this
-            // controller...
             let subtree_ids = self_owned.collect_spawn_subtree_ids(&target_owned).await?;
-            // ...then recursively close each child-scoped controller's subtree.
-            // Grandchildren live in the child controller's state, not ours, so
-            // they are closed through that controller to keep node ownership
-            // correct. Only controllers of nodes inside the closed subtree are
-            // cascaded, so closing one subagent never kills a sibling's
-            // descendants.
             let subtree_set = subtree_ids.iter().collect::<std::collections::HashSet<_>>();
             let nested = {
                 let state = self_owned.state.read().await;
@@ -293,14 +290,28 @@ impl SubagentController {
                     })
                     .collect::<Vec<_>>()
             };
+            // Mark every child-scoped controller in the subtree as closing so
+            // it rejects new grandchild spawns before we start aborting.
+            for (controller, _) in &nested {
+                controller.begin_close().await;
+            }
+            // Close the target's own subtree (deepest first) on this
+            // controller. Aborting the owning child's handle first stops it
+            // from spawning further descendants.
+            for node_id in subtree_ids.into_iter().rev() {
+                self_owned.close_single(node_id.as_str()).await?;
+            }
+            // ...then recursively close each child-scoped controller's subtree.
+            // Grandchildren live in the child controller's state, not ours, so
+            // they are closed through that controller to keep node ownership
+            // correct. Only controllers of nodes inside the closed subtree are
+            // cascaded, so closing one subagent never kills a sibling's
+            // descendants.
             for (controller, session_id) in nested {
                 let ids = controller.spawn_child_ids_for_parent(&session_id).await;
                 for id in ids {
                     let _ = controller.close_tree(&id).await;
                 }
-            }
-            for node_id in subtree_ids.into_iter().rev() {
-                self_owned.close_single(node_id.as_str()).await?;
             }
             self_owned.status_for(&target_owned).await
         })
@@ -646,6 +657,14 @@ impl SubagentController {
         Ok(())
     }
 
+    /// Marks this controller as closing so [`Self::spawn`] rejects new spawns.
+    ///
+    /// Used before aborting a subtree so a still-running child cannot spawn a
+    /// descendant between the descendant snapshot and the handle abort.
+    pub(super) async fn begin_close(&self) {
+        self.shutdown_requested.store(true, Ordering::Relaxed);
+    }
+
     /// Signal that the program is shutting down. Subsequent calls to
     /// `save_background_state` will be skipped. All running child handles
     /// are aborted so subagent tasks do not outlive the parent session.
@@ -665,6 +684,11 @@ impl SubagentController {
             }
             nested
         };
+        // Mark every child-scoped controller as closing before enumerating
+        // descendants so a race cannot let a fresh grandchild outlive shutdown.
+        for (controller, _) in &nested {
+            controller.begin_close().await;
+        }
         // Cascade shutdown to child-scoped controllers so grandchildren tasks
         // are aborted too; otherwise their tokio tasks keep running detached.
         for (controller, session_id) in nested {
@@ -827,6 +851,9 @@ impl SubagentController {
     ) -> Result<SubagentStatusEntry> {
         if !self.config.vt_cfg.subagents.enabled {
             bail!("Subagents are disabled by configuration");
+        }
+        if self.shutdown_requested.load(Ordering::Relaxed) {
+            bail!("Subagent controller is shutting down; cannot spawn new subagents");
         }
         if self.config.depth.saturating_add(1) > self.config.vt_cfg.subagents.max_depth {
             bail!("Subagent depth limit reached (max_depth={})", self.config.vt_cfg.subagents.max_depth);

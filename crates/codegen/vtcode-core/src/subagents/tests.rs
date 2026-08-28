@@ -46,14 +46,16 @@ fn test_controller_config(workspace_root: PathBuf, vt_cfg: VTCodeConfig) -> Suba
 
 fn test_child_record(
     id: &str,
+    session_id: &str,
     parent_thread_id: &str,
     spec: &SubagentSpec,
     status: SubagentStatus,
     depth: usize,
+    child_controller: Option<Arc<SubagentController>>,
 ) -> ChildRecord {
     ChildRecord {
         id: id.to_string(),
-        session_id: format!("session-{id}"),
+        session_id: session_id.to_string(),
         parent_thread_id: parent_thread_id.to_string(),
         spec: spec.clone(),
         display_label: subagent_display_label(spec),
@@ -79,7 +81,7 @@ fn test_child_record(
         handle: None,
         notify: Arc::new(Notify::new()),
         worktree_path: None,
-        child_controller: None,
+        child_controller,
     }
 }
 
@@ -1715,14 +1717,15 @@ async fn close_and_resume_cascade_through_spawn_tree() {
         let mut state = controller.state.write().await;
         state.children.insert(
             "parent".to_string(),
-            test_child_record("parent", "session-root", &spec, SubagentStatus::Running, 1),
+            test_child_record("parent", "session-parent", "session-root", &spec, SubagentStatus::Running, 1, None),
         );
-        state
-            .children
-            .insert("child".to_string(), test_child_record("child", "parent", &spec, SubagentStatus::Running, 2));
+        state.children.insert(
+            "child".to_string(),
+            test_child_record("child", "session-child", "parent", &spec, SubagentStatus::Running, 2, None),
+        );
         state.children.insert(
             "grandchild".to_string(),
-            test_child_record("grandchild", "child", &spec, SubagentStatus::Running, 3),
+            test_child_record("grandchild", "session-grandchild", "child", &spec, SubagentStatus::Running, 3, None),
         );
     }
 
@@ -1826,13 +1829,9 @@ async fn spawn_from_child_controller_respects_depth_limit() {
 
     // Child controller runs at depth 1: it may spawn a grandchild (depth 2),
     // but the grandchild itself (depth 2) may not spawn further.
-    let mut child_controller =
-        SubagentController::new(test_controller_config(temp.path().to_path_buf(), vt_cfg.clone()))
-            .await
-            .expect("child controller");
-
-    let config = Arc::make_mut(&mut child_controller.config);
-    config.depth = 1;
+    let mut child_config = test_controller_config(temp.path().to_path_buf(), vt_cfg.clone());
+    child_config.depth = 1;
+    let child_controller = SubagentController::new(child_config).await.expect("child controller");
 
     child_controller
         .spawn(SpawnAgentRequest {
@@ -1915,36 +1914,15 @@ async fn close_cascades_to_child_scoped_grandchildren() {
         let mut state = child_controller.state.write().await;
         state.children.insert(
             "grandchild".to_string(),
-            ChildRecord {
-                id: "grandchild".to_string(),
-                session_id: "session-grandchild".to_string(),
-                parent_thread_id: child_session_id.clone(),
-                spec: spec.clone(),
-                display_label: subagent_display_label(&spec),
-                status: SubagentStatus::Running,
-                background: false,
-                depth: 2,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
-                completed_at: None,
-                summary: None,
-                error: None,
-                archive_metadata: None,
-                archive_path: None,
-                transcript_path: None,
-                effective_config: None,
-                stored_messages: Vec::new(),
-                last_prompt: Some("Inspect.".to_string()),
-                queued_prompts: VecDeque::new(),
-                max_turns: None,
-                model_override: None,
-                reasoning_override: None,
-                thread_handle: None,
-                handle: None,
-                notify: Arc::new(Notify::new()),
-                worktree_path: None,
-                child_controller: None,
-            },
+            test_child_record(
+                "grandchild",
+                "session-grandchild",
+                &child_session_id,
+                &spec,
+                SubagentStatus::Running,
+                2,
+                None,
+            ),
         );
     }
     let child_controller = std::sync::Arc::new(child_controller);
@@ -1955,36 +1933,15 @@ async fn close_cascades_to_child_scoped_grandchildren() {
         let mut state = parent.state.write().await;
         state.children.insert(
             "child".to_string(),
-            ChildRecord {
-                id: "child".to_string(),
-                session_id: child_session_id.clone(),
-                parent_thread_id: "parent-session".to_string(),
-                spec: spec.clone(),
-                display_label: subagent_display_label(&spec),
-                status: SubagentStatus::Running,
-                background: false,
-                depth: 1,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
-                completed_at: None,
-                summary: None,
-                error: None,
-                archive_metadata: None,
-                archive_path: None,
-                transcript_path: None,
-                effective_config: None,
-                stored_messages: Vec::new(),
-                last_prompt: Some("Inspect.".to_string()),
-                queued_prompts: VecDeque::new(),
-                max_turns: None,
-                model_override: None,
-                reasoning_override: None,
-                thread_handle: None,
-                handle: None,
-                notify: Arc::new(Notify::new()),
-                worktree_path: None,
-                child_controller: Some(child_controller.clone()),
-            },
+            test_child_record(
+                "child",
+                &child_session_id,
+                "parent-session",
+                &spec,
+                SubagentStatus::Running,
+                1,
+                Some(child_controller.clone()),
+            ),
         );
     }
 
@@ -2020,36 +1977,15 @@ async fn close_does_not_affect_sibling_grandchildren() {
         let mut state = controller_a.state.write().await;
         state.children.insert(
             "a-grandchild".to_string(),
-            ChildRecord {
-                id: "a-grandchild".to_string(),
-                session_id: "session-a-grandchild".to_string(),
-                parent_thread_id: "session-a".to_string(),
-                spec: spec.clone(),
-                display_label: subagent_display_label(&spec),
-                status: SubagentStatus::Running,
-                background: false,
-                depth: 2,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
-                completed_at: None,
-                summary: None,
-                error: None,
-                archive_metadata: None,
-                archive_path: None,
-                transcript_path: None,
-                effective_config: None,
-                stored_messages: Vec::new(),
-                last_prompt: Some("Inspect.".to_string()),
-                queued_prompts: VecDeque::new(),
-                max_turns: None,
-                model_override: None,
-                reasoning_override: None,
-                thread_handle: None,
-                handle: None,
-                notify: Arc::new(Notify::new()),
-                worktree_path: None,
-                child_controller: None,
-            },
+            test_child_record(
+                "a-grandchild",
+                "session-a-grandchild",
+                "session-a",
+                &spec,
+                SubagentStatus::Running,
+                2,
+                None,
+            ),
         );
     }
     let controller_b =
@@ -2060,36 +1996,15 @@ async fn close_does_not_affect_sibling_grandchildren() {
         let mut state = controller_b.state.write().await;
         state.children.insert(
             "b-grandchild".to_string(),
-            ChildRecord {
-                id: "b-grandchild".to_string(),
-                session_id: "session-b-grandchild".to_string(),
-                parent_thread_id: "session-b".to_string(),
-                spec: spec.clone(),
-                display_label: subagent_display_label(&spec),
-                status: SubagentStatus::Running,
-                background: false,
-                depth: 2,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
-                completed_at: None,
-                summary: None,
-                error: None,
-                archive_metadata: None,
-                archive_path: None,
-                transcript_path: None,
-                effective_config: None,
-                stored_messages: Vec::new(),
-                last_prompt: Some("Inspect.".to_string()),
-                queued_prompts: VecDeque::new(),
-                max_turns: None,
-                model_override: None,
-                reasoning_override: None,
-                thread_handle: None,
-                handle: None,
-                notify: Arc::new(Notify::new()),
-                worktree_path: None,
-                child_controller: None,
-            },
+            test_child_record(
+                "b-grandchild",
+                "session-b-grandchild",
+                "session-b",
+                &spec,
+                SubagentStatus::Running,
+                2,
+                None,
+            ),
         );
     }
     let controller_a = std::sync::Arc::new(controller_a);
@@ -2099,69 +2014,27 @@ async fn close_does_not_affect_sibling_grandchildren() {
         let mut state = parent.state.write().await;
         state.children.insert(
             "a".to_string(),
-            ChildRecord {
-                id: "a".to_string(),
-                session_id: "session-a".to_string(),
-                parent_thread_id: "parent-session".to_string(),
-                spec: spec.clone(),
-                display_label: subagent_display_label(&spec),
-                status: SubagentStatus::Running,
-                background: false,
-                depth: 1,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
-                completed_at: None,
-                summary: None,
-                error: None,
-                archive_metadata: None,
-                archive_path: None,
-                transcript_path: None,
-                effective_config: None,
-                stored_messages: Vec::new(),
-                last_prompt: Some("Inspect.".to_string()),
-                queued_prompts: VecDeque::new(),
-                max_turns: None,
-                model_override: None,
-                reasoning_override: None,
-                thread_handle: None,
-                handle: None,
-                notify: Arc::new(Notify::new()),
-                worktree_path: None,
-                child_controller: Some(controller_a.clone()),
-            },
+            test_child_record(
+                "a",
+                "session-a",
+                "parent-session",
+                &spec,
+                SubagentStatus::Running,
+                1,
+                Some(controller_a.clone()),
+            ),
         );
         state.children.insert(
             "b".to_string(),
-            ChildRecord {
-                id: "b".to_string(),
-                session_id: "session-b".to_string(),
-                parent_thread_id: "parent-session".to_string(),
-                spec: spec.clone(),
-                display_label: subagent_display_label(&spec),
-                status: SubagentStatus::Running,
-                background: false,
-                depth: 1,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
-                completed_at: None,
-                summary: None,
-                error: None,
-                archive_metadata: None,
-                archive_path: None,
-                transcript_path: None,
-                effective_config: None,
-                stored_messages: Vec::new(),
-                last_prompt: Some("Inspect.".to_string()),
-                queued_prompts: VecDeque::new(),
-                max_turns: None,
-                model_override: None,
-                reasoning_override: None,
-                thread_handle: None,
-                handle: None,
-                notify: Arc::new(Notify::new()),
-                worktree_path: None,
-                child_controller: Some(controller_b.clone()),
-            },
+            test_child_record(
+                "b",
+                "session-b",
+                "parent-session",
+                &spec,
+                SubagentStatus::Running,
+                1,
+                Some(controller_b.clone()),
+            ),
         );
     }
 
@@ -2175,6 +2048,35 @@ async fn close_does_not_affect_sibling_grandchildren() {
     );
     let a_grandchild = controller_a.status_for("a-grandchild").await.expect("a-grandchild status");
     assert_eq!(a_grandchild.status, SubagentStatus::Closed, "closing 'a' must cascade to its own grandchildren");
+}
+
+#[tokio::test]
+async fn spawn_is_rejected_after_close_begins() {
+    let temp = TempDir::new().expect("tempdir");
+    let mut vt_cfg = VTCodeConfig::default();
+    vt_cfg.subagents.max_depth = 2;
+    let mut child_config = test_controller_config(temp.path().to_path_buf(), vt_cfg);
+    child_config.depth = 1;
+    let child_controller = SubagentController::new(child_config).await.expect("child controller");
+    child_controller
+        .set_turn_delegation_hints_from_input("delegate this task")
+        .await;
+
+    // Mark the controller as closing: this is exactly what `close_tree` does
+    // to a child-scoped controller before aborting its subtree, so a still-
+    // running child cannot spawn a grandchild after the descendant snapshot.
+    child_controller.begin_close().await;
+
+    let err = child_controller
+        .spawn(SpawnAgentRequest {
+            agent_type: Some("explorer".to_string()),
+            message: Some("Inspect the codebase.".to_string()),
+            ..SpawnAgentRequest::default()
+        })
+        .await
+        .expect_err("spawn after close began must be rejected");
+
+    assert!(err.to_string().contains("shutting down"));
 }
 
 #[tokio::test]
