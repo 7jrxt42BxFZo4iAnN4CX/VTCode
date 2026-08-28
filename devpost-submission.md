@@ -85,7 +85,10 @@ validation, a display title, abort-aware execution, and explicit annotations
 for read-only and untrusted content. File, diff, and collection responses are
 bounded to a 1,500-character serialized result budget and include truncation
 metadata when an agent should narrow its request. The app listens for WebMCP
-`toolchange` events and unregisters tools through an `AbortSignal`.
+`toolchange` events and unregisters tools through an `AbortSignal`. The
+`get_editor_state` tool reports a small workflow state and recommended next
+tools, while invalid states return recovery-oriented errors instead of generic
+failures.
 
 `stage_text_edit` is intentionally narrow: it requires a current digest,
 rejects stale or dirty drafts, requires exactly one match, and returns the base
@@ -113,8 +116,11 @@ WebMCP-capable browser client.
 - Explicit separation between browser draft mutation and terminal filesystem
   authority.
 - Bounded outputs and input validation designed for browser-agent context.
+- Workflow-state hints and actionable recovery messages for failed or stale
+  agent steps.
 - Checked-in deterministic eval cases for direct, open-ended, multi-step, and
-  failure journeys.
+  failure journeys. Each case records its goal, initial state, boundaries,
+  expected UI effects, success criteria, and recovery guidance.
 
 ## Architecture
 

@@ -201,7 +201,10 @@ a display title, JSON Schema input, read-only/untrusted-content annotations,
 an abort-aware callback, and a 1,500-character result budget. Truncated file,
 diff, and collection results carry explicit metadata so an agent can decide
 whether to narrow the request. The registration listens for `toolchange` and
-can be unregistered with its `AbortSignal`.
+can be unregistered with its `AbortSignal`. `get_editor_state` also reports a
+small workflow state and recommended next tools so an agent can recover its
+place after a refresh or a multi-step request. The page intentionally does not
+pass `exposedTo`: this demo has no trusted cross-origin embedder.
 
 This is the browser-agent direction described by WebMCP: a browser-integrated
 or in-page agent discovers tools registered by the page and invokes them in the
@@ -213,10 +216,13 @@ or terminal approval boundary.
 
 The deterministic eval corpus in `evals/webmcp-evals.js` covers direct requests,
 open-ended search-and-open requests, the review journey, and invalid tool
-arguments. `test/webmcp-evals.test.js` checks that every expected tool exists,
-metadata stays within Chrome's recommended discoverability budgets, and browser
-tools never gain a write or revert authority. Run it with the rest of the demo
-tests:
+arguments. Each case records the user goal, initial editor state, boundaries,
+expected UI effects, success criteria, and recovery guidance. Runtime errors
+name the next safe action, such as rereading a stale file or choosing one of
+the allowed panels. `test/webmcp-evals.test.js` checks that every expected tool
+exists, metadata stays within Chrome's recommended discoverability budgets, and
+browser tools never gain a write or revert authority. Run it with the rest of
+the demo tests:
 
 ```sh
 npm test

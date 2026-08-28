@@ -15,6 +15,12 @@ function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function toolInputError(message) {
+  const error = new Error(message);
+  error.code = "invalid_input";
+  return error;
+}
+
 function truncateString(value, maxChars) {
   if (value.length <= maxChars) return value;
   const markerLength = OUTPUT_TRUNCATION_MARKER.length;
@@ -104,30 +110,30 @@ function boundToolOutput(result) {
 
 function validateToolInput(toolName, schema, input) {
   const value = input === undefined ? {} : input;
-  if (!isRecord(value)) throw new Error(`${toolName} expects an object input`);
+  if (!isRecord(value)) throw toolInputError(`${toolName} expects an object input matching its input schema`);
   for (const required of schema.required || []) {
-    if (!(required in value)) throw new Error(`${toolName} requires ${required}`);
+    if (!(required in value)) throw toolInputError(`${toolName} requires ${required}; provide it before retrying`);
   }
   if (schema.additionalProperties === false) {
     const properties = new Set(Object.keys(schema.properties || {}));
     for (const key of Object.keys(value)) {
-      if (!properties.has(key)) throw new Error(`${toolName} does not accept ${key}`);
+      if (!properties.has(key)) throw toolInputError(`${toolName} does not accept ${key}; use only fields listed in the schema`);
     }
   }
   for (const [name, property] of Object.entries(schema.properties || {})) {
     if (!(name in value)) continue;
     const current = value[name];
     if (property.type === "string" && typeof current !== "string") {
-      throw new Error(`${toolName}.${name} must be a string`);
+      throw toolInputError(`${toolName}.${name} must be a string; provide a string value`);
     }
     if (typeof current === "string" && property.minLength !== undefined && current.length < property.minLength) {
-      throw new Error(`${toolName}.${name} must not be empty`);
+      throw toolInputError(`${toolName}.${name} must not be empty; provide a non-empty value`);
     }
     if (typeof current === "string" && property.maxLength !== undefined && current.length > property.maxLength) {
-      throw new Error(`${toolName}.${name} exceeds the length limit`);
+      throw toolInputError(`${toolName}.${name} exceeds the length limit; shorten the value and retry`);
     }
     if (property.enum && !property.enum.includes(current)) {
-      throw new Error(`${toolName}.${name} has an unsupported value`);
+      throw toolInputError(`${toolName}.${name} has an unsupported value; choose one of: ${property.enum.join(", ")}`);
     }
   }
   return value;
@@ -147,12 +153,12 @@ function applyToolContract(tool) {
 export function replaceExactText(content, find, replace) {
   const first = content.indexOf(find);
   if (first < 0) {
-    const error = new Error("Text was not found");
+    const error = new Error("Text was not found; read the current file and provide an exact non-empty match");
     error.code = "text_not_found";
     throw error;
   }
   if (content.indexOf(find, first + 1) >= 0) {
-    const error = new Error("Text occurs more than once; provide a more specific match");
+    const error = new Error("Text occurs more than once; narrow find to one exact match before retrying");
     error.code = "ambiguous_edit";
     throw error;
   }
@@ -198,7 +204,7 @@ export function createWebMcpTools({
     {
       name: "list_project_files",
       title: "List project files",
-      description: "List files visible to the current VT Code workspace without changing it.",
+      description: "Start here to list bounded files visible to the current VT Code workspace without changing it.",
       inputSchema: EMPTY_INPUT_SCHEMA,
       annotations: { readOnlyHint: true, untrustedContentHint: true },
       execute: async (_input, { signal } = {}) => ({ files: await listFiles({ signal }) }),
@@ -206,7 +212,7 @@ export function createWebMcpTools({
     {
       name: "read_file",
       title: "Read a project file",
-      description: "Read a bounded preview of the current browser buffer or clean backend snapshot for a workspace file.",
+      description: "Read a bounded file preview and fresh digest after a path is known; use it before staging an edit.",
       inputSchema: {
         type: "object",
         properties: {
@@ -226,7 +232,7 @@ export function createWebMcpTools({
     {
       name: "search_code",
       title: "Search project code",
-      description: "Search visible workspace buffers and return bounded path, line, and text matches without changing the project.",
+      description: "Search visible workspace text for a term and return bounded path, line, and text matches without changing it.",
       inputSchema: {
         type: "object",
         properties: {
@@ -251,7 +257,7 @@ export function createWebMcpTools({
       title: "Inspect editor state",
       description: "Return selected file, open tabs, draft paths, and backend state without returning file contents.",
       inputSchema: EMPTY_INPUT_SCHEMA,
-      annotations: { readOnlyHint: true, untrustedContentHint: false },
+      annotations: { readOnlyHint: true, untrustedContentHint: true },
       execute: async (_input, { signal } = {}) => {
         throwIfAborted(signal);
         return getEditorState();
@@ -260,7 +266,7 @@ export function createWebMcpTools({
     {
       name: "open_file",
       title: "Open a file in the editor",
-      description: "Open a visible workspace file in the browser editor; this changes only the page view and never writes a file.",
+      description: "Open a path returned by search or file listing; this changes only the page view and never writes a file.",
       inputSchema: {
         type: "object",
         properties: {
@@ -284,7 +290,7 @@ export function createWebMcpTools({
     {
       name: "stage_text_edit",
       title: "Stage a text edit",
-      description: "Apply one exact replacement to a clean browser draft using a fresh file digest; review is still required and disk is never written.",
+      description: "After read_file, stage one exact replacement in a clean browser draft using its fresh digest; review is required and disk is never written.",
       inputSchema: {
         type: "object",
         properties: {
@@ -324,7 +330,7 @@ export function createWebMcpTools({
     {
       name: "review_draft",
       title: "Review the current draft",
-      description: "Create the browser's unified diff for the current draft without approving or applying a filesystem change.",
+      description: "After a draft edit, create its browser unified diff; this never approves or applies a filesystem change.",
       inputSchema: EMPTY_INPUT_SCHEMA,
       annotations: { readOnlyHint: false, untrustedContentHint: true },
       execute: async (_input, { signal } = {}) => {

@@ -61,12 +61,21 @@ an unbounded data channel.
 
 `examples/webmcp-challenge/evals/webmcp-evals.js` is the checked-in eval corpus.
 It includes direct intents, open-ended output-dependent tool selection, a
-multi-step review journey, and an invalid-argument failure case.
+multi-step review journey, and an invalid-argument failure case. Each case
+defines the user goal, initial editor state, boundaries, expected UI effects,
+success criteria, and recovery guidance. `get_editor_state` exposes the live
+workflow state and bounded recommended next tools so an agent can recover its
+place after a refresh or a failed step. Browser errors include the next safe
+action, such as rereading a stale file or selecting an allowed panel.
 `test/webmcp-evals.test.js` validates tool names, metadata budgets, input errors,
 and the browser-only authority boundary. These are deterministic contract
 checks. Probabilistic selection and end-to-end model behavior must additionally
 be tested in Chrome's Model Context Tool Inspector or another WebMCP-compatible
 agent using the prompts in the example guide.
+
+The registration intentionally omits WebMCP's `exposedTo` option. The demo has
+no trusted cross-origin embedder, so exposing tools to another origin would add
+authority without a defined trust relationship.
 
 ## Transport and pairing
 

@@ -73,7 +73,11 @@ page effect:
    expect `review_draft` followed by `open_panel` with `changes`.
 5. Execute a long-file or many-match request and confirm the response stays
    bounded and reports truncation.
-6. Confirm no exposed browser tool can approve, apply, or revert a filesystem
+6. Ask for the current editor state and verify it reports the workflow state and
+   recommended next tools.
+7. Try a stale digest, an ambiguous replacement, an empty search term, and an
+   invalid panel. Confirm each error explains how to recover.
+8. Confirm no exposed browser tool can approve, apply, or revert a filesystem
    change; those operations remain behind VT Code's separate approval boundary.
 
 The repository's deterministic version of these checks is in

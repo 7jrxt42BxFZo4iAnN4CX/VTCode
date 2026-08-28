@@ -64,6 +64,7 @@ test("registers spec-shaped WebMCP tools with titles, schemas, annotations, and 
   assert.equal(context.tools[0].tool.annotations.readOnlyHint, true);
   assert.equal(context.tools[0].tool.annotations.untrustedContentHint, true);
   assert.equal(context.tools[4].tool.annotations.readOnlyHint, false);
+  assert.equal(context.tools[3].tool.annotations.untrustedContentHint, true);
   assert.equal(context.tools[6].tool.annotations.untrustedContentHint, true);
   assert.equal(context.tools[1].tool.inputSchema.required[0], "path");
   assert.equal(context.tools[7].tool.inputSchema.properties.panel.enum.length, 3);
@@ -138,7 +139,10 @@ test("tool inputs fail clearly before application callbacks run", async () => {
 
   await assert.rejects(context.tools[1].tool.execute({}, {}), /read_file requires path/);
   await assert.rejects(context.tools[2].tool.execute({ query: "" }, {}), /search_code.query must not be empty/);
-  await assert.rejects(context.tools[7].tool.execute({ panel: "unknown" }, {}), /open_panel.panel has an unsupported value/);
+  await assert.rejects(
+    context.tools[7].tool.execute({ panel: "unknown" }, {}),
+    /open_panel\.panel has an unsupported value; choose one of: activity, changes, turn/,
+  );
   await assert.rejects(context.tools[1].tool.execute({ path: "README.md", extra: true }, {}), /read_file does not accept extra/);
   assert.equal(called, false);
 });
@@ -146,8 +150,14 @@ test("tool inputs fail clearly before application callbacks run", async () => {
 test("browser draft edits require exactly one matching text span", () => {
   assert.equal(replaceExactText("Hello WebMCP", "Hello", "Hi"), "Hi WebMCP");
   assert.equal(replaceExactText("remove me", "remove me", ""), "");
-  assert.throws(() => replaceExactText("Hello", "missing", "new"), { code: "text_not_found" });
-  assert.throws(() => replaceExactText("same same", "same", "new"), { code: "ambiguous_edit" });
+  assert.throws(() => replaceExactText("Hello", "missing", "new"), {
+    code: "text_not_found",
+    message: /read the current file/,
+  });
+  assert.throws(() => replaceExactText("same same", "same", "new"), {
+    code: "ambiguous_edit",
+    message: /narrow find/,
+  });
 });
 
 test("tool results stay within the WebMCP character budget and report truncation", async () => {

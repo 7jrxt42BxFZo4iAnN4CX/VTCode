@@ -495,7 +495,7 @@ function renderSelectedEditor() {
 }
 
 async function openFile(path, record = true) {
-  if (!state.files.has(path)) throw new Error(`Unknown project file: ${path}`);
+  if (!state.files.has(path)) throw webMcpFileNotFoundError(path);
   const request = ++openRequest;
   state.selected = path;
   expandAncestors(path);
@@ -576,7 +576,7 @@ function renderProposal() {
 
 async function reviewChanges() {
   const changes = collectChanges();
-  if (!changes.length) throw new Error("Edit at least one file before reviewing changes");
+  if (!changes.length) throw new Error("No browser draft is ready to review; edit a file or call stage_text_edit first");
   const beforeByPath = Object.fromEntries(changes.map((change) => [change.path, snapshot(change.path).content]));
   state.clientProposal = { changes, unified_diff: createUnifiedDiff(changes, beforeByPath) };
   state.serverProposal = null;
@@ -969,6 +969,7 @@ async function loadWorkspace(nextBackend, restoreState = null) {
 }
 
 async function readCurrentFile(path) {
+  if (!state.files.has(path)) throw webMcpFileNotFoundError(path);
   const draft = state.drafts.get(path);
   const base = snapshot(path);
   if (draft !== undefined) {
@@ -996,7 +997,24 @@ async function readCurrentFile(path) {
   return { ...file, draft: false };
 }
 
+function webMcpFileNotFoundError(path) {
+  const error = new Error(`No workspace file named "${path}"; call list_project_files or search_code and retry with a returned path`);
+  error.code = "not_found";
+  return error;
+}
+
 function editorStateForWebMcp() {
+  const dirtyFiles = dirtyPaths();
+  const workflowState = dirtyFiles.length
+    ? "draft_needs_review"
+    : state.selected
+      ? "file_selected"
+      : "workspace_ready";
+  const recommendedNextTools = dirtyFiles.length
+    ? ["review_draft", "open_panel"]
+    : state.selected
+      ? ["read_file", "search_code"]
+      : ["list_project_files", "search_code"];
   return {
     backend: backend.kind,
     connected: isBridgeConnected(),
@@ -1005,25 +1023,27 @@ function editorStateForWebMcp() {
     authenticated_origin: backend.statusPayload?.authenticated_origin || null,
     selected: state.selected,
     open_tabs: [...state.openTabs],
-    dirty_files: dirtyPaths(),
+    dirty_files: dirtyFiles,
     has_client_proposal: Boolean(state.clientProposal),
     has_server_proposal: Boolean(state.serverProposal),
     active_panel: document.querySelector("[data-terminal].active")?.dataset.terminal || "activity",
+    workflow_state: workflowState,
+    recommended_next_tools: recommendedNextTools,
   };
 }
 
 async function stageTextEditForWebMcp({ path, find, replace, expected_digest: expectedDigest }, { signal } = {}) {
-  if (!state.files.has(path)) throw new Error(`Unknown project file: ${path}`);
+  if (!state.files.has(path)) throw webMcpFileNotFoundError(path);
   if (!snapshot(path)) await openFile(path, false);
   if (signal?.aborted) throw signal.reason || new Error("The WebMCP edit was aborted");
   if (isDirty(path)) {
-    const error = new Error(`Draft already contains changes for ${path}; review or discard it first`);
+    const error = new Error(`Draft already contains changes for ${path}; call review_draft or discard the draft before staging another edit`);
     error.code = "draft_conflict";
     throw error;
   }
   const base = snapshot(path);
   if (base.digest !== expectedDigest) {
-    const error = new Error(`Stale edit: refresh ${path} before staging a replacement`);
+    const error = new Error(`Stale edit for ${path}; call read_file again and use its fresh digest before retrying`);
     error.code = "conflict";
     throw error;
   }
@@ -1036,7 +1056,7 @@ async function stageTextEditForWebMcp({ path, find, replace, expected_digest: ex
     throw error;
   }
   if (contentSizeBytes(next) > MAX_FILE_BYTES) {
-    const error = new Error(`Edited file exceeds the browser size limit: ${path}`);
+    const error = new Error(`Edited file exceeds the browser size limit: ${path}; shorten the replacement and retry`);
     error.code = "limit_exceeded";
     throw error;
   }
@@ -1084,7 +1104,11 @@ async function reviewDraftForWebMcp() {
 }
 
 function openPanelForWebMcp(panel) {
-  if (!["activity", "changes", "turn"].includes(panel)) throw new Error("Unknown editor panel");
+  if (!["activity", "changes", "turn"].includes(panel)) {
+    const error = new Error(`Unknown editor panel "${panel}"; choose one of: activity, changes, turn`);
+    error.code = "invalid_input";
+    throw error;
+  }
   selectTerminal(panel);
 }
 
@@ -1106,6 +1130,11 @@ async function registerWebMcp() {
       truncated,
       scanned_files: scannedFiles,
       scanned_bytes: scannedBytes,
+      ...(truncated
+        ? { hint: "Results are truncated; narrow the query or inspect the returned paths." }
+        : results.length === 0
+          ? { hint: "No matches found; try a shorter or different query." }
+          : {}),
     });
     for (const path of paths()) {
       if (signal?.aborted) throw signal.reason || new Error("The WebMCP search was aborted");

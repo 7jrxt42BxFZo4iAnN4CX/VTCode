@@ -23,12 +23,25 @@ test("WebMCP eval corpus covers direct, open-ended, journey, and failure cases",
 
   for (const testCase of WEBMCP_EVAL_CASES) {
     assert.match(testCase.id, /^[a-z0-9-]+$/);
+    assert.ok(testCase.goal.length > 0);
+    assert.deepEqual(Object.keys(testCase.initialState).sort(), [
+      "active_panel",
+      "backend",
+      "connected",
+      "dirty_files",
+      "open_tabs",
+      "selected",
+    ]);
+    assert.ok(testCase.boundaries.length > 0);
     assert.ok(testCase.messages.length > 0);
     assert.equal(testCase.messages[0].role, "user");
     assert.ok(testCase.messages[0].content.length > 0);
+    assert.ok(testCase.successCriteria.length > 0);
+    assert.ok(testCase.recovery.length > 0);
     for (const expectedCall of testCase.expectedCall) {
       assert.ok(toolNames.has(expectedCall.functionName), `${testCase.id}: unknown tool ${expectedCall.functionName}`);
       assert.equal(typeof expectedCall.arguments, "object");
+      assert.ok(expectedCall.expected_ui || expectedCall.recovery);
       if (expectedCall.expected_error) assert.equal(typeof expectedCall.expected_error, "string");
     }
   }
