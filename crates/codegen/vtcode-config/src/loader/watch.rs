@@ -81,15 +81,26 @@ impl ConfigWatcher {
     /// Returns an error when internal watcher state cannot be updated.
     pub async fn load_config(&mut self) -> Result<()> {
         ConfigManager::invalidate_workspace_cache(&self.workspace_path);
-        let config = ConfigManager::load_from_workspace(&self.workspace_path)
-            .ok()
-            .map(|manager| manager.config().clone());
+        let reloaded = ConfigManager::load_from_workspace(&self.workspace_path).map(|manager| manager.config().clone());
+
+        if let Err(err) = &reloaded {
+            let override_path = super::session_override::explicit_config_path();
+            tracing::warn!(
+                path = %override_path.as_deref().map(|p| p.display().to_string()).unwrap_or_default(),
+                "Failed to reload config; keeping the last known configuration: {err:#}"
+            );
+        }
 
         let mut current = self
             .current_config
             .lock()
             .map_err(|e| anyhow!("config watcher state lock poisoned: {e}"))?;
-        *current = config;
+        // Fail-safe: on reload errors keep the last known config instead of
+        // dropping it to `None`, which would cascade into a session reset
+        // (e.g. when the explicit override file was deleted mid-session).
+        if let Ok(config) = reloaded {
+            *current = Some(config);
+        }
         drop(current);
 
         let mut last_load = self
@@ -143,6 +154,7 @@ pub struct SimpleConfigWatcher {
     last_modified_times: HashMap<PathBuf, Option<SystemTime>>,
     debounce_duration: Duration,
     last_reload_attempt: Option<Instant>,
+    last_known_config: Option<VTCodeConfig>,
 }
 
 impl SimpleConfigWatcher {
@@ -157,6 +169,7 @@ impl SimpleConfigWatcher {
             last_modified_times: HashMap::new(),
             debounce_duration: Duration::from_millis(1000),
             last_reload_attempt: None,
+            last_known_config: None,
         }
     }
 
@@ -170,6 +183,12 @@ impl SimpleConfigWatcher {
     pub fn new_with_user_config_paths(workspace_path: PathBuf) -> Self {
         let mut watcher = Self::new(workspace_path.clone());
         if let Ok(manager) = ConfigManager::load_from_workspace(&workspace_path) {
+            if let Some(explicit_path) = manager.config_path() {
+                // With a session-explicit config file the loaded manager's
+                // Workspace layer is that file; watch it so live reload
+                // observes edits to the actual config source.
+                watcher.add_watch_path(explicit_path.to_path_buf());
+            }
             for path in manager.user_config_paths() {
                 watcher.add_watch_path(path);
             }
@@ -259,9 +278,24 @@ impl SimpleConfigWatcher {
 
     pub fn load_config(&mut self) -> Option<VTCodeConfig> {
         ConfigManager::invalidate_workspace_cache(&self.workspace_path);
-        let config = ConfigManager::load_from_workspace(&self.workspace_path)
+        let reloaded = ConfigManager::load_from_workspace(&self.workspace_path)
             .ok()
             .map(|manager| manager.config().clone());
+
+        if reloaded.is_none() {
+            let override_path = super::session_override::explicit_config_path();
+            tracing::warn!(
+                path = %override_path.as_deref().map(|p| p.display().to_string()).unwrap_or_default(),
+                "Failed to reload config; keeping the last known configuration"
+            );
+        }
+
+        // Fail-safe: on reload errors keep the last known config so the
+        // session does not silently lose its effective configuration (e.g.
+        // when the explicit override file was deleted mid-session).
+        if let Some(config) = reloaded {
+            self.last_known_config = Some(config.clone());
+        }
 
         self.last_load_time = Instant::now();
         self.last_modified_times.clear();
@@ -269,7 +303,7 @@ impl SimpleConfigWatcher {
             self.last_modified_times.insert(target.clone(), latest_modified(&target));
         }
 
-        config
+        self.last_known_config.clone()
     }
 
     pub fn set_check_interval(&mut self, seconds: u64) {

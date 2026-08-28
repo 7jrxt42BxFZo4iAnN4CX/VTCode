@@ -8,6 +8,7 @@ mod config;
 mod fingerprint;
 mod manager;
 mod merge;
+pub(crate) mod session_override;
 mod syntax_highlighting;
 
 #[cfg(test)]
@@ -18,5 +19,6 @@ pub use config::{FeaturesConfig, ProviderConfig, VTCodeConfig, WorkspaceConfig};
 pub use fingerprint::{fingerprint_str, fingerprint_toml_value};
 pub use manager::{ConfigManager, ConfigPhaseTiming};
 pub use merge::{merge_toml_values, merge_toml_values_with_origins};
+pub use session_override::{explicit_config_path, set_explicit_config_path};
 pub use syntax_highlighting::SyntaxHighlightingConfig;
 pub use watch::{ConfigWatcher, SimpleConfigWatcher};
