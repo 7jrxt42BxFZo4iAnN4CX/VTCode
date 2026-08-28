@@ -95,9 +95,18 @@ impl ConfigWatcher {
             .current_config
             .lock()
             .map_err(|e| anyhow!("config watcher state lock poisoned: {e}"))?;
-        // Fail-safe: on reload errors keep the last known config instead of
-        // dropping it to `None`, which would cascade into a session reset
-        // (e.g. when the explicit override file was deleted mid-session).
+        // Fail-fast on the initial load: when no configuration was ever
+        // loaded and the reload fails, surface the error instead of silently
+        // starting with `None` (e.g. a broken explicit override file).
+        if current.is_none() {
+            if let Err(err) = reloaded {
+                return Err(err);
+            }
+        }
+        // Fail-safe: on subsequent reload errors keep the last known config
+        // instead of dropping it to `None`, which would cascade into a
+        // session reset (e.g. when the explicit override file was deleted
+        // mid-session).
         if let Ok(config) = reloaded {
             *current = Some(config);
         }
@@ -182,13 +191,13 @@ impl SimpleConfigWatcher {
     #[must_use]
     pub fn new_with_user_config_paths(workspace_path: PathBuf) -> Self {
         let mut watcher = Self::new(workspace_path.clone());
+        // Register the session-explicit override file before the best-effort
+        // manager load so a malformed or temporarily unreadable explicit file
+        // remains watched and observable for later correction.
+        if let Some(override_path) = super::session_override::explicit_config_path() {
+            watcher.add_watch_path(override_path);
+        }
         if let Ok(manager) = ConfigManager::load_from_workspace(&workspace_path) {
-            if let Some(explicit_path) = manager.config_path() {
-                // With a session-explicit config file the loaded manager's
-                // Workspace layer is that file; watch it so live reload
-                // observes edits to the actual config source.
-                watcher.add_watch_path(explicit_path.to_path_buf());
-            }
             for path in manager.user_config_paths() {
                 watcher.add_watch_path(path);
             }

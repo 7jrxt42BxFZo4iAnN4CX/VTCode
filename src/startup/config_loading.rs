@@ -121,6 +121,7 @@ fn has_top_level_config_key(config: &toml::Value, key: &str) -> bool {
 mod tests {
     use super::*;
     use clap::Parser;
+    use serial_test::serial;
     use tempfile::TempDir;
     use vtcode_config::loader::explicit_config_path;
     use vtcode_core::cli::args::Cli;
@@ -143,6 +144,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn cli_config_path_override_loads_requested_file() {
         let _guard = SessionOverrideGuard::reset();
         let temp_dir = TempDir::new().expect("temp dir");
@@ -174,6 +176,7 @@ enable_tracing = true
     }
 
     #[tokio::test]
+    #[serial]
     async fn env_config_path_override_loads_requested_file_and_captures_session_override() {
         use vtcode_commons::env_lock;
 

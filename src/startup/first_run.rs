@@ -172,7 +172,8 @@ async fn run_first_run_setup(workspace: &Path, config: &mut VTCodeConfig, mode: 
         }
     };
 
-    renderer.line(MessageStyle::Status, "Saving your configuration to vtcode.toml ...")?;
+    let config_path = vtcode_config::loader::explicit_config_path().unwrap_or_else(|| workspace.join("vtcode.toml"));
+    renderer.line(MessageStyle::Status, &format!("Saving your configuration to {} ...", config_path.display()))?;
 
     // Compute provider key once to avoid repeated allocations from `to_string()`.
     let provider_key = provider.to_string();
@@ -180,7 +181,6 @@ async fn run_first_run_setup(workspace: &Path, config: &mut VTCodeConfig, mode: 
     config.agent.api_key_env = provider.default_api_key_env().to_owned();
     apply_selection(config, &provider_key, &model, &lightweight_model, reasoning, persistent_memory);
 
-    let config_path = vtcode_config::loader::explicit_config_path().unwrap_or_else(|| workspace.join("vtcode.toml"));
     ConfigManager::save_config_to_path(&config_path, config)
         .with_context(|| format!("Failed to write initial configuration to {}", config_path.display()))?;
 

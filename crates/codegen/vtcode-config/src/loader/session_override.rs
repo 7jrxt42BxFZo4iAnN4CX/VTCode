@@ -7,8 +7,9 @@
 //! here as a session snapshot, so runtime reloads via
 //! [`ConfigManager::load_from_workspace`] stay deterministic.
 //!
-//! Runtime reloads must re-read the environment; the snapshot keeps reloads
-//! deterministic and matches `--config` behavior.
+//! Reloads reuse this stored snapshot rather than re-reading the
+//! environment, which keeps them deterministic and matches `--config`
+//! semantics.
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -39,10 +40,9 @@ pub fn set_explicit_config_path(path: Option<PathBuf>) {
     }
     // A cleared or changed override must not leave a stale manager in the
     // workspace cache: the cache key is the canonical workspace only, so an
-    // override-loaded manager would otherwise leak into later default loads.
-    if let Ok(cwd) = std::env::current_dir() {
-        ConfigManager::invalidate_workspace_cache(cwd);
-    }
+    // override-loaded manager would otherwise leak into later default loads
+    // for any workspace. Invalidate every entry.
+    ConfigManager::invalidate_all_workspace_cache();
 }
 
 /// Return the session's explicit config-file override, if one was captured.

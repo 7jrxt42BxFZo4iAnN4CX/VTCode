@@ -259,6 +259,17 @@ impl ConfigManager {
         let _ = workspace;
     }
 
+    /// Invalidate every cached workspace configuration.
+    ///
+    /// Used when a session-scoped override changes or is cleared: the cache is
+    /// keyed by canonical workspace only, so an override-loaded manager for any
+    /// workspace must not leak into later default loads. This is a rare event
+    /// (startup and tests), so a full sweep is cheap and safe.
+    pub fn invalidate_all_workspace_cache() {
+        #[cfg(not(test))]
+        with_cache_mut(|map| map.clear());
+    }
+
     /// Load configuration from a specific workspace
     ///
     /// When the session has an explicit config-file override (captured at
