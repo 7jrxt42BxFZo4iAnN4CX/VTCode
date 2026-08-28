@@ -2093,6 +2093,72 @@ async fn spawn_is_rejected_after_close_begins() {
 }
 
 #[tokio::test]
+async fn resume_restores_closed_grandchildren() {
+    let temp = TempDir::new().expect("tempdir");
+    let parent = SubagentController::new(test_controller_config(temp.path().to_path_buf(), VTCodeConfig::default()))
+        .await
+        .expect("parent controller");
+
+    let spec = vtcode_config::builtin_subagents()
+        .into_iter()
+        .find(|spec| spec.name == "explorer")
+        .expect("explorer");
+
+    // Child-scoped controller that has a grandchild under the child session id.
+    let child_controller =
+        SubagentController::new(test_controller_config(temp.path().to_path_buf(), VTCodeConfig::default()))
+            .await
+            .expect("child controller");
+    let child_session_id = "child-session".to_string();
+    {
+        let mut state = child_controller.state.write().await;
+        state.children.insert(
+            "grandchild".to_string(),
+            test_child_record(
+                "grandchild",
+                "session-grandchild",
+                &child_session_id,
+                &spec,
+                SubagentStatus::Running,
+                2,
+                None,
+            ),
+        );
+    }
+    let child_controller = std::sync::Arc::new(child_controller);
+    {
+        let mut state = parent.state.write().await;
+        state.children.insert(
+            "child".to_string(),
+            test_child_record(
+                "child",
+                &child_session_id,
+                "parent-session",
+                &spec,
+                SubagentStatus::Running,
+                1,
+                Some(child_controller.clone()),
+            ),
+        );
+    }
+
+    // Closing the child cascades to the grandchild...
+    parent.close("child").await.expect("close child");
+    let closed_grandchild = child_controller.status_for("grandchild").await.expect("grandchild status");
+    assert_eq!(closed_grandchild.status, SubagentStatus::Closed, "grandchild must be closed with the child");
+
+    // ...and resuming the child must reopen the grandchild too, not just clear
+    // the close gate.
+    parent.resume("child").await.expect("resume child");
+    let resumed_grandchild = child_controller.status_for("grandchild").await.expect("grandchild status");
+    assert!(
+        matches!(resumed_grandchild.status, SubagentStatus::Queued | SubagentStatus::Running),
+        "resumed grandchild must be re-queued, got {:?}",
+        resumed_grandchild.status
+    );
+}
+
+#[tokio::test]
 async fn wait_returns_first_terminal_child() {
     let temp = TempDir::new().expect("tempdir");
     let controller =
