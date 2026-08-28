@@ -2077,6 +2077,19 @@ async fn spawn_is_rejected_after_close_begins() {
         .expect_err("spawn after close began must be rejected");
 
     assert!(err.to_string().contains("shutting down"));
+
+    // Reopening the subtree clears the transient close flag, so a resumed
+    // child can delegate again. Permanent `shutdown_requested` stays set only
+    // for real shutdown, not for a subtree close.
+    child_controller.end_close().await;
+    child_controller
+        .spawn(SpawnAgentRequest {
+            agent_type: Some("explorer".to_string()),
+            message: Some("Inspect the codebase.".to_string()),
+            ..SpawnAgentRequest::default()
+        })
+        .await
+        .expect("spawn after end_close must be allowed again");
 }
 
 #[tokio::test]

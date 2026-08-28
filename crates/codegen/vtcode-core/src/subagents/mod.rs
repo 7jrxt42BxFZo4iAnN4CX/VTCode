@@ -146,6 +146,12 @@ pub struct SubagentController {
     lifecycle_hooks: Option<LifecycleHookEngine>,
     state: Arc<RwLock<ControllerState>>,
     shutdown_requested: Arc<AtomicBool>,
+    /// Transient close-in-progress flag. Unlike `shutdown_requested` this is
+    /// cleared when a subtree is reopened via `reopen_single`, so a resumed
+    /// child can delegate again and its controller keeps saving background
+    /// state. Set only while `close_tree`/`signal_shutdown` are tearing a
+    /// subtree down.
+    closing: Arc<AtomicBool>,
 }
 
 impl SubagentController {
@@ -185,6 +191,7 @@ impl SubagentController {
                 background_children,
             })),
             shutdown_requested: Arc::new(AtomicBool::new(false)),
+            closing: Arc::new(AtomicBool::new(false)),
         })
     }
 

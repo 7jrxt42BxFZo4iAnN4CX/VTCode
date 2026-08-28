@@ -418,24 +418,33 @@ impl SubagentController {
     }
 
     pub(super) async fn reopen_single(&self, target: &str) -> Result<bool> {
-        let mut state = self.state.write().await;
-        let record = state
-            .children
-            .get_mut(target)
-            .ok_or_else(|| anyhow!("Unknown subagent id {target}"))?;
-        if matches!(record.status, SubagentStatus::Running | SubagentStatus::Queued) {
-            return Ok(false);
+        let child_controller = {
+            let mut state = self.state.write().await;
+            let record = state
+                .children
+                .get_mut(target)
+                .ok_or_else(|| anyhow!("Unknown subagent id {target}"))?;
+            if matches!(record.status, SubagentStatus::Running | SubagentStatus::Queued) {
+                return Ok(false);
+            }
+            let prompt = record
+                .last_prompt
+                .clone()
+                .unwrap_or_else(|| "Continue the delegated task from the existing context.".to_string());
+            record.status = SubagentStatus::Queued;
+            record.updated_at = Utc::now();
+            record.completed_at = None;
+            record.error = None;
+            record.summary = None;
+            record.queued_prompts.push_back(prompt);
+            record.child_controller.clone()
+        };
+        // Reopening a subtree reverses the transient `begin_close` on any
+        // child-scoped controller so a resumed child can delegate again (and
+        // its controller resumes saving background state).
+        if let Some(controller) = child_controller {
+            controller.end_close().await;
         }
-        let prompt = record
-            .last_prompt
-            .clone()
-            .unwrap_or_else(|| "Continue the delegated task from the existing context.".to_string());
-        record.status = SubagentStatus::Queued;
-        record.updated_at = Utc::now();
-        record.completed_at = None;
-        record.error = None;
-        record.summary = None;
-        record.queued_prompts.push_back(prompt);
         Ok(true)
     }
 
@@ -660,9 +669,18 @@ impl SubagentController {
     /// Marks this controller as closing so [`Self::spawn`] rejects new spawns.
     ///
     /// Used before aborting a subtree so a still-running child cannot spawn a
-    /// descendant between the descendant snapshot and the handle abort.
+    /// descendant between the descendant snapshot and the handle abort. Unlike
+    /// [`Self::signal_shutdown`] this uses the transient `closing` flag, which
+    /// is cleared again when the subtree is reopened, so a resumed child can
+    /// delegate and its controller keeps saving background state.
     pub(super) async fn begin_close(&self) {
-        self.shutdown_requested.store(true, Ordering::Relaxed);
+        self.closing.store(true, Ordering::Relaxed);
+    }
+
+    /// Clears the transient close-in-progress flag. Called when a closed
+    /// subtree is reopened so its child-scoped controller can delegate again.
+    pub(super) async fn end_close(&self) {
+        self.closing.store(false, Ordering::Relaxed);
     }
 
     /// Signal that the program is shutting down. Subsequent calls to
@@ -684,9 +702,11 @@ impl SubagentController {
             }
             nested
         };
-        // Mark every child-scoped controller as closing before enumerating
-        // descendants so a race cannot let a fresh grandchild outlive shutdown.
+        // Mark every child-scoped controller as permanently shut down (so its
+        // background state is not saved) and as closing (so a race cannot let
+        // a fresh grandchild outlive shutdown), then cascade.
         for (controller, _) in &nested {
+            controller.shutdown_requested.store(true, Ordering::Relaxed);
             controller.begin_close().await;
         }
         // Cascade shutdown to child-scoped controllers so grandchildren tasks
@@ -852,7 +872,7 @@ impl SubagentController {
         if !self.config.vt_cfg.subagents.enabled {
             bail!("Subagents are disabled by configuration");
         }
-        if self.shutdown_requested.load(Ordering::Relaxed) {
+        if self.shutdown_requested.load(Ordering::Relaxed) || self.closing.load(Ordering::Relaxed) {
             bail!("Subagent controller is shutting down; cannot spawn new subagents");
         }
         if self.config.depth.saturating_add(1) > self.config.vt_cfg.subagents.max_depth {
