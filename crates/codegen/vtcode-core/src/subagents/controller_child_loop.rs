@@ -174,7 +174,7 @@ impl SubagentController {
         model_override: Option<String>,
         reasoning_override: Option<String>,
     ) -> Result<ChildRunResult> {
-        let (spec, session_id, bootstrap_messages, display_label, background, worktree_path) = {
+        let (spec, session_id, bootstrap_messages, display_label, background, worktree_path, existing_child_controller) = {
             let mut state = self.state.write().await;
             let record = state
                 .children
@@ -189,12 +189,19 @@ impl SubagentController {
                 record.display_label.clone(),
                 record.background,
                 record.worktree_path.clone(),
+                record.child_controller.clone(),
             )
         };
 
         // Use the worktree path as the effective workspace root if the
         // subagent was spawned with isolation=worktree.
         let effective_workspace = worktree_path.as_deref().unwrap_or(&self.config.workspace_root);
+
+        // This child may delegate further only when a grandchild (depth + 2)
+        // still fits inside `subagents.max_depth`. The depth check in
+        // `spawn_with_spec` remains the sole runtime gate; this flag just
+        // decides whether the delegation tools stay in the child's toolset.
+        let allow_nested_delegation = self.config.depth.saturating_add(2) <= self.config.vt_cfg.subagents.max_depth;
 
         let (resolved_model, child_reasoning_effort, child_cfg) = prepare_child_runtime_config(
             &self.config.vt_cfg,
@@ -205,6 +212,7 @@ impl SubagentController {
             max_turns,
             model_override.as_deref(),
             reasoning_override.as_deref(),
+            allow_nested_delegation,
             resolve_effective_subagent_model,
         )?;
         let parent_session_id = self.parent_session_id.read().await.clone();
@@ -243,6 +251,55 @@ impl SubagentController {
         .await?;
         runner.set_quiet(true);
         runner.set_subagent_mode(true);
+        // When this child may delegate further, attach a child-scoped
+        // controller so the subagent-lifecycle tools surface in its catalog
+        // and grandchild spawns inherit the incremented depth. The controller
+        // is created once and reused across resumes so grandchildren remain
+        // reachable for the child's lifetime. It is created with
+        // `managed_background_runtime: true` so the unified `agent` tool cannot
+        // launch background subprocesses from a child.
+        let child_controller = if allow_nested_delegation {
+            match existing_child_controller {
+                Some(controller) => Some(controller),
+                None => {
+                    let nested_config = SubagentControllerConfig {
+                        workspace_root: effective_workspace.to_path_buf(),
+                        parent_session_id: session_id.clone(),
+                        parent_model: child_cfg.agent.default_model.clone(),
+                        parent_provider: child_cfg.agent.provider.clone(),
+                        parent_reasoning_effort: child_reasoning_effort,
+                        api_key: self.config.api_key.clone(),
+                        vt_cfg: child_cfg.clone(),
+                        openai_chatgpt_auth: self.config.openai_chatgpt_auth.clone(),
+                        depth: self.config.depth.saturating_add(1),
+                        exec_sessions: self.config.exec_sessions.clone(),
+                        pty_manager: self.config.pty_manager.clone(),
+                        managed_background_runtime: true,
+                    };
+                    match SubagentController::new(nested_config).await {
+                        Ok(controller) => {
+                            controller.set_parent_messages(&bootstrap_messages).await;
+                            Some(std::sync::Arc::new(controller))
+                        }
+                        Err(err) => {
+                            // Fail closed: without a controller the child keeps
+                            // the current non-nested toolset and cannot delegate.
+                            tracing::warn!(
+                                child_id,
+                                error = %err,
+                                "Failed to create nested subagent controller; child delegation disabled"
+                            );
+                            None
+                        }
+                    }
+                }
+            }
+        } else {
+            None
+        };
+        if let Some(controller) = child_controller.as_ref() {
+            runner.set_subagent_controller(controller.clone());
+        }
         let thread_handle = runner.thread_handle();
         let archive_path = archive.path().to_path_buf();
 
@@ -256,6 +313,9 @@ impl SubagentController {
             record.archive_path = Some(archive_path.clone());
             record.effective_config = Some(child_cfg.clone());
             record.thread_handle = Some(thread_handle.clone());
+            if let Some(controller) = child_controller.clone() {
+                record.child_controller = Some(controller);
+            }
         }
         if let Some(hooks) = self.lifecycle_hooks.as_ref()
             && let Err(err) = hooks
@@ -277,7 +337,13 @@ impl SubagentController {
             );
         }
 
-        let filtered_tools = filter_child_tools(&spec, runner.build_universal_tools().await?, spec.is_read_only());
+        // Fail closed on tool exposure: only expose the delegation tools when
+        // the child-scoped controller is actually attached. If controller
+        // creation failed the child keeps the non-nested toolset even though
+        // its config deny-list may omit the delegation tools.
+        let nested_tools_enabled = allow_nested_delegation && child_controller.is_some();
+        let filtered_tools =
+            filter_child_tools(&spec, runner.build_universal_tools().await?, spec.is_read_only(), nested_tools_enabled);
         let allowed_tools = filtered_tools
             .iter()
             .map(|tool| tool.function_name().to_string())

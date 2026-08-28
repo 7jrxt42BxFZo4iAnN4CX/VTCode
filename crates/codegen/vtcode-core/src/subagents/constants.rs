@@ -39,6 +39,12 @@ pub(crate) const SUBAGENT_TOOL_NAMES: &[&str] = &[
     tools::CLOSE_AGENT,
 ];
 
+/// Subagent-internal tool names that are removed from a child's toolset even
+/// when nested delegation is allowed: `spawn_background_subprocess` maps to a
+/// dedicated controller guard (`managed_background_runtime`) because it is an
+/// argument alias of the unified `agent` registration, not a separate tool.
+pub(crate) const CHILD_BLOCKED_BACKGROUND_TOOL_NAMES: &[&str] = &[tools::SPAWN_BACKGROUND_SUBPROCESS];
+
 pub(crate) const NON_MUTATING_TOOL_PREFIXES: &[&str] = &[
     tools::CODE_SEARCH,
     tools::LIST_SKILLS,

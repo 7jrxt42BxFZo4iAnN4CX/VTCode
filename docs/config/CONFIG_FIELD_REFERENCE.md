@@ -751,7 +751,7 @@ python3 scripts/generate_config_field_reference.py
 | `subagents.default_timeout_seconds` | `integer` | no | `300` | - |
 | `subagents.enabled` | `boolean` | no | `true` | - |
 | `subagents.max_concurrent` | `integer` | no | `3` | - |
-| `subagents.max_depth` | `integer` | no | `1` | - |
+| `subagents.max_depth` | `integer` | no | `1` | Maximum delegation depth. `1` disables nested delegation (children cannot spawn); `2` allows one level of nesting (root → child → grandchild), `3` two levels, etc. |
 | `syntax_highlighting.cache_themes` | `boolean` | no | `true` | Enable theme caching for better performance |
 | `syntax_highlighting.enabled` | `boolean` | no | `true` | Enable syntax highlighting for tool output |
 | `syntax_highlighting.enabled_languages` | `array` | no | `[]` | Languages to enable syntax highlighting for |

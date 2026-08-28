@@ -4,7 +4,7 @@
 )]
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::Utc;
-use futures::future::select_all;
+use futures::future::{BoxFuture, select_all};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -255,11 +255,55 @@ impl SubagentController {
 
     /// Closes a subagent and all its descendants, aborting any in-flight work.
     pub async fn close(&self, target: &str) -> Result<SubagentStatusEntry> {
-        let subtree_ids = self.collect_spawn_subtree_ids(target).await?;
-        for node_id in subtree_ids.into_iter().rev() {
-            self.close_single(node_id.as_str()).await?;
-        }
-        self.status_for(target).await
+        // `close_tree` walks the full nesting tree (including grandchildren
+        // spawned through child-scoped controllers) and closes bottom-up.
+        self.close_tree(target).await
+    }
+
+    /// Closes `target` and every descendant across the whole delegation tree.
+    ///
+    /// Unlike [`Self::close`] this is recursive over child-scoped controllers,
+    /// so it works for arbitrary `max_depth`. The recursion is boxed to satisfy
+    /// Rust's async-fn recursion requirement.
+    fn close_tree(&self, target: &str) -> BoxFuture<'static, Result<SubagentStatusEntry>> {
+        let self_owned = self.clone();
+        let target_owned = target.to_string();
+        Box::pin(async move {
+            // Close the target's own subtree (deepest first) on this
+            // controller...
+            let subtree_ids = self_owned.collect_spawn_subtree_ids(&target_owned).await?;
+            // ...then recursively close each child-scoped controller's subtree.
+            // Grandchildren live in the child controller's state, not ours, so
+            // they are closed through that controller to keep node ownership
+            // correct. Only controllers of nodes inside the closed subtree are
+            // cascaded, so closing one subagent never kills a sibling's
+            // descendants.
+            let subtree_set = subtree_ids.iter().collect::<std::collections::HashSet<_>>();
+            let nested = {
+                let state = self_owned.state.read().await;
+                state
+                    .children
+                    .iter()
+                    .filter(|(id, _)| subtree_set.contains(id))
+                    .filter_map(|(_, record)| {
+                        record
+                            .child_controller
+                            .clone()
+                            .map(|controller| (controller, record.session_id.clone()))
+                    })
+                    .collect::<Vec<_>>()
+            };
+            for (controller, session_id) in nested {
+                let ids = controller.spawn_child_ids_for_parent(&session_id).await;
+                for id in ids {
+                    let _ = controller.close_tree(&id).await;
+                }
+            }
+            for node_id in subtree_ids.into_iter().rev() {
+                self_owned.close_single(node_id.as_str()).await?;
+            }
+            self_owned.status_for(&target_owned).await
+        })
     }
 
     /// Blocks until one of the target subagents reaches a terminal state or the timeout expires.
@@ -607,12 +651,27 @@ impl SubagentController {
     /// are aborted so subagent tasks do not outlive the parent session.
     pub async fn signal_shutdown(&self) {
         self.shutdown_requested.store(true, Ordering::Relaxed);
-        let mut state = self.state.write().await;
-        for record in state.children.values_mut() {
-            if let Some(handle) = record.handle.take() {
-                handle.abort();
+        let nested = {
+            let mut state = self.state.write().await;
+            let mut nested = Vec::new();
+            for record in state.children.values_mut() {
+                if let Some(handle) = record.handle.take() {
+                    handle.abort();
+                }
+                record.status = SubagentStatus::Closed;
+                if let Some(controller) = record.child_controller.clone() {
+                    nested.push((controller, record.session_id.clone()));
+                }
             }
-            record.status = SubagentStatus::Closed;
+            nested
+        };
+        // Cascade shutdown to child-scoped controllers so grandchildren tasks
+        // are aborted too; otherwise their tokio tasks keep running detached.
+        for (controller, session_id) in nested {
+            let ids = controller.spawn_child_ids_for_parent(&session_id).await;
+            for id in ids {
+                let _ = controller.close_tree(&id).await;
+            }
         }
     }
 
@@ -772,6 +831,14 @@ impl SubagentController {
         if self.config.depth.saturating_add(1) > self.config.vt_cfg.subagents.max_depth {
             bail!("Subagent depth limit reached (max_depth={})", self.config.vt_cfg.subagents.max_depth);
         }
+        if self.config.depth > 0 && spec.isolation == Some(vtcode_config::IsolationMode::Worktree) {
+            bail!(
+                "Subagent '{}' requests isolation=worktree, but nested worktree isolation is not supported \
+                 (child-scoped controllers operate inside the parent's worktree). Use isolation=worktree only \
+                 at the root delegation level.",
+                spec.name
+            );
+        }
         // Create a worktree for isolation if requested.
         let worktree_path = if spec.isolation == Some(vtcode_config::IsolationMode::Worktree) {
             let workspace_root = self.config.workspace_root.clone();
@@ -816,6 +883,7 @@ impl SubagentController {
             child_max_turns,
             model_override.as_deref(),
             reasoning_override.as_deref(),
+            self.config.depth.saturating_add(2) <= self.config.vt_cfg.subagents.max_depth,
             resolve_effective_subagent_model,
         )?;
 
@@ -859,6 +927,7 @@ impl SubagentController {
             handle: None,
             notify,
             worktree_path,
+            child_controller: None,
         };
         state.children.insert(id.clone(), entry);
         drop(state);

@@ -394,6 +394,15 @@ impl AgentRunner {
         self.loop_detector.lock().set_subagent_mode(is_subagent);
     }
 
+    /// Attach a subagent controller to this runner's tool registry so the
+    /// subagent-lifecycle tools (`agent` and its aliases) become available to
+    /// the model. Used to enable nested delegation: the attached controller
+    /// carries the child-scoped depth so the depth check in `spawn_with_spec`
+    /// still governs grandchild spawns.
+    pub fn set_subagent_controller(&self, controller: Arc<crate::subagents::SubagentController>) {
+        self.tool_registry.set_subagent_controller(controller);
+    }
+
     /// Snapshot the runner-owned conversation messages for archive persistence.
     pub fn session_messages(&self) -> Vec<crate::llm::provider::Message> {
         self.thread_handle.messages()
