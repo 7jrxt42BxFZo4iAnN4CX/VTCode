@@ -343,6 +343,12 @@ impl LifecycleHookEngine {
     }
 
     /// Execute all `PreToolUse` hooks that match the tool name.
+    ///
+    /// Hooks run in configuration order. When a hook returns
+    /// `hookSpecificOutput.updatedInput`, later hooks receive the rewritten
+    /// tool input in their payload, so policy hooks placed after rewrite
+    /// hooks observe the final command. The first Allow/Deny decision still
+    /// short-circuits the remaining hooks.
     pub async fn run_pre_tool_use(
         &self,
         tool_name: &str,
@@ -355,7 +361,7 @@ impl LifecycleHookEngine {
             return Ok(outcome);
         }
 
-        let payload = self.build_pre_tool_payload(tool_name, tool_input, tool_call_id).await?;
+        let mut payload = self.build_pre_tool_payload(tool_name, tool_input, tool_call_id).await?;
 
         for group in &self.inner.hooks.pre_tool_use {
             if !group.matcher.matches(tool_name) {
@@ -366,6 +372,12 @@ impl LifecycleHookEngine {
                 match self.execute_command("PreToolUse", command, &payload).await {
                     Ok(result) => {
                         interpret_pre_tool(command, &result, &mut outcome, self.inner.hooks.quiet_success_output);
+                        if let Some(updated) = outcome.updated_input.take() {
+                            outcome.updated_input = Some(updated.clone());
+                            if let Some(payload_obj) = payload.as_object_mut() {
+                                payload_obj.insert("tool_input".to_string(), updated);
+                            }
+                        }
                         match outcome.decision {
                             PreToolHookDecision::Allow | PreToolHookDecision::Deny => {
                                 return Ok(outcome);

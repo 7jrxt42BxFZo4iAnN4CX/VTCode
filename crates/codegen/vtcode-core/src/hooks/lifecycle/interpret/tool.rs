@@ -81,6 +81,10 @@ pub(crate) fn interpret_pre_tool(
             {
                 outcome.messages.push(HookMessage::info(reason.trim().to_owned()));
             }
+
+            if spec.get("updatedInput").is_some_and(|value| !value.is_null()) {
+                outcome.updated_input = spec.get("updatedInput").cloned();
+            }
         }
 
         if !common.suppress_stdout

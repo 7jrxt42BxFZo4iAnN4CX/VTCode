@@ -39,6 +39,128 @@ async fn test_pre_tool_use_hook_allows_by_default() {
 }
 
 #[tokio::test]
+async fn test_pre_tool_use_hook_parses_updated_input() {
+    let temp_dir = create_test_workspace();
+    let workspace = temp_dir.path();
+
+    let hooks_config = LifecycleHooksConfig {
+        pre_tool_use: vec![HookGroupConfig {
+            matcher: Some("exec_command".into()),
+            hooks: vec![HookCommandConfig {
+                kind: Default::default(),
+                command: r#"printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"rtk cargo build"}}}'"#.into(),
+                timeout_seconds: None,
+            }],
+        }],
+        ..Default::default()
+    };
+
+    let config = HooksConfig { lifecycle: hooks_config };
+
+    let engine = LifecycleHookEngine::new(workspace.to_path_buf(), &config, SessionStartTrigger::Startup)
+        .expect("Failed to create hook engine")
+        .unwrap();
+
+    let outcome = engine
+        .run_pre_tool_use("exec_command", Some(&json!({"command": "cargo build"})), None)
+        .await
+        .expect("Failed to run pre-tool use hook");
+
+    assert!(matches!(outcome.decision, PreToolHookDecision::Continue));
+    assert_eq!(outcome.updated_input, Some(json!({"command": "rtk cargo build"})));
+}
+
+#[tokio::test]
+async fn test_pre_tool_use_hook_updated_input_without_decision() {
+    let temp_dir = create_test_workspace();
+    let workspace = temp_dir.path();
+
+    let hooks_config = LifecycleHooksConfig {
+        pre_tool_use: vec![HookGroupConfig {
+            matcher: Some("exec_command".into()),
+            hooks: vec![HookCommandConfig {
+                kind: Default::default(),
+                command: r#"printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecisionReason":"RTK auto-rewrite","updatedInput":{"command":"rtk ls"}}}'"#.into(),
+                timeout_seconds: None,
+            }],
+        }],
+        ..Default::default()
+    };
+
+    let config = HooksConfig { lifecycle: hooks_config };
+
+    let engine = LifecycleHookEngine::new(workspace.to_path_buf(), &config, SessionStartTrigger::Startup)
+        .expect("Failed to create hook engine")
+        .unwrap();
+
+    let outcome = engine
+        .run_pre_tool_use("exec_command", Some(&json!({"command": "ls"})), None)
+        .await
+        .expect("Failed to run pre-tool use hook");
+
+    assert!(matches!(outcome.decision, PreToolHookDecision::Continue));
+    assert_eq!(outcome.updated_input, Some(json!({"command": "rtk ls"})));
+    assert!(outcome.messages.iter().any(|m| m.text.contains("RTK auto-rewrite")));
+}
+
+#[tokio::test]
+async fn test_pre_tool_use_hook_chain_rewrites_feed_later_hooks() {
+    let temp_dir = create_test_workspace();
+    let workspace = temp_dir.path();
+
+    let second_hook = r#"
+import json, sys
+data = json.load(sys.stdin)
+command = data.get("tool_input", {}).get("command", "")
+print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "updatedInput": {"command": command + " --audited"}}}))
+"#;
+    let hook_path = workspace.join("second_hook.py");
+    std::fs::write(&hook_path, second_hook).expect("write second hook");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&hook_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&hook_path, perms).unwrap();
+    }
+
+    let hooks_config = LifecycleHooksConfig {
+        pre_tool_use: vec![
+            HookGroupConfig {
+                matcher: Some("exec_command".into()),
+                hooks: vec![HookCommandConfig {
+                    kind: Default::default(),
+                    command: r#"printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"rtk cargo build"}}}'"#.into(),
+                    timeout_seconds: None,
+                }],
+            },
+            HookGroupConfig {
+                matcher: Some("exec_command".into()),
+                hooks: vec![HookCommandConfig {
+                    kind: Default::default(),
+                    command: format!("python3 {}", hook_path.display()),
+                    timeout_seconds: None,
+                }],
+            },
+        ],
+        ..Default::default()
+    };
+
+    let config = HooksConfig { lifecycle: hooks_config };
+
+    let engine = LifecycleHookEngine::new(workspace.to_path_buf(), &config, SessionStartTrigger::Startup)
+        .expect("Failed to create hook engine")
+        .unwrap();
+
+    let outcome = engine
+        .run_pre_tool_use("exec_command", Some(&json!({"command": "cargo build"})), None)
+        .await
+        .expect("Failed to run pre-tool use hook");
+
+    assert_eq!(outcome.updated_input, Some(json!({"command": "rtk cargo build --audited"})));
+}
+
+#[tokio::test]
 #[cfg_attr(not(target_os = "macos"), ignore = "Lifecycle hooks are for local development only")]
 async fn test_pre_tool_use_hook_blocks_with_exit_code_2() {
     let temp_dir = create_test_workspace();
