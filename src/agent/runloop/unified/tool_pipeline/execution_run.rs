@@ -200,9 +200,13 @@ pub(crate) async fn run_tool_call_with_args(
                     effective_args.as_ref(),
                 ));
             }
-            Ok(Some(PreToolHookPhaseResult::Proceed { rewritten_args: Some(rewritten), .. })) => {
+            Ok(Some(PreToolHookPhaseResult::Proceed { rewritten_args: Some(rewritten), requires_prompt })) => {
                 effective_args = std::borrow::Cow::Owned(rewritten);
-                None
+                // Forward the phase with the rewrite stripped so the
+                // permission flow neither re-runs hooks (double invocation,
+                // double rewrite) nor loses the Ask decision. The rewritten
+                // args are already reflected in effective_args below.
+                Some(PreToolHookPhaseResult::Proceed { rewritten_args: None, requires_prompt })
             }
             Ok(phase) => phase,
             Err(err) => {

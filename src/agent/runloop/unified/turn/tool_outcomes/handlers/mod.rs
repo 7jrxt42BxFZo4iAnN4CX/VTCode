@@ -15,7 +15,9 @@ use crate::agent::runloop::unified::tool_call_safety::invocation_id_from_call_id
 use crate::agent::runloop::unified::tool_pipeline::validation::{
     SafetyValidationFailure, validate_tool_call_with_limit_prompt,
 };
-use crate::agent::runloop::unified::tool_routing::{ToolPermissionFlow, ensure_tool_permission_with_call_id};
+use crate::agent::runloop::unified::tool_routing::{
+    PreToolHookPhaseResult, ToolPermissionFlow, ensure_tool_permission_with_call_id,
+};
 use crate::agent::runloop::unified::turn::context::{
     PreparedAssistantToolCall, TurnHandlerOutcome, TurnLoopResult, TurnProcessingContext,
 };
@@ -768,6 +770,34 @@ pub(crate) async fn validate_tool_call<'a>(
     // the turn balancer. The legacy core loop detector remains available for
     // non-unified autonomous execution paths only.
 
+    // PreToolUse hooks run before the safety gateway so rewritten arguments
+    // are what every downstream check evaluates, mirroring the pipeline path.
+    let hook_phase = match crate::agent::runloop::unified::tool_routing::pipeline_pre_tool_hooks(
+        ctx.lifecycle_hooks,
+        ctx.renderer,
+        &canonical_tool_name,
+        effective_args,
+        tool_call_id,
+    )
+    .await
+    {
+        Ok(Some(PreToolHookPhaseResult::Deny)) => {
+            ctx.harness_state.record_denied_tool_call();
+            return Ok(ValidationResult::Blocked);
+        }
+        Ok(Some(PreToolHookPhaseResult::Proceed { rewritten_args: Some(rewritten), requires_prompt })) => {
+            prepared.effective_args = rewritten;
+            Some(PreToolHookPhaseResult::Proceed { rewritten_args: None, requires_prompt })
+        }
+        Ok(phase) => phase,
+        Err(err) => {
+            ctx.harness_state.record_denied_tool_call();
+            ctx.push_system_message(format!("Pre-tool hook phase failed: {err}"));
+            return Ok(ValidationResult::Blocked);
+        }
+    };
+    let effective_args = &prepared.effective_args;
+
     let mut safety_approval_justification = None;
     if let Some((outcome, justification)) =
         run_safety_validation_loop(ctx, tool_call_id, &canonical_tool_name, effective_args).await?
@@ -778,14 +808,14 @@ pub(crate) async fn validate_tool_call<'a>(
         }
     }
 
-    // Ensure tool permission. The PreToolUse hook phase has not run yet on
-    // this path; `None` makes the permission flow run it itself.
+    // Ensure tool permission. The PreToolUse hook phase already ran above;
+    // forwarding it here prevents a second hook invocation.
     let permission_result = ensure_tool_permission_with_call_id(
         build_tool_permissions_context_with_safety(ctx, safety_approval_justification.as_deref()),
         &canonical_tool_name,
         Some(effective_args),
         Some(tool_call_id),
-        None,
+        hook_phase,
     )
     .await;
 

@@ -494,6 +494,10 @@ impl<'a> CopilotRuntimeHost<'a> {
         }
 
         if let Some(exhaustion) = self.harness_state.tool_budget_exhaustion() {
+            // Nothing will execute for this call id; drop the pending
+            // rewrite so a later retry with the same id cannot inherit stale
+            // arguments.
+            self.pending_hook_rewritten_args.remove(tool_call_id);
             return Ok(Some(tool_exceeded_budget_response(tool_name, exhaustion.max)));
         }
 
