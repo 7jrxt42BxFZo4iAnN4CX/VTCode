@@ -253,7 +253,6 @@ impl SubagentController {
         let target_owned = target.to_string();
         Box::pin(async move {
             let subtree_ids = self_owned.collect_spawn_subtree_ids(&target_owned).await?;
-            let subtree_set = subtree_ids.iter().collect::<std::collections::HashSet<_>>();
             let mut restart_ids = Vec::new();
             for node_id in subtree_ids.iter() {
                 if self_owned.reopen_single(node_id.as_str()).await? {
@@ -265,20 +264,7 @@ impl SubagentController {
             // resumed subtree (mirroring close_tree's sibling isolation).
             // Grandchildren live in the child controller's state, so they are
             // reopened through that controller to keep node ownership correct.
-            let nested = {
-                let state = self_owned.state.read().await;
-                state
-                    .children
-                    .iter()
-                    .filter(|(id, _)| subtree_set.contains(id))
-                    .filter_map(|(_, record)| {
-                        record
-                            .child_controller
-                            .clone()
-                            .map(|controller| (controller, record.session_id.clone()))
-                    })
-                    .collect::<Vec<_>>()
-            };
+            let nested = self_owned.nested_controllers_in_subtree(&subtree_ids).await;
             for (controller, session_id) in nested {
                 let ids = controller.spawn_child_ids_for_parent(&session_id).await;
                 for id in ids {
@@ -316,21 +302,7 @@ impl SubagentController {
         let target_owned = target.to_string();
         Box::pin(async move {
             let subtree_ids = self_owned.collect_spawn_subtree_ids(&target_owned).await?;
-            let subtree_set = subtree_ids.iter().collect::<std::collections::HashSet<_>>();
-            let nested = {
-                let state = self_owned.state.read().await;
-                state
-                    .children
-                    .iter()
-                    .filter(|(id, _)| subtree_set.contains(id))
-                    .filter_map(|(_, record)| {
-                        record
-                            .child_controller
-                            .clone()
-                            .map(|controller| (controller, record.session_id.clone()))
-                    })
-                    .collect::<Vec<_>>()
-            };
+            let nested = self_owned.nested_controllers_in_subtree(&subtree_ids).await;
             // Mark every child-scoped controller in the subtree as closing so
             // it rejects new grandchild spawns before we start aborting.
             for (controller, _) in &nested {
@@ -458,6 +430,25 @@ impl SubagentController {
         }
 
         Ok(subtree_ids)
+    }
+
+    /// Collects the child-scoped controllers owned by records inside `subtree_ids`,
+    /// paired with each owning record's session id. Shared by `resume_tree` and
+    /// `close_tree` so subtree isolation cannot diverge between them.
+    async fn nested_controllers_in_subtree(&self, subtree_ids: &[String]) -> Vec<(Arc<SubagentController>, String)> {
+        let subtree_set = subtree_ids.iter().collect::<std::collections::HashSet<_>>();
+        let state = self.state.read().await;
+        state
+            .children
+            .iter()
+            .filter(|(id, _)| subtree_set.contains(id))
+            .filter_map(|(_, record)| {
+                record
+                    .child_controller
+                    .clone()
+                    .map(|controller| (controller, record.session_id.clone()))
+            })
+            .collect()
     }
 
     pub(super) async fn reopen_single(&self, target: &str) -> Result<bool> {
