@@ -93,18 +93,20 @@ impl FileOpsTool {
         let absolute = self.absolute_candidate(path);
         let normalized = normalize_path(&absolute);
         let normalized_root = normalize_path(&self.workspace_root);
-        let canonical = self.canonicalize_allow_missing(&normalized).await?;
-        let canonical_root = normalize_path(self.canonical_workspace_root());
 
-        let within_workspace = normalized.starts_with(&normalized_root)
-            || normalized.starts_with(&canonical_root)
-            || canonical.starts_with(&normalized_root)
-            || canonical.starts_with(self.canonical_workspace_root());
-
-        if !within_workspace {
+        if !normalized.starts_with(&normalized_root) {
             return Err(anyhow!("Error: Path '{original_display}' resolves outside the workspace."));
         }
 
+        // Symlink-aware containment: validate every path component so a
+        // symlink committed inside the workspace cannot resolve outside it.
+        // The lexical tier above gives precise error messages for plain
+        // traversal; this tier closes the escape-by-symlink case.
+        vtcode_commons::paths::ensure_path_within_workspace_resolved(&normalized, &self.workspace_root)
+            .await
+            .map_err(|_| anyhow!("Error: Path '{original_display}' resolves outside the workspace."))?;
+
+        let canonical = self.canonicalize_allow_missing(&normalized).await?;
         Ok(canonical)
     }
 
@@ -238,5 +240,60 @@ impl FileOpsTool {
     /// avoid an extra coroutine state machine (audit section 16).
     pub fn normalize_user_path<'a>(&'a self, path: &'a str) -> impl Future<Output = Result<PathBuf>> + 'a {
         self.normalize_and_validate_user_path(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::FileOpsTool;
+    use crate::tools::grep_file::GrepSearchManager;
+    use std::fs;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    fn make_tool(workspace: &TempDir) -> FileOpsTool {
+        let grep_manager = Arc::new(GrepSearchManager::new(workspace.path().to_path_buf()));
+        FileOpsTool::new(workspace.path().to_path_buf(), grep_manager)
+    }
+
+    #[tokio::test]
+    async fn symlink_inside_workspace_pointing_outside_is_rejected() {
+        let temp_dir = TempDir::new().expect("workspace tempdir");
+        let outside = TempDir::new().expect("outside tempdir");
+        fs::create_dir_all(temp_dir.path().join("sub")).expect("create sub");
+        fs::write(outside.path().join("secret.txt"), "top secret").expect("write outside");
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(outside.path(), temp_dir.path().join("sub/link")).expect("create symlink");
+
+        let file_ops = make_tool(&temp_dir);
+
+        let result = file_ops.normalize_user_path("sub/link/secret.txt").await;
+        assert!(result.is_err(), "symlink escape must be rejected, got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn plain_paths_inside_workspace_still_validate() {
+        let temp_dir = TempDir::new().expect("workspace tempdir");
+        fs::create_dir_all(temp_dir.path().join("sub")).expect("create sub");
+        fs::write(temp_dir.path().join("sub/file.txt"), "ok").expect("write file");
+
+        let file_ops = make_tool(&temp_dir);
+
+        let resolved = file_ops
+            .normalize_user_path("sub/file.txt")
+            .await
+            .expect("existing in-workspace path must validate");
+        assert!(resolved.starts_with(temp_dir.path()));
+
+        // Missing files inside the workspace remain allowed (create flows).
+        let created = file_ops
+            .normalize_user_path("sub/new-file.txt")
+            .await
+            .expect("missing in-workspace path must validate");
+        assert!(created.starts_with(temp_dir.path()));
+
+        // Plain traversal stays rejected.
+        assert!(file_ops.normalize_user_path("../outside.txt").await.is_err());
     }
 }
