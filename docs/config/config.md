@@ -679,7 +679,7 @@ max_frame_bytes = 1048576
 max_in_flight_requests = 8
 ```
 
-`allowed_origins` must contain exact browser origins; wildcards are rejected. Loopback is the default bind host and direct non-loopback binding is rejected. Remote access additionally requires explicit CLI opt-in, a `wss://` public URL, and a TLS-terminating reverse proxy forwarding to the loopback listener. Pairing codes expire after five minutes by default and are consumed once. Tokens remain in memory only. See the [WebMCP development guide](../development/webmcp.md) for the protocol and threat model.
+`allowed_origins` must contain exact browser origins; wildcards are rejected. Loopback is the default bind host and direct non-loopback binding is rejected. Remote access additionally requires explicit CLI opt-in, a `wss://` public URL, and a TLS-terminating reverse proxy forwarding to the loopback listener. Pairing codes expire after five minutes by default and are consumed once. Authenticated sessions use the same value as an inactivity lease and are refreshed by authenticated browser requests. Tokens remain in memory only. See the [WebMCP development guide](../development/webmcp.md) for the protocol and threat model.
 
 ## Security and approvals
 

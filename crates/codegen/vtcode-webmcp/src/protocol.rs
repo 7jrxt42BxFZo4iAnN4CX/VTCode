@@ -125,6 +125,9 @@ pub enum BridgeRequest {
         request_id: String,
         /// In-memory pairing token.
         token: String,
+        /// Optional server-validated proposal to include in the active turn handoff.
+        #[serde(default)]
+        proposal_id: Option<String>,
         /// Prompt to submit.
         prompt: String,
     },
@@ -238,6 +241,40 @@ mod tests {
         assert_eq!(response_request_id(""), "unknown");
         assert_eq!(response_request_id(&"x".repeat(MAX_REQUEST_ID_BYTES + 1)), "unknown");
     }
+
+    #[test]
+    fn turn_request_can_reference_a_staged_proposal() {
+        let request: BridgeRequest = serde_json::from_value(serde_json::json!({
+            "type": "turn.request",
+            "request_id": "browser-1",
+            "token": "session-token",
+            "proposal_id": "proposal-1",
+            "prompt": "Implement the staged change"
+        }))
+        .expect("turn request should deserialize");
+
+        assert!(matches!(
+            request,
+            BridgeRequest::RequestTurn { proposal_id: Some(proposal_id), prompt, .. }
+                if proposal_id == "proposal-1" && prompt == "Implement the staged change"
+        ));
+    }
+
+    #[test]
+    fn bridge_settings_are_non_secret() {
+        let settings = BridgeSettings {
+            host: "127.0.0.1".to_string(),
+            port: 4321,
+            pairing_ttl_secs: 300,
+            max_frame_bytes: 1_048_576,
+            max_in_flight_requests: 8,
+            remote_enabled: false,
+        };
+        let serialized = serde_json::to_string(&settings).expect("settings should serialize");
+        assert!(serialized.contains("pairing_ttl_secs"));
+        assert!(!serialized.contains("token"));
+        assert!(!serialized.contains("code"));
+    }
 }
 
 /// Pairing response payload.
@@ -247,8 +284,30 @@ pub struct PairPayload {
     pub token: String,
     /// Protocol version negotiated by the server.
     pub protocol_version: &'static str,
-    /// Seconds until the session expires.
+    /// Seconds until the session inactivity lease expires.
     pub expires_in_secs: u64,
+}
+
+/// Non-secret bridge settings returned to an authenticated browser.
+///
+/// The origin is returned separately in [`StatusPayload`] because the server
+/// may allow more than one configured origin while each session is bound to
+/// exactly one request origin. Pairing codes and session tokens are never
+/// included in this structure.
+#[derive(Debug, Clone, Serialize)]
+pub struct BridgeSettings {
+    /// Literal address configured for the listener.
+    pub host: String,
+    /// Configured listener port; zero means that the operating system chooses one.
+    pub port: u16,
+    /// Pairing-code lifetime and authenticated-session inactivity lease.
+    pub pairing_ttl_secs: u64,
+    /// Maximum accepted WebSocket frame size.
+    pub max_frame_bytes: usize,
+    /// Maximum concurrent bridge operations.
+    pub max_in_flight_requests: usize,
+    /// Whether the server was configured for a TLS-terminating remote proxy.
+    pub remote_enabled: bool,
 }
 
 /// Status response payload.
@@ -260,6 +319,10 @@ pub struct StatusPayload {
     pub connected: bool,
     /// Runtime status.
     pub runtime: crate::runtime::RuntimeStatus,
+    /// Origin authenticated for this browser session.
+    pub authenticated_origin: String,
+    /// Terminal-owned, non-secret bridge configuration.
+    pub settings: BridgeSettings,
     /// Latest bridge event sequence.
     pub latest_sequence: u64,
 }

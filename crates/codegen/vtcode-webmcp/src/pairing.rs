@@ -91,7 +91,7 @@ impl PairingSession {
         &self.origin
     }
 
-    /// Returns the remaining session lifetime.
+    /// Returns the remaining inactivity-lease lifetime.
     pub fn expires_in(&self) -> Duration {
         self.expires_at.saturating_duration_since(Instant::now())
     }
@@ -116,7 +116,7 @@ pub struct PairingManager {
 }
 
 impl PairingManager {
-    /// Create a manager with an explicit origin allowlist and session lifetime.
+    /// Create a manager with an explicit origin allowlist and inactivity lease.
     pub fn new<I, S>(allowed_origins: I, ttl: Duration) -> Result<Self>
     where
         I: IntoIterator<Item = S>,
@@ -140,10 +140,10 @@ impl PairingManager {
 
     /// Starts a fresh pairing code, invalidating any older unconsumed code.
     pub fn begin_pairing(&self) -> PairingDisplay {
-        self.begin_pairing_inner(None)
+        self.begin_pairing_inner(None, false)
     }
 
-    fn begin_pairing_inner(&self, origin: Option<String>) -> PairingDisplay {
+    fn begin_pairing_inner(&self, origin: Option<String>, revoke_sessions: bool) -> PairingDisplay {
         let code = Uuid::new_v4()
             .simple()
             .to_string()
@@ -153,6 +153,9 @@ impl PairingManager {
             .to_ascii_uppercase();
         let expires_at = Instant::now() + self.ttl;
         let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if revoke_sessions {
+            state.sessions.clear();
+        }
         state.pending = Some(PendingPairing {
             code: code.clone(),
             origin,
@@ -167,7 +170,14 @@ impl PairingManager {
     pub fn begin_pairing_for_origin(&self, origin: impl Into<String>) -> Result<PairingDisplay> {
         let origin = origin.into();
         self.ensure_origin_allowed(&origin)?;
-        Ok(self.begin_pairing_inner(Some(origin)))
+        Ok(self.begin_pairing_inner(Some(origin), false))
+    }
+
+    /// Revoke all browser sessions and issue a fresh code in one state update.
+    pub fn replace_pairing_for_origin(&self, origin: impl Into<String>) -> Result<PairingDisplay> {
+        let origin = origin.into();
+        self.ensure_origin_allowed(&origin)?;
+        Ok(self.begin_pairing_inner(Some(origin), true))
     }
 
     /// Consumes a code and creates a session token bound to the browser origin.
@@ -205,24 +215,41 @@ impl PairingManager {
         Ok(PairingSession { token, origin: origin.to_string(), expires_at })
     }
 
-    /// Validates a session token and its origin binding.
+    /// Validates a session token and its origin binding without extending it.
     pub fn validate(&self, token: &str, origin: &str) -> Result<()> {
+        self.validate_session(token, origin, false)
+    }
+
+    /// Validates a session and extends its inactivity deadline.
+    ///
+    /// Pairing codes remain one-time and expire according to the configured
+    /// TTL. An authenticated browser session may remain connected longer than
+    /// that TTL as long as it continues making authenticated requests.
+    pub fn refresh(&self, token: &str, origin: &str) -> Result<()> {
+        self.validate_session(token, origin, true)
+    }
+
+    fn validate_session(&self, token: &str, origin: &str, refresh: bool) -> Result<()> {
         self.ensure_origin_allowed(origin)?;
         let now = Instant::now();
         let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let Some(session) = state.sessions.get(token) else {
-            return Err(WebmcpError::Unauthorized);
-        };
-        if session.expires_at <= now || session.origin != origin {
+        let valid = state
+            .sessions
+            .get(token)
+            .is_some_and(|session| session.expires_at > now && session.origin == origin);
+        if !valid {
             drop(state.sessions.remove(token));
             return Err(WebmcpError::Unauthorized);
+        }
+        if refresh && let Some(session) = state.sessions.get_mut(token) {
+            session.expires_at = now + self.ttl;
         }
         Ok(())
     }
 
     /// Rehydrates an existing in-memory session for a reconnecting socket.
     pub fn resume(&self, token: &str, origin: &str) -> Result<PairingSession> {
-        self.validate(token, origin)?;
+        self.refresh(token, origin)?;
         let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let session = state.sessions.get(token).ok_or(WebmcpError::Unauthorized)?;
         Ok(PairingSession {
@@ -294,6 +321,33 @@ mod tests {
     }
 
     #[test]
+    fn replacing_pairing_revokes_sessions_and_preserves_origin_validation() {
+        let manager = PairingManager::new(["https://example.test"], Duration::from_secs(60)).expect("manager");
+        let display = manager.begin_pairing();
+        let session = manager.pair(display.code(), "https://example.test").expect("pair");
+
+        let replacement = manager
+            .replace_pairing_for_origin("https://example.test")
+            .expect("replacement pairing");
+        assert!(matches!(manager.validate(session.token(), "https://example.test"), Err(WebmcpError::Unauthorized)));
+        assert!(matches!(manager.pair(display.code(), "https://example.test"), Err(WebmcpError::PairingExpired)));
+        assert!(manager.pair(replacement.code(), "https://example.test").is_ok());
+    }
+
+    #[test]
+    fn rejected_replacement_does_not_revoke_current_session() {
+        let manager = PairingManager::new(["https://example.test"], Duration::from_secs(60)).expect("manager");
+        let display = manager.begin_pairing();
+        let session = manager.pair(display.code(), "https://example.test").expect("pair");
+
+        assert!(matches!(
+            manager.replace_pairing_for_origin("https://other.test"),
+            Err(WebmcpError::OriginRejected(_))
+        ));
+        assert!(manager.validate(session.token(), "https://example.test").is_ok());
+    }
+
+    #[test]
     fn reconnect_can_resume_without_reusing_the_pairing_code() {
         let manager = PairingManager::new(["https://example.test"], Duration::from_secs(60)).expect("manager");
         let display = manager.begin_pairing();
@@ -326,5 +380,20 @@ mod tests {
             assert!(matches!(manager.pair("000000000000", "https://example.test"), Err(WebmcpError::PairingExpired)));
         }
         assert!(matches!(manager.pair(display.code(), "https://example.test"), Err(WebmcpError::PairingExpired)));
+    }
+
+    #[test]
+    fn refreshing_an_active_session_extends_only_its_inactivity_deadline() {
+        let manager = PairingManager::new(["https://example.test"], Duration::from_millis(400)).expect("manager");
+        let display = manager.begin_pairing();
+        let session = manager.pair(display.code(), "https://example.test").expect("pair");
+
+        std::thread::sleep(Duration::from_millis(150));
+        manager.refresh(session.token(), "https://example.test").expect("refresh");
+        std::thread::sleep(Duration::from_millis(150));
+        assert!(manager.validate(session.token(), "https://example.test").is_ok());
+
+        std::thread::sleep(Duration::from_millis(450));
+        assert!(matches!(manager.validate(session.token(), "https://example.test"), Err(WebmcpError::Unauthorized)));
     }
 }

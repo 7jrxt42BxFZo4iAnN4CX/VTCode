@@ -109,8 +109,8 @@ pub trait RuntimeAdapter: Send + Sync {
     /// Revert a still-current last change.
     async fn revert_last_change(&self, change_id: &str) -> Result<AppliedChange>;
 
-    /// Submit a prompt to the active runtime.
-    async fn request_turn(&self, prompt: &str) -> Result<TurnResult>;
+    /// Submit a prompt and optional validated proposal to the active runtime.
+    async fn request_turn(&self, prompt: &str, proposal_id: Option<&str>) -> Result<TurnResult>;
 
     /// Cancel a runtime request.
     ///

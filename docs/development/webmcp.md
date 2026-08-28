@@ -16,13 +16,54 @@ The browser uses CodeMirror draft buffers. `Cmd/Ctrl+S` opens review and never w
 
 The adapter re-reads every base file before staging and applying. The headless filesystem adapter rejects absolute paths, parent components, sensitive paths, symlink components, hard-linked files, oversized files, stale digests, duplicate changes, and writes outside its canonical allowed roots. On Unix platforms with directory-handle support, reads and writes traverse from a bound root descriptor with `O_NOFOLLOW`; compare-and-replace locks and validates the opened file before writing, so a pathname swap cannot redirect a stale proposal. Platforms without that directory-handle primitive reject filesystem adapter construction rather than falling back to a pathname race. Revert requires the last change identity and verifies that the current file still matches the applied snapshot. Staged proposals have bounded count and memory budgets.
 
+The browser-generated diff is a review preview, not an authorization or agent
+input source. An active `turn.request` may include the `proposal_id` returned by
+`patch.propose`; the active adapter revalidates every stored base snapshot and
+hands the existing runtime a bounded prompt containing the server-generated
+authoritative diff. A stale proposal is rejected before it can enter the TUI,
+and the proposal is never applied automatically by the handoff.
+
+## WebMCP API versus the VT Code bridge
+
+The example implements two related but separate directions:
+
+1. The page implements the standard browser WebMCP provider surface through
+   `document.modelContext.registerTool()`. When supported by the browser, it
+   registers bounded file inspection tools plus page-only editor actions. Tool
+   definitions include `title`, JSON Schema input, annotations, and an
+   abort-aware `execute(input, { signal })` callback. The registration uses an
+   `AbortSignal` to unregister tools and observes `toolchange` notifications.
+   Browser or in-page agents discover and invoke these tools through the
+   WebMCP API.
+2. The VT Code editor connection uses the authenticated `/webmcp` WebSocket.
+   It is a VT Code-specific adapter, not a WebMCP wire protocol: browser
+   requests go to VT Code and VT Code returns responses and canonical
+   `VersionedThreadEvent` notifications. This is the path used by **VT CODE
+   TURN**, terminal approval, workspace proposals, and runtime event updates.
+
+The WebMCP specification defines the page `ModelContext` API and browser-agent
+observation/invocation. It does not define a server-to-page WebSocket or a way
+for a Rust terminal agent to call `document.modelContext.executeTool()`
+directly. A future VT Code-to-page tool-call relay would therefore need an
+explicit, separately documented bridge extension and must retain terminal
+approval; it must not be presented as native WebMCP.
+
 ## Transport and pairing
 
-`WebmcpServer` exposes one WebSocket endpoint at `/webmcp`. Every connection must send an allowed `Origin` header. The first JSON message consumes a short-lived one-time pairing code. The response returns an in-memory session token; subsequent messages include that token and a request ID. Tokens are never written to URLs, logs, or persistent storage.
+`WebmcpServer` exposes one WebSocket endpoint at `/webmcp`. Every connection must send an allowed `Origin` header. The first JSON message consumes a short-lived one-time pairing code. The response returns an in-memory session token; subsequent messages include that token and a request ID. The configured pairing TTL is the session inactivity lease: authenticated requests refresh it, while an idle session expires. Tokens are never written to URLs, logs, or persistent storage.
 
 The protocol uses `VersionedThreadEvent` for runtime events. `WebmcpEventHub` adds a bridge sequence, retains a bounded replay window for reconnects, reports sequence gaps, and removes clients whose bounded queue is full. Lifecycle events are not silently dropped for a slow client.
 
 The server rejects malformed JSON, binary frames, oversized frames, requests over the in-flight limit, disallowed origins, expired/revoked sessions, unsupported adapter operations, and unauthorised mutation requests. Mutation responses remain pending until the adapter reports a result so a transport timeout cannot be mistaken for a failed write. Adapter errors are returned as a generic runtime failure so filesystem details do not become a transport side channel; an intentionally unsupported operation uses the `unsupported` error code.
+
+An authenticated `status` response includes a `settings` object containing the
+non-secret listener host/port, pairing lease, frame limit, in-flight limit, and
+remote-proxy flag, plus the exact authenticated browser origin. It also
+includes the adapter's canonical workspace root and runtime capabilities. The
+example editor renders these values in its Settings dialog and refreshes them
+from the authenticated heartbeat, so the TUI configuration is the source of
+truth. Pairing codes, session tokens, and other credentials are never returned
+as settings or persisted by the browser.
 
 ## Running the headless bridge
 
@@ -36,11 +77,20 @@ The default bind is loopback with an OS-selected port. `--allowed-root` explicit
 
 The slash command `/webmcp` reports the command family and security boundary
 inside an active session. `/webmcp pair <origin>` starts an authenticated
-bridge owned by that interactive TUI session, prints its one-time pairing code,
-and routes `turn.request` prompts into the existing interaction loop. The
+bridge owned by that interactive TUI session, prints its WebSocket URL,
+one-time pairing code, and browser next-step instruction, then routes
+`turn.request` prompts into the existing interaction loop. The browser pastes
+the URL and code into **Settings → Connect or re-pair a VT Code bridge**. The
 browser still cannot authorize writes; normal VT Code terminal permissions and
-tool policy remain authoritative. `/webmcp unpair` stops that session bridge
-and revokes its in-memory sessions.
+tool policy remain authoritative. If the bridge is already running, the pair
+command prints its current endpoint, one-time code, and expiry. Use
+`/webmcp pair --replace <origin>` to open a terminal confirmation before
+disconnecting the current browser and issuing a fresh pairing code. `/webmcp unpair`
+also requires terminal confirmation before it stops the bridge and revokes its
+in-memory sessions.
+
+`/webmcp` and `/webmcp help` also print the supported command arguments and
+the active-session pairing boundary directly in the TUI.
 
 The standalone `vtcode webmcp serve` adapter is intentionally headless. It
 serves one root per process, reports `turns_available: false`, and rejects
@@ -55,7 +105,9 @@ routes proposals and reads through the bounded workspace adapter, queues agent
 turn prompts into the idle interaction loop, and publishes canonical runtime
 events through the existing harness emitter. Direct browser apply/check/revert
 operations remain denied so the model's normal terminal permission flow is the
-only write path. Bridge prompts use a prompt-only inline event, so text beginning
+only write path. When a proposal is attached to a turn, the adapter sends its
+identity and authoritative unified diff through that prompt-only path; it does
+not call the apply operation. Bridge prompts use a prompt-only inline event, so text beginning
 with `/` is sent to the model and cannot invoke a TUI slash command. A headless
 adapter must keep the explicit full-auto policy, workspace-trust gate, and
 allowed-root restrictions.

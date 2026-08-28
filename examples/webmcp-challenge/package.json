@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "start": "bash ./start.sh",
     "build": "vite build",
     "test": "node --test test/*.test.js"
   },

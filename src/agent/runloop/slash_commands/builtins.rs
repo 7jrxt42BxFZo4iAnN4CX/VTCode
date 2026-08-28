@@ -462,6 +462,7 @@ fn handle_edit_command(args: &str) -> Result<SlashCommandOutcome> {
 fn handle_webmcp_command(args: &str, renderer: &mut AnsiRenderer) -> Result<SlashCommandOutcome> {
     match args.trim() {
         "" | "status" => return Ok(SlashCommandOutcome::ShowWebmcpStatus),
+        "help" => return Ok(SlashCommandOutcome::ShowWebmcpHelp),
         "tools" => {
             renderer.line(MessageStyle::Info, "WebMCP tools: workspace.list_files, workspace.read_file, patch.propose, patch.apply, checks.run, patch.revert, turn.request, cancel")?;
         }
@@ -473,26 +474,56 @@ fn handle_webmcp_command(args: &str, renderer: &mut AnsiRenderer) -> Result<Slas
         }
         "pair" => renderer.line(
             MessageStyle::Info,
-            "Usage: /webmcp pair <exact-browser-origin> (for example, /webmcp pair http://localhost:5173)",
+            "Usage: /webmcp pair [--replace] <exact-browser-origin> (for example, /webmcp pair http://localhost:5173)",
         )?,
         "unpair" => return Ok(SlashCommandOutcome::StopWebmcp),
         pair_args if pair_args.starts_with("pair ") => {
-            let origin = pair_args.strip_prefix("pair ").unwrap_or_default().trim();
-            let origin = origin.strip_prefix("--origin ").unwrap_or(origin).trim();
-            if origin.is_empty() || origin.split_whitespace().count() != 1 {
-                renderer.line(
-                    MessageStyle::Error,
-                    "Usage: /webmcp pair <exact-browser-origin> (for example, /webmcp pair http://localhost:5173)",
-                )?;
-            } else {
-                return Ok(SlashCommandOutcome::StartWebmcp { origin: origin.to_string() });
+            let pair_args = pair_args.strip_prefix("pair ").unwrap_or_default();
+            if let Some((origin, replace)) = parse_webmcp_pair_args(pair_args) {
+                return Ok(SlashCommandOutcome::StartWebmcp { origin, replace });
             }
+            renderer.line(
+                MessageStyle::Error,
+                "Usage: /webmcp pair [--replace] <exact-browser-origin> (for example, /webmcp pair http://localhost:5173)",
+            )?;
         }
         _ => {
-            renderer.line(MessageStyle::Error, "Usage: /webmcp [status|tools|roots|pair <origin>|unpair]")?;
+            renderer.line(
+                MessageStyle::Error,
+                "Usage: /webmcp [help|status|tools|roots|pair [--replace] <origin>|unpair]",
+            )?;
         }
     }
     Ok(SlashCommandOutcome::Handled)
+}
+
+fn parse_webmcp_pair_args(args: &str) -> Option<(String, bool)> {
+    let tokens = args.split_whitespace().collect::<Vec<_>>();
+    if tokens.is_empty() {
+        return None;
+    }
+
+    let mut origin = None;
+    let mut replace = false;
+    let mut index = 0;
+    while index < tokens.len() {
+        match tokens[index] {
+            "--replace" if !replace => replace = true,
+            "--origin" if origin.is_none() => {
+                index += 1;
+                let value = tokens.get(index).copied()?;
+                if value.starts_with('-') {
+                    return None;
+                }
+                origin = Some(value);
+            }
+            token if origin.is_none() && !token.starts_with('-') => origin = Some(token),
+            _ => return None,
+        }
+        index += 1;
+    }
+
+    origin.map(|origin| (origin.to_string(), replace))
 }
 
 pub(in crate::agent::runloop::slash_commands) async fn execute_built_in_command_skill(

@@ -543,10 +543,25 @@ async fn webmcp_pair_command_starts_an_active_bridge() {
 
     assert!(matches!(
         outcome,
-        SlashCommandOutcome::StartWebmcp { ref origin } if origin == "http://localhost:5173"
+        SlashCommandOutcome::StartWebmcp { ref origin, replace: false } if origin == "http://localhost:5173"
     ));
 
-    for rejected in ["webmcp pair", "webmcp pair   ", "webmcp pair http://a http://b"] {
+    let replacement =
+        handle_slash_command("webmcp pair --replace --origin http://localhost:5173", &mut renderer, &workspace)
+            .await
+            .expect("webmcp replacement should parse");
+    assert!(matches!(
+        replacement,
+        SlashCommandOutcome::StartWebmcp { ref origin, replace: true } if origin == "http://localhost:5173"
+    ));
+
+    for rejected in [
+        "webmcp pair",
+        "webmcp pair   ",
+        "webmcp pair http://a http://b",
+        "webmcp pair --origin --replace",
+        "webmcp pair --replace --replace http://localhost:5173",
+    ] {
         let outcome = handle_slash_command(rejected, &mut renderer, &workspace)
             .await
             .expect("malformed webmcp pair should still parse");
@@ -563,6 +578,11 @@ async fn webmcp_status_and_unpair_commands_route_to_runtime_handlers() {
         .await
         .expect("webmcp status should parse");
     assert!(matches!(status, SlashCommandOutcome::ShowWebmcpStatus));
+
+    let help = handle_slash_command("webmcp help", &mut renderer, &workspace)
+        .await
+        .expect("webmcp help should parse");
+    assert!(matches!(help, SlashCommandOutcome::ShowWebmcpHelp));
 
     let unpair = handle_slash_command("webmcp unpair", &mut renderer, &workspace)
         .await

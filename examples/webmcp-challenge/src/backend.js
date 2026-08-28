@@ -2,10 +2,15 @@ const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_CHANGES = 32;
 const MAX_FRAME_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
+const MIN_HEARTBEAT_INTERVAL_MS = 250;
+const MAX_HEARTBEAT_INTERVAL_MS = 30_000;
+const DEFAULT_SESSION_TTL_SECS = 300;
 const MAX_TURN_PROMPT_BYTES = 16 * 1024;
 const TURN_DIFF_PREFIX = "\n\nReview this browser draft unified diff:\n\n```diff\n";
 const TURN_DIFF_SUFFIX = "\n```";
 const TURN_DIFF_TRUNCATION = "\n[diff truncated by the browser prompt limit]\n";
+const DIFF_CONTEXT_LINES = 3;
+const MAX_DIFF_TRACE_CELLS = 1_000_000;
 
 const SEED_FILES = Object.freeze({
   "README.md": "# hello-world\n\nA tiny project for the VT Code WebMCP Challenge.\n\nThe workflow is inspect → edit → review → approve → verify.",
@@ -45,25 +50,192 @@ export async function digest(text) {
   return `sha256:fallback-${(hash >>> 0).toString(16)}`;
 }
 
-function splitLines(text) { return text.split("\n"); }
+function splitDiffLines(text) {
+  const lines = [];
+  let lineStart = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (character !== "\n" && character !== "\r") continue;
+    const ending = character === "\r" && text[index + 1] === "\n" ? "\r\n" : character;
+    lines.push({ text: text.slice(lineStart, index), ending });
+    if (ending === "\r\n") index += 1;
+    lineStart = index + 1;
+  }
+  if (lineStart < text.length) lines.push({ text: text.slice(lineStart), ending: "" });
+  return lines;
+}
+
+function sameDiffLine(left, right) {
+  return left.text === right.text && left.ending === right.ending;
+}
+
+function equalOperations(lines) {
+  return lines.map((line) => ({ type: "equal", line }));
+}
+
+function replaceOperations(before, after) {
+  return [
+    ...before.map((line) => ({ type: "delete", line })),
+    ...after.map((line) => ({ type: "insert", line })),
+  ];
+}
+
+function backtrackDiff(trace, before, after) {
+  let beforeIndex = before.length;
+  let afterIndex = after.length;
+  const reversed = [];
+
+  for (let distance = trace.length - 1; distance > 0; distance -= 1) {
+    const previous = trace[distance - 1];
+    const diagonal = beforeIndex - afterIndex;
+    const shouldInsert = diagonal === -distance
+      || (diagonal !== distance
+        && (previous.get(diagonal - 1) ?? -Infinity) < (previous.get(diagonal + 1) ?? -Infinity));
+    const previousDiagonal = shouldInsert ? diagonal + 1 : diagonal - 1;
+    const previousBeforeIndex = previous.get(previousDiagonal);
+    if (previousBeforeIndex === undefined) return null;
+    const previousAfterIndex = previousBeforeIndex - previousDiagonal;
+
+    while (beforeIndex > previousBeforeIndex && afterIndex > previousAfterIndex) {
+      reversed.push({ type: "equal", line: before[beforeIndex - 1] });
+      beforeIndex -= 1;
+      afterIndex -= 1;
+    }
+
+    if (beforeIndex === previousBeforeIndex) {
+      reversed.push({ type: "insert", line: after[afterIndex - 1] });
+      afterIndex -= 1;
+    } else {
+      reversed.push({ type: "delete", line: before[beforeIndex - 1] });
+      beforeIndex -= 1;
+    }
+  }
+
+  while (beforeIndex > 0 && afterIndex > 0) {
+    reversed.push({ type: "equal", line: before[beforeIndex - 1] });
+    beforeIndex -= 1;
+    afterIndex -= 1;
+  }
+  while (beforeIndex > 0) {
+    reversed.push({ type: "delete", line: before[beforeIndex - 1] });
+    beforeIndex -= 1;
+  }
+  while (afterIndex > 0) {
+    reversed.push({ type: "insert", line: after[afterIndex - 1] });
+    afterIndex -= 1;
+  }
+  return reversed.reverse();
+}
+
+function myersDiff(before, after) {
+  if (!before.length) return after.map((line) => ({ type: "insert", line }));
+  if (!after.length) return before.map((line) => ({ type: "delete", line }));
+
+  const maxDistance = before.length + after.length;
+  const trace = [];
+  let traceCells = 0;
+  let frontier = new Map([[0, 0]]);
+
+  for (let distance = 0; distance <= maxDistance; distance += 1) {
+    const next = new Map();
+    for (let diagonal = -distance; diagonal <= distance; diagonal += 2) {
+      const shouldInsert = diagonal === -distance
+        || (diagonal !== distance
+          && (frontier.get(diagonal - 1) ?? -Infinity) < (frontier.get(diagonal + 1) ?? -Infinity));
+      let beforeIndex = shouldInsert
+        ? frontier.get(diagonal + 1) ?? 0
+        : (frontier.get(diagonal - 1) ?? 0) + 1;
+      let afterIndex = beforeIndex - diagonal;
+      while (beforeIndex < before.length && afterIndex < after.length
+        && sameDiffLine(before[beforeIndex], after[afterIndex])) {
+        beforeIndex += 1;
+        afterIndex += 1;
+      }
+      next.set(diagonal, beforeIndex);
+    }
+
+    traceCells += next.size;
+    if (traceCells > MAX_DIFF_TRACE_CELLS) return null;
+    trace.push(next);
+    const completed = next.get(before.length - after.length);
+    if (completed === before.length) return backtrackDiff(trace, before, after);
+    frontier = next;
+  }
+  return null;
+}
+
+function diffOperations(before, after) {
+  let prefix = 0;
+  while (prefix < before.length && prefix < after.length && sameDiffLine(before[prefix], after[prefix])) prefix += 1;
+
+  let suffix = 0;
+  while (before.length - suffix > prefix && after.length - suffix > prefix
+    && sameDiffLine(before[before.length - suffix - 1], after[after.length - suffix - 1])) suffix += 1;
+
+  const beforeMiddle = before.slice(prefix, before.length - suffix);
+  const afterMiddle = after.slice(prefix, after.length - suffix);
+  const middle = myersDiff(beforeMiddle, afterMiddle) || replaceOperations(beforeMiddle, afterMiddle);
+  return [
+    ...equalOperations(before.slice(0, prefix)),
+    ...middle,
+    ...equalOperations(before.slice(before.length - suffix)),
+  ];
+}
+
+function formatDiffRange(start, count) {
+  return count === 1 ? `${start}` : `${start},${count}`;
+}
+
+function renderDiffHunks(operations) {
+  const changed = operations
+    .map((operation, index) => operation.type === "equal" ? -1 : index)
+    .filter((index) => index >= 0);
+  if (!changed.length) return [];
+
+  const hunks = [];
+  for (const index of changed) {
+    const start = Math.max(0, index - DIFF_CONTEXT_LINES);
+    const end = Math.min(operations.length, index + DIFF_CONTEXT_LINES + 1);
+    const previous = hunks.at(-1);
+    if (previous && start <= previous.end) previous.end = Math.max(previous.end, end);
+    else hunks.push({ start, end });
+  }
+
+  const beforeOffsets = [0];
+  const afterOffsets = [0];
+  for (const operation of operations) {
+    beforeOffsets.push(beforeOffsets.at(-1) + (operation.type === "insert" ? 0 : 1));
+    afterOffsets.push(afterOffsets.at(-1) + (operation.type === "delete" ? 0 : 1));
+  }
+
+  const lines = [];
+  for (const hunk of hunks) {
+    const beforeStartCount = beforeOffsets[hunk.start];
+    const afterStartCount = afterOffsets[hunk.start];
+    const beforeCount = beforeOffsets[hunk.end] - beforeStartCount;
+    const afterCount = afterOffsets[hunk.end] - afterStartCount;
+    const beforeStart = beforeCount === 0 ? beforeStartCount : beforeStartCount + 1;
+    const afterStart = afterCount === 0 ? afterStartCount : afterStartCount + 1;
+    lines.push(`@@ -${formatDiffRange(beforeStart, beforeCount)} +${formatDiffRange(afterStart, afterCount)} @@`);
+
+    for (const operation of operations.slice(hunk.start, hunk.end)) {
+      const prefix = operation.type === "equal" ? " " : operation.type === "delete" ? "-" : "+";
+      lines.push(`${prefix}${operation.line.text}`);
+      if (!operation.line.ending) lines.push("\\ No newline at end of file");
+    }
+  }
+  return lines;
+}
 
 export function createUnifiedDiff(changes, beforeByPath) {
   const lines = [];
   for (const change of changes) {
-    const beforeLines = splitLines(beforeByPath[change.path] ?? "");
-    const afterLines = splitLines(change.content);
-    let start = 0;
-    while (start < beforeLines.length && start < afterLines.length && beforeLines[start] === afterLines[start]) start += 1;
-    let endBefore = beforeLines.length - 1;
-    let endAfter = afterLines.length - 1;
-    while (endBefore >= start && endAfter >= start && beforeLines[endBefore] === afterLines[endAfter]) {
-      endBefore -= 1;
-      endAfter -= 1;
-    }
-    lines.push(`--- a/${change.path}`, `+++ b/${change.path}`);
-    lines.push(`@@ -${start + 1},${Math.max(0, endBefore - start + 1)} +${start + 1},${Math.max(0, endAfter - start + 1)} @@`);
-    for (const line of beforeLines.slice(start, endBefore + 1)) lines.push(`-${line}`);
-    for (const line of afterLines.slice(start, endAfter + 1)) lines.push(`+${line}`);
+    const beforeContent = typeof beforeByPath?.[change.path] === "string" ? beforeByPath[change.path] : "";
+    const afterContent = typeof change?.content === "string" ? change.content : "";
+    const operations = diffOperations(splitDiffLines(beforeContent), splitDiffLines(afterContent));
+    const hunks = renderDiffHunks(operations);
+    if (!hunks.length) continue;
+    lines.push(`--- a/${change.path}`, `+++ b/${change.path}`, ...hunks);
   }
   return lines.join("\n");
 }
@@ -123,8 +295,10 @@ export class WorkspaceBackend {
   applyProposal() { throw new Error("WorkspaceBackend.applyProposal is not implemented"); }
   runChecks() { throw new Error("WorkspaceBackend.runChecks is not implemented"); }
   revertLastChange() { throw new Error("WorkspaceBackend.revertLastChange is not implemented"); }
-  requestTurn() { throw new Error("WorkspaceBackend.requestTurn is not implemented"); }
+  requestTurn(_prompt, _proposalId) { throw new Error("WorkspaceBackend.requestTurn is not implemented"); }
   subscribeToEvents() { return () => {}; }
+  subscribeToConnection() { return () => {}; }
+  subscribeToStatus() { return () => {}; }
 }
 
 export class InMemoryBackend extends WorkspaceBackend {
@@ -140,6 +314,8 @@ export class InMemoryBackend extends WorkspaceBackend {
   }
 
   async listFiles() { return Object.keys(this.files).sort(); }
+
+  exportFiles() { return cloneFiles(this.files); }
 
   async readFile(path) {
     validatePath(path);
@@ -219,7 +395,7 @@ export class InMemoryBackend extends WorkspaceBackend {
     });
   }
 
-  async requestTurn(prompt) {
+  async requestTurn(prompt, _proposalId) {
     if (typeof prompt !== "string" || new TextEncoder().encode(prompt).length > MAX_TURN_PROMPT_BYTES) {
       throw backendError("Prompt is too long", "limit_exceeded");
     }
@@ -273,6 +449,86 @@ export class VtCodeBackend extends WorkspaceBackend {
     this.openingReject = null;
     this.resuming = null;
     this.statusPayload = null;
+    this.sessionExpiresInSecs = DEFAULT_SESSION_TTL_SECS;
+    this.heartbeatTimer = null;
+    this.heartbeatInFlight = null;
+    this.connectionListeners = new Set();
+    this.statusListeners = new Set();
+    this.connectionState = "disconnected";
+  }
+
+  setConnectionState(state, error = null) {
+    if (this.connectionState === state && !error) return;
+    this.connectionState = state;
+    for (const listener of this.connectionListeners) listener({ state, error });
+  }
+
+  setStatusPayload(payload) {
+    this.statusPayload = payload;
+    for (const listener of this.statusListeners) listener(payload);
+  }
+
+  updateSessionLease(payload) {
+    const seconds = Number(payload?.expires_in_secs);
+    if (Number.isSafeInteger(seconds) && seconds >= 0) this.sessionExpiresInSecs = Math.max(1, seconds);
+  }
+
+  heartbeatIntervalMs() {
+    return Math.max(MIN_HEARTBEAT_INTERVAL_MS, Math.min(MAX_HEARTBEAT_INTERVAL_MS, Math.floor(this.sessionExpiresInSecs * 1000 / 3)));
+  }
+
+  startHeartbeat() {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => { void this.keepAlive(); }, this.heartbeatIntervalMs());
+  }
+
+  stopHeartbeat() {
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = null;
+  }
+
+  async keepAlive() {
+    if (!this.token || this.heartbeatInFlight) return;
+    const heartbeat = this.status();
+    this.heartbeatInFlight = heartbeat;
+    try {
+      await heartbeat;
+      if (this.connected) this.setConnectionState("connected");
+    } catch (error) {
+      if (error?.code === "unauthorized" || error?.code === "pairing_expired") return;
+      if (error?.code === "request_in_progress") return;
+      if (this.token && ["connection_closed", "connection_failed", "request_timeout"].includes(error?.code)) {
+        this.disconnectSocket(error, "reconnecting");
+      }
+    } finally {
+      if (this.heartbeatInFlight === heartbeat) this.heartbeatInFlight = null;
+    }
+  }
+
+  disconnectSocket(error, state = "disconnected") {
+    const socket = this.socket;
+    this.socket = null;
+    this.connected = false;
+    this.setStatusPayload(null);
+    this.rejectPending(error);
+    socket?.close();
+    this.setConnectionState(state, error);
+  }
+
+  invalidateSession(error) {
+    const socket = this.socket;
+    this.socket = null;
+    this.token = null;
+    this.connected = false;
+    this.setStatusPayload(null);
+    this.stopHeartbeat();
+    this.rejectPending(error);
+    socket?.close();
+    this.setConnectionState("reauthorize", error);
+  }
+
+  protocolError(detail) {
+    this.invalidateSession(backendError(`VT Code sent an invalid WebMCP frame: ${detail}`, "protocol_error"));
   }
 
   rejectPending(error) {
@@ -292,7 +548,10 @@ export class VtCodeBackend extends WorkspaceBackend {
       after_sequence: this.sequence || undefined,
     }, false);
     this.token = payload.token;
+    this.updateSessionLease(payload);
     this.connected = true;
+    this.startHeartbeat();
+    this.setConnectionState("connected");
     return payload;
   }
 
@@ -300,13 +559,19 @@ export class VtCodeBackend extends WorkspaceBackend {
     if (!this.token) throw backendError("Pair this browser with VT Code first", "unauthorized");
     if (this.resuming) return this.resuming;
     const token = this.token;
+    this.setConnectionState("reconnecting");
     const request = this.send("pair", {
       resume_token: token,
       origin: globalThis.location?.origin,
       after_sequence: this.sequence || undefined,
     }, false);
     const resuming = request.then((payload) => {
-      if (this.token === token) this.connected = true;
+      if (this.token === token) {
+        this.updateSessionLease(payload);
+        this.connected = true;
+        this.startHeartbeat();
+        this.setConnectionState("connected");
+      }
       return payload;
     });
     this.resuming = resuming;
@@ -343,9 +608,8 @@ export class VtCodeBackend extends WorkspaceBackend {
       };
       socket.onclose = () => {
         if (this.socket !== socket) return;
-        this.connected = false;
-        this.socket = null;
-        this.rejectPending(backendError("VT Code WebSocket disconnected", "connection_closed"));
+        const error = backendError("VT Code WebSocket disconnected", "connection_closed");
+        this.disconnectSocket(error);
         fail(backendError("VT Code WebSocket closed before pairing", "connection_closed"));
       };
       socket.onmessage = (event) => this.receive(event.data);
@@ -356,15 +620,21 @@ export class VtCodeBackend extends WorkspaceBackend {
 
   receive(raw) {
     if (typeof raw !== "string" || new TextEncoder().encode(raw).length > MAX_FRAME_BYTES) {
-      this.close();
+      this.protocolError("frame is missing or exceeds the configured limit");
       return;
     }
     let message;
-    try { message = JSON.parse(raw); } catch { this.close(); return; }
-    if (!message || typeof message !== "object") { this.close(); return; }
+    try { message = JSON.parse(raw); } catch {
+      this.protocolError("frame is not valid JSON");
+      return;
+    }
+    if (!message || typeof message !== "object") {
+      this.protocolError("frame must be a JSON object");
+      return;
+    }
     if (message.type === "event") {
       if (!Number.isSafeInteger(message.sequence) || message.sequence < 1 || (this.sequence > 0 && message.sequence !== this.sequence + 1)) {
-        this.close();
+        this.protocolError("runtime event sequence is invalid or has a gap");
         return;
       }
       this.sequence = message.sequence;
@@ -376,7 +646,11 @@ export class VtCodeBackend extends WorkspaceBackend {
     this.pending.delete(message.request_id);
     clearTimeout(pending.timeout);
     if (message.ok) pending.resolve(message.payload);
-    else pending.reject(backendError(message.error?.message || "VT Code request failed", message.error?.code || "runtime_error"));
+    else {
+      const error = backendError(message.error?.message || "VT Code request failed", message.error?.code || "runtime_error");
+      if (error.code === "unauthorized" || error.code === "pairing_expired") this.invalidateSession(error);
+      pending.reject(error);
+    }
   }
 
   async send(type, payload = {}, authenticated = true) {
@@ -397,10 +671,12 @@ export class VtCodeBackend extends WorkspaceBackend {
       this.pending.set(requestId, { resolve, reject, timeout });
       try {
         this.socket.send(serialized);
-      } catch (error) {
+      } catch {
         clearTimeout(timeout);
         this.pending.delete(requestId);
-        reject(error);
+        const connectionError = backendError("VT Code WebSocket could not send the request", "connection_closed");
+        this.disconnectSocket(connectionError, "reconnecting");
+        reject(connectionError);
       }
     });
   }
@@ -414,15 +690,34 @@ export class VtCodeBackend extends WorkspaceBackend {
   applyProposal(proposalId) { return this.send("patch.apply", { proposal_id: proposalId }); }
   runChecks(command = "cargo check --locked") { return this.send("checks.run", { command }); }
   revertLastChange(changeId) { return this.send("patch.revert", { change_id: changeId }); }
-  status() { return this.send("status"); }
-  requestTurn(prompt) { return this.send("turn.request", { prompt }); }
+  async status() {
+    const payload = await this.send("status");
+    this.setStatusPayload(payload);
+    return payload;
+  }
+  requestTurn(prompt, proposalId) {
+    const payload = { prompt };
+    if (proposalId) payload.proposal_id = proposalId;
+    return this.send("turn.request", payload);
+  }
   subscribeToEvents(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  subscribeToConnection(listener) {
+    this.connectionListeners.add(listener);
+    return () => this.connectionListeners.delete(listener);
+  }
+  subscribeToStatus(listener) {
+    this.statusListeners.add(listener);
+    return () => this.statusListeners.delete(listener);
+  }
   close() {
     const socket = this.socket;
     this.socket = null;
+    this.stopHeartbeat();
+    this.heartbeatInFlight = null;
     this.token = null;
     this.connected = false;
-    this.statusPayload = null;
+    this.connectionState = "closed";
+    this.setStatusPayload(null);
     this.openingReject?.(backendError("VT Code WebSocket disconnected", "connection_closed"));
     this.openingReject = null;
     this.rejectPending(backendError("VT Code WebSocket disconnected", "connection_closed"));
@@ -440,13 +735,13 @@ export class VtCodeBackend extends WorkspaceBackend {
 
 export const WebSocketVtCodeBackend = VtCodeBackend;
 
-export function createBackend() { return new InMemoryBackend(); }
+export function createBackend(initialFiles = SEED_FILES) { return new InMemoryBackend(initialFiles); }
 
 export async function connectVtCode(url, code) {
   const backend = new VtCodeBackend(url);
   try {
     await backend.pair(code);
-    backend.statusPayload = await backend.status();
+    await backend.status();
     return backend;
   } catch (error) {
     backend.close();

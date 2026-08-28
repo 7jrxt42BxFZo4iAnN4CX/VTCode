@@ -16,6 +16,36 @@ It has three modes:
 
 The browser never writes to the filesystem directly.
 
+For a real agent turn, pairing has two sides:
+
+1. **VT Code TUI:** run `/webmcp pair <origin>`. VT Code starts the active
+   bridge and prints the WebSocket URL and one-time pairing code.
+2. **Web app:** open **Settings → Connect or re-pair a VT Code bridge**, paste both values, and select
+   **Pair with VT Code**.
+
+The browser cannot start or approve the bridge. Keep the TUI running while the
+browser is connected.
+
+## Two integration paths
+
+The demo has two interfaces that are easy to confuse:
+
+- **Browser WebMCP:** When the browser provides `document.modelContext`, the
+  page registers seven bounded tools for browser/in-page agents. They can list
+  and read visible files, search buffers, inspect editor state, open files,
+  review a draft, and switch panels. Page-only actions update the browser UI;
+  they cannot approve or apply a filesystem change.
+- **VT Code bridge:** The paired editor uses VT Code's authenticated custom
+  WebSocket protocol. The browser sends workspace, patch, check, and turn
+  requests; VT Code sends responses and runtime events back. This is the path
+  for **VT CODE TURN** and terminal policy.
+
+The WebMCP specification covers the first interface (`ModelContext` and
+browser-agent tool invocation), not the second. A browser WebMCP agent cannot
+automatically call the Rust VT Code process, and VT Code cannot directly call
+`document.modelContext.executeTool()` without a separate bridge extension.
+Keeping the interfaces separate preserves the terminal approval boundary.
+
 ## Run the fallback demo
 
 This is the quickest way to try the editor and does not require VT Code, Rust,
@@ -25,12 +55,28 @@ From the repository root:
 
 ```sh
 cd examples/webmcp-challenge
-npm ci
-npm run dev
+./start.sh
 ```
 
-Open the local URL printed by Vite, normally `http://localhost:5173`. The
-header should show **Fallback mode**.
+The launcher installs browser dependencies if needed and starts the local
+server at `http://localhost:5173`. The header should show **Fallback mode**.
+If your terminal is already in `examples/webmcp-challenge`, skip the `cd`
+command.
+
+The launcher can also start a connected workflow. Use `--headless` for a
+workspace-only bridge or `--active` for an interactive VT Code session:
+
+```sh
+./start.sh --headless --workspace /absolute/path/to/workspace
+./start.sh --active --workspace /absolute/path/to/workspace
+```
+
+In active mode, enter `/webmcp pair http://localhost:5173` when the TUI is
+ready, then paste the printed URL and pairing code into the browser. Use
+`--port 5174` consistently in the launcher, bridge origin, and pairing command
+if port `5173` is already occupied. See the example's
+[GUIDE.md](../../examples/webmcp-challenge/GUIDE.md) for the complete
+one-command workflow.
 
 ### Complete the fallback walkthrough
 
@@ -42,8 +88,11 @@ header should show **Fallback mode**.
 6. Select **Run checks**. The fallback runs deterministic checks in the browser.
 7. Select **Revert last change** if you want to restore the original project.
 
-Fallback approvals and changes are deliberately simulated. Closing or
-refreshing the page removes them.
+Fallback approvals and changes are deliberately simulated. The browser keeps
+the fallback project, drafts, open tabs, and selected file across a page
+refresh. A new Vite app instance clears that browser state. Real bridge
+credentials are never stored, so a refreshed page must be paired again before
+it can access a real workspace.
 
 Other useful controls:
 
@@ -55,6 +104,37 @@ Other useful controls:
 - **Run self-check** performs an edit, review, approval, apply, check, and
   revert cycle. Start with a clean workspace and an open file.
 - **Request turn** explains that fallback mode has no VT Code runtime; it does not call an LLM.
+
+### Open a workspace from the web app
+
+Select **Settings** in the header, open **Choose a workspace and setup mode**,
+and enter the absolute path to the workspace. The settings dialog generates
+two safe, copyable choices:
+
+1. **Active session · VT CODE TURN** starts `vtcode chat` for that workspace.
+   After it opens, run `/webmcp pair <origin>` in the VT Code TUI.
+2. **Workspace only** starts `vtcode webmcp serve` with the selected
+   `--allowed-root`. This provides workspace inspection and proposals, but no
+   agent turns.
+
+The browser cannot launch a local process or grant filesystem access. Run the
+copied command in a terminal, keep that process running, then select **Open
+pairing settings** and paste the URL and one-time code printed by VT Code.
+
+### Manage settings
+
+Use the header's **Settings** button for all setup and pairing controls. The
+dialog contains the browser origin, workspace path, generated terminal
+commands, WebSocket URL, and one-time pairing code. The URL and workspace path
+are remembered for this Vite app instance to make reconnecting easier; the
+pairing code and authenticated session token are never stored.
+
+After pairing, **Bridge status** is synchronized from the VT Code `status`
+response and heartbeat. It shows the authenticated workspace, runtime mode,
+listener, pairing lease, and request limits. These are read-only values: the
+active VT Code TUI and its `[webmcp]` configuration remain authoritative. To
+change origins, roots, policy, or the active session, use the VT Code TUI and
+pair again with the newly printed values.
 
 The demo uses an IDE-style layout rather than a page of file previews. The
 explorer keeps directories collapsed, unopened files remain metadata-only, and
@@ -75,8 +155,7 @@ In one terminal:
 
 ```sh
 cd examples/webmcp-challenge
-npm ci
-npm run dev -- --host localhost --port 5173 --strictPort
+./start.sh
 ```
 
 Open `http://localhost:5173` and leave this terminal running. The example uses
@@ -115,9 +194,11 @@ look like:
 ws://127.0.0.1:<port>/webmcp
 ```
 
-The pairing code expires after five minutes and can be used once. Keep the
-bridge terminal open while using the editor. Press `Ctrl+C` there to stop the
-server and revoke its in-memory sessions.
+The pairing code expires after five minutes and can be used once. After a
+successful pair, the browser sends a small authenticated heartbeat and the
+session lease is refreshed while the page remains connected. Keep the bridge
+terminal open while using the editor. Press `Ctrl+C` there to stop the server
+and revoke its in-memory sessions.
 
 Use the URL and code printed by the same, currently running bridge process.
 Every restart may choose a different port and creates a new one-time code.
@@ -126,7 +207,7 @@ old URL, a stopped bridge, or a code from an earlier restart.
 
 ### 3. Pair the browser
 
-1. Expand **Connect this editor to a local VT Code WebMCP bridge**.
+1. Open **Settings** and expand **Connect or re-pair a VT Code bridge**.
 2. Paste the printed WebSocket URL into **WebSocket URL**.
 3. Paste the printed code into **One-time pairing code**.
 4. Select **Pair with VT Code**.
@@ -162,10 +243,12 @@ policy. It does not display an interactive terminal approval prompt or execute
 agent turns. The editor reports this explicitly in the prompt panel instead of
 showing a successful no-op.
 
-The prompt composer includes the reviewed unified diff, bounded to the bridge
-prompt limit. A real active runtime can review the browser draft; the headless
-filesystem adapter rejects the request with an **agent turns unavailable**
-message.
+For fallback mode, the prompt composer includes the browser-reviewed diff within
+the bridge prompt limit. In active mode, the browser sends the staged
+`proposal_id`; VT Code revalidates the files and supplies its own bounded,
+authoritative unified diff to the TUI. The handoff never applies the proposal
+automatically. The headless filesystem adapter rejects the request with an
+**agent turns unavailable** message.
 
 ## Send a draft to an active VT Code session
 
@@ -174,7 +257,7 @@ The browser bridge and interactive TUI must be started by the same VT Code
 process.
 
 After starting the browser as described above, start VT Code in the target
-workspace:
+workspace. Run this command from the VT Code repository checkout:
 
 ```sh
 cd /path/to/vtcode
@@ -193,12 +276,27 @@ In the VT Code TUI, enter:
 /webmcp pair http://localhost:5173
 ```
 
-Paste the printed WebSocket URL and one-time code into the browser.
-Do not use the URL or code from a separate `vtcode webmcp serve` process.
+The TUI prints the values the browser needs:
+
+```text
+Active WebMCP bridge started.
+WebSocket: ws://127.0.0.1:<port>/webmcp
+Pairing code: <one-time-code> (expires in <seconds> seconds)
+In the WebMCP editor, open **Settings → Connect or re-pair a VT Code bridge** and paste the WebSocket URL and pairing code above.
+```
+
+In the browser, open **Settings → Connect or re-pair a VT Code bridge**, paste the
+WebSocket URL and pairing code into the two fields, and select **Pair with VT
+Code**. Do not use the URL or code from a separate `vtcode webmcp serve`
+process.
 
 In the browser, review the draft, select **Stage for VT Code turn**, write the
-instruction, and select **Request VT Code turn**.
-The prompt and diff arrive in the active TUI as a normal agent turn.
+instruction, and select **Request VT Code turn**. From the prompt composer,
+`Cmd/Ctrl+Enter` performs the same action. After staging an active-session
+proposal, the editor switches to **VT CODE** and focuses the prompt composer.
+The prompt and server-authoritative diff arrive in the active TUI as a normal
+agent turn. The browser diff remains a local review preview; the adapter
+revalidates the proposal ID before enqueueing the handoff.
 Terminal tool permissions remain authoritative.
 The active bridge keeps direct browser apply, check, and revert disabled; ask
 VT Code to perform those actions and reload the browser afterward.
@@ -275,7 +373,23 @@ development URL described above.
 ### “WebSocket connection failed”
 
 Confirm that the bridge is still running and that the browser uses the exact
-WebSocket URL printed by VT Code, including its port and `/webmcp` path.
+WebSocket URL printed by VT Code, including its port and `/webmcp` path. For
+active-session mode, the URL must come from the TUI where you ran
+`/webmcp pair`; a standalone `webmcp serve` URL cannot receive agent turns.
+
+### “WebMCP session is not authorized”
+
+The browser lost its in-memory session token, the bridge was restarted, or the
+page was suspended longer than the session lease. For an active session, run
+`/webmcp pair http://localhost:5173` again in the TUI. For a standalone bridge,
+restart `vtcode webmcp serve`. Then paste the new URL and one-time code. An open
+page normally renews the lease automatically.
+
+### “Enter the WebMCP WebSocket URL and the terminal pairing code”
+
+The browser form is missing one or both pairing values. Paste the URL into
+**WebSocket URL** and the code into **One-time pairing code**. The code is not
+part of the URL.
 
 ### “Origin rejected”
 
@@ -286,6 +400,13 @@ scheme, and trailing slash. `localhost` and `127.0.0.1` are not interchangeable.
 
 Restart `vtcode webmcp serve` and enter the newly printed code. A code is
 one-time and is not reusable after a successful pairing.
+
+### The TUI prints only “Active WebMCP bridge started.”
+
+Restart VT Code from the current source checkout, then run
+`/webmcp pair http://localhost:5173` again. A current build prints the
+WebSocket URL, pairing code, and browser instruction immediately below the
+status line.
 
 ### Apply or checks are rejected
 

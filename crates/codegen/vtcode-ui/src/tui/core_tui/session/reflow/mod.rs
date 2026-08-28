@@ -27,7 +27,12 @@ mod helpers;
 mod thinking;
 
 pub(super) use helpers::parse_tool_call_prefix;
-use helpers::{agent_code_continuation_prefix, is_info_box_line, is_tool_summary_line, rule_fill};
+use helpers::{agent_code_continuation_prefix, is_tool_summary_line, rule_fill};
+
+pub(super) fn is_info_box_line(message: &MessageLine) -> bool {
+    matches!(message.kind, InlineMessageKind::Error | InlineMessageKind::Warning)
+        || (message.kind == InlineMessageKind::Info && !is_tool_summary_line(message))
+}
 
 impl Session {
     /// Reflow message lines for a given width (test-only method)

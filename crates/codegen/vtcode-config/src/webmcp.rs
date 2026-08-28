@@ -24,7 +24,7 @@ pub struct WebmcpConfig {
     /// Explicit roots available to headless mode; the current bridge serves one root per process.
     #[serde(default)]
     pub allowed_roots: Vec<PathBuf>,
-    /// One-time pairing and session lifetime.
+    /// One-time pairing lifetime and authenticated-session inactivity lease.
     #[serde(default = "default_pairing_ttl_secs")]
     pub pairing_ttl_secs: u64,
     /// Maximum JSON WebSocket frame size.

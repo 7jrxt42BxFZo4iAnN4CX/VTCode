@@ -26,6 +26,6 @@ pub use error::{Result, WebmcpError};
 pub use event_hub::{EventHubConfig, EventHubSubscription, SequencedThreadEvent, WebmcpEventHub};
 pub use filesystem::{FilesystemLimits, FilesystemWorkspace};
 pub use pairing::{PairingDisplay, PairingManager, PairingSession};
-pub use protocol::{BridgeRequest, BridgeResponse, FileChange, PROTOCOL_VERSION};
+pub use protocol::{BridgeRequest, BridgeResponse, BridgeSettings, FileChange, PROTOCOL_VERSION};
 pub use runtime::{RuntimeAdapter, RuntimeStatus};
 pub use server::{WebmcpServer, WebmcpServerConfig};

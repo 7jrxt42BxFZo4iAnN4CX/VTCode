@@ -299,8 +299,8 @@ const COMMAND_SKILL_SPECS: &[CommandSkillSpec] = &[
     ),
     built_in_command_spec!(
         "webmcp",
-        "Manage the opt-in authenticated browser editor bridge (usage: /webmcp [status|tools|roots|pair <origin>|unpair])",
-        "/webmcp [status|tools|roots|pair <origin>|unpair]",
+        "Manage the opt-in authenticated browser editor bridge (usage: /webmcp [help|status|tools|roots|pair [--replace] <origin>|unpair])",
+        "/webmcp [help|status|tools|roots|pair [--replace] <origin>|unpair]",
         "integration"
     ),
     built_in_command_spec!(

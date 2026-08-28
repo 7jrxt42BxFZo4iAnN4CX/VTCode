@@ -889,7 +889,7 @@ python3 scripts/generate_config_field_reference.py
 | `webmcp.host` | `string` | no | `"127.0.0.1"` | Literal loopback bind host; remote clients require a TLS-terminating reverse proxy. |
 | `webmcp.max_frame_bytes` | `integer` | no | `1048576` | Maximum JSON WebSocket frame size. |
 | `webmcp.max_in_flight_requests` | `integer` | no | `8` | Maximum concurrent bridge operations. |
-| `webmcp.pairing_ttl_secs` | `integer` | no | `300` | One-time pairing and session lifetime. |
+| `webmcp.pairing_ttl_secs` | `integer` | no | `300` | One-time pairing lifetime and authenticated-session inactivity lease. |
 | `webmcp.port` | `integer` | no | `0` | Bind port. Zero asks the OS for an available port. |
 | `workspace.include_context` | `boolean` | no | `true` | Include workspace context in messages. |
 | `workspace.max_context_size` | `integer \| null` | no | `null` | Maximum size of workspace context to include (in bytes). |

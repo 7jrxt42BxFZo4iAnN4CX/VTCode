@@ -138,12 +138,15 @@ Configure the behaviour under **Settings › Extensions › VT Code**:
 
 ## WebMCP browser bridge
 
-`/webmcp` displays the active-session bridge status and can start the bridge
-inside an interactive TUI session:
+`/webmcp` displays the active-session bridge status, prints a command guide,
+and can start the bridge inside an interactive TUI session. Use
+`/webmcp help` to print the guide without the status details:
 
 ```text
 /webmcp
+/webmcp help
 /webmcp pair http://localhost:5173
+/webmcp pair --replace http://localhost:5173
 /webmcp tools
 /webmcp roots
 /webmcp unpair
@@ -152,6 +155,22 @@ inside an interactive TUI session:
 Use `/webmcp pair <origin>` when the browser must submit real agent turns to
 this same VT Code session. The printed WebSocket URL and one-time pairing code
 belong to that running TUI process.
+
+Pair from the two sides in this order:
+
+1. In the VT Code TUI, run `/webmcp pair http://localhost:5173`.
+2. In the WebMCP editor, open **Connect to a local VT Code bridge**.
+3. Paste the TUI's WebSocket URL and one-time pairing code into the browser,
+   then select **Pair with VT Code**.
+
+Keep the TUI running. A URL and code from `vtcode webmcp serve` are for the
+headless workspace bridge and cannot receive active-session agent turns.
+
+If `/webmcp pair <origin>` reports that WebMCP is already listening, it also
+prints the active WebSocket URL, pairing code, and expiry. The existing bridge
+stays connected. To replace it, run `/webmcp pair --replace <origin>` and
+confirm **Disconnect and re-pair** in the terminal. `/webmcp unpair` uses the
+same confirmation and closes the current browser connections.
 
 The standalone command starts the opt-in authenticated WebSocket bridge for
 headless workspace operations:

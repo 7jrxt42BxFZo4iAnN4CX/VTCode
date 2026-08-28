@@ -5,7 +5,7 @@
 ## Modules
 
 - `protocol` — versioned browser/server messages.
-- `pairing` — expiring one-time codes, sessions, origin binding, revocation.
+- `pairing` — expiring one-time codes, sessions, origin binding, revocation, and atomic replacement.
 - `event_hub` — bounded replay and slow-client handling for runtime events.
 - `runtime` — adapter traits and result types used by active and headless sessions.
 - `filesystem` — canonicalized, digest-checked headless workspace adapter.
@@ -20,3 +20,6 @@
 - Browser listings and reads must apply the central sensitive-file exclusions. Filesystem access must use bound directory handles with no-follow traversal where supported; compare-and-replace must operate on the opened handle and fail closed when that guarantee is unavailable.
 - The listener is loopback-only; remote access requires a TLS-terminating reverse proxy.
 - Multi-file mutations use serialized compare-and-rollback; preserve fail-closed behavior when rollback itself fails. Keep proposal count/byte budgets and subscriber count/byte budgets bounded.
+- Active turn requests may carry a proposal identity; revalidate its stored snapshots and hand off the adapter-generated authoritative diff. Never trust or forward the browser-rendered diff as the source of truth.
+- Pairing TTL is the one-time-code lifetime and authenticated-session inactivity lease; authenticated browser traffic may refresh it, and an in-flight authenticated operation may pin its lease until completion. Expiry checks outside an operation remain read-only.
+- Authenticated `status` may expose only non-secret bridge settings; the terminal/TUI remains authoritative for origins, roots, and policy. Keep browser settings refreshable from status/heartbeats without persisting tokens or pairing codes.

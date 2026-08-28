@@ -16,6 +16,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
+use vtcode_commons::diff::{DiffHunk, DiffLineKind, DiffOptions, compute_diff};
 use vtcode_commons::exclusions::{SENSITIVE_FILES, is_sensitive_file};
 use vtcode_safety::sandboxing::{
     CommandSpec, ExecExpiration, SandboxManager, SandboxPolicy, SensitivePath, default_sensitive_paths,
@@ -207,6 +208,30 @@ impl FilesystemWorkspace {
         self
     }
 
+    /// Return a still-current proposal for an active runtime turn handoff.
+    ///
+    /// Rechecking the snapshots here prevents a browser proposal from being
+    /// handed to the agent after an external edit occurred between proposal
+    /// creation and turn submission.
+    pub async fn proposal_for_turn(&self, proposal_id: &str) -> Result<PatchProposal> {
+        let _mutation_guard = self.mutation_lock.lock().await;
+        let stored = {
+            let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.proposals.get(proposal_id).cloned().ok_or(WebmcpError::ProposalNotFound)?
+        };
+        for expected in &stored.before {
+            let current = self.read_snapshot(&expected.path).await?;
+            if current.digest != expected.digest {
+                return Err(WebmcpError::Conflict {
+                    path: expected.path.clone(),
+                    expected: expected.digest.clone(),
+                    actual: current.digest,
+                });
+            }
+        }
+        Ok(stored.proposal)
+    }
+
     /// Returns the canonical primary workspace path.
     pub fn root(&self) -> &Path {
         self.root.as_ref()
@@ -319,21 +344,76 @@ impl FilesystemWorkspace {
     fn proposal_diff(before: &[FileSnapshot], changes: &[FileChange]) -> String {
         let mut diff = String::new();
         for (snapshot, change) in before.iter().zip(changes) {
-            diff.push_str(&format!("--- a/{}\n+++ b/{}\n", snapshot.path, change.path));
-            diff.push_str(&format!("@@ -1,{} +1,{} @@\n", line_count(&snapshot.content), line_count(&change.content)));
-            for line in snapshot.content.lines() {
-                diff.push('-');
-                diff.push_str(line);
-                diff.push('\n');
+            let bundle = compute_diff(
+                &snapshot.content,
+                &change.content,
+                DiffOptions { context_lines: 3, ..DiffOptions::default() },
+                |hunks, _| format_unified_hunks(hunks),
+            );
+            if bundle.is_empty {
+                continue;
             }
-            for line in change.content.lines() {
-                diff.push('+');
-                diff.push_str(line);
-                diff.push('\n');
-            }
+            diff.push_str("--- a/");
+            diff.push_str(&snapshot.path);
+            diff.push('\n');
+            diff.push_str("+++ b/");
+            diff.push_str(&change.path);
+            diff.push('\n');
+            diff.push_str(&bundle.formatted);
         }
         diff
     }
+}
+
+fn format_unified_hunks(hunks: &[DiffHunk]) -> String {
+    let mut output = String::new();
+    for hunk in hunks {
+        output.push_str("@@ -");
+        output.push_str(&format_diff_range(hunk.old_start, hunk.old_lines));
+        output.push_str(" +");
+        output.push_str(&format_diff_range(hunk.new_start, hunk.new_lines));
+        output.push_str(" @@\n");
+        for line in &hunk.lines {
+            let prefix = match line.kind {
+                DiffLineKind::Context => ' ',
+                DiffLineKind::Addition => '+',
+                DiffLineKind::Deletion => '-',
+            };
+            output.push(prefix);
+            let has_line_terminator = if let Some(content) = line.text.strip_suffix("\r\n") {
+                output.push_str(content);
+                output.push('\n');
+                true
+            } else if let Some(content) = line.text.strip_suffix('\n') {
+                output.push_str(content);
+                output.push('\n');
+                true
+            } else if let Some(content) = line.text.strip_suffix('\r') {
+                output.push_str(content);
+                output.push('\n');
+                true
+            } else {
+                output.push_str(&line.text);
+                output.push('\n');
+                false
+            };
+            if !has_line_terminator {
+                output.push_str(r"\ No newline at end of file");
+                output.push('\n');
+            }
+        }
+    }
+    output
+}
+
+fn format_diff_range(start: usize, count: usize) -> String {
+    if count == 0 {
+        return format!("{},0", start.saturating_sub(1));
+    }
+    if count == 1 {
+        return start.to_string();
+    }
+    format!("{start},{count}")
 }
 
 #[async_trait]
@@ -543,7 +623,7 @@ impl RuntimeAdapter for FilesystemWorkspace {
             .map_err(|error| WebmcpError::Adapter(format!("WebMCP revert task failed: {error}")))?
     }
 
-    async fn request_turn(&self, prompt: &str) -> Result<TurnResult> {
+    async fn request_turn(&self, prompt: &str, _proposal_id: Option<&str>) -> Result<TurnResult> {
         if prompt.trim().is_empty() {
             return Err(WebmcpError::InvalidRequest("agent turn prompt cannot be empty".to_string()));
         }
@@ -629,10 +709,6 @@ fn digest_text(content: &str) -> String {
         encoded.push_str(&format!("{byte:02x}"));
     }
     encoded
-}
-
-fn line_count(content: &str) -> usize {
-    content.lines().count().max(1)
 }
 
 #[cfg(all(unix, not(any(target_os = "redox", target_os = "solaris"))))]
@@ -1164,13 +1240,120 @@ mod tests {
         assert_eq!(adapter.read_file("main.js").await.expect("read").content, "console.log('old');\n");
     }
 
+    #[test]
+    fn proposal_diff_contains_context_and_correct_file_ranges() {
+        let before = FileSnapshot {
+            path: "src/main.js".to_string(),
+            content: (1..=12).map(|line| format!("line-{line}\n")).collect(),
+            digest: String::new(),
+        };
+        let after = (1..=12)
+            .map(|line| match line {
+                2 => "changed-2\n".to_string(),
+                10 => "changed-10\n".to_string(),
+                _ => format!("line-{line}\n"),
+            })
+            .collect::<String>();
+        let diff = FilesystemWorkspace::proposal_diff(
+            &[before],
+            &[FileChange {
+                path: "src/main.js".to_string(),
+                base_digest: String::new(),
+                content: after,
+            }],
+        );
+
+        assert_eq!(
+            diff,
+            "--- a/src/main.js\n+++ b/src/main.js\n@@ -1,5 +1,5 @@\n line-1\n-line-2\n+changed-2\n line-3\n line-4\n line-5\n@@ -7,6 +7,6 @@\n line-7\n line-8\n line-9\n-line-10\n+changed-10\n line-11\n line-12\n"
+        );
+    }
+
+    #[test]
+    fn proposal_diff_handles_empty_files_and_missing_final_newlines() {
+        let empty_before = FileSnapshot {
+            path: "new.txt".to_string(),
+            content: String::new(),
+            digest: String::new(),
+        };
+        let empty_diff = FilesystemWorkspace::proposal_diff(
+            &[empty_before],
+            &[FileChange {
+                path: "new.txt".to_string(),
+                base_digest: String::new(),
+                content: "first\nsecond\n".to_string(),
+            }],
+        );
+        assert_eq!(empty_diff, "--- a/new.txt\n+++ b/new.txt\n@@ -0,0 +1,2 @@\n+first\n+second\n");
+
+        let no_newline_before = FileSnapshot {
+            path: "line.txt".to_string(),
+            content: "old".to_string(),
+            digest: String::new(),
+        };
+        let no_newline_diff = FilesystemWorkspace::proposal_diff(
+            &[no_newline_before],
+            &[FileChange {
+                path: "line.txt".to_string(),
+                base_digest: String::new(),
+                content: "new".to_string(),
+            }],
+        );
+        assert_eq!(
+            no_newline_diff,
+            "--- a/line.txt\n+++ b/line.txt\n@@ -1 +1 @@\n-old\n\\ No newline at end of file\n+new\n\\ No newline at end of file\n"
+        );
+
+        let cr_diff = FilesystemWorkspace::proposal_diff(
+            &[FileSnapshot {
+                path: "cr.txt".to_string(),
+                content: "one\rtwo\r".to_string(),
+                digest: String::new(),
+            }],
+            &[FileChange {
+                path: "cr.txt".to_string(),
+                base_digest: String::new(),
+                content: "one\rchanged\r".to_string(),
+            }],
+        );
+        assert_eq!(cr_diff, "--- a/cr.txt\n+++ b/cr.txt\n@@ -1,2 +1,2 @@\n one\n-two\n+changed\n");
+    }
+
+    #[tokio::test]
+    async fn proposal_for_turn_rechecks_the_staged_snapshot() {
+        let (temp, adapter) = workspace(false).await;
+        let snapshot = adapter.read_file("main.js").await.expect("snapshot");
+        let proposal = adapter
+            .propose_changes(vec![FileChange {
+                path: "main.js".to_string(),
+                base_digest: snapshot.digest,
+                content: "console.log('new');\n".to_string(),
+            }])
+            .await
+            .expect("proposal");
+
+        let handed_off = adapter
+            .proposal_for_turn(&proposal.proposal_id)
+            .await
+            .expect("current proposal");
+        assert_eq!(handed_off.unified_diff, proposal.unified_diff);
+
+        tokio::fs::write(temp.path().join("main.js"), "external\n")
+            .await
+            .expect("external edit");
+        assert!(matches!(
+            adapter.proposal_for_turn(&proposal.proposal_id).await,
+            Err(WebmcpError::Conflict { path, .. }) if path == "main.js"
+        ));
+    }
+
     #[tokio::test]
     async fn headless_adapter_does_not_fake_agent_turns() {
         let (_temp, adapter) = workspace(false).await;
         let status = adapter.status().await.expect("status");
         assert!(!status.turns_available);
         assert!(matches!(
-            adapter.request_turn("review the draft").await,
+            adapter.request_turn("review the draft", None).await,
             Err(WebmcpError::Unsupported(message)) if message.contains("active VT Code runtime")
         ));
     }

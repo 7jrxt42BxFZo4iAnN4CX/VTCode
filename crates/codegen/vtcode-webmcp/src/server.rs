@@ -2,7 +2,7 @@ use crate::error::{Result, WebmcpError};
 use crate::event_hub::{EventHubConfig, EventHubSubscription, MAX_EVENT_BYTES, WebmcpEventHub};
 use crate::pairing::{PairingDisplay, PairingManager, is_valid_origin};
 use crate::protocol::{
-    BridgeEventMessage, BridgeRequest, BridgeResponse, PROTOCOL_VERSION, PairPayload, StatusPayload,
+    BridgeEventMessage, BridgeRequest, BridgeResponse, BridgeSettings, PROTOCOL_VERSION, PairPayload, StatusPayload,
     is_valid_request_id, response_request_id,
 };
 use crate::runtime::RuntimeAdapter;
@@ -25,6 +25,7 @@ const EVENT_ENVELOPE_OVERHEAD: usize = 256;
 const MIN_FRAME_BYTES: usize = 1024;
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_MUTATION_QUEUE: usize = 64;
+const SESSION_LEASE_CHECK_INTERVAL: Duration = Duration::from_millis(250);
 
 /// Configuration for the WebMCP listener.
 #[derive(Debug, Clone)]
@@ -35,7 +36,7 @@ pub struct WebmcpServerConfig {
     pub port: u16,
     /// Explicit browser origin allowlist.
     pub allowed_origins: Vec<String>,
-    /// Pairing and session lifetime in seconds.
+    /// Pairing lifetime and authenticated-session inactivity lease in seconds.
     pub pairing_ttl_secs: u64,
     /// Maximum WebSocket message size.
     pub max_frame_bytes: usize,
@@ -84,6 +85,7 @@ struct DispatchState {
     adapter: Arc<dyn RuntimeAdapter>,
     pairing: PairingManager,
     event_hub: WebmcpEventHub,
+    settings: BridgeSettings,
     in_flight: Arc<Semaphore>,
     request_timeout: Duration,
 }
@@ -171,10 +173,19 @@ impl WebmcpServer {
             .min(MAX_EVENT_BYTES);
         let event_hub = WebmcpEventHub::new_with_max_event_bytes(config.event_hub, event_limit)?;
         let in_flight = Arc::new(Semaphore::new(config.max_in_flight_requests));
+        let settings = BridgeSettings {
+            host: config.host.clone(),
+            port: config.port,
+            pairing_ttl_secs: config.pairing_ttl_secs,
+            max_frame_bytes: config.max_frame_bytes,
+            max_in_flight_requests: config.max_in_flight_requests,
+            remote_enabled: config.allow_remote,
+        };
         let dispatch = Arc::new(DispatchState {
             adapter: Arc::clone(&adapter),
             pairing: pairing.clone(),
             event_hub: event_hub.clone(),
+            settings,
             in_flight: Arc::clone(&in_flight),
             request_timeout: config.request_timeout,
         });
@@ -202,6 +213,11 @@ impl WebmcpServer {
     /// Start a one-time code bound to one exact allowed browser origin.
     pub fn begin_pairing_for_origin(&self, origin: impl Into<String>) -> Result<PairingDisplay> {
         self.state.pairing.begin_pairing_for_origin(origin)
+    }
+
+    /// Revoke browser sessions and issue a fresh code for one exact origin.
+    pub fn replace_pairing_for_origin(&self, origin: impl Into<String>) -> Result<PairingDisplay> {
+        self.state.pairing.replace_pairing_for_origin(origin)
     }
 
     /// Revoke all browser sessions and pending pairing codes.
@@ -379,7 +395,7 @@ async fn run_socket(
                                     PairPayload {
                                         token: session.token().to_string(),
                                         protocol_version: PROTOCOL_VERSION,
-                                        expires_in_secs: session.expires_in().as_secs(),
+                                        expires_in_secs: session.expires_in().as_secs().max(1),
                                     },
                                 );
                                 if send_response(&mut socket, response, state.max_frame_bytes).await.is_err() {
@@ -549,7 +565,7 @@ async fn run_paired_socket(
     _connection_permit: OwnedSemaphorePermit,
     _all_connections_permit: OwnedSemaphorePermit,
 ) {
-    let mut expiry_check = tokio::time::interval(Duration::from_secs(1));
+    let mut expiry_check = tokio::time::interval(SESSION_LEASE_CHECK_INTERVAL);
     expiry_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
@@ -596,12 +612,15 @@ async fn run_paired_socket(
                                         PairedFrameAction::Continue => {}
                                         PairedFrameAction::Request(request) => {
                                             let request_id = request.request_id().to_string();
-                                            let response = if matches!(&request, BridgeRequest::Cancel { .. }) {
+                                            let response = if request.token() != Some(token.as_str()) {
+                                                response_for_error(&request_id, WebmcpError::Unauthorized)
+                                            } else if matches!(&request, BridgeRequest::Cancel { .. }) {
                                                 match dispatch_cancel_request(&state, &origin, &token, request).await {
                                                     Ok(payload) => BridgeResponse::success(request_id.clone(), payload),
                                                     Err(error) => response_for_error(&request_id, error),
                                                 }
                                             } else {
+                                                if state.pairing.refresh(&token, &origin).is_err() { return; }
                                                 BridgeResponse::failure(&request_id, "request_in_progress", "wait for the active request or cancel it")
                                             };
                                             if send_response(&mut socket, response, state.max_frame_bytes).await.is_err() { return; }
@@ -617,7 +636,10 @@ async fn run_paired_socket(
                                     if send_event(&mut socket, event.sequence, &event.event, state.max_frame_bytes).await.is_err() { return; }
                                 }
                                 _ = expiry_check.tick() => {
-                                    if state.pairing.validate(&token, &origin).is_err() { return; }
+                                    // Keep the lease pinned while the authenticated operation is
+                                    // still executing. Mutations intentionally remain pending
+                                    // until the supervisor knows their final result.
+                                    if state.pairing.refresh(&token, &origin).is_err() { return; }
                                 }
                             }
                         }
@@ -648,7 +670,7 @@ async fn dispatch_request(
     if request.token() != Some(token.as_str()) {
         return Err(WebmcpError::Unauthorized);
     }
-    dispatch.pairing.validate(&token, &origin)?;
+    dispatch.pairing.refresh(&token, &origin)?;
     let _permit = tokio::time::timeout(dispatch.request_timeout, dispatch.in_flight.clone().acquire_owned())
         .await
         .map_err(|_error| WebmcpError::Timeout(dispatch.request_timeout))?
@@ -656,7 +678,7 @@ async fn dispatch_request(
     // A request may have waited for capacity long enough for the session to
     // expire or be revoked. Re-check immediately before handing it to the
     // runtime adapter.
-    dispatch.pairing.validate(&token, &origin)?;
+    dispatch.pairing.refresh(&token, &origin)?;
     let mutation_request =
         matches!(&request, BridgeRequest::ApplyProposal { .. } | BridgeRequest::RevertLastChange { .. });
     let operation = async {
@@ -668,6 +690,8 @@ async fn dispatch_request(
                     protocol_version: PROTOCOL_VERSION,
                     connected: runtime.connected,
                     runtime,
+                    authenticated_origin: origin,
+                    settings: dispatch.settings.clone(),
                     latest_sequence: dispatch.event_hub.latest_sequence(),
                 })
                 .map_err(WebmcpError::Json)
@@ -690,8 +714,9 @@ async fn dispatch_request(
             BridgeRequest::RevertLastChange { change_id, .. } => {
                 serde_json::to_value(dispatch.adapter.revert_last_change(&change_id).await?).map_err(WebmcpError::Json)
             }
-            BridgeRequest::RequestTurn { prompt, .. } => {
-                serde_json::to_value(dispatch.adapter.request_turn(&prompt).await?).map_err(WebmcpError::Json)
+            BridgeRequest::RequestTurn { prompt, proposal_id, .. } => {
+                serde_json::to_value(dispatch.adapter.request_turn(&prompt, proposal_id.as_deref()).await?)
+                    .map_err(WebmcpError::Json)
             }
             BridgeRequest::Cancel { target_id, .. } => {
                 let accepted = dispatch.adapter.cancel(&target_id).await?;
@@ -720,7 +745,7 @@ async fn dispatch_cancel_request(
     if request.token() != Some(token) {
         return Err(WebmcpError::Unauthorized);
     }
-    state.pairing.validate(token, origin)?;
+    state.pairing.refresh(token, origin)?;
     let BridgeRequest::Cancel { target_id, .. } = request else {
         return Err(WebmcpError::InvalidRequest(
             "only cancellation requests are accepted while a request is running".to_string(),
