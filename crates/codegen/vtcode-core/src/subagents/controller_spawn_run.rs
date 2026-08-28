@@ -253,13 +253,16 @@ impl SubagentController {
         let target_owned = target.to_string();
         Box::pin(async move {
             let subtree_ids = self_owned.collect_spawn_subtree_ids(&target_owned).await?;
+            let subtree_set = subtree_ids.iter().collect::<std::collections::HashSet<_>>();
             let mut restart_ids = Vec::new();
-            for node_id in subtree_ids {
+            for node_id in subtree_ids.iter() {
                 if self_owned.reopen_single(node_id.as_str()).await? {
-                    restart_ids.push(node_id);
+                    restart_ids.push(node_id.clone());
                 }
             }
-            // Recursively resume each child-scoped controller's descendants.
+            // Recursively resume each child-scoped controller's descendants,
+            // but only for controllers whose owning record is inside the
+            // resumed subtree (mirroring close_tree's sibling isolation).
             // Grandchildren live in the child controller's state, so they are
             // reopened through that controller to keep node ownership correct.
             let nested = {
@@ -267,6 +270,7 @@ impl SubagentController {
                 state
                     .children
                     .iter()
+                    .filter(|(id, _)| subtree_set.contains(id))
                     .filter_map(|(_, record)| {
                         record
                             .child_controller
@@ -975,14 +979,14 @@ impl SubagentController {
             format!("{}-{}", sanitize_component(parent_session_id.as_str()), sanitize_component(id.as_str()));
         let display_label = subagent_display_label(&spec);
         let notify = Arc::new(Notify::new());
-        // Re-check the close gates immediately before insertion. The earlier
+        let mut state = self.state.write().await;
+        // Re-check the close gates while the write lock is held. The earlier
         // check can race with a concurrent `close_tree` that snapshots and
         // closes the subtree between this spawn's admission and its record
-        // insertion; re-checking under the write lock closes that window.
+        // insertion; checking after acquisition closes that window.
         if self.shutdown_requested.load(Ordering::Relaxed) || self.closing.load(Ordering::Relaxed) {
             bail!("Subagent controller is shutting down; cannot spawn new subagents");
         }
-        let mut state = self.state.write().await;
         let initial_messages = if fork_context {
             state.parent_messages.clone()
         } else {
