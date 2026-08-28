@@ -25,6 +25,7 @@ use vtcode_core::exec_policy::AskForApproval;
 use vtcode_core::llm::provider::{self as uni, LLMStreamEvent, LLMStreamEvent::Completed};
 use vtcode_core::llm::provider::{LLMResponse, ToolDefinition};
 use vtcode_core::tools::registry::{ToolProgressCallback, ToolRegistry};
+use vtcode_core::types::CompactStr;
 use vtcode_core::utils::ansi::AnsiRenderer;
 use vtcode_core::utils::style_helpers::ColorPalette;
 use vtcode_ui::tui::app::{InlineHandle, InlineSession};
@@ -91,7 +92,7 @@ pub(super) struct CopilotRuntimeHost<'a> {
     observed_tool_calls: HashMap<String, ObservedToolCallState>,
     local_terminal_sessions: HashMap<String, LocalTerminalSession>,
     compatibility_notice_shown: bool,
-    pending_hook_rewritten_args: HashMap<String, Value>,
+    pending_hook_rewritten_args: HashMap<CompactStr, Value>,
 }
 
 impl<'a> CopilotRuntimeHost<'a> {
@@ -298,7 +299,7 @@ impl<'a> CopilotRuntimeHost<'a> {
 
         let effective_arguments = self
             .pending_hook_rewritten_args
-            .remove(&request.tool_call_id)
+            .remove(request.tool_call_id.as_str())
             .unwrap_or(effective_arguments);
 
         // The mutation guard runs after the hook phase so it evaluates the
@@ -483,7 +484,7 @@ impl<'a> CopilotRuntimeHost<'a> {
             ToolPermissionFlow::Approved { updated_args } => {
                 let final_args = updated_args.or(rewritten_arguments);
                 if let Some(updated) = final_args {
-                    self.pending_hook_rewritten_args.insert(tool_call_id.to_string(), updated);
+                    self.pending_hook_rewritten_args.insert(CompactStr::from(tool_call_id), updated);
                 }
             }
             ToolPermissionFlow::Denied => {
