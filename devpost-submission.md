@@ -101,6 +101,11 @@ for policy, approval, and authoritative file changes.
    the changes panel.
 5. Confirm long results report truncation and that no exposed browser tool can
    approve, apply, or revert a filesystem change.
+6. Before the run, open **Evidence**, select the actual client, and choose
+   **Start new run**. Afterward export the sanitized JSON with **Copy JSON** or
+   **Download JSON**, and keep it beside the client tool-inspector screenshot
+   or screen recording. The export records real page callbacks, not a simulated
+   self-check; it omits file contents, diffs, prompts, pairing codes, and tokens.
 
 If native WebMCP is unavailable, the editor's fallback remains usable for the
 same human review flow, but the WebMCP requirement should be verified in an
@@ -154,7 +159,8 @@ Capture 3–5 screenshots before submitting:
 2. The browser's WebMCP tool inspector showing the eight registered tools.
 3. An agent-driven search/open flow with the structured result visible.
 4. The staged exact edit and unified diff in the **CHANGES** panel.
-5. The approval boundary or `get_editor_state` recovery/truncation output.
+5. The browser tool inspector plus the exported sanitized evidence JSON, or
+   `get_editor_state` recovery/truncation output.
 
 ## Submission Readiness Notes
 
@@ -176,8 +182,10 @@ the participant confirms that this accurately describes the project and keeps
 the prior/new work distinction clear.
 
 Current evidence is strong for deterministic contracts, security boundaries,
-fallback behavior, and Rust/TypeScript tests. It is not evidence of a recorded
-real browser-agent session, a completed video, or personal eligibility answers.
+fallback behavior, and Rust/TypeScript tests. The reference client now includes
+a recorder for real WebMCP callback evidence, but no Chrome or ChatGPT client run
+has been recorded in this checkout yet. It is not evidence of a completed
+video or personal eligibility answers.
 
 A local preflight scan found no high-confidence secret patterns and no
 credential-looking `.env`, `.pem`, `id_rsa`, or `id_dsa` files in the current
@@ -207,7 +215,7 @@ confirms every required value.
 | App Status | TODO — confirm New or Existing; Existing is likely based on the repository history |
 | Existing-project explanation | If Existing: during the submission period, added the WebMCP browser tool surface, bounded contracts, safe draft-edit handoff, eval corpus, bridge integration, documentation, and public deployment. Confirm accuracy before use. |
 | Live URL | <https://vinhnx.github.io/VTCode/> |
-| Testing instructions | Use the instructions above; no credentials are required for fallback mode. Confirm the real WebMCP client used. |
+| Testing instructions | Use the instructions above; start an Evidence run before the external client, export the sanitized JSON, and include the client screenshot/video. No credentials are required for fallback mode. |
 | Public code repo | <https://github.com/vinhnx/VTCode> |
 | WebMCP clients tested | TODO — record Chrome with the WebMCP flag, ChatGPT's in-app browser, or both after the manual pass |
 | AI tools leveraged | OpenAI Codex; the WebMCP-capable browser agent used for the manual pass |
@@ -221,8 +229,8 @@ confirms every required value.
 - [x] Public repository is accessible and contains an open-source license.
 - [x] Text description explains WebMCP fit, the collaboration loop, and the
       implementation.
-- [x] Strict TypeScript/Bun and Rust checks pass locally.
-- [ ] Run and record a real Chrome or ChatGPT in-app browser-agent pass.
+- [x] Focused WebMCP TypeScript/Bun and Rust checks pass locally.
+- [ ] Run and record a real Chrome or ChatGPT in-app browser-agent pass; export the sanitized Evidence JSON.
 - [ ] Capture and review screenshots.
 - [ ] Upload the public narrated YouTube video under three minutes.
 - [ ] Confirm personal/team form fields, residence, app status, learning level,

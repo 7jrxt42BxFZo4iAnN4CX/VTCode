@@ -24,6 +24,7 @@
         <button id="quickActions" class="button subtle shortcut-button" type="button" title="Open quick actions (Cmd/Ctrl+Shift+P)" aria-keyshortcuts="Meta+Shift+P Control+Shift+P">Actions <kbd>⌘⇧P</kbd></button>
         <button id="helpButton" class="button subtle help-button" type="button" title="Show keyboard shortcuts and help (?)" aria-label="Show keyboard shortcuts and help">?</button>
         <button id="settingsButton" class="button subtle shortcut-button" type="button" title="Open connection and workspace settings (Cmd/Ctrl+,)" aria-keyshortcuts="Meta+, Control+,">Settings <kbd>⌘,</kbd></button>
+        <button id="evidenceButton" class="button subtle" type="button" title="Record a sanitized WebMCP client run">Evidence</button>
         <button id="selfCheck" class="button subtle" type="button">Run self-check</button>
       </div>
     </header>
@@ -193,6 +194,30 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <dialog id="confirmDialog"><form method="dialog"><span class="dialog-kicker">CONFIRMATION REQUIRED</span><h2 id="dialogTitle">Apply this patch?</h2><p id="dialogCopy"></p><div class="dialog-actions"><button value="cancel" class="button subtle" type="submit">Cancel</button><button id="dialogConfirm" value="confirm" class="button primary" type="button">Confirm</button></div></form></dialog>
+  <dialog id="evidenceDialog" class="evidence-dialog" aria-labelledby="evidenceTitle">
+    <form method="dialog">
+      <div class="dialog-header">
+        <div><span class="dialog-kicker">WEBMCP EVIDENCE</span><h2 id="evidenceTitle">Record a client run</h2></div>
+        <button id="closeEvidence" class="toolbar-button" type="button">Close</button>
+      </div>
+      <p class="evidence-intro">Start a fresh run before using Chrome or ChatGPT. The report captures tool discovery, calls, bounded metadata, errors, and editor state while omitting file contents, diffs, prompts, pairing codes, and tokens.</p>
+      <label class="evidence-client">Client under test
+        <select id="evidenceClient">
+          <option value="Chrome WebMCP Tool Inspector">Chrome WebMCP Tool Inspector</option>
+          <option value="ChatGPT in-app browser">ChatGPT in-app browser</option>
+          <option value="Other WebMCP client">Other WebMCP client</option>
+        </select>
+      </label>
+      <div class="evidence-actions">
+        <button id="beginEvidence" class="button primary" type="button">Start new run</button>
+        <button id="copyEvidence" class="button subtle" type="button">Copy JSON</button>
+        <button id="downloadEvidence" class="button subtle" type="button">Download JSON</button>
+      </div>
+      <p id="evidenceSummary" class="evidence-summary">No client selected · 0 discovery events · 0 tool calls</p>
+      <pre id="evidenceOutput" class="evidence-output">Start a run to collect evidence.</pre>
+      <p class="dialog-hint">Pair this JSON with a screenshot or screen recording of the client. The selected label is supplied by the person recording the run.</p>
+    </form>
+  </dialog>
   <dialog id="quickActionDialog" class="quick-actions-dialog" aria-labelledby="quickActionTitle">
     <form method="dialog">
       <div class="dialog-header">

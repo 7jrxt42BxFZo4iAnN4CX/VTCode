@@ -35,7 +35,7 @@ browser is connected.
 
 Browser WebMCP is available only while the reference editor is open in a supported browser
 tab or webview. Chrome gates the page API on origin isolation and the `tools`
- Permissions Policy; the reference editor reports the observed values in
+Permissions Policy; the reference editor reports the observed values in
 `get_editor_state.webmcp_context` and keeps its normal fallback active when the
 API is unavailable. The authenticated VT Code bridge is separate and can still
 be used for workspace operations when explicitly paired.
@@ -87,6 +87,24 @@ browser tool can approve, apply, or revert a filesystem change.
 The deterministic corpus and contract checks live in
 `examples/webmcp-challenge/evals/webmcp-evals.ts` and run with `bun run test`.
 Model tool selection remains probabilistic and needs the real browser-agent pass.
+
+### Capture real Chrome or ChatGPT evidence
+
+Open **Evidence** in the reference editor, select **Chrome WebMCP Tool
+Inspector** or **ChatGPT in-app browser**, and choose **Start new run** before
+the external client begins. Use Chrome with the WebMCP testing flag (or a
+valid origin-trial token), or open the deployed page in ChatGPT's in-app
+browser when that client exposes WebMCP. The recorder wraps the registered
+callbacks, so each actual discovery and tool invocation is captured with
+bounded metadata, errors, elapsed time, and a sanitized editor-state snapshot.
+
+After the run, use **Copy JSON** or **Download JSON** and keep the export with
+the client tool-inspector screenshot or screen recording. The export omits
+file contents, diffs, prompts, pairing codes, session tokens, and sensitive
+fields. The selected client name is a human attestation; the JSON demonstrates
+that the page callbacks ran and should be reviewed together with the client
+capture. **Run self-check** is a deterministic fallback test and is not a
+substitute for this external-client evidence.
 
 ### Optional Chrome origin trial
 

@@ -86,6 +86,17 @@ checks. Probabilistic selection and end-to-end model behavior must additionally
 be tested in Chrome's Model Context Tool Inspector or another WebMCP-compatible
 agent using the prompts in the reference client guide.
 
+The reference client includes `src/webmcp-evidence.ts` and an **Evidence**
+dialog for capturing that manual pass. The recorder wraps the registered page
+callbacks, records discovery and tool-call outcomes with bounded metadata,
+elapsed time, recovery errors, and selected editor state, and exports a
+versioned JSON report. It omits file contents, diffs, prompts, pairing codes,
+session tokens, and sensitive fields. A human-selected client label is an
+attestation only; review the export with the Chrome inspector or ChatGPT
+capture. Keep this evidence separate from deterministic `bun run test` output:
+the latter validates contracts, while the former demonstrates a real client
+invoked the browser API.
+
 The registration intentionally omits WebMCP's `exposedTo` option. The reference client has
 no trusted cross-origin embedder, so exposing tools to another origin would add
 authority without a defined trust relationship.

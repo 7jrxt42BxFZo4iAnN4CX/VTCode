@@ -80,6 +80,31 @@ The editor reports those observed prerequisites in `get_editor_state` as
 The optional VT Code bridge is a separate authenticated adapter and does not
 make WebMCP calls headlessly.
 
+### Record real-client evidence
+
+The header's **Evidence** control records the calls made through the page's
+registered WebMCP callbacks. It does not simulate a client or infer tool use
+from clicks. To capture a run:
+
+1. Open **Evidence**, choose the client you are about to use, and select
+   **Start new run** before opening the inspector or sending a prompt.
+2. In Chrome, enable `chrome://flags/#enable-webmcp-testing`, relaunch Chrome,
+   open the deployed page, and use the Model Context Tool Inspector. In
+   ChatGPT, open the deployed page in the in-app browser when WebMCP is
+   available and use the **ChatGPT in-app browser** label.
+3. Exercise the sequence below through that client. Keep the page open; the
+   WebMCP API is browsing-context scoped.
+4. Return to **Evidence**, select **Copy JSON** or **Download JSON**, and keep
+   the export with the client screenshot or screen recording. The export is
+   sanitized and intentionally omits file contents, diffs, prompts, pairing
+   codes, session tokens, and other sensitive fields.
+
+The selected client label is an attestation by the person recording the run;
+the JSON itself proves which page callbacks ran, not the identity of the
+external client. Treat the export and the screenshot/video as one evidence
+bundle. Do not count **Run self-check** as a real-client pass: it exercises the
+fallback editor, not an external WebMCP client.
+
 Run this sequence and record the selected tool, arguments, result, and visible
 page effect:
 

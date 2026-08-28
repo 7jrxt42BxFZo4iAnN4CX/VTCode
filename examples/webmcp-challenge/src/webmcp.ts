@@ -37,6 +37,7 @@ export interface WebMcpTool {
 }
 
 export interface ModelContext {
+  readonly getTools?: () => Promise<readonly WebMcpTool[]>;
   readonly registerTool?: (
     tool: WebMcpTool,
     options?: WebMcpToolRegistrationOptions,
@@ -440,7 +441,13 @@ export function createWebMcpTools({
 export async function registerWebMcpTools(
   modelContext: ModelContext | undefined,
   tools: readonly WebMcpTool[],
-  { onToolChange = () => {} }: { readonly onToolChange?: (names: readonly string[]) => void } = {},
+  {
+    onToolChange = () => {},
+    onToolsDiscovered = () => {},
+  }: {
+    readonly onToolChange?: (names: readonly string[]) => void;
+    readonly onToolsDiscovered?: (names: readonly string[]) => void;
+  } = {},
 ): Promise<WebMcpRegistration | null> {
   if (!modelContext?.registerTool) return null;
   const controller = new AbortController();
@@ -455,7 +462,23 @@ export async function registerWebMcpTools(
     throw error;
   }
 
-  const handleToolChange = (): void => onToolChange(names);
+  const notifyDiscoveredTools = async (): Promise<void> => {
+    if (!modelContext.getTools) {
+      onToolsDiscovered(names);
+      return;
+    }
+    try {
+      const discovered = await modelContext.getTools();
+      onToolsDiscovered(discovered.map((tool) => tool.name));
+    } catch {
+      onToolsDiscovered(names);
+    }
+  };
+  await notifyDiscoveredTools();
+  const handleToolChange = (): void => {
+    onToolChange(names);
+    void notifyDiscoveredTools();
+  };
   modelContext.addEventListener?.("toolchange", handleToolChange);
   return {
     names,

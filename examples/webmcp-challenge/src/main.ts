@@ -1,7 +1,8 @@
 import { InMemoryBackend, VtCodeBackend, buildTurnPrompt, connectVtCode, createBackend, createUnifiedDiff, digest, MAX_FILE_BYTES } from "./backend.ts";
 import { CodeEditor } from "./editor.ts";
 import { loadBrowserSettings, loadBrowserState, saveBrowserSettings, saveBrowserState, type StorageLike } from "./persistence.ts";
-import { createWebMcpTools, registerWebMcpTools, replaceExactText, type ModelContext, type StageTextEditInput, type ToolExecutionOptions, type WebMcpRegistration } from "./webmcp.ts";
+import { createWebMcpEvidenceRecorder, type WebMcpEvidenceRecorder } from "./webmcp-evidence.ts";
+import { createWebMcpTools, registerWebMcpTools, replaceExactText, type ModelContext, type StageTextEditInput, type ToolExecutionOptions, type WebMcpRegistration, type WebMcpTool } from "./webmcp.ts";
 import { BackendError, errorCode, errorMessage, isRecord, type BackendConnectionEvent, type BackendEvent, type ClientProposal, type EditorStateForWebMcp, type FileSnapshot, type Panel, type PatchProposal, type PersistedBrowserState, type RuntimeStatus, type SearchMatch, type SearchResult, type StatusPayload, type TreeNode, type WebMcpEnvironmentState, type WorkspaceFile } from "./types.ts";
 import "../styles.css";
 
@@ -45,6 +46,15 @@ interface DemoElements {
   readonly quickActions: HTMLButtonElement;
   readonly helpButton: HTMLButtonElement;
   readonly dialogConfirm: HTMLButtonElement;
+  readonly evidenceDialog: HTMLDialogElement;
+  readonly evidenceClient: HTMLSelectElement;
+  readonly evidenceSummary: HTMLElement;
+  readonly evidenceOutput: HTMLPreElement;
+  readonly beginEvidence: HTMLButtonElement;
+  readonly copyEvidence: HTMLButtonElement;
+  readonly downloadEvidence: HTMLButtonElement;
+  readonly evidenceButton: HTMLButtonElement;
+  readonly closeEvidence: HTMLButtonElement;
 }
 
 function $<K extends keyof DemoElements>(id: K): DemoElements[K];
@@ -102,6 +112,8 @@ let webMcpRegistration: WebMcpRegistration | null = null;
 let fallbackPersistenceTimer: ReturnType<typeof setTimeout> | null = null;
 let persistenceWarningShown = false;
 let settingsPersistenceWarningShown = false;
+const webMcpEvidence: WebMcpEvidenceRecorder = createWebMcpEvidenceRecorder();
+let registeredWebMcpToolNames: readonly string[] = [];
 
 const state: DemoState = {
   files: new Map(),
@@ -191,6 +203,136 @@ function browserOrigin(): string {
   return globalThis.location?.origin || "http://localhost:5173";
 }
 
+function evidenceNowMs(): number {
+  return typeof performance?.now === "function" ? performance.now() : Date.now();
+}
+
+function renderEvidence(): void {
+  const evidence = webMcpEvidence.snapshot();
+  const discoveryCount = evidence.records.filter((record) => record.kind === "discovery").length;
+  const callCount = evidence.records.filter((record) => record.kind === "tool_call").length;
+  const session = evidence.session?.client_label || "No client selected";
+  $("evidenceSummary").textContent = `${session} · ${discoveryCount} discovery event${discoveryCount === 1 ? "" : "s"} · ${callCount} tool call${callCount === 1 ? "" : "s"}${evidence.dropped_records ? ` · ${evidence.dropped_records} older record${evidence.dropped_records === 1 ? "" : "s"} dropped` : ""}`;
+  $("copyEvidence").disabled = !evidence.session;
+  $("downloadEvidence").disabled = !evidence.session;
+  $("evidenceOutput").textContent = webMcpEvidence.toJson();
+}
+
+function recordWebMcpDiscovery(toolNames: readonly string[], source: string): void {
+  try {
+    webMcpEvidence.recordDiscovery(toolNames, source);
+    renderEvidence();
+  } catch {
+    // Evidence capture must never prevent the browser tool surface from registering.
+  }
+}
+
+function recordWebMcpCall(evidence: {
+  readonly tool_name: string;
+  readonly input: unknown;
+  readonly success: boolean;
+  readonly result?: unknown;
+  readonly error?: unknown;
+  readonly duration_ms: number;
+}): void {
+  try {
+    webMcpEvidence.recordToolCall({
+      ...evidence,
+      editor_state: editorStateForWebMcp(),
+    });
+    renderEvidence();
+  } catch {
+    // Evidence capture must never change the result or failure of a tool call.
+  }
+}
+
+function instrumentWebMcpTools(tools: readonly WebMcpTool[]): WebMcpTool[] {
+  return tools.map((tool) => ({
+    ...tool,
+    execute: async (input: unknown = {}, options: ToolExecutionOptions = {}) => {
+      const startedAt = evidenceNowMs();
+      try {
+        const result = await tool.execute(input, options);
+        recordWebMcpCall({
+          tool_name: tool.name,
+          input,
+          success: true,
+          result,
+          duration_ms: evidenceNowMs() - startedAt,
+        });
+        return result;
+      } catch (error: unknown) {
+        recordWebMcpCall({
+          tool_name: tool.name,
+          input,
+          success: false,
+          error,
+          duration_ms: evidenceNowMs() - startedAt,
+        });
+        throw error;
+      }
+    },
+  }));
+}
+
+function beginWebMcpEvidence(): void {
+  const clientLabel = $("evidenceClient").value.trim() || "WebMCP client";
+  const environment = webMcpEnvironmentState();
+  webMcpEvidence.begin({
+    client_label: clientLabel,
+    origin: browserOrigin(),
+    user_agent: navigator.userAgent,
+    webmcp_context: {
+      browsing_context_required: environment.browsing_context_required,
+      origin_agent_cluster: environment.origin_agent_cluster,
+      tools_permission_allowed: environment.tools_permission_allowed,
+    },
+  });
+  if (registeredWebMcpToolNames.length) {
+    webMcpEvidence.recordDiscovery(registeredWebMcpToolNames, "registered browser tools");
+  }
+  renderEvidence();
+  log(`Started ${clientLabel} WebMCP evidence run`);
+  status("Evidence run started", "Use the selected browser client now, then export the sanitized JSON report.");
+  toast("WebMCP evidence run started");
+}
+
+async function copyWebMcpEvidence(): Promise<void> {
+  await copyText(webMcpEvidence.toJson());
+  log("Copied sanitized WebMCP evidence JSON");
+  toast("Evidence JSON copied");
+}
+
+function downloadWebMcpEvidence(): void {
+  const clientLabel = $("evidenceClient").value.trim() || "webmcp-client";
+  const slug = clientLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "webmcp-client";
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const blob = new Blob([webMcpEvidence.toJson()], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `webmcp-evidence-${slug}-${timestamp}.json`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+  log("Downloaded sanitized WebMCP evidence JSON");
+  toast("Evidence JSON downloaded");
+}
+
+function openEvidenceDialog(): void {
+  const dialog = $("evidenceDialog");
+  if (dialog.open) {
+    dialog.close();
+    return;
+  }
+  if ($("confirmDialog").open) return;
+  if ($("settingsDialog").open) $("settingsDialog").close();
+  if ($("quickActionDialog").open) $("quickActionDialog").close();
+  if ($("helpDialog").open) $("helpDialog").close();
+  renderEvidence();
+  dialog.showModal();
+  $("beginEvidence").focus();
+}
+
 function formatBytes(bytes: unknown): string {
   const value = Number(bytes);
   if (!Number.isFinite(value) || value < 0) return "not reported";
@@ -259,6 +401,7 @@ function openSettings(section: "connection" | "workspace" | null = null): void {
   if ($("confirmDialog").open) return;
   if ($("quickActionDialog").open) $("quickActionDialog").close();
   if ($("helpDialog").open) $("helpDialog").close();
+  if ($("evidenceDialog").open) $("evidenceDialog").close();
   const dialog = $("settingsDialog");
   if (!dialog.open) dialog.showModal();
   if (section === "connection") {
@@ -1221,6 +1364,7 @@ function openPanelForWebMcp(panel: Panel): void {
 }
 
 async function registerWebMcp(): Promise<void> {
+  registeredWebMcpToolNames = [];
   const modelContext = document.modelContext as ModelContext | undefined;
   const environment = webMcpEnvironmentState();
   if (environment.origin_agent_cluster === false) {
@@ -1291,7 +1435,7 @@ async function registerWebMcp(): Promise<void> {
     }
     return output();
   };
-  const tools = createWebMcpTools({
+  const tools = instrumentWebMcpTools(createWebMcpTools({
     listFiles: async () => (await backend.listFiles()).map((entry) => typeof entry === "string" ? entry : entry.path),
     readFile: readCurrentFile,
     searchCode,
@@ -1300,13 +1444,17 @@ async function registerWebMcp(): Promise<void> {
     stageTextEdit: stageTextEditForWebMcp,
     reviewDraft: reviewDraftForWebMcp,
     openPanel: openPanelForWebMcp,
-  });
+  }));
   webMcpRegistration?.dispose();
   webMcpRegistration = null;
   try {
     const registration = await registerWebMcpTools(modelContext, tools, {
       onToolChange: (names) => {
         $("webmcpCapability").textContent = `WebMCP tools available: ${names.length}; browser agent tool set changed.`;
+      },
+      onToolsDiscovered: (names) => {
+        registeredWebMcpToolNames = [...names];
+        recordWebMcpDiscovery(names, "document.modelContext.getTools");
       },
     });
     webMcpRegistration = registration;
@@ -1345,6 +1493,7 @@ async function run(action: () => void | Promise<void>): Promise<void> {
 function confirmAction(title: string, copy: string, label: string, action: () => void | Promise<void>): void {
   const dialog = $("confirmDialog");
   if ($("settingsDialog").open) $("settingsDialog").close();
+  if ($("evidenceDialog").open) $("evidenceDialog").close();
   $("dialogTitle").textContent = title;
   $("dialogCopy").textContent = copy;
   $("dialogConfirm").textContent = label;
@@ -1514,6 +1663,7 @@ function openQuickActions() {
   if ($("confirmDialog").open) return;
   if ($("helpDialog").open) $("helpDialog").close();
   if ($("settingsDialog").open) $("settingsDialog").close();
+  if ($("evidenceDialog").open) $("evidenceDialog").close();
   $("quickActionSearch").value = "";
   renderQuickActions();
   dialog.showModal();
@@ -1529,6 +1679,7 @@ function openHelp() {
   if ($("confirmDialog").open) return;
   if ($("quickActionDialog").open) $("quickActionDialog").close();
   if ($("settingsDialog").open) $("settingsDialog").close();
+  if ($("evidenceDialog").open) $("evidenceDialog").close();
   dialog.showModal();
   dialog.querySelector("button")?.focus();
 }
@@ -1578,6 +1729,7 @@ $("workspacePath").oninput = () => {
 $("bridgeUrl").oninput = persistBrowserSettings;
 renderWorkspaceSetup();
 renderSettings();
+renderEvidence();
 $("searchInput").oninput = search;
 for (const tab of document.querySelectorAll<HTMLElement>("[data-terminal]")) {
   tab.onclick = () => {
@@ -1609,6 +1761,11 @@ $("showConnection").onclick = openConnectionPanel;
 $("selfCheck").onclick = () => run(runSelfCheck);
 $("quickActions").onclick = openQuickActions;
 $("helpButton").onclick = openHelp;
+$("evidenceButton").onclick = openEvidenceDialog;
+$("beginEvidence").onclick = beginWebMcpEvidence;
+$("copyEvidence").onclick = () => run(copyWebMcpEvidence);
+$("downloadEvidence").onclick = downloadWebMcpEvidence;
+$("closeEvidence").onclick = () => $("evidenceDialog").close();
 $("quickActionSearch").oninput = () => renderQuickActions($("quickActionSearch").value);
 $("quickActionSearch").onkeydown = (event: KeyboardEvent) => {
   if (event.key === "ArrowDown") {
