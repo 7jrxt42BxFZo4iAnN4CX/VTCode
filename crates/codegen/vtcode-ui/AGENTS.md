@@ -14,7 +14,7 @@
 
 - `design` and `theme` are re-exported at crate root (`pub use design::*; pub use theme::*`) for backward compatibility with the old standalone crates.
 - `publish = false` — internal crate, not published to crates.io.
-- `tui/core_tui/` owns the full terminal session lifecycle; `tui/core_tui/app/session/task_panel.rs` owns compact TODO-panel wrapping/height/header helpers; `tui/ui/` has reusable widgets (markdown, interactive list). Headered markdown tables use intrinsic width when available and labeled wrapped blocks below it, so callers must pass content width after transcript framing.
+- `tui/core_tui/` owns the full terminal session lifecycle; `tui/core_tui/app/session/task_panel.rs` owns compact TODO-panel wrapping/height/header helpers; `tui/ui/` has reusable widgets (Markdown, interactive list). Headered Markdown tables use intrinsic width when available and labeled wrapped blocks below it, so callers must pass content width after transcript framing. Bridge prompts use the bounded deferred-event queue while transient overlays own input; keep them prompt-only so slash-command parsing remains terminal-only.
 - `tui/config/constants/` holds TUI-specific defaults — keep them here, not in `vtcode-config`; snapshot tests live in `tui/core_tui/widgets/snapshots/`.
 
 ## Gotchas

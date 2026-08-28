@@ -2,6 +2,7 @@ use crate::error::Result;
 use crate::protocol::FileChange;
 use async_trait::async_trait;
 use serde::Serialize;
+use std::borrow::Cow;
 
 /// Runtime status exposed to a paired browser.
 #[derive(Debug, Clone, Serialize)]
@@ -17,7 +18,7 @@ pub struct RuntimeStatus {
     /// Whether check requests can be authorized by the runtime.
     pub checks_allowed: bool,
     /// Human-readable approval authority.
-    pub approval_authority: &'static str,
+    pub approval_authority: Cow<'static, str>,
 }
 
 /// A file entry returned by a runtime adapter.

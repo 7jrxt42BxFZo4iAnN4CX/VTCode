@@ -37,6 +37,8 @@ pub const SENSITIVE_FILES: &[&str] = &[
     ".pypirc",
     "credentials",
     "credentials.json",
+    "id_dsa",
+    "id_ecdsa",
     "id_ed25519",
     "id_rsa",
 ];
@@ -75,5 +77,13 @@ mod tests {
         assert!(is_sensitive_file(".Env.Local"));
         assert!(is_sensitive_file(".NPMRC"));
         assert!(!is_sensitive_file(".environment"));
+    }
+
+    #[test]
+    fn ssh_private_key_basenames_are_sensitive() {
+        assert!(is_sensitive_file("id_dsa"));
+        assert!(is_sensitive_file("id_ecdsa"));
+        assert!(is_sensitive_file("ID_ECDSA"));
+        assert!(!is_sensitive_file("id_ecdsa.pub"));
     }
 }

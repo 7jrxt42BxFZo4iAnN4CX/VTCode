@@ -124,7 +124,7 @@ impl RuntimeAdapter for ActiveRuntimeAdapter {
     async fn status(&self) -> vtcode_webmcp::Result<RuntimeStatus> {
         let mut status = self.workspace.status().await?;
         status.turns_available = true;
-        status.approval_authority = "active VT Code terminal";
+        status.approval_authority = "active VT Code terminal".into();
         Ok(status)
     }
 

@@ -263,6 +263,7 @@ pub(crate) async fn execute_recovery_prompt(
         }),
         OverlayWaitOutcome::Cancelled => json!({"cancelled": true}),
         OverlayWaitOutcome::Interrupted => json!({"cancelled": true, "signal": "cancel"}),
+        OverlayWaitOutcome::Deferred => json!({"cancelled": true}),
         OverlayWaitOutcome::Exit => json!({"cancelled": true, "signal": "exit"}),
     })
 }

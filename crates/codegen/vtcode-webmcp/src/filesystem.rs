@@ -346,9 +346,9 @@ impl RuntimeAdapter for FilesystemWorkspace {
             mutations_allowed: self.mutations_allowed,
             checks_allowed: self.checks_allowed,
             approval_authority: if self.mutations_allowed {
-                "headless full-auto allowlist"
+                "headless full-auto allowlist".into()
             } else {
-                "headless policy (mutations disabled)"
+                "headless policy (mutations disabled)".into()
             },
         })
     }
@@ -455,15 +455,27 @@ impl RuntimeAdapter for FilesystemWorkspace {
             .split_first()
             .ok_or_else(|| WebmcpError::InvalidRequest("check command cannot be empty".to_string()))?;
         let executable = resolve_check_executable(program)?;
+        // Capture host toolchain locations before replacing HOME with the
+        // workspace sandbox HOME. This keeps checks reproducible without
+        // allowing the child to inherit the caller's complete environment.
+        let host_home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from);
         let mut environment = SandboxEnvironment::new();
         let _ = environment.insert("PATH".to_string(), trusted_executable_path(&executable)?);
         let _ = environment.insert("HOME".to_string(), self.root.display().to_string());
         let _ = environment.insert("CARGO_NET_OFFLINE".to_string(), "true".to_string());
         let _ = environment.insert("CARGO_TERM_COLOR".to_string(), "never".to_string());
-        if let Some(cargo_home) = std::env::var_os("CARGO_HOME") {
+        let cargo_home = std::env::var_os("CARGO_HOME")
+            .map(PathBuf::from)
+            .or_else(|| host_home.as_ref().map(|home| home.join(".cargo")));
+        if let Some(cargo_home) = cargo_home {
             let _ = environment.insert("CARGO_HOME".to_string(), cargo_home.to_string_lossy().into_owned());
         }
-        if let Some(rustup_home) = std::env::var_os("RUSTUP_HOME") {
+        let rustup_home = std::env::var_os("RUSTUP_HOME")
+            .map(PathBuf::from)
+            .or_else(|| host_home.as_ref().map(|home| home.join(".rustup")));
+        if let Some(rustup_home) = rustup_home {
             let _ = environment.insert("RUSTUP_HOME".to_string(), rustup_home.to_string_lossy().into_owned());
         }
         let spec = CommandSpec::new(executable)
@@ -597,14 +609,7 @@ fn has_multiple_hard_links(metadata: &std::fs::Metadata) -> bool {
     metadata.nlink() > 1
 }
 
-#[cfg(windows)]
-fn has_multiple_hard_links(metadata: &std::fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-
-    metadata.number_of_links() > 1
-}
-
-#[cfg(not(any(unix, windows)))]
+#[cfg(not(unix))]
 const fn has_multiple_hard_links(_metadata: &std::fs::Metadata) -> bool {
     false
 }
@@ -794,13 +799,46 @@ fn replace_open_file(file: std::fs::File, update: &FileSnapshot, expected: &File
 
     let mut file =
         Flock::lock(file, FlockArg::LockExclusiveNonblock).map_err(|(_, error)| WebmcpError::Io(error.into()))?;
-    let metadata = file.metadata()?;
-    if !metadata.is_file() {
+    let metadata_before = file.metadata()?;
+    if !metadata_before.is_file() {
         return Err(WebmcpError::PathRejected(expected.path.clone()));
     }
-    reject_hard_links(&metadata, &expected.path)?;
+    reject_hard_links(&metadata_before, &expected.path)?;
+    let expected_size = u64::try_from(expected.content.len()).unwrap_or(u64::MAX);
+    if metadata_before.len() > expected_size {
+        return Err(WebmcpError::Conflict {
+            path: expected.path.clone(),
+            expected: expected.digest.clone(),
+            actual: format!("size:{}", metadata_before.len()),
+        });
+    }
     let _ = file.seek(SeekFrom::Start(0))?;
-    let current = read_bounded_content(&mut *file, expected.content.len().saturating_add(1))?;
+    let current = match read_bounded_content(&mut *file, expected.content.len()) {
+        Ok(current) => current,
+        Err(WebmcpError::LimitExceeded) => {
+            return Err(WebmcpError::Conflict {
+                path: expected.path.clone(),
+                expected: expected.digest.clone(),
+                actual: format!("size:>{expected_size}"),
+            });
+        }
+        Err(error) => return Err(error),
+    };
+    let metadata_after_read = file.metadata()?;
+    if metadata_after_read.len() > expected_size || metadata_after_read.len() != metadata_before.len() {
+        return Err(WebmcpError::Conflict {
+            path: expected.path.clone(),
+            expected: expected.digest.clone(),
+            actual: format!("size:{}", metadata_after_read.len()),
+        });
+    }
+    if metadata_after_read.modified().ok() != metadata_before.modified().ok() {
+        return Err(WebmcpError::Conflict {
+            path: expected.path.clone(),
+            expected: expected.digest.clone(),
+            actual: "metadata-changed".to_string(),
+        });
+    }
     let actual = digest_text(&current);
     if actual != expected.digest {
         return Err(WebmcpError::Conflict {
@@ -1319,6 +1357,36 @@ mod tests {
             Err(WebmcpError::Conflict { path, .. }) if path == "main.js"
         ));
         assert_eq!(adapter.read_file("main.js").await.expect("current").content, "external\n");
+    }
+
+    #[tokio::test]
+    async fn apply_reports_a_grown_file_as_a_conflict() {
+        let (_temp, adapter) = workspace(true).await;
+        let original = adapter.read_file("main.js").await.expect("original");
+        let proposal = adapter
+            .propose_changes(vec![FileChange {
+                path: original.path.clone(),
+                base_digest: original.digest.clone(),
+                content: "proposed\n".to_string(),
+            }])
+            .await
+            .expect("proposal");
+        let mut file = tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(adapter.root().join("main.js"))
+            .await
+            .expect("external append");
+        file.write_all(b"external append\n").await.expect("append");
+        file.flush().await.expect("flush");
+
+        let result = adapter.apply_proposal(&proposal.proposal_id).await;
+        assert!(matches!(result, Err(WebmcpError::Conflict { actual, .. }) if actual.starts_with("size:")));
+        assert!(
+            tokio::fs::read_to_string(adapter.root().join("main.js"))
+                .await
+                .expect("current")
+                .ends_with("external append\n")
+        );
     }
 
     #[cfg(unix)]

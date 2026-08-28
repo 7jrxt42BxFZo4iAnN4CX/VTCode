@@ -1,6 +1,7 @@
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_CHANGES = 32;
 const MAX_FRAME_BYTES = 1024 * 1024;
+const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_TURN_PROMPT_BYTES = 16 * 1024;
 const TURN_DIFF_PREFIX = "\n\nReview this browser draft unified diff:\n\n```diff\n";
 const TURN_DIFF_SUFFIX = "\n```";
@@ -274,6 +275,14 @@ export class VtCodeBackend extends WorkspaceBackend {
     this.statusPayload = null;
   }
 
+  rejectPending(error) {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+
   async pair(code) {
     if (typeof code !== "string" || !/^[A-Z0-9-]{4,64}$/.test(code)) throw backendError("Enter the pairing code shown by VT Code", "invalid_request");
     await this.open();
@@ -336,8 +345,7 @@ export class VtCodeBackend extends WorkspaceBackend {
         if (this.socket !== socket) return;
         this.connected = false;
         this.socket = null;
-        for (const pending of this.pending.values()) pending.reject(backendError("VT Code WebSocket disconnected", "connection_closed"));
-        this.pending.clear();
+        this.rejectPending(backendError("VT Code WebSocket disconnected", "connection_closed"));
         fail(backendError("VT Code WebSocket closed before pairing", "connection_closed"));
       };
       socket.onmessage = (event) => this.receive(event.data);
@@ -366,6 +374,7 @@ export class VtCodeBackend extends WorkspaceBackend {
     const pending = this.pending.get(message.request_id);
     if (!pending) return;
     this.pending.delete(message.request_id);
+    clearTimeout(pending.timeout);
     if (message.ok) pending.resolve(message.payload);
     else pending.reject(backendError(message.error?.message || "VT Code request failed", message.error?.code || "runtime_error"));
   }
@@ -379,8 +388,20 @@ export class VtCodeBackend extends WorkspaceBackend {
     const serialized = JSON.stringify(request);
     if (new TextEncoder().encode(serialized).length > MAX_FRAME_BYTES) throw backendError("Request exceeds the frame limit", "limit_exceeded");
     return new Promise((resolve, reject) => {
-      this.pending.set(requestId, { resolve, reject });
-      try { this.socket.send(serialized); } catch (error) { this.pending.delete(requestId); reject(error); }
+      const timeout = setTimeout(() => {
+        const pending = this.pending.get(requestId);
+        if (!pending) return;
+        this.pending.delete(requestId);
+        pending.reject(backendError("VT Code request timed out", "request_timeout"));
+      }, REQUEST_TIMEOUT_MS);
+      this.pending.set(requestId, { resolve, reject, timeout });
+      try {
+        this.socket.send(serialized);
+      } catch (error) {
+        clearTimeout(timeout);
+        this.pending.delete(requestId);
+        reject(error);
+      }
     });
   }
 
@@ -404,8 +425,7 @@ export class VtCodeBackend extends WorkspaceBackend {
     this.statusPayload = null;
     this.openingReject?.(backendError("VT Code WebSocket disconnected", "connection_closed"));
     this.openingReject = null;
-    for (const pending of this.pending.values()) pending.reject(backendError("VT Code WebSocket disconnected", "connection_closed"));
-    this.pending.clear();
+    this.rejectPending(backendError("VT Code WebSocket disconnected", "connection_closed"));
     socket?.close();
   }
 

@@ -48,6 +48,12 @@ const editor = new CodeEditor($("editor"), {
 
 function message(error) { return error instanceof Error ? error.message : String(error); }
 
+const contentSizeBytes = (content) => new TextEncoder().encode(typeof content === "string" ? content : "").length;
+const snapshotSizeBytes = (file) => {
+  const size = Number(file?.size_bytes);
+  return Number.isSafeInteger(size) && size >= 0 ? size : contentSizeBytes(file?.content);
+};
+
 function toast(text) {
   $("toast").textContent = text;
   $("toast").classList.add("show");
@@ -446,7 +452,8 @@ async function requestTurn() {
 
 async function refreshFile(path, force = false, render = true) {
   const fresh = await backend.readFile(path);
-  if (fresh.size_bytes > MAX_FILE_BYTES) throw new Error(`File exceeds the browser size limit: ${path}`);
+  if (typeof fresh?.content !== "string") throw new Error(`Backend returned invalid content for ${path}`);
+  if (snapshotSizeBytes(fresh) > MAX_FILE_BYTES) throw new Error(`File exceeds the browser size limit: ${path}`);
   if (isDirty(path) && !force && snapshot(path) && fresh.digest !== snapshot(path).digest) {
     state.conflicts.add(path);
     throw new Error(`External change conflict for ${path}; discard the draft before reloading`);
@@ -547,8 +554,6 @@ async function loadWorkspace(nextBackend) {
   state.lastChange = null;
   state.conflicts.clear();
   $("turnOutput").textContent = "No VT Code turn requested.";
-  const first = paths()[0];
-  if (first) await openFile(first, false);
   hydrationComplete = true;
   state.unsubscribe = stopHydration;
   for (const event of hydrationEvents) recordRuntimeEvent(event);
@@ -580,6 +585,17 @@ async function loadWorkspace(nextBackend) {
   renderTree();
   renderTabs();
   renderProposal();
+
+  const first = paths()[0];
+  if (first) {
+    try {
+      await openFile(first, false);
+    } catch (error) {
+      const detail = message(error);
+      log(`Initial file read failed: ${detail}`);
+      status("Workspace loaded with read error", detail);
+    }
+  }
 }
 
 async function registerWebMcp() {
@@ -601,9 +617,10 @@ async function registerWebMcp() {
         if (!snapshot(path)) {
           if (scannedFiles >= MAX_SEARCH_FILES || scannedBytes >= MAX_SEARCH_BYTES) break;
           const file = await backend.readFile(path);
+          if (typeof file?.content !== "string") throw new Error(`Backend returned invalid content for ${path}`);
           content = file.content;
           scannedFiles += 1;
-          scannedBytes += file.size_bytes;
+          scannedBytes += snapshotSizeBytes(file);
         }
         for (const [line, text] of content.split("\n").entries()) {
           if (text.toLowerCase().includes(normalizedQuery)) results.push({ path, line: line + 1, text });

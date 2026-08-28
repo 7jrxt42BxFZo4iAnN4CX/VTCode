@@ -14,12 +14,13 @@ use futures::{StreamExt, future::BoxFuture};
 use serde_json::Value;
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 
 const MAX_PAIRED_CONNECTIONS: usize = 64;
 const MAX_CONNECTIONS: usize = 128;
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 const EVENT_ENVELOPE_OVERHEAD: usize = 256;
 const MIN_FRAME_BYTES: usize = 1024;
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -277,8 +278,16 @@ async fn run_socket(
     origin: String,
     _connection_permit: OwnedSemaphorePermit,
 ) {
+    let handshake_deadline = Instant::now() + HANDSHAKE_TIMEOUT;
     loop {
-        let Some(message) = socket.next().await else { return };
+        let remaining = handshake_deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return;
+        }
+        let message = match tokio::time::timeout(remaining, socket.next()).await {
+            Ok(Some(message)) => message,
+            Ok(None) | Err(_) => return,
+        };
         let Ok(message) = message else { return };
         match message {
             ws::Message::Text(text) => {
@@ -454,6 +463,83 @@ async fn run_socket(
     }
 }
 
+enum PairedFrameAction {
+    Request(BridgeRequest),
+    Continue,
+    Close,
+}
+
+async fn handle_paired_frame(
+    socket: &mut ws::WebSocket,
+    message: ws::Message,
+    max_frame_bytes: usize,
+) -> PairedFrameAction {
+    match message {
+        ws::Message::Text(text) => {
+            if text.len() > max_frame_bytes {
+                drop(
+                    send_response(
+                        socket,
+                        BridgeResponse::failure("unknown", "frame_too_large", "request exceeds the frame limit"),
+                        max_frame_bytes,
+                    )
+                    .await,
+                );
+                return PairedFrameAction::Close;
+            }
+            let request = match serde_json::from_slice::<BridgeRequest>(text.as_bytes()) {
+                Ok(request) => request,
+                Err(error) => {
+                    if send_response(
+                        socket,
+                        BridgeResponse::failure("unknown", "malformed_request", error.to_string()),
+                        max_frame_bytes,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        return PairedFrameAction::Close;
+                    }
+                    return PairedFrameAction::Continue;
+                }
+            };
+            if !is_valid_request_id(request.request_id()) {
+                if send_response(socket, invalid_request_id_response(request.request_id()), max_frame_bytes)
+                    .await
+                    .is_err()
+                {
+                    return PairedFrameAction::Close;
+                }
+                return PairedFrameAction::Continue;
+            }
+            PairedFrameAction::Request(request)
+        }
+        ws::Message::Binary(_) => {
+            if send_response(
+                socket,
+                BridgeResponse::failure("unknown", "binary_not_supported", "WebMCP accepts JSON text frames only"),
+                max_frame_bytes,
+            )
+            .await
+            .is_err()
+            {
+                PairedFrameAction::Close
+            } else {
+                PairedFrameAction::Continue
+            }
+        }
+        ws::Message::Ping(payload) => {
+            if send_pong(socket, payload).await.is_err() {
+                PairedFrameAction::Close
+            } else {
+                PairedFrameAction::Continue
+            }
+        }
+        ws::Message::Close(_) => PairedFrameAction::Close,
+        ws::Message::Pong(_) => PairedFrameAction::Continue,
+    }
+}
+
 async fn run_paired_socket(
     mut socket: ws::WebSocket,
     state: Arc<ServerState>,
@@ -469,23 +555,10 @@ async fn run_paired_socket(
         tokio::select! {
             message = socket.next() => {
                 let Some(Ok(message)) = message else { return };
-                match message {
-                    ws::Message::Text(text) => {
-                        if text.len() > state.max_frame_bytes {
-                            drop(send_response(&mut socket, BridgeResponse::failure("unknown", "frame_too_large", "request exceeds the frame limit"), state.max_frame_bytes).await);
-                            return;
-                        }
-                        let request = match serde_json::from_slice::<BridgeRequest>(text.as_bytes()) {
-                            Ok(request) => request,
-                            Err(error) => {
-                                if send_response(&mut socket, BridgeResponse::failure("unknown", "malformed_request", error.to_string()), state.max_frame_bytes).await.is_err() { return; }
-                                continue;
-                            }
-                        };
-                        if !is_valid_request_id(request.request_id()) {
-                            if send_response(&mut socket, invalid_request_id_response(request.request_id()), state.max_frame_bytes).await.is_err() { return; }
-                            continue;
-                        }
+                match handle_paired_frame(&mut socket, message, state.max_frame_bytes).await {
+                    PairedFrameAction::Close => return,
+                    PairedFrameAction::Continue => {}
+                    PairedFrameAction::Request(request) => {
                         let request_id = request.request_id().to_string();
                         let mutation_request = matches!(
                             &request,
@@ -518,27 +591,14 @@ async fn run_paired_socket(
                                 }
                                 message = socket.next() => {
                                     let Some(Ok(message)) = message else { return };
-                                    match message {
-                                        ws::Message::Text(text) => {
-                                            if text.len() > state.max_frame_bytes {
-                                                drop(send_response(&mut socket, BridgeResponse::failure("unknown", "frame_too_large", "request exceeds the frame limit"), state.max_frame_bytes).await);
-                                                return;
-                                            }
-                                            let request = match serde_json::from_slice::<BridgeRequest>(text.as_bytes()) {
-                                                Ok(request) => request,
-                                                Err(error) => {
-                                                    if send_response(&mut socket, BridgeResponse::failure("unknown", "malformed_request", error.to_string()), state.max_frame_bytes).await.is_err() { return; }
-                                                    continue;
-                                                }
-                                            };
-                                            if !is_valid_request_id(request.request_id()) {
-                                                if send_response(&mut socket, invalid_request_id_response(request.request_id()), state.max_frame_bytes).await.is_err() { return; }
-                                                continue;
-                                            }
+                                    match handle_paired_frame(&mut socket, message, state.max_frame_bytes).await {
+                                        PairedFrameAction::Close => return,
+                                        PairedFrameAction::Continue => {}
+                                        PairedFrameAction::Request(request) => {
                                             let request_id = request.request_id().to_string();
                                             let response = if matches!(&request, BridgeRequest::Cancel { .. }) {
                                                 match dispatch_cancel_request(&state, &origin, &token, request).await {
-                                                    Ok(payload) => BridgeResponse::success(request_id, payload),
+                                                    Ok(payload) => BridgeResponse::success(request_id.clone(), payload),
                                                     Err(error) => response_for_error(&request_id, error),
                                                 }
                                             } else {
@@ -546,14 +606,6 @@ async fn run_paired_socket(
                                             };
                                             if send_response(&mut socket, response, state.max_frame_bytes).await.is_err() { return; }
                                         }
-                                        ws::Message::Binary(_) => {
-                                            if send_response(&mut socket, BridgeResponse::failure("unknown", "binary_not_supported", "WebMCP accepts JSON text frames only"), state.max_frame_bytes).await.is_err() { return; }
-                                        }
-                                        ws::Message::Ping(payload) => {
-                                            if send_pong(&mut socket, payload).await.is_err() { return; }
-                                        }
-                                        ws::Message::Close(_) => return,
-                                        ws::Message::Pong(_) => {}
                                     }
                                 }
                                 event = subscription.recv() => {
@@ -570,14 +622,6 @@ async fn run_paired_socket(
                             }
                         }
                     }
-                    ws::Message::Binary(_) => {
-                        if send_response(&mut socket, BridgeResponse::failure("unknown", "binary_not_supported", "WebMCP accepts JSON text frames only"), state.max_frame_bytes).await.is_err() { return; }
-                    }
-                    ws::Message::Ping(payload) => {
-                        if send_pong(&mut socket, payload).await.is_err() { return; }
-                    }
-                    ws::Message::Close(_) => return,
-                    ws::Message::Pong(_) => {}
                 }
             }
             event = subscription.recv() => {

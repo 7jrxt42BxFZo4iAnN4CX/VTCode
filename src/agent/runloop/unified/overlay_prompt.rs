@@ -12,6 +12,9 @@ pub(crate) enum OverlayWaitOutcome<T> {
     Submitted(T),
     Cancelled,
     Interrupted,
+    /// A bridge prompt arrived while a modal owned the input surface. The
+    /// prompt was requeued and must be handled after the modal closes.
+    Deferred,
     Exit,
 }
 
@@ -123,7 +126,12 @@ where
                 close_overlay(handle).await;
                 return Ok(OverlayWaitOutcome::Exit);
             }
-            InlineEvent::Submit(_) | InlineEvent::WebmcpSubmit(_) | InlineEvent::QueueSubmit(_) => continue,
+            InlineEvent::WebmcpSubmit(input) => {
+                session.defer_event(InlineEvent::WebmcpSubmit(input))?;
+                close_overlay(handle).await;
+                return Ok(OverlayWaitOutcome::Deferred);
+            }
+            InlineEvent::Submit(_) | InlineEvent::QueueSubmit(_) => continue,
             InlineEvent::Transient(_) => {}
             _ => {
                 tracing::info!(

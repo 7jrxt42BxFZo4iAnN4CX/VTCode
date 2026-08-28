@@ -6,7 +6,7 @@ The WebMCP demo is a browser code editor for exploring the workflow:
 inspect → edit a draft → review a diff → propose → apply → check → revert
 ```
 
-It has two modes:
+It has three modes:
 
 | Mode | Start | Write boundary |
 | --- | --- | --- |

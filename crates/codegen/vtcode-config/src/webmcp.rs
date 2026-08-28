@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::path::PathBuf;
@@ -59,7 +59,7 @@ impl WebmcpConfig {
         let address = self
             .host
             .parse::<IpAddr>()
-            .map_err(|_error| anyhow::anyhow!("webmcp.host must be a literal IP address"))?;
+            .context("webmcp.host must be a literal IP address")?;
         if !address.is_loopback() {
             bail!("webmcp.host must be a loopback address; use a TLS-terminating reverse proxy for remote access");
         }

@@ -169,7 +169,7 @@ impl<'a> InlineEventLoop<'a> {
         // If the TUI event stream has been dropped the session cannot produce
         // further input; polling would spin a 100% CPU busy-loop because
         // next_event() resolves to None instantly on a closed channel. Exit.
-        if session.events.is_closed() {
+        if session.events.is_closed() && !session.handle.has_deferred_event() {
             return Ok(InlineLoopAction::Exit(vtcode_core::hooks::SessionEndReason::Exit));
         }
 

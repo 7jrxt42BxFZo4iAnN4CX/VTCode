@@ -23,7 +23,7 @@ pub(crate) async fn handle_start_webmcp(ctx: SlashCommandContext<'_>, origin: St
     let pairing_code = bridge.pairing_code().to_string();
     let expires_in_secs = bridge.pairing_expires_in_secs();
     if let Some(emitter) = ctx.harness_emitter {
-        emitter.attach_webmcp_event_hub(bridge.event_hub());
+        emitter.attach_webmcp_event_hub(bridge.event_hub())?;
     }
     *ctx.webmcp_bridge = Some(bridge);
 

@@ -195,11 +195,16 @@ impl HarnessEventEmitter {
             canonical.emit(&event)?;
         }
 
-        if let Ok(guard) = self.inner.webmcp_event_hub.lock()
-            && let Some(hub) = guard.as_ref()
-            && let Err(error) = hub.publish(VersionedThreadEvent::new(event.clone()))
         {
-            tracing::warn!(target: "vtcode.webmcp", error = %error, "failed to publish a runtime event to WebMCP");
+            let webmcp_hub = self
+                .inner
+                .webmcp_event_hub
+                .lock()
+                .map_err(|error| anyhow::anyhow!("WebMCP event hub lock poisoned: {error}"))?;
+            if let Some(hub) = webmcp_hub.as_ref() {
+                hub.publish(VersionedThreadEvent::new(event.clone()))
+                    .context("publish runtime event to WebMCP")?;
+            }
         }
 
         // The legacy JSONL file is an optional compatibility export.
@@ -250,10 +255,14 @@ impl HarnessEventEmitter {
     /// Attach the active WebMCP event hub to this session's canonical event
     /// fan-out. Runtime events remain `VersionedThreadEvent` values; the hub
     /// only adds transport sequencing for browser replay.
-    pub(crate) fn attach_webmcp_event_hub(&self, hub: WebmcpEventHub) {
-        if let Ok(mut guard) = self.inner.webmcp_event_hub.lock() {
-            *guard = Some(hub);
-        }
+    pub(crate) fn attach_webmcp_event_hub(&self, hub: WebmcpEventHub) -> Result<()> {
+        let mut guard = self
+            .inner
+            .webmcp_event_hub
+            .lock()
+            .map_err(|error| anyhow::anyhow!("WebMCP event hub lock poisoned: {error}"))?;
+        *guard = Some(hub);
+        Ok(())
     }
 
     /// Emit a completed assistant message for a response that did not come

@@ -101,7 +101,12 @@ impl StartupPolicy {
     /// Classify parsed arguments before any command-specific startup side effects run.
     #[must_use]
     pub(crate) fn for_args(args: &Cli) -> Self {
-        let kind = if args.print.is_some() {
+        // `--print` is global, but it must not downgrade a tool-capable
+        // subcommand to the tool-free Ask path. Doing so would skip the
+        // runtime security initialization required by exec/review.
+        let kind = if matches!(args.command, Some(Commands::Exec { .. } | Commands::Review(_))) {
+            StartupCommandKind::ToolCapable
+        } else if args.print.is_some() {
             StartupCommandKind::Ask
         } else {
             match args.command.as_ref() {
@@ -944,6 +949,24 @@ mod validation_tests {
         );
         assert_policy(
             Cli::parse_from(["vtcode", "exec", "inspect the workspace"]),
+            StartupCommandKind::ToolCapable,
+            true,
+            true,
+            true,
+            false,
+            false,
+        );
+        assert_policy(
+            Cli::parse_from(["vtcode", "exec", "--print", "inspect the workspace"]),
+            StartupCommandKind::ToolCapable,
+            true,
+            true,
+            true,
+            false,
+            false,
+        );
+        assert_policy(
+            Cli::parse_from(["vtcode", "review", "--print"]),
             StartupCommandKind::ToolCapable,
             true,
             true,

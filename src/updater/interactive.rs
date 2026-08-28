@@ -211,6 +211,7 @@ pub(crate) async fn run_inline_update_prompt(
         OverlayWaitOutcome::Cancelled | OverlayWaitOutcome::Interrupted | OverlayWaitOutcome::Exit => {
             Ok(InlineUpdateOutcome::Continue)
         }
+        OverlayWaitOutcome::Deferred => Ok(InlineUpdateOutcome::Continue),
     }
 }
 

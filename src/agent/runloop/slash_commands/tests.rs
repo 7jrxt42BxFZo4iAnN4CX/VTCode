@@ -545,6 +545,13 @@ async fn webmcp_pair_command_starts_an_active_bridge() {
         outcome,
         SlashCommandOutcome::StartWebmcp { ref origin } if origin == "http://localhost:5173"
     ));
+
+    for rejected in ["webmcp pair", "webmcp pair   ", "webmcp pair http://a http://b"] {
+        let outcome = handle_slash_command(rejected, &mut renderer, &workspace)
+            .await
+            .expect("malformed webmcp pair should still parse");
+        assert!(matches!(outcome, SlashCommandOutcome::Handled));
+    }
 }
 
 #[tokio::test]

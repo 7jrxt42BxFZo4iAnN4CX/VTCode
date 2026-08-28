@@ -203,7 +203,8 @@ impl EventHubSubscription {
     }
 
     /// Waits for the next live event. A closed receiver means the client was
-    /// removed because it could not keep up or the hub was dropped.
+    /// removed because it could not keep up. The subscription owns the state
+    /// needed to receive retained and live events after the hub is dropped.
     pub async fn recv(&mut self) -> Option<SequencedThreadEvent> {
         let event = self.receiver.recv().await?;
         let _ = self.queued_bytes.fetch_sub(event.size_bytes, Ordering::Relaxed);
