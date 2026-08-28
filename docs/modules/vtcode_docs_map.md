@@ -202,7 +202,7 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/development/vtcode-binary-gotchas.md`
   - **Content**: vtcode Binary Gotchas
-  - **Topics**: Startup, updates, and allocation, Tool-budget and recovery contracts, Request assembly and planning, Startup benchmark guidance
+  - **Topics**: Startup, updates, and allocation, Tool-budget and recovery contracts, WebMCP bridge boundary, Request assembly and planning, Startup benchmark guidance
   - **User Questions**: "What can you tell me about vtcode Binary Gotchas?", "How does Startup, updates, and allocation work?", "How does Tool-budget and recovery contracts work?"
 
 - **File**: `docs/development/vtcode-crate-audit.md`

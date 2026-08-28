@@ -890,6 +890,9 @@ function discardDraft(): void {
 }
 
 async function runSelfCheck(): Promise<void> {
+  if (backend.kind !== "fallback") {
+    throw new Error("The self-check runs only in fallback mode; it must not write to a paired workspace");
+  }
   if (dirtyPaths().length || state.serverProposal || state.lastChange) {
     throw new Error("Finish the current change before running the self-check");
   }

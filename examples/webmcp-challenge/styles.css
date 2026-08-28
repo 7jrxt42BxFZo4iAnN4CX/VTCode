@@ -147,7 +147,7 @@ a {
 }
 
 .shortcut-button kbd {
-  border-color: currentColor;
+  border-color: currentcolor;
   color: inherit;
   opacity: .8;
 }
@@ -159,7 +159,7 @@ a {
 }
 
 #requestTurn kbd {
-  border-color: currentColor;
+  border-color: currentcolor;
   color: inherit;
   opacity: .8;
 }

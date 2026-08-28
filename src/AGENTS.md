@@ -4,12 +4,11 @@
 Detailed runloop recovery and allocator notes live in the [vtcode binary gotchas guide](../docs/development/vtcode-binary-gotchas.md).
 
 ## Modules (active bridge: `agent/runloop/unified/webmcp.rs`)
-
 `main.rs` binary entry | `agent/` runloop + subagent dispatch | `cli/` handlers including opt-in WebMCP serving | `startup/` onboarding | `updater/` downloads and self-replacement | `codex_app_server/` bridge | `main_helpers/` tracing and runtime init | `agent/runloop/unified/planning_workflow/tracker_response.rs` model-facing path boundary | `agent/runloop/unified/turn/session/interaction_loop_runner/status_refresh.rs` status/IDE/title cadence | `agent/runloop/unified/session_setup/hook_approval.rs` workspace lifecycle-hook approval overlay
 
 ## Rules
 
-- Keep the binary thin; runtime logic belongs in `vtcode-core`. Build `LifecycleHookEngine` with `new_with_session_gated`, passing `workspace_gated = vt_cfg.workspace_lifecycle_hooks` non-empty OR `active_primary_agent.contributes_workspace_controlled_hooks()`; the approval overlay lives in `session_setup/hook_approval.rs`. WebMCP stays opt-in with explicit origins, loopback defaults, in-memory credentials, terminal/full-auto authorization, and the existing full-auto workspace-trust gate before headless mutations/checks. Active bridge replacement and unpair require terminal confirmation. Bridge prompts use a prompt-only inline event and must not enter slash-command parsing.
+- Keep the binary thin; runtime logic belongs in `vtcode-core`. Build `LifecycleHookEngine` with `new_with_session_gated`, passing `workspace_gated = vt_cfg.workspace_lifecycle_hooks` non-empty OR `active_primary_agent.contributes_workspace_controlled_hooks()`; the approval overlay lives in `session_setup/hook_approval.rs`. See the binary gotchas guide for WebMCP bridge and prompt-boundary details.
 - Spool preview generation and shell activity classification belong to `vtcode-core`; the binary only serializes the typed reference.
 - `mimalloc` is the default allocator; `allocator-jemalloc` opts into `tikv-jemalloc`. Measure with `vtcode bench-allocator` before changing it; see the [allocator guide](../docs/development/ALLOCATOR_MEMORY.md).
 - Install `vtcode_ui::tui::panic_hook` before producing output.

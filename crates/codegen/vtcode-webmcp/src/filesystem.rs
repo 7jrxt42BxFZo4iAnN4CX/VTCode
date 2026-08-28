@@ -26,6 +26,7 @@ const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_CHECK_OUTPUT_BYTES: usize = 512 * 1024;
 const MAX_DIRECTORY_DEPTH: usize = 64;
 const MAX_VISITED_DIRECTORIES: usize = 16_384;
+const MAX_CHECK_SENSITIVE_PATHS: usize = 4096;
 const MAX_STORED_PROPOSALS: usize = 64;
 const MAX_STORED_PROPOSAL_BYTES: usize = 128 * 1024 * 1024;
 const IGNORED_DIRECTORY_NAMES: &[&str] = &[
@@ -564,13 +565,10 @@ impl RuntimeAdapter for FilesystemWorkspace {
             .with_env(environment)
             .with_expiration(ExecExpiration::Timeout(CHECK_TIMEOUT));
         let sandbox_executable = std::env::var_os("VTCODE_LINUX_SANDBOX_EXECUTABLE").map(PathBuf::from);
+        let check_policy = check_sandbox_policy(self.root.as_ref())
+            .map_err(|error| WebmcpError::Adapter(format!("failed to build WebMCP check sandbox: {error}")))?;
         let exec_env = SandboxManager::new()
-            .transform(
-                spec,
-                &check_sandbox_policy(self.root.as_ref()),
-                self.root.as_ref(),
-                sandbox_executable.as_deref(),
-            )
+            .transform(spec, &check_policy, self.root.as_ref(), sandbox_executable.as_deref())
             .map_err(|error| WebmcpError::Adapter(format!("failed to sandbox WebMCP check: {error}")))?;
         let mut child = Command::new(exec_env.program)
             .args(exec_env.args)
@@ -1119,12 +1117,69 @@ fn trusted_executable_path(executable: &Path) -> Result<String> {
         .map_err(|error| WebmcpError::Adapter(format!("failed to build trusted check PATH: {error}")))
 }
 
-fn check_sandbox_policy(root: &Path) -> SandboxPolicy {
+fn sensitive_path_for_policy(path: &Path) -> Result<SensitivePath> {
+    let path_string = path.to_str().ok_or_else(|| {
+        WebmcpError::Adapter(format!("cannot sandbox a non-UTF-8 sensitive path: {}", path.display()))
+    })?;
+    if path_string
+        .chars()
+        .any(|character| character == '"' || character == '\\' || character.is_control())
+    {
+        return Err(WebmcpError::Adapter(format!(
+            "cannot sandbox a sensitive path containing an unsafe character: {path_string}"
+        )));
+    }
+    Ok(SensitivePath::new(path_string))
+}
+
+fn collect_workspace_sensitive_paths(root: &Path) -> Result<Vec<SensitivePath>> {
+    let mut sensitive_paths = Vec::new();
+    let mut pending = vec![(root.to_path_buf(), 0usize)];
+    let mut visited_directories = 0usize;
+
+    while let Some((directory, depth)) = pending.pop() {
+        if depth > MAX_DIRECTORY_DEPTH {
+            return Err(WebmcpError::LimitExceeded);
+        }
+        visited_directories = visited_directories.saturating_add(1);
+        if visited_directories > MAX_VISITED_DIRECTORIES {
+            return Err(WebmcpError::LimitExceeded);
+        }
+
+        for entry in std::fs::read_dir(&directory)? {
+            let entry = entry?;
+            let path = entry.path();
+            let relative_path = path
+                .strip_prefix(root)
+                .map_err(|_error| WebmcpError::PathRejected(path.display().to_string()))?;
+            if is_sensitive_relative_path(relative_path) {
+                if sensitive_paths.len() >= MAX_CHECK_SENSITIVE_PATHS {
+                    return Err(WebmcpError::LimitExceeded);
+                }
+                sensitive_paths.push(sensitive_path_for_policy(&path)?);
+                continue;
+            }
+
+            let metadata = std::fs::symlink_metadata(&path)?;
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
+            if metadata.is_dir() {
+                pending.push((path, depth + 1));
+            }
+        }
+    }
+
+    Ok(sensitive_paths)
+}
+
+fn check_sandbox_policy(root: &Path) -> Result<SandboxPolicy> {
     let mut sensitive_paths = default_sensitive_paths();
     for name in SENSITIVE_FILES.iter().copied().chain(SENSITIVE_DIRECTORY_NAMES.iter().copied()) {
-        sensitive_paths.push(SensitivePath::new(root.join(name).display().to_string()));
+        sensitive_paths.push(sensitive_path_for_policy(&root.join(name))?);
     }
-    SandboxPolicy::workspace_write_with_sensitive_paths(vec![root.to_path_buf()], sensitive_paths)
+    sensitive_paths.extend(collect_workspace_sensitive_paths(root)?);
+    Ok(SandboxPolicy::workspace_write_with_sensitive_paths(vec![root.to_path_buf()], sensitive_paths))
 }
 
 fn parse_safe_command(command: &str, allowed_commands: &HashSet<String>) -> Result<Vec<String>> {
@@ -1405,10 +1460,20 @@ mod tests {
         for name in ["ID_ECDSA", ".ENV", "credentials.JSON"] {
             std::fs::write(temp.path().join(name), "secret").expect("sensitive file");
         }
-        let policy = check_sandbox_policy(temp.path());
+        let nested = temp.path().join("project");
+        std::fs::create_dir_all(nested.join(".ssh")).expect("nested credential directory");
+        std::fs::write(nested.join(".ssh/id_ed25519"), "private key").expect("nested private key");
+        std::fs::write(nested.join(".env"), "TOKEN=secret").expect("nested dotenv file");
 
-        for name in ["ID_ECDSA", ".ENV", "credentials.JSON"] {
-            let path = temp.path().join(name);
+        let policy = check_sandbox_policy(temp.path()).expect("sandbox policy");
+
+        for path in [
+            temp.path().join("ID_ECDSA"),
+            temp.path().join(".ENV"),
+            temp.path().join("credentials.JSON"),
+            nested.join(".ssh/id_ed25519"),
+            nested.join(".env"),
+        ] {
             assert!(!policy.is_path_readable(&path), "check sandbox read allowed: {path:?}");
             assert!(!policy.is_path_writable(&path, temp.path()), "check sandbox write allowed: {path:?}");
         }
