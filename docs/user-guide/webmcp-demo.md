@@ -73,6 +73,20 @@ The deterministic corpus and contract checks live in
 `examples/webmcp-challenge/evals/webmcp-evals.js` and run with `npm test`.
 Model tool selection remains probabilistic and needs the real browser-agent pass.
 
+### Optional Chrome origin trial
+
+Chrome 149 offers WebMCP through a [time-limited origin trial](https://developer.chrome.com/blog/ai-webmcp-origin-trial).
+To test the deployed demo without the testing flag, request a token for the exact origin
+`https://vinhnx.github.io` and set the repository Actions variable
+`WEBMCP_ORIGIN_TRIAL_TOKEN`. The Pages workflow passes that value to the Vite
+build as `VITE_WEBMCP_ORIGIN_TRIAL_TOKEN`, which injects the token into the
+document head before the application accesses `document.modelContext`.
+
+No token is committed to the repository. If the variable is unset, use
+`chrome://flags/#enable-webmcp-testing` in Chrome 149 or use the normal
+WebMCP-unavailable fallback. A token is tied to its registered origin, so a
+production token does not enable the local Vite origin.
+
 ## Run the fallback demo
 
 This is the quickest way to try the editor and does not require VT Code, Rust,

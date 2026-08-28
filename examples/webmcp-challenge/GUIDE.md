@@ -50,12 +50,25 @@ require active mode.
 Use `--port 5174` if port `5173` is already in use. Use the same port in the
 browser URL and `/webmcp pair` command.
 
+### Use the Chrome origin trial
+
+Chrome's [WebMCP origin trial](https://developer.chrome.com/blog/ai-webmcp-origin-trial)
+is an optional way to test the deployed page without relying on the testing
+flag. Request a token for the exact origin
+`https://vinhnx.github.io`, then configure the repository Actions variable
+`WEBMCP_ORIGIN_TRIAL_TOKEN`. The Pages workflow injects it at build time through
+`VITE_WEBMCP_ORIGIN_TRIAL_TOKEN`; no token is committed to source control.
+
+For local development, use a token registered for the local origin or enable
+`chrome://flags/#enable-webmcp-testing` instead. A token for the GitHub Pages
+origin will not authorize `http://localhost:5173`.
+
 ## Test browser WebMCP tools
 
 The public editor is usable without a bridge, so it is the easiest target for a
-real browser-agent check. Use Chrome 149 or newer, enable
-`chrome://flags/#enable-webmcp-testing`, relaunch Chrome, and open the deployed
-editor. Chrome's [WebMCP documentation](https://developer.chrome.com/docs/ai/webmcp)
+real browser-agent check. Use Chrome 149 or newer with a valid origin-trial token
+or enable `chrome://flags/#enable-webmcp-testing`, relaunch Chrome, and open the
+deployed editor. Chrome's [WebMCP documentation](https://developer.chrome.com/docs/ai/webmcp)
 links to the Model Context Tool Inspector, which can list tools, execute a tool
 with JSON input, and display structured output or errors.
 

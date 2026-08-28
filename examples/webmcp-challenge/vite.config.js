@@ -1,13 +1,26 @@
 import { defineConfig } from "vite";
 
-const appInstance = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+export function webmcpOriginTrialPlugin(token = process.env.VITE_WEBMCP_ORIGIN_TRIAL_TOKEN) {
+  const normalizedToken = typeof token === "string" ? token.trim() : "";
+  return {
+    name: "webmcp-origin-trial",
+    transformIndexHtml(html) {
+      if (!normalizedToken) return html;
+      return {
+        html,
+        tags: [{
+          tag: "meta",
+          attrs: {
+            "http-equiv": "origin-trial",
+            content: normalizedToken,
+          },
+          injectTo: "head-prepend",
+        }],
+      };
+    },
+  };
+}
 
 export default defineConfig({
-  base: "./",
-  define: {
-    __VTCODE_APP_INSTANCE__: JSON.stringify(appInstance),
-  },
-  server: {
-    strictPort: true,
-  },
+  plugins: [webmcpOriginTrialPlugin()],
 });

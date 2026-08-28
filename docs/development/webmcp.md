@@ -77,6 +77,14 @@ The registration intentionally omits WebMCP's `exposedTo` option. The demo has
 no trusted cross-origin embedder, so exposing tools to another origin would add
 authority without a defined trust relationship.
 
+The example also supports [Chrome's optional origin trial](https://developer.chrome.com/blog/ai-webmcp-origin-trial)
+without making a token part of source control. Set `VITE_WEBMCP_ORIGIN_TRIAL_TOKEN` during the Vite
+build to prepend an `origin-trial` meta tag before the module loads. The Pages
+workflow maps the optional repository Actions variable
+`WEBMCP_ORIGIN_TRIAL_TOKEN` to that build variable. The token must be registered
+for the exact page origin; when it is absent, feature detection, the Chrome
+testing flag, and the in-memory fallback remain the supported paths.
+
 ## Transport and pairing
 
 `WebmcpServer` exposes one WebSocket endpoint at `/webmcp`. Every connection must send an allowed `Origin` header. The first JSON message consumes a short-lived one-time pairing code. The response returns an in-memory session token; subsequent messages include that token and a request ID. The configured pairing TTL is the session inactivity lease: authenticated requests refresh it, while an idle session expires. Tokens are never written to URLs, logs, or persistent storage.

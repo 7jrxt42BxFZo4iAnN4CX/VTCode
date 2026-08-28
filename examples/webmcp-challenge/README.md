@@ -65,6 +65,24 @@ npm test
 npm run build
 ```
 
+### Optional Chrome origin trial
+
+The Vite build supports an opt-in [WebMCP origin-trial](https://developer.chrome.com/blog/ai-webmcp-origin-trial)
+token without storing a token in the repository. Register the exact production origin
+`https://vinhnx.github.io` in Chrome's origin-trial service, then set the token
+as `VITE_WEBMCP_ORIGIN_TRIAL_TOKEN` when building:
+
+```sh
+VITE_WEBMCP_ORIGIN_TRIAL_TOKEN='<token for https://vinhnx.github.io>' npm run build
+```
+
+The GitHub Pages workflow reads the optional repository Actions variable
+`WEBMCP_ORIGIN_TRIAL_TOKEN` and passes it to the build. If the variable is not
+set, no origin-trial tag is emitted and the demo remains available through the
+Chrome WebMCP testing flag or its normal fallback mode. Tokens are
+origin-specific and time-limited; a production token should not be reused for
+`localhost`.
+
 ## Pair with VT Code
 
 Pairing is a two-step handoff:
@@ -228,9 +246,10 @@ the demo tests:
 npm test
 ```
 
-For a real browser-agent pass, use Chrome 149 or newer, enable
-`chrome://flags/#enable-webmcp-testing`, relaunch Chrome, and open this page.
-Use the [Model Context Tool Inspector](https://developer.chrome.com/docs/ai/webmcp)
+For a real browser-agent pass, use Chrome 149 or newer with either a valid
+origin-trial token for the page origin or
+`chrome://flags/#enable-webmcp-testing` enabled, relaunch Chrome, and open this
+page. Use the [Model Context Tool Inspector](https://developer.chrome.com/docs/ai/webmcp)
 to inspect `getTools()` and manually execute the `list_project_files`,
 `search_code`, `read_file`, `open_file`, `stage_text_edit`, `review_draft`, and
 `open_panel` calls.

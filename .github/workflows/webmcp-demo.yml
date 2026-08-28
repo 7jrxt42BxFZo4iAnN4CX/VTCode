@@ -42,6 +42,8 @@ jobs:
           cache-dependency-path: examples/webmcp-challenge/package-lock.json
 
       - name: Build Vite editor
+        env:
+          VITE_WEBMCP_ORIGIN_TRIAL_TOKEN: ${{ vars.WEBMCP_ORIGIN_TRIAL_TOKEN }}
         run: |
           npm ci --prefix examples/webmcp-challenge
           npm run build --prefix examples/webmcp-challenge

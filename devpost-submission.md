@@ -216,7 +216,9 @@ cargo nextest run --locked -p vtcode -E 'test(/webmcp/)' --no-fail-fast
 ## Known limitations
 
 - WebMCP availability depends on the browser/client and its current feature
-  flag or rollout; the fallback editor remains usable without it.
+  flag, origin-trial enrollment, or rollout; the fallback editor remains usable
+  without it. No origin-trial token is currently committed or configured for
+  the public demo.
 - The public page is a static fallback demo. A real local workspace and VT Code
   turn require the optional loopback bridge and an active VT Code session.
 - The deterministic eval corpus verifies contracts and expected journeys; a
