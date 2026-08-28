@@ -1857,6 +1857,11 @@ async fn spawn_from_child_controller_respects_depth_limit() {
         .expect_err("spawn at depth == max_depth should hit the depth limit");
 
     assert!(err.to_string().contains("Subagent depth limit reached (max_depth=2)"));
+
+    // Abort queued child tasks so they cannot run provider work after the
+    // temp workspace is removed.
+    child_controller.signal_shutdown().await;
+    grandchild_controller.signal_shutdown().await;
 }
 
 #[tokio::test]
@@ -2090,6 +2095,10 @@ async fn spawn_is_rejected_after_close_begins() {
         })
         .await
         .expect("spawn after end_close must be allowed again");
+
+    // Abort the queued child task so it cannot run provider work after the
+    // temp workspace is removed.
+    child_controller.signal_shutdown().await;
 }
 
 #[tokio::test]
@@ -2156,6 +2165,10 @@ async fn resume_restores_closed_grandchildren() {
         "resumed grandchild must be re-queued, got {:?}",
         resumed_grandchild.status
     );
+
+    // Abort restarted child tasks so they cannot run provider work after the
+    // temp workspace is removed.
+    parent.signal_shutdown().await;
 }
 
 #[tokio::test]
@@ -2258,6 +2271,10 @@ async fn resume_does_not_affect_sibling_grandchildren() {
         SubagentStatus::Closed,
         "resuming sibling 'a' must not reopen sibling 'b''s grandchildren"
     );
+
+    // Abort restarted child tasks so they cannot run provider work after the
+    // temp workspace is removed.
+    parent.signal_shutdown().await;
 }
 
 #[tokio::test]

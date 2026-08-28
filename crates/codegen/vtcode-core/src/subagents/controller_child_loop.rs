@@ -198,10 +198,11 @@ impl SubagentController {
         let effective_workspace = worktree_path.as_deref().unwrap_or(&self.config.workspace_root);
 
         // This child may delegate further only when a grandchild (depth + 2)
-        // still fits inside `subagents.max_depth`. The depth check in
-        // `spawn_with_spec` remains the sole runtime gate; this flag just
-        // decides whether the delegation tools stay in the child's toolset.
-        let allow_nested_delegation = self.config.depth.saturating_add(2) <= self.config.vt_cfg.subagents.max_depth;
+        // still fits inside `subagents.max_depth` AND the child is write-capable.
+        // A read-only child never receives delegation tools, so it also needs
+        // no child-scoped controller and must keep the delegation tools denied.
+        let allow_nested_delegation =
+            !spec.is_read_only() && self.config.depth.saturating_add(2) <= self.config.vt_cfg.subagents.max_depth;
 
         let (resolved_model, child_reasoning_effort, child_cfg) = prepare_child_runtime_config(
             &self.config.vt_cfg,
@@ -277,10 +278,7 @@ impl SubagentController {
                         managed_background_runtime: true,
                     };
                     match SubagentController::new(nested_config).await {
-                        Ok(controller) => {
-                            controller.set_parent_messages(&bootstrap_messages).await;
-                            Some(std::sync::Arc::new(controller))
-                        }
+                        Ok(controller) => Some(std::sync::Arc::new(controller)),
                         Err(err) => {
                             // Fail closed: without a controller the child keeps
                             // the current non-nested toolset and cannot delegate.
@@ -297,7 +295,11 @@ impl SubagentController {
         } else {
             None
         };
+        // Refresh parent context on both a newly created and a reused
+        // controller so a resumed child's grandchildren fork from the latest
+        // bootstrap messages.
         if let Some(controller) = child_controller.as_ref() {
+            controller.set_parent_messages(&bootstrap_messages).await;
             runner.set_subagent_controller(controller.clone());
         }
         let thread_handle = runner.thread_handle();

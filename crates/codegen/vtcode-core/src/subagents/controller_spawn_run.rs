@@ -739,6 +739,8 @@ impl SubagentController {
                     handle.abort();
                 }
                 record.status = SubagentStatus::Closed;
+                record.completed_at = Some(Utc::now());
+                record.notify.notify_waiters();
                 if let Some(controller) = record.child_controller.clone() {
                     nested.push((controller, record.session_id.clone()));
                 }
