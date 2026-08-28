@@ -106,3 +106,11 @@ implement intelligent container width for display table/blocks
 
 if width is enough use the wide table-layout regression screenshot
 if not use the narrow heading-block regression screenshot
+
+===
+
+implement /secret filter
+
+===
+
+on /config, revise the UI and when go back from section -> keep previous selected entry. also revamp the /config UI to be more user friendly and intuitive. implement live reload of config changes without needing to restart the program. implement a /config reset command to reset all config to default values. Both in TUI and CLI.
