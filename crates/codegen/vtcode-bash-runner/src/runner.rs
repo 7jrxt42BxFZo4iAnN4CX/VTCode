@@ -89,7 +89,7 @@ where
     }
 
     pub fn cd(&mut self, path: &str) -> Result<()> {
-        let candidate = self.resolve_path(path);
+        let candidate = self.resolve_path(path)?;
         if !candidate.exists() {
             bail!("directory `{}` does not exist", candidate.display());
         }
@@ -153,7 +153,7 @@ where
     }
 
     pub fn mkdir(&self, path: &str, parents: bool) -> Result<()> {
-        let target = self.resolve_path(path);
+        let target = self.resolve_path(path)?;
         self.ensure_mutation_target_within_workspace(&target)?;
 
         let command = match self.shell_kind {
@@ -183,7 +183,7 @@ where
     }
 
     pub fn rm(&self, path: &str, recursive: bool, force: bool) -> Result<()> {
-        let target = self.resolve_path(path);
+        let target = self.resolve_path(path)?;
         self.ensure_mutation_target_within_workspace(&target)?;
 
         let command = match self.shell_kind {
@@ -210,7 +210,7 @@ where
 
     pub fn cp(&self, source: &str, dest: &str, recursive: bool) -> Result<()> {
         let source_path = self.resolve_existing_path(source)?;
-        let dest_path = self.resolve_path(dest);
+        let dest_path = self.resolve_path(dest)?;
         self.ensure_mutation_target_within_workspace(&dest_path)?;
 
         let command = match self.shell_kind {
@@ -237,7 +237,7 @@ where
 
     pub fn mv(&self, source: &str, dest: &str) -> Result<()> {
         let source_path = self.resolve_existing_path(source)?;
-        let dest_path = self.resolve_path(dest);
+        let dest_path = self.resolve_path(dest)?;
         self.ensure_mutation_target_within_workspace(&dest_path)?;
 
         let command = match self.shell_kind {
@@ -329,7 +329,7 @@ where
     }
 
     fn resolve_existing_path(&self, raw: &str) -> Result<PathBuf> {
-        let path = self.resolve_path(raw);
+        let path = self.resolve_path(raw)?;
         if !path.exists() {
             bail!("path `{}` does not exist", path.display());
         }
@@ -340,17 +340,34 @@ where
         Ok(canonical)
     }
 
-    fn resolve_path(&self, raw: &str) -> PathBuf {
+    fn resolve_path(&self, raw: &str) -> Result<PathBuf> {
+        // An empty/whitespace path joins to the working directory itself
+        // (`PathBuf::join("")` returns the base), turning `rm -r -f ""` into
+        // a recursive delete of the workspace root. Reject it at the entry
+        // point shared by cd/mkdir/rm/cp/mv.
+        if raw.trim().is_empty() {
+            bail!("path must not be empty");
+        }
         let candidate = Path::new(raw);
         let joined = if candidate.is_absolute() {
             candidate.to_path_buf()
         } else {
             self.working_dir.join(candidate)
         };
-        joined.clean()
+        Ok(joined.clean())
     }
 
     fn ensure_mutation_target_within_workspace(&self, candidate: &Path) -> Result<()> {
+        // A mutation target equal to the workspace root itself (e.g. `rm -r -f .`,
+        // `mkdir .`) passes the containment check but destroys/recreates the
+        // whole workspace. Reject it for every mutating operation.
+        if candidate == self.working_dir {
+            bail!(
+                "refusing to mutate the workspace root itself (`{}`)",
+                candidate.display()
+            );
+        }
+
         if let Ok(metadata) = fs::symlink_metadata(candidate)
             && metadata.file_type().is_symlink()
         {
@@ -516,6 +533,24 @@ mod tests {
         // Canonicalize expected path to match runner's canonical working_dir
         let expected = canonicalize(&nested)?;
         assert_eq!(runner.working_dir(), expected);
+        Ok(())
+    }
+
+    #[test]
+    fn rm_rejects_empty_path_instead_of_targeting_workspace_root() -> Result<()> {
+        let dir = TempDir::new()?;
+        let executor = RecordingExecutor::default();
+        let runner = BashRunner::new(dir.path().to_path_buf(), executor.clone(), AllowAllPolicy)?;
+        let runner = runner;
+
+        for empty in ["", "   ", "."] {
+            let result = runner.rm(empty, true, true);
+            assert!(result.is_err(), "rm({empty:?}) must be rejected");
+        }
+        assert!(
+            executor.invocations.lock().expect("invocations lock").is_empty(),
+            "no command must be built for empty paths"
+        );
         Ok(())
     }
 
