@@ -523,6 +523,19 @@ async fn handle_tool_call_inner<'a, 'b, 'tool>(
         }
     };
 
+    // A PreToolUse hook may have rewritten the arguments inside validate_tool_call;
+    // re-evaluate the mutation guard against the arguments that will actually
+    // execute, so a rewrite cannot turn a read-only call into an unguarded mutation.
+    if block_mutation_until_verification(
+        t_ctx.ctx,
+        t_ctx.repeated_tool_attempts,
+        tool_call_id,
+        &prepared.canonical_name,
+        &prepared.effective_args,
+    )? {
+        return Ok(None);
+    }
+
     // 3. Execute and Handle Result
     if let Some(outcome) = execute_and_handle_tool_call(
         t_ctx.ctx,

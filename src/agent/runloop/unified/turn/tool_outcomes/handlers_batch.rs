@@ -317,6 +317,18 @@ pub(crate) async fn handle_tool_call_batch_prepared<'a, 'b>(
         match finalize_validation_result(t_ctx.ctx, tool_call.call_id(), tool_call.tool_name(), args, validation_result)
         {
             ValidationTransition::Proceed(prepared) => {
+                // A PreToolUse hook may have rewritten the arguments inside
+                // validate_tool_call; re-evaluate the mutation guard against
+                // the arguments that will actually execute.
+                if block_mutation_until_verification(
+                    t_ctx.ctx,
+                    t_ctx.repeated_tool_attempts,
+                    tool_call.call_id(),
+                    &prepared.canonical_name,
+                    &prepared.effective_args,
+                )? {
+                    continue;
+                }
                 validated_calls.push(ValidatedToolCall { tool_call, prepared });
             }
             ValidationTransition::Return(Some(outcome)) => {
