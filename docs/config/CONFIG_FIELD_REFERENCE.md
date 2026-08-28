@@ -885,7 +885,7 @@ python3 scripts/generate_config_field_reference.py
 | `webmcp.allowed_origins[]` | `string` | no | `-` | - |
 | `webmcp.allowed_roots` | `array` | no | `[]` | Explicit headless roots; the current bridge serves one root per process. |
 | `webmcp.allowed_roots[]` | `string` | no | `-` | - |
-| `webmcp.enabled` | `boolean` | no | `false` | Whether a session may start a WebMCP listener through an integration. |
+| `webmcp.enabled` | `boolean` | no | `false` | Opt-in marker for WebMCP integrations; listener startup still requires an explicit CLI or TUI command. |
 | `webmcp.host` | `string` | no | `"127.0.0.1"` | Literal loopback bind host; remote clients require a TLS-terminating reverse proxy. |
 | `webmcp.max_frame_bytes` | `integer` | no | `1048576` | Maximum JSON WebSocket frame size. |
 | `webmcp.max_in_flight_requests` | `integer` | no | `8` | Maximum concurrent bridge operations. |

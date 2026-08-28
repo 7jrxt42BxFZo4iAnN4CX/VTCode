@@ -11,6 +11,7 @@ Inspired by [caniuse.rs](https://caniuse.rs), this document tracks feature avail
 | Keyring Auth | Yes | Yes | Yes | No | OS-specific backends |
 | MCP Protocol | Yes | Yes | Yes | No | Model Context Protocol |
 | ACP Client | Yes | Yes | Yes | Partial | Agent Client Protocol |
+| WebMCP browser bridge | Yes | Yes | No | No | First-class authenticated bridge; filesystem access requires Unix directory-handle support and the browser client is a separate supported WebMCP page |
 | File Watching | Yes | Yes | Yes | No | notify crate |
 | Desktop Notifications | Yes | Yes | Yes | No | Optional feature |
 | Bash Runner | Yes | Yes | Improved | No | Windows uses PowerShell with cross-platform process groups |

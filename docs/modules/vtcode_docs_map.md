@@ -294,10 +294,14 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Topics**: Quick Reference, Minimum Supported Rust Version (MSRV), Platform-Specific Features, LLM Provider Compatibility, Feature Flags Matrix
   - **User Questions**: "What can you tell me about VT Code Platform Compatibility Matrix?", "How does Quick Reference work?", "How does Minimum Supported Rust Version (MSRV) work?"
 
+- **File**: `docs/user-guide/webmcp.md`
+  - **Content**: WebMCP Browser Bridge User Guide
+  - **Topics**: Two integration paths, Evaluate the browser tool surface, Run the reference editor without a bridge, Connect to a real workspace, Edit, review, and apply in headless mode
+  - **User Questions**: "What can you tell me about WebMCP Browser Bridge User Guide?", "How does Two integration paths work?", "How does Evaluate the browser tool surface work?"
+
 - **File**: `docs/user-guide/webmcp-demo.md`
-  - **Content**: WebMCP Demo User Guide
-  - **Topics**: Two integration paths, Evaluate the browser tool surface, Run the fallback demo, Connect to a real workspace, Edit, review, and apply in headless mode
-  - **User Questions**: "What can you tell me about WebMCP Demo User Guide?", "How does Two integration paths work?", "How does Evaluate the browser tool surface work?"
+  - **Content**: WebMCP browser bridge guide (legacy link)
+  - **User Questions**: "What can you tell me about WebMCP browser bridge guide (legacy link)?"
 
 ### Integrations & Tooling
 

@@ -1,11 +1,11 @@
-# VT Code WebMCP Demo
+# VT Code WebMCP Reference Client
 
 This is a browser code editor with a safe in-memory fallback. In a real VT Code
 session, the browser sends reviewed proposals to VT Code. VT Code performs the
 terminal-approved file changes. The browser never writes to the filesystem
 directly.
 
-## Start the demo
+## Start the reference client
 
 Run these commands from the VT Code repository root:
 
@@ -66,7 +66,7 @@ origin will not authorize `http://localhost:5173`.
 ## Test browser WebMCP tools
 
 The public editor is usable without a bridge, so it is the easiest target for a
-real browser-agent check. Use Chrome 149 or newer with a valid origin-trial token
+real browser-agent check. Use a supported WebMCP browser with a valid origin-trial token
 or enable `chrome://flags/#enable-webmcp-testing`, relaunch Chrome, and open the
 deployed editor. Chrome's [WebMCP documentation](https://developer.chrome.com/docs/ai/webmcp)
 links to the Model Context Tool Inspector, which can list tools, execute a tool
@@ -156,7 +156,7 @@ entire workspace into the editor.
 
 ### Port `5173` is busy
 
-Reuse the existing demo at <http://localhost:5173>, or start another instance:
+Reuse the existing reference client at <http://localhost:5173>, or start another instance:
 
 ```sh
 ./start.sh --port 5174
@@ -173,7 +173,7 @@ match the browser origin; `localhost` and `127.0.0.1` are different origins.
 
 ### The TUI prints no URL or pairing code
 
-Run the demo from the current VT Code checkout, stop old VT Code processes, and pair again:
+Run the reference client from the current VT Code checkout, stop old VT Code processes, and pair again:
 
 ```sh
 cd /path/to/vtcode
@@ -188,7 +188,7 @@ Use `./start.sh --headless --workspace /absolute/path/to/project`, or run the
 command from a current VT Code checkout with
 `cargo run --locked -- webmcp serve ...`.
 
-## Test the demo
+## Test the reference client
 
 From `examples/webmcp-challenge`:
 
@@ -199,5 +199,5 @@ bun run test
 bun run build
 ```
 
-See the [WebMCP demo user guide](../../docs/user-guide/webmcp-demo.md) for the
+See the [WebMCP browser bridge user guide](../../docs/user-guide/webmcp.md) for the
 full protocol, configuration, and security model.

@@ -1,9 +1,9 @@
-# VT Code WebMCP editor
+# VT Code WebMCP reference client
 
-This Vite example is a real CodeMirror 6 browser editor for a VT Code
-workspace. It supports editable drafts, syntax highlighting, tabs, line
-numbers, dirty state, unified diff review, checks, prompt requests, and
-backend events.
+This Vite project is the maintained reference browser client for VT Code's
+WebMCP bridge. It is a real CodeMirror 6 editor for a VT Code workspace and
+supports editable drafts, syntax highlighting, tabs, line numbers, dirty
+state, unified diff review, checks, prompt requests, and backend events.
 
 The app-owned runtime, tests, evals, and Vite configuration use strict
 TypeScript. Bun is the supported package manager and script runner. The
@@ -11,8 +11,8 @@ JavaScript files shown in the fallback workspace are intentional virtual
 sample-project files.
 
 For the click-by-click setup and fallback/connected workflow, see the
-[local demo guide](GUIDE.md) or the [repository WebMCP demo user
-guide](../../docs/user-guide/webmcp-demo.md).
+[reference client guide](GUIDE.md) or the [WebMCP browser bridge user
+guide](../../docs/user-guide/webmcp.md).
 
 The browser never writes to the local filesystem. With no bridge, the page
 starts in a deterministic `InMemoryBackend`; edits, proposals, checks, and
@@ -63,7 +63,7 @@ when the TUI is ready, run `/webmcp pair http://localhost:5173` and paste its
 WebSocket URL and pairing code into the browser. Add `--port 5174` when port
 `5173` is already occupied. See [GUIDE.md](GUIDE.md) for the complete workflow.
 
-Build and test the example with:
+Build and test the reference client with:
 
 ```sh
 bun install --frozen-lockfile
@@ -85,7 +85,7 @@ VITE_WEBMCP_ORIGIN_TRIAL_TOKEN='<token for https://vinhnx.github.io>' bun run bu
 
 The GitHub Pages workflow reads the optional repository Actions variable
 `WEBMCP_ORIGIN_TRIAL_TOKEN` and passes it to the build. If the variable is not
-set, no origin-trial tag is emitted and the demo remains available through the
+set, no origin-trial tag is emitted and the reference client remains available through the
 Chrome WebMCP testing flag or its normal fallback mode. Tokens are
 origin-specific and time-limited; a production token should not be reused for
 `localhost`.
@@ -165,7 +165,7 @@ configured origin must match the page exactly: `localhost:5173` and
 
 The standalone `serve` command is headless: it does not open an interactive
 terminal approval prompt or execute agent turns. For the complete active-session
-workflow, see the [demo user guide](../../docs/user-guide/webmcp-demo.md).
+workflow, see the [WebMCP browser bridge user guide](../../docs/user-guide/webmcp.md).
 
 ## Editor workflow
 
@@ -229,7 +229,7 @@ whether to narrow the request. The registration listens for `toolchange` and
 can be unregistered with its `AbortSignal`. `get_editor_state` also reports a
 small workflow state and recommended next tools so an agent can recover its
 place after a refresh or a multi-step request. The page intentionally does not
-pass `exposedTo`: this demo has no trusted cross-origin embedder.
+pass `exposedTo`: this reference client has no trusted cross-origin embedder.
 
 This is the browser-agent direction described by WebMCP: a browser-integrated
 or in-page agent discovers tools registered by the page and invokes them in the
@@ -247,13 +247,13 @@ name the next safe action, such as rereading a stale file or choosing one of
 the allowed panels. `test/webmcp-evals.test.ts` checks that every expected tool
 exists, metadata stays within Chrome's recommended discoverability budgets, and
 browser tools never gain a write or revert authority. Run it with the rest of
-the demo tests:
+the reference client tests:
 
 ```sh
 bun run test
 ```
 
-For a real browser-agent pass, use Chrome 149 or newer with either a valid
+For a real browser-agent pass, use a supported WebMCP browser with either a valid
 origin-trial token for the page origin or
 `chrome://flags/#enable-webmcp-testing` enabled, relaunch Chrome, and open this
 page. Use the [Model Context Tool Inspector](https://developer.chrome.com/docs/ai/webmcp)
@@ -277,15 +277,15 @@ a browser-agent model runner.
 The VT Code connection is a separate authenticated bridge. The browser sends
 workspace, patch, check, and turn requests over that WebSocket; VT Code sends
 responses and canonical runtime events back. WebMCP does not define that
-remote VT Code protocol, so this demo does not claim that the WebSocket itself
+remote VT Code protocol, so this reference client does not claim that the WebSocket itself
 is the WebMCP API.
 
 ## GitHub Pages
 
 The repository workflow at `../../.github/workflows/webmcp-demo.yml` runs
 `bun install --frozen-lockfile`, typechecks and tests the Vite app, then builds
-and publishes `dist/` when the demo branch is
+and publishes `dist/` when the reference-client branch is
 pushed or the workflow is started manually. Configure Pages to use **GitHub
 Actions**.
 
-The example is covered by the repository's [MIT OR Apache-2.0 license](../../LICENSE).
+The reference client is covered by the repository's [MIT OR Apache-2.0 license](../../LICENSE).

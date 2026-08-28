@@ -85,7 +85,7 @@ workspace="$(cd -- "$workspace" && pwd)"
 origin="http://${host}:${port}"
 vite_bin="$script_dir/node_modules/.bin/vite"
 
-command -v bun >/dev/null 2>&1 || fail "bun is required to run the browser demo"
+command -v bun >/dev/null 2>&1 || fail "bun is required to run the WebMCP reference client"
 if [[ ! -x "$vite_bin" ]]; then
     echo "Installing browser dependencies..."
     (cd "$script_dir" && bun install --frozen-lockfile)

@@ -1,6 +1,11 @@
 # WebMCP bridge development guide
 
-VT Code's WebMCP bridge lets a browser editor inspect a workspace and submit structured change proposals without giving the browser direct filesystem access. The bridge is opt-in and is implemented in the `vtcode-webmcp` crate.
+VT Code's first-class WebMCP bridge lets a browser editor inspect a workspace
+and submit structured change proposals without giving the browser direct
+filesystem access. The bridge ships in the main `vtcode` binary and the
+`vtcode-webmcp` crate, is opt-in at runtime, and keeps the terminal as the
+authority for origins, roots, pairing, and writes. The repository's
+`examples/webmcp-challenge` project is a maintained reference browser client.
 
 ## Boundaries
 
@@ -25,7 +30,7 @@ and the proposal is never applied automatically by the handoff.
 
 ## WebMCP API versus the VT Code bridge
 
-The example implements two related but separate directions:
+The reference browser client implements two related but separate directions:
 
 1. The page implements the standard browser WebMCP provider surface through
    `document.modelContext.registerTool()`. When supported by the browser, it
@@ -48,9 +53,9 @@ directly. A future VT Code-to-page tool-call relay would therefore need an
 explicit, separately documented bridge extension and must retain terminal
 approval; it must not be presented as native WebMCP.
 
-WebMCP calls also require the page to remain open in a supported browser
+WebMCP calls also require the reference client page to remain open in a supported browser
 browsing context. Current Chrome gates the page API on origin isolation and the
-`tools` Permissions Policy. The demo exposes the observed prerequisites through
+`tools` Permissions Policy. The reference client exposes the observed prerequisites through
 `get_editor_state.webmcp_context` and shows a recovery message when the context
 is not eligible; its in-memory editor fallback remains available. The
 imperative API is used because this editor has stateful search, selection, draft,
@@ -58,7 +63,7 @@ and review actions rather than a standard HTML-form submission surface.
 
 ## Browser tool contracts and evals
 
-The example keeps its browser tool surface intentionally small: eight tools for
+The reference client keeps its browser tool surface intentionally small: eight tools for
 inspection, navigation, and draft review. It does not expose apply, write, or
 revert as WebMCP tools. Each input is checked against its JSON Schema at runtime
 before the application callback runs, and every result is bounded to 1,500
@@ -79,13 +84,13 @@ action, such as rereading a stale file or selecting an allowed panel.
 and the browser-only authority boundary. These are deterministic contract
 checks. Probabilistic selection and end-to-end model behavior must additionally
 be tested in Chrome's Model Context Tool Inspector or another WebMCP-compatible
-agent using the prompts in the example guide.
+agent using the prompts in the reference client guide.
 
-The registration intentionally omits WebMCP's `exposedTo` option. The demo has
+The registration intentionally omits WebMCP's `exposedTo` option. The reference client has
 no trusted cross-origin embedder, so exposing tools to another origin would add
 authority without a defined trust relationship.
 
-The example also supports [Chrome's optional origin trial](https://developer.chrome.com/blog/ai-webmcp-origin-trial)
+The reference client also supports [Chrome's optional origin trial](https://developer.chrome.com/blog/ai-webmcp-origin-trial)
 without making a token part of source control. Set `VITE_WEBMCP_ORIGIN_TRIAL_TOKEN` during the Vite
 build to prepend an `origin-trial` meta tag before the module loads. The Pages
 workflow maps the optional repository Actions variable
@@ -105,7 +110,7 @@ An authenticated `status` response includes a `settings` object containing the
 non-secret listener host/port, pairing lease, frame limit, in-flight limit, and
 remote-proxy flag, plus the exact authenticated browser origin. It also
 includes the adapter's canonical workspace root and runtime capabilities. The
-example editor renders these values in its Settings dialog and refreshes them
+reference editor renders these values in its Settings dialog and refreshes them
 from the authenticated heartbeat, so the TUI configuration is the source of
 truth. Pairing codes, session tokens, and other credentials are never returned
 as settings or persisted by the browser.

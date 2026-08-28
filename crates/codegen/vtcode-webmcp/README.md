@@ -1,9 +1,12 @@
 # vtcode-webmcp
 
-`vtcode-webmcp` provides the authenticated WebMCP bridge used by the VT Code
-browser editor. It is deliberately independent of the TUI so an active session
-can supply its own runtime adapter while `vtcode webmcp serve` uses the safe
-filesystem adapter.
+`vtcode-webmcp` is the production WebMCP bridge shipped with VT Code. It
+provides the authenticated transport, pairing, protocol, and bounded workspace
+adapter used by the VT Code browser integration. It is deliberately
+independent of the TUI so an active session can supply its own runtime adapter
+while `vtcode webmcp serve` uses the safe filesystem adapter. The Vite project
+under `examples/webmcp-challenge` is a reference browser client, not the
+bridge's authority boundary.
 
 The bridge is opt-in, binds to loopback by default, requires an expiring
 one-time pairing code, validates the browser `Origin` header, and keeps pairing

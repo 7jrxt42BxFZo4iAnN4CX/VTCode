@@ -70,6 +70,7 @@ VT Code has undergone significant improvements:
 - **Agent Plugins** - Support for the [Agent Plugins](https://agent-plugins.org/specification) portable package format: install plugins that bundle Agent Skills and MCP servers under a root `plugin.json` manifest with `vtcode plugins list/info/validate/add/remove`. Plugin skills and MCP servers are discovered automatically at session startup. See [Agent Plugins Guide](./guides/agent-plugins.md) and [Agent Plugins User Guide](./user-guide/agent-plugins.md).
 
 - **Planning Workflow** - Iterate on a build plan with `/plan` and the `plan` primary agent. The agent can propose planning itself via an "Enter Planning workflow?" confirmation prompt, and you steer it with intent phrases (`approve`/`implement` to exit, `stay in planning` to remain). Approve via a structured review gate and hand off to `build`/`auto`. See [Planning Workflow](./guides/planning-workflow.md).
+- **WebMCP Browser Bridge** - Connect a supported browser editor to an active VT Code session or a bounded standalone workspace bridge through authenticated pairing, origin validation, and terminal-owned approval. See [WebMCP Browser Bridge](./user-guide/webmcp.md).
 - **Primary Agent Switching & Mode Guard** - Switch main-session agents (`plan`/`build`/`auto`) with `Tab`; mode switches lock during a turn to keep tool-access and instructions consistent.
 - **Automatic Compaction & Memory Envelope** - Unified compaction orchestration with a shared memory envelope as the single source of truth for both runloops.
 - **`/checkup` Command** - Configuration diagnostics that surface reversible, confirm-before-apply optimizations (e.g. tool-result clearing, client tool search, token-efficiency warnings).
@@ -102,7 +103,7 @@ New to VT Code? Start with installation and basic usage:
 - **[Subagents](./user-guide/subagents.md)** - Create, configure, invoke, and switch between delegated child agents with VT Code-native tool metadata
 - **[Agent Plugins](./user-guide/agent-plugins.md)** - Install portable plugins that bundle Agent Skills and MCP servers under a `plugin.json` manifest
 - **[Interactive Mode Reference](./user-guide/interactive-mode.md)** - Keyboard shortcuts and terminal workflows
-- **[WebMCP Demo User Guide](./user-guide/webmcp-demo.md)** - Run the browser editor in fallback mode or pair it with a local VT Code bridge
+- **[WebMCP Browser Bridge User Guide](./user-guide/webmcp.md)** - Connect a browser editor to an active VT Code session or a bounded standalone workspace bridge
 - **[Scheduled Tasks](./user-guide/scheduled-tasks.md)** - Reminders and durable `vtcode schedule` automations
 - [Decision Ledger](./context/context_engineering.md#4-decision-ledger-structured-note-taking) - How decisions are tracked and injected
 - **[Configuration Guide](./config/config.md)** - Comprehensive configuration options

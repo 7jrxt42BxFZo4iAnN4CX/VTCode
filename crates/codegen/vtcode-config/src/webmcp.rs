@@ -9,7 +9,7 @@ const MIN_FRAME_BYTES: usize = 1024;
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct WebmcpConfig {
-    /// Whether a session may start a WebMCP listener through an integration.
+    /// Opt-in marker for WebMCP integrations; listener startup still requires an explicit CLI or TUI command.
     #[serde(default)]
     pub enabled: bool,
     /// Literal loopback bind host.
