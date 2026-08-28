@@ -179,10 +179,10 @@ Current evidence is strong for deterministic contracts, security boundaries,
 fallback behavior, and Rust/TypeScript tests. It is not evidence of a recorded
 real browser-agent session, a completed video, or personal eligibility answers.
 
-A local preflight scan found credential-looking assignments only in the ignored
-local `.env` file; that file is not tracked or part of the public repository.
-Verify it remains excluded, and remove or rotate any unnecessary local secrets
-before sharing the checkout.
+A local preflight scan found no high-confidence secret patterns and no
+credential-looking `.env`, `.pem`, `id_rsa`, or `id_dsa` files in the current
+checkout. Repeat the scan before sharing the repository if local credentials
+are added later.
 
 ## Known Limitations
 
