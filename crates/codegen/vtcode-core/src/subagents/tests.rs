@@ -15,8 +15,8 @@ use tempfile::TempDir;
 use tokio::sync::Notify;
 use vtcode_config::core::permissions::{AgentPermissionsConfig, PermissionDefault};
 use vtcode_config::{
-    HookCommandConfig, HookGroupConfig, HooksConfig, SubagentMcpServer, SubagentMemoryScope, SubagentSource,
-    SubagentSpec,
+    HookCommandConfig, HookGroupConfig, HooksConfig, IsolationMode, SubagentMcpServer, SubagentMemoryScope,
+    SubagentSource, SubagentSpec,
 };
 
 fn readonly_agent_permissions() -> AgentPermissionsConfig {
@@ -47,14 +47,16 @@ fn test_controller_config(workspace_root: PathBuf, vt_cfg: VTCodeConfig) -> Suba
 
 fn test_child_record(
     id: &str,
+    session_id: &str,
     parent_thread_id: &str,
     spec: &SubagentSpec,
     status: SubagentStatus,
     depth: usize,
+    child_controller: Option<Arc<SubagentController>>,
 ) -> ChildRecord {
     ChildRecord {
         id: id.to_string(),
-        session_id: format!("session-{id}"),
+        session_id: session_id.to_string(),
         parent_thread_id: parent_thread_id.to_string(),
         spec: spec.clone(),
         display_label: subagent_display_label(spec),
@@ -80,6 +82,7 @@ fn test_child_record(
         handle: None,
         notify: Arc::new(Notify::new()),
         worktree_path: None,
+        child_controller,
     }
 }
 
@@ -456,7 +459,81 @@ fn filter_child_tools_keeps_public_read_tools_and_removes_mutation_tools() {
         .into_iter()
         .find(|spec| spec.name == "explorer")
         .expect("explorer");
-    let filtered = filter_child_tools(&spec, defs, true);
+    let filtered = filter_child_tools(&spec, defs, true, false);
+    let names = filtered.iter().map(ToolDefinition::function_name).collect::<Vec<_>>();
+    assert_eq!(names, vec![tools::CODE_SEARCH]);
+}
+
+#[test]
+fn filter_child_tools_keeps_delegation_tools_when_nested_delegation_allowed() {
+    let defs = vec![
+        ToolDefinition::function(tools::AGENT.to_string(), "Agent".to_string(), serde_json::json!({"type": "object"})),
+        ToolDefinition::function(
+            tools::SPAWN_AGENT.to_string(),
+            "Spawn".to_string(),
+            serde_json::json!({"type": "object"}),
+        ),
+        ToolDefinition::function(
+            tools::SEND_INPUT.to_string(),
+            "Send".to_string(),
+            serde_json::json!({"type": "object"}),
+        ),
+        ToolDefinition::function(
+            tools::WAIT_AGENT.to_string(),
+            "Wait".to_string(),
+            serde_json::json!({"type": "object"}),
+        ),
+        ToolDefinition::function(
+            tools::SPAWN_BACKGROUND_SUBPROCESS.to_string(),
+            "Bg".to_string(),
+            serde_json::json!({"type": "object"}),
+        ),
+        ToolDefinition::function(
+            tools::CODE_SEARCH.to_string(),
+            "Search".to_string(),
+            serde_json::json!({"type": "object"}),
+        ),
+    ];
+    let spec = vtcode_config::builtin_subagents()
+        .into_iter()
+        .find(|spec| spec.name == "worker")
+        .expect("worker");
+
+    let filtered = filter_child_tools(&spec, defs, false, true);
+    let names = filtered.iter().map(ToolDefinition::function_name).collect::<Vec<_>>();
+
+    assert!(names.contains(&tools::AGENT), "agent tool stays exposed when nested delegation is allowed");
+    assert!(names.contains(&tools::SPAWN_AGENT));
+    assert!(names.contains(&tools::SEND_INPUT));
+    assert!(names.contains(&tools::WAIT_AGENT));
+    assert!(
+        !names.contains(&tools::SPAWN_BACKGROUND_SUBPROCESS),
+        "background subprocess alias stays blocked for children"
+    );
+    assert!(names.contains(&tools::CODE_SEARCH));
+}
+
+#[test]
+fn filter_child_tools_removes_delegation_tools_by_default() {
+    let defs = vec![
+        ToolDefinition::function(tools::AGENT.to_string(), "Agent".to_string(), serde_json::json!({"type": "object"})),
+        ToolDefinition::function(
+            tools::SPAWN_AGENT.to_string(),
+            "Spawn".to_string(),
+            serde_json::json!({"type": "object"}),
+        ),
+        ToolDefinition::function(
+            tools::CODE_SEARCH.to_string(),
+            "Search".to_string(),
+            serde_json::json!({"type": "object"}),
+        ),
+    ];
+    let spec = vtcode_config::builtin_subagents()
+        .into_iter()
+        .find(|spec| spec.name == "worker")
+        .expect("worker");
+
+    let filtered = filter_child_tools(&spec, defs, false, false);
     let names = filtered.iter().map(ToolDefinition::function_name).collect::<Vec<_>>();
     assert_eq!(names, vec![tools::CODE_SEARCH]);
 }
@@ -502,7 +579,7 @@ fn filter_child_tools_keeps_command_session_for_shell_capable_agents() {
         tool_policy_overrides: BTreeMap::new(),
     };
 
-    let filtered = filter_child_tools(&spec, defs, spec.is_read_only());
+    let filtered = filter_child_tools(&spec, defs, spec.is_read_only(), false);
     assert_eq!(filtered.len(), 2);
     assert_eq!(filtered[0].function_name(), tools::UNIFIED_EXEC);
     assert_eq!(filtered[1].function_name(), tools::CODE_SEARCH);
@@ -528,11 +605,70 @@ fn build_child_config_intersects_allowed_tools_and_preserves_global_denies() {
         tools::READ_FILE.to_string(),
     ]);
 
-    let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None);
+    let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None, false);
     assert_eq!(child.runtime_agent_permissions.as_ref(), Some(&spec.permissions));
     assert_eq!(child.permissions.allow, vec![tools::READ_FILE.to_string(), tools::CODE_SEARCH.to_string()]);
     assert!(child.permissions.deny.contains(&tools::UNIFIED_EXEC.to_string()));
     assert!(child.permissions.deny.contains(&tools::SPAWN_AGENT.to_string()));
+}
+
+#[test]
+fn build_child_config_allows_nested_delegation_keeps_agent_tools_out_of_deny() {
+    let mut parent = VTCodeConfig::default();
+    parent.permissions.allow = vec![
+        tools::SPAWN_AGENT.to_string(),
+        tools::WAIT_AGENT.to_string(),
+        tools::CODE_SEARCH.to_string(),
+    ];
+
+    let mut spec = vtcode_config::builtin_subagents()
+        .into_iter()
+        .find(|spec| spec.name == "worker")
+        .expect("worker");
+    spec.tools = Some(parent.permissions.allow.clone());
+
+    let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None, true);
+
+    assert_eq!(
+        child.permissions.allow,
+        vec![
+            tools::SPAWN_AGENT.to_string(),
+            tools::WAIT_AGENT.to_string(),
+            tools::CODE_SEARCH.to_string()
+        ],
+        "nested delegation keeps delegation tools in the allow-list"
+    );
+    assert!(
+        !child.permissions.deny.contains(&tools::SPAWN_AGENT.to_string()),
+        "spawn_agent must not be denied when nested delegation is allowed"
+    );
+    assert!(
+        !child.permissions.deny.contains(&tools::AGENT.to_string()),
+        "agent must not be denied when nested delegation is allowed"
+    );
+    assert!(
+        child.permissions.deny.contains(&tools::SPAWN_BACKGROUND_SUBPROCESS.to_string()),
+        "background subprocess alias stays blocked for children"
+    );
+}
+
+#[test]
+fn build_child_config_default_denies_all_subagent_tools() {
+    let parent = VTCodeConfig::default();
+    let spec = vtcode_config::builtin_subagents()
+        .into_iter()
+        .find(|spec| spec.name == "worker")
+        .expect("worker");
+
+    let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None, false);
+
+    assert!(child.permissions.deny.contains(&tools::SPAWN_AGENT.to_string()));
+    assert!(child.permissions.deny.contains(&tools::AGENT.to_string()));
+    assert!(child.permissions.deny.contains(&tools::SEND_INPUT.to_string()));
+    assert!(child.permissions.deny.contains(&tools::WAIT_AGENT.to_string()));
+    assert!(child.permissions.deny.contains(&tools::RESUME_AGENT.to_string()));
+    assert!(child.permissions.deny.contains(&tools::CLOSE_AGENT.to_string()));
+    assert!(child.permissions.deny.contains(&tools::SPAWN_BACKGROUND_SUBPROCESS.to_string()));
 }
 
 #[test]
@@ -559,7 +695,7 @@ fn build_child_config_preserves_subagent_lifecycle_stripping_and_hook_merging() 
     });
     spec.hooks = Some(hooks);
 
-    let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None);
+    let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None, false);
 
     assert_eq!(child.permissions.allow, vec![tools::CODE_SEARCH.to_string(), tools::UNIFIED_EXEC.to_string()]);
     assert!(child.permissions.deny.contains(&tools::SPAWN_AGENT.to_string()));
@@ -586,6 +722,7 @@ fn prepare_child_runtime_config_uses_shared_view_for_model_and_reasoning() {
         None,
         None,
         None,
+        false,
         |_, parent_model, parent_provider, model_override, spec_model, agent_name| {
             assert_eq!(parent_model, models::openai::GPT_5_6_SOL);
             assert_eq!(parent_provider, "openai");
@@ -639,7 +776,7 @@ fn build_child_config_preserves_matching_rule_and_exact_tool_ids() {
         tools::READ_FILE.to_string(),
     ]);
 
-    let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None);
+    let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None, false);
 
     assert_eq!(
         child.permissions.allow,
@@ -666,7 +803,7 @@ fn build_child_config_preserves_parent_rule_shaped_allowlist() {
         tools::UNIFIED_EXEC.to_string(),
     ]);
 
-    let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None);
+    let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None, false);
 
     assert_eq!(child.permissions.allow, vec!["Read".to_string()]);
 }
@@ -679,7 +816,7 @@ fn build_child_config_promotes_single_turn_budget_to_recovery_budget() {
         .find(|spec| spec.name == "worker")
         .expect("worker");
 
-    let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, Some(1));
+    let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, Some(1), false);
 
     assert_eq!(child.automation.full_auto.max_turns, SUBAGENT_MIN_MAX_TURNS);
 }
@@ -714,7 +851,7 @@ fn build_child_config_merges_inline_mcp_provider() {
         }),
     )]))];
 
-    let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None);
+    let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None, false);
     let provider = child
         .mcp
         .providers
@@ -1581,14 +1718,15 @@ async fn close_and_resume_cascade_through_spawn_tree() {
         let mut state = controller.state.write().await;
         state.children.insert(
             "parent".to_string(),
-            test_child_record("parent", "session-root", &spec, SubagentStatus::Running, 1),
+            test_child_record("parent", "session-parent", "session-root", &spec, SubagentStatus::Running, 1, None),
         );
-        state
-            .children
-            .insert("child".to_string(), test_child_record("child", "parent", &spec, SubagentStatus::Running, 2));
+        state.children.insert(
+            "child".to_string(),
+            test_child_record("child", "session-child", "parent", &spec, SubagentStatus::Running, 2, None),
+        );
         state.children.insert(
             "grandchild".to_string(),
-            test_child_record("grandchild", "child", &spec, SubagentStatus::Running, 3),
+            test_child_record("grandchild", "session-grandchild", "child", &spec, SubagentStatus::Running, 3, None),
         );
     }
 
@@ -1661,6 +1799,7 @@ async fn spawn_rejects_fourth_active_subagent() {
                     handle: None,
                     notify: Arc::new(Notify::new()),
                     worktree_path: None,
+                    child_controller: None,
                 },
             );
         }
@@ -1681,6 +1820,480 @@ async fn spawn_rejects_fourth_active_subagent() {
                 SUBAGENT_HARD_CONCURRENCY_LIMIT
             )
         )));
+}
+
+#[tokio::test]
+async fn spawn_from_child_controller_respects_depth_limit() {
+    let temp = TempDir::new().expect("tempdir");
+    let mut vt_cfg = VTCodeConfig::default();
+    vt_cfg.subagents.max_depth = 2;
+
+    // Child controller runs at depth 1: it may spawn a grandchild (depth 2),
+    // but the grandchild itself (depth 2) may not spawn further.
+    let mut child_config = test_controller_config(temp.path().to_path_buf(), vt_cfg.clone());
+    child_config.depth = 1;
+    let child_controller = SubagentController::new(child_config).await.expect("child controller");
+
+    child_controller
+        .spawn(SpawnAgentRequest {
+            agent_type: Some("explorer".to_string()),
+            message: Some("Inspect the codebase.".to_string()),
+            ..SpawnAgentRequest::default()
+        })
+        .await
+        .expect("grandchild spawn should be allowed at depth 1 with max_depth=2");
+
+    // Now a controller at depth 2 must refuse another spawn.
+    let mut grandchild_config = test_controller_config(temp.path().to_path_buf(), vt_cfg);
+    grandchild_config.depth = 2;
+    let grandchild_controller = SubagentController::new(grandchild_config).await.expect("grandchild controller");
+
+    let err = grandchild_controller
+        .spawn(SpawnAgentRequest {
+            agent_type: Some("explorer".to_string()),
+            message: Some("Inspect yet more.".to_string()),
+            ..SpawnAgentRequest::default()
+        })
+        .await
+        .expect_err("spawn at depth == max_depth should hit the depth limit");
+
+    assert!(err.to_string().contains("Subagent depth limit reached (max_depth=2)"));
+
+    // Abort queued child tasks so they cannot run provider work after the
+    // temp workspace is removed.
+    child_controller.signal_shutdown().await;
+    grandchild_controller.signal_shutdown().await;
+}
+
+#[tokio::test]
+async fn nested_spawn_rejects_worktree_isolation() {
+    let temp = TempDir::new().expect("tempdir");
+    let mut vt_cfg = VTCodeConfig::default();
+    vt_cfg.subagents.max_depth = 2;
+    let mut child_config = test_controller_config(temp.path().to_path_buf(), vt_cfg);
+    child_config.depth = 1;
+    let child_controller = SubagentController::new(child_config).await.expect("child controller");
+    child_controller
+        .set_turn_delegation_hints_from_input("delegate this task")
+        .await;
+
+    // Force the discovered "worker" spec to request worktree isolation so the
+    // nested-spawn guard can be exercised.
+    {
+        let mut state = child_controller.state.write().await;
+        if let Some(spec) = state.discovered.effective.iter_mut().find(|spec| spec.name == "worker") {
+            spec.isolation = Some(IsolationMode::Worktree);
+        }
+    }
+
+    let err = child_controller
+        .spawn(SpawnAgentRequest {
+            agent_type: Some("worker".to_string()),
+            message: Some("Implement a change.".to_string()),
+            ..SpawnAgentRequest::default()
+        })
+        .await
+        .expect_err("nested worktree isolation should be rejected");
+
+    assert!(err.to_string().contains("nested worktree isolation is not supported"));
+}
+
+#[tokio::test]
+async fn close_cascades_to_child_scoped_grandchildren() {
+    let temp = TempDir::new().expect("tempdir");
+    let parent = SubagentController::new(test_controller_config(temp.path().to_path_buf(), VTCodeConfig::default()))
+        .await
+        .expect("parent controller");
+
+    // Child-scoped controller that already has a grandchild tracked under the
+    // child's session id.
+    let child_controller =
+        SubagentController::new(test_controller_config(temp.path().to_path_buf(), VTCodeConfig::default()))
+            .await
+            .expect("child controller");
+    let child_session_id = "child-session".to_string();
+    let spec = vtcode_config::builtin_subagents()
+        .into_iter()
+        .find(|spec| spec.name == "explorer")
+        .expect("explorer");
+    {
+        let mut state = child_controller.state.write().await;
+        state.children.insert(
+            "grandchild".to_string(),
+            test_child_record(
+                "grandchild",
+                "session-grandchild",
+                &child_session_id,
+                &spec,
+                SubagentStatus::Running,
+                2,
+                None,
+            ),
+        );
+    }
+    let child_controller = std::sync::Arc::new(child_controller);
+
+    // Register the child on the parent controller with the child-scoped
+    // controller attached, then close it and assert the grandchild is closed.
+    {
+        let mut state = parent.state.write().await;
+        state.children.insert(
+            "child".to_string(),
+            test_child_record(
+                "child",
+                &child_session_id,
+                "parent-session",
+                &spec,
+                SubagentStatus::Running,
+                1,
+                Some(child_controller.clone()),
+            ),
+        );
+    }
+
+    let closed = parent.close("child").await.expect("close child");
+    assert!(closed.status.is_terminal());
+
+    let grandchild_status = child_controller.status_for("grandchild").await.expect("grandchild status");
+    assert_eq!(
+        grandchild_status.status,
+        SubagentStatus::Closed,
+        "closing the child must cascade to its grandchildren"
+    );
+}
+
+#[tokio::test]
+async fn close_does_not_affect_sibling_grandchildren() {
+    let temp = TempDir::new().expect("tempdir");
+    let parent = SubagentController::new(test_controller_config(temp.path().to_path_buf(), VTCodeConfig::default()))
+        .await
+        .expect("parent controller");
+
+    let spec = vtcode_config::builtin_subagents()
+        .into_iter()
+        .find(|spec| spec.name == "explorer")
+        .expect("explorer");
+
+    // Two siblings each with their own child-scoped controller and a grandchild.
+    let controller_a =
+        SubagentController::new(test_controller_config(temp.path().to_path_buf(), VTCodeConfig::default()))
+            .await
+            .expect("controller a");
+    {
+        let mut state = controller_a.state.write().await;
+        state.children.insert(
+            "a-grandchild".to_string(),
+            test_child_record(
+                "a-grandchild",
+                "session-a-grandchild",
+                "session-a",
+                &spec,
+                SubagentStatus::Running,
+                2,
+                None,
+            ),
+        );
+    }
+    let controller_b =
+        SubagentController::new(test_controller_config(temp.path().to_path_buf(), VTCodeConfig::default()))
+            .await
+            .expect("controller b");
+    {
+        let mut state = controller_b.state.write().await;
+        state.children.insert(
+            "b-grandchild".to_string(),
+            test_child_record(
+                "b-grandchild",
+                "session-b-grandchild",
+                "session-b",
+                &spec,
+                SubagentStatus::Running,
+                2,
+                None,
+            ),
+        );
+    }
+    let controller_a = std::sync::Arc::new(controller_a);
+    let controller_b = std::sync::Arc::new(controller_b);
+
+    {
+        let mut state = parent.state.write().await;
+        state.children.insert(
+            "a".to_string(),
+            test_child_record(
+                "a",
+                "session-a",
+                "parent-session",
+                &spec,
+                SubagentStatus::Running,
+                1,
+                Some(controller_a.clone()),
+            ),
+        );
+        state.children.insert(
+            "b".to_string(),
+            test_child_record(
+                "b",
+                "session-b",
+                "parent-session",
+                &spec,
+                SubagentStatus::Running,
+                1,
+                Some(controller_b.clone()),
+            ),
+        );
+    }
+
+    parent.close("a").await.expect("close a");
+
+    let b_grandchild = controller_b.status_for("b-grandchild").await.expect("b-grandchild status");
+    assert_eq!(
+        b_grandchild.status,
+        SubagentStatus::Running,
+        "closing sibling 'a' must not affect sibling 'b''s grandchildren"
+    );
+    let a_grandchild = controller_a.status_for("a-grandchild").await.expect("a-grandchild status");
+    assert_eq!(a_grandchild.status, SubagentStatus::Closed, "closing 'a' must cascade to its own grandchildren");
+}
+
+#[tokio::test]
+async fn spawn_is_rejected_after_close_begins() {
+    let temp = TempDir::new().expect("tempdir");
+    let mut vt_cfg = VTCodeConfig::default();
+    vt_cfg.subagents.max_depth = 2;
+    let mut child_config = test_controller_config(temp.path().to_path_buf(), vt_cfg);
+    child_config.depth = 1;
+    let child_controller = SubagentController::new(child_config).await.expect("child controller");
+    child_controller
+        .set_turn_delegation_hints_from_input("delegate this task")
+        .await;
+
+    // Mark the controller as closing: this is exactly what `close_tree` does
+    // to a child-scoped controller before aborting its subtree, so a still-
+    // running child cannot spawn a grandchild after the descendant snapshot.
+    child_controller.begin_close().await;
+
+    let err = child_controller
+        .spawn(SpawnAgentRequest {
+            agent_type: Some("explorer".to_string()),
+            message: Some("Inspect the codebase.".to_string()),
+            ..SpawnAgentRequest::default()
+        })
+        .await
+        .expect_err("spawn after close began must be rejected");
+
+    assert!(err.to_string().contains("shutting down"));
+
+    // Reopening the subtree clears the transient close flag, so a resumed
+    // child can delegate again. Permanent `shutdown_requested` stays set only
+    // for real shutdown, not for a subtree close.
+    child_controller.end_close().await;
+    child_controller
+        .spawn(SpawnAgentRequest {
+            agent_type: Some("explorer".to_string()),
+            message: Some("Inspect the codebase.".to_string()),
+            ..SpawnAgentRequest::default()
+        })
+        .await
+        .expect("spawn after end_close must be allowed again");
+
+    // Abort the queued child task so it cannot run provider work after the
+    // temp workspace is removed.
+    child_controller.signal_shutdown().await;
+}
+
+#[tokio::test]
+async fn resume_rejected_after_shutdown() {
+    let temp = TempDir::new().expect("tempdir");
+    let controller =
+        SubagentController::new(test_controller_config(temp.path().to_path_buf(), VTCodeConfig::default()))
+            .await
+            .expect("controller");
+
+    controller.signal_shutdown().await;
+
+    let err = controller
+        .resume("some-agent")
+        .await
+        .expect_err("resume after shutdown must be rejected");
+
+    assert!(err.to_string().contains("shutting down"));
+}
+
+#[tokio::test]
+async fn resume_restores_closed_grandchildren() {
+    let temp = TempDir::new().expect("tempdir");
+    let parent = SubagentController::new(test_controller_config(temp.path().to_path_buf(), VTCodeConfig::default()))
+        .await
+        .expect("parent controller");
+
+    let spec = vtcode_config::builtin_subagents()
+        .into_iter()
+        .find(|spec| spec.name == "explorer")
+        .expect("explorer");
+
+    // Child-scoped controller that has a grandchild under the child session id.
+    let child_controller =
+        SubagentController::new(test_controller_config(temp.path().to_path_buf(), VTCodeConfig::default()))
+            .await
+            .expect("child controller");
+    let child_session_id = "child-session".to_string();
+    {
+        let mut state = child_controller.state.write().await;
+        state.children.insert(
+            "grandchild".to_string(),
+            test_child_record(
+                "grandchild",
+                "session-grandchild",
+                &child_session_id,
+                &spec,
+                SubagentStatus::Running,
+                2,
+                None,
+            ),
+        );
+    }
+    let child_controller = std::sync::Arc::new(child_controller);
+    {
+        let mut state = parent.state.write().await;
+        state.children.insert(
+            "child".to_string(),
+            test_child_record(
+                "child",
+                &child_session_id,
+                "parent-session",
+                &spec,
+                SubagentStatus::Running,
+                1,
+                Some(child_controller.clone()),
+            ),
+        );
+    }
+
+    // Closing the child cascades to the grandchild...
+    parent.close("child").await.expect("close child");
+    let closed_grandchild = child_controller.status_for("grandchild").await.expect("grandchild status");
+    assert_eq!(closed_grandchild.status, SubagentStatus::Closed, "grandchild must be closed with the child");
+
+    // ...and resuming the child must reopen the grandchild too, not just clear
+    // the close gate.
+    parent.resume("child").await.expect("resume child");
+    let resumed_grandchild = child_controller.status_for("grandchild").await.expect("grandchild status");
+    assert!(
+        matches!(resumed_grandchild.status, SubagentStatus::Queued | SubagentStatus::Running),
+        "resumed grandchild must be re-queued, got {:?}",
+        resumed_grandchild.status
+    );
+
+    // Abort restarted child tasks so they cannot run provider work after the
+    // temp workspace is removed.
+    parent.signal_shutdown().await;
+}
+
+#[tokio::test]
+async fn resume_does_not_affect_sibling_grandchildren() {
+    let temp = TempDir::new().expect("tempdir");
+    let parent = SubagentController::new(test_controller_config(temp.path().to_path_buf(), VTCodeConfig::default()))
+        .await
+        .expect("parent controller");
+
+    let spec = vtcode_config::builtin_subagents()
+        .into_iter()
+        .find(|spec| spec.name == "explorer")
+        .expect("explorer");
+
+    // Two siblings each with their own child-scoped controller and a grandchild.
+    let controller_a =
+        SubagentController::new(test_controller_config(temp.path().to_path_buf(), VTCodeConfig::default()))
+            .await
+            .expect("controller a");
+    {
+        let mut state = controller_a.state.write().await;
+        state.children.insert(
+            "a-grandchild".to_string(),
+            test_child_record(
+                "a-grandchild",
+                "session-a-grandchild",
+                "session-a",
+                &spec,
+                SubagentStatus::Running,
+                2,
+                None,
+            ),
+        );
+    }
+    let controller_b =
+        SubagentController::new(test_controller_config(temp.path().to_path_buf(), VTCodeConfig::default()))
+            .await
+            .expect("controller b");
+    {
+        let mut state = controller_b.state.write().await;
+        state.children.insert(
+            "b-grandchild".to_string(),
+            test_child_record(
+                "b-grandchild",
+                "session-b-grandchild",
+                "session-b",
+                &spec,
+                SubagentStatus::Running,
+                2,
+                None,
+            ),
+        );
+    }
+    let controller_a = std::sync::Arc::new(controller_a);
+    let controller_b = std::sync::Arc::new(controller_b);
+    {
+        let mut state = parent.state.write().await;
+        state.children.insert(
+            "a".to_string(),
+            test_child_record(
+                "a",
+                "session-a",
+                "parent-session",
+                &spec,
+                SubagentStatus::Running,
+                1,
+                Some(controller_a.clone()),
+            ),
+        );
+        state.children.insert(
+            "b".to_string(),
+            test_child_record(
+                "b",
+                "session-b",
+                "parent-session",
+                &spec,
+                SubagentStatus::Running,
+                1,
+                Some(controller_b.clone()),
+            ),
+        );
+    }
+
+    // Close both siblings' grandchildren, then resume only "a": "b"'s
+    // grandchild must stay closed (resume_tree must respect subtree isolation).
+    parent.close("a").await.expect("close a");
+    parent.close("b").await.expect("close b");
+
+    parent.resume("a").await.expect("resume a");
+
+    let a_grandchild = controller_a.status_for("a-grandchild").await.expect("a-grandchild status");
+    assert!(
+        matches!(a_grandchild.status, SubagentStatus::Queued | SubagentStatus::Running),
+        "resumed 'a''s grandchild must be re-queued, got {:?}",
+        a_grandchild.status
+    );
+    let b_grandchild = controller_b.status_for("b-grandchild").await.expect("b-grandchild status");
+    assert_eq!(
+        b_grandchild.status,
+        SubagentStatus::Closed,
+        "resuming sibling 'a' must not reopen sibling 'b''s grandchildren"
+    );
+
+    // Abort restarted child tasks so they cannot run provider work after the
+    // temp workspace is removed.
+    parent.signal_shutdown().await;
 }
 
 #[tokio::test]
@@ -1728,6 +2341,7 @@ async fn wait_returns_first_terminal_child() {
                     handle: None,
                     notify: Arc::new(Notify::new()),
                     worktree_path: None,
+                    child_controller: None,
                 },
             );
         }

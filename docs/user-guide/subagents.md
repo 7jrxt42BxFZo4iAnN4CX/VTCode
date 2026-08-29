@@ -43,7 +43,7 @@ Notes:
 
 - `explorer` also matches `explore`
 - `worker` also matches `general` and `general-purpose`
-- child threads do not spawn more subagents
+- child threads spawn more subagents only when `subagents.max_depth` allows another nesting level (read-only children and background subprocesses stay excluded)
 
 Completed child threads are expected to return a fixed Markdown handoff that VT Code can merge back into the parent session memory:
 
@@ -286,7 +286,7 @@ When one or more child threads are active, VT Code shows each active agent name 
 - Prefer the exact VT Code tool ids returned by `vtcode schema tools`.
 - For new VT Code-native agent files, do not use Claude-style tool names such as `Read`, `Grep`, `Glob`, `Write`, `Edit`, or `Bash`.
 - Use the narrowest VT Code tool set that fits the job instead of granting broad umbrella access by default.
-- VT Code always strips child access to `spawn_agent`, `send_input`, `wait_agent`, `resume_agent`, and `close_agent`.
+- Delegation tools (`spawn_agent`, `send_input`, `wait_agent`, `resume_agent`, `close_agent`) are available to a child only while `subagents.max_depth` permits deeper nesting; read-only children never receive them. `spawn_background_subprocess` stays unavailable to children at any depth.
 - If the agent is effectively read-only, VT Code strips mutating tools at runtime even if they are listed.
 
 ### Permissions
@@ -381,9 +381,30 @@ auto_delegate_read_only = true
 
 Key behaviors:
 
-- `max_depth = 1` keeps nested delegation off by default
-- `max_concurrent` limits simultaneous child threads
+- `max_depth = 1` keeps nested delegation off by default; set `max_depth = 2` or higher to allow delegated child agents to spawn their own children
+- `max_concurrent` limits simultaneous child threads at each nesting level
 - `auto_delegate_read_only` controls whether VT Code may proactively launch read-only agents without an explicit user delegation request
+
+### Nested Delegation
+
+`max_depth` controls how deep the delegation tree may grow. A value of `1`
+(the default) means the root agent may delegate to children, but children
+cannot spawn their own subagents. Set it to `2` for one level of nesting
+(root → child → grandchild), `3` for two levels, and so on. A value of `0`
+disables delegation entirely (equivalent to `subagents.enabled = false`).
+
+Nested delegation is governed by the same depth check that limits the root
+session: a child agent may call `spawn_agent` (and the other `agent`
+lifecycle actions) only while `depth + 1 <= max_depth` still holds. When the
+limit is reached the child's toolset omits the delegation tools entirely, so
+the depth gate is enforced both at tool exposure and at spawn time.
+
+Background subprocesses (`spawn_background_subprocess`) stay unavailable to
+delegated children at any depth. Read-only agents never receive delegation
+tools, so a read-only child cannot widen its own permissions by spawning a
+write-capable grandchild. Nested worktree isolation is not supported: an
+`isolation = worktree` subagent at depth > 0 is rejected at spawn time, since
+a child-scoped controller already runs inside the parent's worktree.
 
 ## Work With Subagents
 
@@ -604,7 +625,7 @@ Prefer subagents when:
 - you want a tighter tool or permission boundary
 - you want to inspect delegated runs or keep a long-lived helper available without leaving the main session
 
-If you need nested delegation or long-lived parallel teams, VT Code subagents are not the right primitive yet. The current build keeps child depth at one level by default.
+Nested delegation is controlled by `subagents.max_depth`. The default `max_depth = 1` keeps child depth at one level; raise it when you need deeper delegation. For long-lived parallel teams that outlive a single task, managed background subprocesses (via `spawn_background_subprocess`) remain the dedicated primitive, and nested delegation within child agents is scoped by the same depth limit as the root session.
 
 ## Related Guides
 

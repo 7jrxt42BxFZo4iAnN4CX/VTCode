@@ -9,7 +9,8 @@ use vtcode_config::{
 };
 
 use super::constants::{
-    NON_MUTATING_TOOL_PREFIXES, SUBAGENT_MIN_BACKGROUND_MAX_TURNS, SUBAGENT_MIN_MAX_TURNS, SUBAGENT_TOOL_NAMES,
+    CHILD_BLOCKED_BACKGROUND_TOOL_NAMES, NON_MUTATING_TOOL_PREFIXES, SUBAGENT_MIN_BACKGROUND_MAX_TURNS,
+    SUBAGENT_MIN_MAX_TURNS, SUBAGENT_TOOL_NAMES,
 };
 use crate::config::VTCodeConfig;
 use crate::config::constants::tools;
@@ -77,8 +78,15 @@ pub fn build_child_config(
     spec: &SubagentSpec,
     model: &str,
     max_turns: Option<usize>,
+    allow_nested_delegation: bool,
 ) -> VTCodeConfig {
-    build_child_config_from_runtime(parent, &ResolvedAgentRuntimeView::from_spec(spec), model, max_turns)
+    build_child_config_from_runtime(
+        parent,
+        &ResolvedAgentRuntimeView::from_spec(spec),
+        model,
+        max_turns,
+        allow_nested_delegation,
+    )
 }
 
 fn build_child_config_from_runtime(
@@ -86,6 +94,7 @@ fn build_child_config_from_runtime(
     runtime: &ResolvedAgentRuntimeView,
     model: &str,
     max_turns: Option<usize>,
+    allow_nested_delegation: bool,
 ) -> VTCodeConfig {
     let mut child = parent.clone();
     child.agent.default_model = model.to_string();
@@ -98,8 +107,8 @@ fn build_child_config_from_runtime(
     apply_subagent_lightweight_profile(&mut child);
     normalize_child_max_turns_config(&mut child, max_turns);
 
-    child.permissions.allow = resolve_child_allowed_tools(parent, runtime);
-    child.permissions.deny = resolve_child_denied_tools(parent, runtime);
+    child.permissions.allow = resolve_child_allowed_tools(parent, runtime, allow_nested_delegation);
+    child.permissions.deny = resolve_child_denied_tools(parent, runtime, allow_nested_delegation);
     merge_child_hooks(&mut child, runtime.hooks.as_ref());
     // Drop parent MCP providers by default; only attach servers explicitly
     // requested by the subagent spec. This prevents multiplying MCP schema
@@ -117,29 +126,57 @@ fn apply_subagent_lightweight_profile(child: &mut VTCodeConfig) {
     child.agent.tool_documentation_mode = ToolDocumentationMode::Minimal;
 }
 
+/// Returns the subagent-internal tool names blocked from a child at the given
+/// nesting policy. When nested delegation is allowed only the background
+/// subprocess alias is blocked; otherwise every subagent-lifecycle tool is.
+///
+/// Single source of truth so the deny-list, allow-list, and wire-definition
+/// filters cannot diverge on the blocked set.
+fn blocked_child_tool_names(allow_nested_delegation: bool) -> &'static [&'static str] {
+    if allow_nested_delegation {
+        CHILD_BLOCKED_BACKGROUND_TOOL_NAMES
+    } else {
+        SUBAGENT_TOOL_NAMES
+    }
+}
+
 /// Resolves the child's allow-list. When the spec declares tools, the child
 /// allow-list is the intersection of the parent allow-list and the declared
-/// tools (with subagent-internal tools removed). When the spec declares
-/// nothing, the parent allow-list is inherited unchanged.
-fn resolve_child_allowed_tools(parent: &VTCodeConfig, runtime: &ResolvedAgentRuntimeView) -> Vec<String> {
+/// tools (with subagent-internal tools removed unless nested delegation is
+/// allowed). When the spec declares nothing, the parent allow-list is
+/// inherited unchanged.
+fn resolve_child_allowed_tools(
+    parent: &VTCodeConfig,
+    runtime: &ResolvedAgentRuntimeView,
+    allow_nested_delegation: bool,
+) -> Vec<String> {
+    let blocked = blocked_child_tool_names(allow_nested_delegation);
     let allowed_tools = runtime.tools.clone().unwrap_or_default();
     if allowed_tools.is_empty() {
         return parent.permissions.allow.clone();
     }
     let filtered: Vec<String> = allowed_tools
         .into_iter()
-        .filter(|tool| !SUBAGENT_TOOL_NAMES.iter().any(|blocked| blocked == tool))
+        .filter(|tool| !blocked.iter().any(|blocked| blocked == tool))
         .collect();
     intersect_allowed_tools(&parent.permissions.allow, &filtered)
 }
 
 /// Resolves the child's deny-list: the parent deny-list, extended with the
-/// spec's disallowed tools and the always-blocked subagent-internal tools.
-fn resolve_child_denied_tools(parent: &VTCodeConfig, runtime: &ResolvedAgentRuntimeView) -> Vec<String> {
+/// spec's disallowed tools and the subagent-internal tools blocked at this
+/// nesting level. When nested delegation is allowed, only the
+/// background-subprocess alias stays blocked; the delegation tools are gated
+/// by the runtime depth check instead.
+fn resolve_child_denied_tools(
+    parent: &VTCodeConfig,
+    runtime: &ResolvedAgentRuntimeView,
+    allow_nested_delegation: bool,
+) -> Vec<String> {
+    let blocked = blocked_child_tool_names(allow_nested_delegation);
     let mut denied = parent.permissions.deny.clone();
     denied.extend(runtime.disallowed_tools.clone());
-    for tool in SUBAGENT_TOOL_NAMES {
-        if !denied.iter().any(|entry| entry == *tool) {
+    for tool in blocked {
+        if !denied.iter().any(|entry| entry == tool) {
             denied.push((*tool).to_string());
         }
     }
@@ -174,6 +211,10 @@ pub fn normalize_background_child_max_turns(max_turns: Option<usize>, background
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "All parameters are required to resolve a child runtime config (parent identity, model overrides, and nesting policy)."
+)]
 pub fn prepare_child_runtime_config(
     parent: &VTCodeConfig,
     spec: &SubagentSpec,
@@ -183,6 +224,7 @@ pub fn prepare_child_runtime_config(
     max_turns: Option<usize>,
     model_override: Option<&str>,
     reasoning_override: Option<&str>,
+    allow_nested_delegation: bool,
     resolve_model: impl FnOnce(&VTCodeConfig, &str, &str, Option<&str>, Option<&str>, &str) -> Result<ModelId>,
 ) -> Result<(ModelId, ReasoningEffortLevel, VTCodeConfig)> {
     let runtime = ResolvedAgentRuntimeView::from_spec(spec);
@@ -194,7 +236,8 @@ pub fn prepare_child_runtime_config(
         runtime.model.as_deref(),
         runtime.canonical_name.as_str(),
     )?;
-    let mut child_cfg = build_child_config_from_runtime(parent, &runtime, &resolved_model.as_str(), max_turns);
+    let mut child_cfg =
+        build_child_config_from_runtime(parent, &runtime, &resolved_model.as_str(), max_turns, allow_nested_delegation);
     let child_reasoning_effort = reasoning_override
         .and_then(ReasoningEffortLevel::parse)
         .or(runtime.reasoning_effort)
@@ -498,6 +541,7 @@ pub fn filter_child_tools(
     spec: &SubagentSpec,
     definitions: Vec<ToolDefinition>,
     read_only: bool,
+    allow_nested_delegation: bool,
 ) -> Vec<ToolDefinition> {
     let allowed = spec
         .tools
@@ -508,12 +552,13 @@ pub fn filter_child_tools(
         .iter()
         .map(|tool| tool.to_ascii_lowercase())
         .collect::<Vec<_>>();
+    let blocked = blocked_child_tool_names(allow_nested_delegation);
 
     definitions
         .into_iter()
         .filter(|tool| {
             let name = tool.function_name().to_ascii_lowercase();
-            if SUBAGENT_TOOL_NAMES.iter().any(|blocked| *blocked == name) {
+            if blocked.iter().any(|blocked| *blocked == name) {
                 return false;
             }
             if denied.iter().any(|entry| entry == &name) {
@@ -551,7 +596,7 @@ mod slice4_tests {
             .find(|spec| spec.name == "explorer")
             .expect("explorer");
 
-        let child = build_child_config(&parent, &spec, "small", None);
+        let child = build_child_config(&parent, &spec, "small", None, false);
         assert_eq!(child.permissions.allow, vec!["Read".to_string()]);
 
         let filtered = filter_child_tools(
@@ -563,6 +608,7 @@ mod slice4_tests {
                 definition(tools::WRITE_STDIN),
             ],
             spec.is_read_only(),
+            false,
         );
         let names = filtered.iter().map(ToolDefinition::function_name).collect::<Vec<_>>();
 
@@ -634,7 +680,7 @@ mod tests {
         parent.mcp.providers.push(McpProviderConfig::default());
 
         let spec = test_subagent_spec();
-        let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None);
+        let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None, false);
 
         assert_eq!(
             child.agent.system_prompt_mode,
@@ -661,7 +707,7 @@ mod tests {
         parent.mcp.providers[0].name = "context7".to_string();
         spec.mcp_servers = vec![SubagentMcpServer::Named("context7".to_string())];
 
-        let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None);
+        let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None, false);
 
         assert_eq!(child.mcp.providers.len(), 1);
         assert_eq!(child.mcp.providers[0].name, "context7");
@@ -741,7 +787,7 @@ mod tests {
             compose_system_instruction_with_report(workspace.path(), Some(&parent), Some(&ctx)).await;
 
         let spec = test_subagent_spec();
-        let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None);
+        let child = build_child_config(&parent, &spec, models::openai::GPT_5_6_SOL, None, false);
 
         // The lightweight profile is the contract under test.
         assert_eq!(child.agent.system_prompt_mode, SystemPromptMode::Minimal);

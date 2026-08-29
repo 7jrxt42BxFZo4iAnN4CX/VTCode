@@ -253,6 +253,11 @@ pub struct ChildRecord {
     /// Optional worktree path for isolated subagents. When set, the child
     /// agent runs in this worktree instead of the parent workspace root.
     pub(crate) worktree_path: Option<PathBuf>,
+    /// Child-scoped subagent controller used to enable nested delegation.
+    /// Created once on the first nested-capable run and reused across resumes
+    /// so grandchildren spawned by this child remain reachable for the child's
+    /// lifetime.
+    pub(crate) child_controller: Option<Arc<super::SubagentController>>,
 }
 
 pub(crate) struct ChildRunRequest {
