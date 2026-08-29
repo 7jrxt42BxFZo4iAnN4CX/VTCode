@@ -312,8 +312,13 @@ function downloadWebMcpEvidence(): void {
   const link = document.createElement("a");
   link.href = url;
   link.download = `webmcp-evidence-${slug}-${timestamp}.json`;
+  link.hidden = true;
+  document.body.append(link);
   link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  setTimeout(() => {
+    link.remove();
+    URL.revokeObjectURL(url);
+  }, 1_000);
   log("Downloaded sanitized WebMCP evidence JSON");
   toast("Evidence JSON downloaded");
 }
