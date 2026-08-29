@@ -1,16 +1,16 @@
-# VT Code WebMCP Reference Client
+# VT Code WebMCP App
 
 This is a browser code editor with a safe in-memory fallback. In a real VT Code
 session, the browser sends reviewed proposals to VT Code. VT Code performs the
 terminal-approved file changes. The browser never writes to the filesystem
 directly.
 
-## Start the reference client
+## Start the WebMCP app
 
 Run these commands from the VT Code repository root:
 
 ```sh
-cd examples/webmcp-challenge
+cd apps/webmcp
 ./start.sh
 ```
 
@@ -22,7 +22,7 @@ Press `?` after closing Settings for the short in-app guide and shortcuts.
 For a real workspace and agent turns, use the recommended active mode:
 
 ```sh
-cd examples/webmcp-challenge
+cd apps/webmcp
 ./start.sh --active --workspace /absolute/path/to/project
 ```
 
@@ -52,7 +52,7 @@ browser URL and `/webmcp pair` command.
 
 ### Pair the deployed GitHub Pages client
 
-The deployed reference client at
+The deployed WebMCP app at
 <https://vinhnx.github.io/VTCode/> is a static page. Its browser origin is
 `https://vinhnx.github.io` (the `/VTCode/` path is not part of the origin).
 When the page is open in a browser on the same machine as the active VT Code
@@ -206,7 +206,7 @@ entire workspace into the editor.
 
 ### Port `5173` is busy
 
-Reuse the existing reference client at <http://localhost:5173>, or start another instance:
+Reuse the existing WebMCP app at <http://localhost:5173>, or start another instance:
 
 ```sh
 ./start.sh --port 5174
@@ -227,7 +227,7 @@ paste the newly printed values.
 
 ### The TUI prints no URL or pairing code
 
-Run the reference client from the current VT Code checkout, stop old VT Code processes, and pair again:
+Run the WebMCP app from the current VT Code checkout, stop old VT Code processes, and pair again:
 
 ```sh
 cd /path/to/vtcode
@@ -242,9 +242,9 @@ Use `./start.sh --headless --workspace /absolute/path/to/project`, or run the
 command from a current VT Code checkout with
 `cargo run --locked -- webmcp serve ...`.
 
-## Test the reference client
+## Test the WebMCP app
 
-From `examples/webmcp-challenge`:
+From `apps/webmcp`:
 
 ```sh
 bun install --frozen-lockfile

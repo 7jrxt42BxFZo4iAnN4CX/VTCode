@@ -55,7 +55,7 @@ in-app browser or Chrome with WebMCP enabled.
 
 OpenAI Codex was used to inspect the existing VT Code bridge, implement and
 harden the browser tool contracts and Rust workspace adapter, add deterministic
-browser evals, migrate the reference client to strict TypeScript and Bun, write
+browser evals, migrate the WebMCP app to strict TypeScript and Bun, write
 the documentation, and run focused Rust and frontend verification. The final
 project description is edited to match the implementation rather than being
 treated as an unreviewed AI-generated claim.
@@ -79,7 +79,7 @@ treated as an unreviewed AI-generated claim.
 
 ## Architecture
 
-The Vite reference client in `examples/webmcp-challenge/` owns the editor state,
+The Vite WebMCP app in `apps/webmcp/` owns the editor state,
 fallback backend, native WebMCP registration, and authenticated bridge client.
 The Rust `vtcode-webmcp` crate is the first-class bridge shipped in VT Code; it
 owns pairing, origin checks, token authentication, bounded workspace operations,
@@ -114,9 +114,9 @@ If native WebMCP is unavailable, the editor's fallback remains usable for the
 same human review flow, but the WebMCP requirement should be verified in an
 eligible browser before judging.
 
-### Local reference-client checks
+### Local WebMCP app checks
 
-From `examples/webmcp-challenge/`:
+From `apps/webmcp/`:
 
 ```sh
 bun install --frozen-lockfile
@@ -139,7 +139,7 @@ cargo nextest run --locked -p vtcode -E 'test(/webmcp/)' --no-fail-fast
 
 <https://vinhnx.github.io/VTCode/>
 
-The live page is a static reference client. It does not expose a local
+The live page is a static WebMCP app. It does not expose a local
 filesystem and does not require credentials in fallback mode.
 
 ## Public Repository Link
@@ -215,7 +215,7 @@ it before final submission. No `.pem`, `id_rsa`, or `id_dsa` files were found.
 
 - Native WebMCP availability depends on the browser/client and its current
   rollout, origin-trial enrollment, or testing flag.
-- The public page is a static reference client. Real workspace access and VT Code
+- The public page is a static WebMCP app. Real workspace access and VT Code
   turns require the optional local bridge and an active VT Code session.
 - Deterministic evals verify contracts and journeys; browser-agent tool selection
   remains probabilistic and must be demonstrated manually.

@@ -665,7 +665,7 @@ Each MCP provider supports these options:
 
 ## WebMCP browser bridge
 
-WebMCP is a first-class, opt-in bridge for a browser editor. It is not an MCP provider and does not reuse `[mcp]` settings. The browser receives no direct filesystem capability: it sends digest-checked proposals over an origin-validated WebSocket, while VT Code or the headless full-auto policy remains the mutation authority. The bridge is shipped in the main `vtcode` binary; the repository's Vite project is a reference browser client.
+WebMCP is a first-class, opt-in bridge for a browser editor. It is not an MCP provider and does not reuse `[mcp]` settings. The browser receives no direct filesystem capability: it sends digest-checked proposals over an origin-validated WebSocket, while VT Code or the headless full-auto policy remains the mutation authority. The bridge is shipped in the main `vtcode` binary; the repository's Vite project is the WebMCP browser app.
 
 ```toml
 [webmcp]

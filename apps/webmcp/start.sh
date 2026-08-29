@@ -26,7 +26,7 @@ Options:
   --port PORT    Browser port (default: 5173).
   -h, --help     Show this help.
 
-Examples:
+Usage examples:
   ./start.sh
   ./start.sh --headless --workspace /absolute/path/to/project
   ./start.sh --active --workspace /absolute/path/to/project
@@ -85,7 +85,7 @@ workspace="$(cd -- "$workspace" && pwd)"
 origin="http://${host}:${port}"
 vite_bin="$script_dir/node_modules/.bin/vite"
 
-command -v bun >/dev/null 2>&1 || fail "bun is required to run the WebMCP reference client"
+command -v bun >/dev/null 2>&1 || fail "bun is required to run the VT Code WebMCP app"
 if [[ ! -x "$vite_bin" ]]; then
     echo "Installing browser dependencies..."
     (cd "$script_dir" && bun install --frozen-lockfile)

@@ -191,7 +191,7 @@ active sessions.
 
 The server binds to loopback and chooses an available port by default. Enter its one-time pairing code in the browser editor. Exact origins are required; remote access must use `--allow-remote --public-url wss://...` behind a TLS-terminating reverse proxy, and direct non-loopback binding is rejected. Browser confirmation cannot authorize a real write: terminal permission or the existing explicit full-auto allowlist remains authoritative. See [WebMCP bridge development](../development/webmcp.md).
 
-For the browser walkthrough, including the reference client, local pairing,
+For the browser walkthrough, including the WebMCP app, local pairing,
 connected drafts, and troubleshooting, see the [WebMCP browser bridge user guide](./webmcp.md).
 
 ## Scheduled tasks

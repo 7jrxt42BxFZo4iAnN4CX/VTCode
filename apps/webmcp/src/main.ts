@@ -6,7 +6,7 @@ import { createWebMcpTools, registerWebMcpTools, replaceExactText, type ModelCon
 import { BackendError, errorCode, errorMessage, isRecord, type BackendConnectionEvent, type BackendEvent, type ClientProposal, type EditorStateForWebMcp, type FileSnapshot, type Panel, type PatchProposal, type PersistedBrowserState, type RuntimeStatus, type SearchMatch, type SearchResult, type StatusPayload, type TreeNode, type WebMcpEnvironmentState, type WorkspaceFile } from "./types.ts";
 import "../styles.css";
 
-interface DemoElements {
+interface AppElements {
   readonly [id: string]: HTMLElement;
   readonly editor: HTMLDivElement;
   readonly toast: HTMLDivElement;
@@ -57,11 +57,11 @@ interface DemoElements {
   readonly closeEvidence: HTMLButtonElement;
 }
 
-function $<K extends keyof DemoElements>(id: K): DemoElements[K];
+function $<K extends keyof AppElements>(id: K): AppElements[K];
 function $(id: string): HTMLElement;
 function $(id: string): HTMLElement {
   const element = document.getElementById(id);
-  if (!element) throw new Error(`Required demo element is missing: ${id}`);
+  if (!element) throw new Error(`Required app element is missing: ${id}`);
   return element;
 }
 
@@ -73,7 +73,7 @@ interface LastChangeView {
   readonly before: Array<Pick<FileSnapshot, "path" | "content">>;
 }
 
-interface DemoState {
+interface AppState {
   readonly files: Map<string, WorkspaceFile>;
   readonly snapshots: Map<string, FileSnapshot>;
   readonly drafts: Map<string, string>;
@@ -115,7 +115,7 @@ let settingsPersistenceWarningShown = false;
 const webMcpEvidence: WebMcpEvidenceRecorder = createWebMcpEvidenceRecorder();
 let registeredWebMcpToolNames: readonly string[] = [];
 
-const state: DemoState = {
+const state: AppState = {
   files: new Map(),
   snapshots: new Map(),
   drafts: new Map(),
@@ -1712,7 +1712,7 @@ async function copyText(value: string): Promise<void> {
   await navigator.clipboard.writeText(value);
 }
 
-async function copySetupCommand(id: keyof DemoElements, label: string): Promise<void> {
+async function copySetupCommand(id: keyof AppElements, label: string): Promise<void> {
   renderWorkspaceSetup();
   try {
     await copyText($(id).textContent?.trim() || "");
@@ -1821,7 +1821,7 @@ globalThis.addEventListener?.("pagehide", () => flushBrowserPersistence({ silent
 async function init() {
   try {
     await loadWorkspace(backend, persistedBrowserState);
-    log(persistedBrowserState ? "Demo ready · restored browser workspace" : "Demo ready · deterministic fallback workspace");
+    log(persistedBrowserState ? "WebMCP app ready · restored browser workspace" : "WebMCP app ready · deterministic fallback workspace");
     status("Ready for inspection", persistedBrowserState
       ? "Restored the fallback workspace and drafts for this Vite app instance."
       : "This is a real editor; fallback mode keeps all changes in page memory.");

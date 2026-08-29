@@ -36,14 +36,14 @@ export function webmcpOriginTrialPlugin(token = process.env.VITE_WEBMCP_ORIGIN_T
 }
 
 export default defineConfig({
-  // GitHub Pages serves this reference client beneath the repository path
+  // GitHub Pages serves this WebMCP app beneath the repository path
   // (/VTCode/), so generated assets must remain relative to the project page.
   base: "./",
-  // Keep fallback state scoped to this deployed reference-client version. Without
+  // Keep fallback state scoped to this deployed WebMCP app version. Without
   // an explicit instance, every origin falls back to the development key and a
   // stale/empty browser snapshot can hide the deterministic seed workspace.
   define: {
-    __VTCODE_APP_INSTANCE__: JSON.stringify("webmcp-challenge-v2"),
+    __VTCODE_APP_INSTANCE__: JSON.stringify("vtcode-webmcp-app-v2"),
   },
   plugins: [webmcpOriginTrialPlugin() as Plugin],
 });

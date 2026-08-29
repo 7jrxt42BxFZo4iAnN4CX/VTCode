@@ -42,7 +42,7 @@ const DIFF_CONTEXT_LINES = 3;
 const MAX_DIFF_TRACE_CELLS = 1_000_000;
 
 const SEED_FILES: Readonly<Record<string, string>> = Object.freeze({
-  "README.md": "# hello-world\n\nA tiny project for the VT Code WebMCP Challenge.\n\nThe workflow is inspect → edit → review → approve → verify.",
+  "README.md": "# hello-world\n\nA tiny project for the VT Code WebMCP app.\n\nThe workflow is inspect → edit → review → approve → verify.",
   "src/greeting.js": "import { name } from './config.js';\n\nexport function greeting() {\n  return `Hello, ${name}!`;\n}\n",
   "src/config.js": "export const name = 'WebMCP';\n",
 });

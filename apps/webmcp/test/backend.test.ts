@@ -321,7 +321,7 @@ test("browser workspace state survives reloads within one Vite app instance", ()
     selected: "src/app.js",
     expanded_dirs: ["src"],
     filter: "app",
-    workspace_path: "/tmp/demo",
+    workspace_path: "/tmp/webmcp-app",
   };
   assert.equal(saveBrowserState(storage, "vite-1", state), true);
   assert.deepEqual(loadBrowserState(storage, "vite-1"), {
@@ -336,14 +336,14 @@ test("browser workspace state survives reloads within one Vite app instance", ()
 test("browser settings persist setup values but never pairing credentials", () => {
   const storage = new MemoryStorage();
   assert.equal(saveBrowserSettings(storage, "vite-1", {
-    workspace_path: "/tmp/demo",
+    workspace_path: "/tmp/webmcp-app",
     bridge_url: "ws://127.0.0.1:4321/webmcp",
     pairing_code: "SECRET-CODE",
   }), true);
   assert.deepEqual(loadBrowserSettings(storage, "vite-1"), {
     version: 1,
     app_instance: "vite-1",
-    workspace_path: "/tmp/demo",
+    workspace_path: "/tmp/webmcp-app",
     bridge_url: "ws://127.0.0.1:4321/webmcp",
   });
   const serializedSettings = storage.getItem(BROWSER_SETTINGS_STORAGE_KEY);

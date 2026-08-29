@@ -5,9 +5,9 @@ browser editor to either the current VT Code session or a bounded standalone
 workspace bridge:
 
 The bridge is part of the main `vtcode` binary and the published
-`vtcode-webmcp` crate; it is not an example-only feature. The repository's
-`examples/webmcp-challenge` Vite project is the maintained reference browser
-client used to exercise the bridge and the browser's native WebMCP API.
+`vtcode-webmcp` crate; it is a first-class feature. The repository's
+`apps/webmcp` Vite project is the maintained WebMCP browser app used to
+exercise the bridge and the browser's native WebMCP API.
 
 ```text
 inspect → edit a draft → review a diff → propose → apply → check → revert
@@ -17,7 +17,7 @@ It has three modes:
 
 | Mode | Start | Write boundary |
 | --- | --- | --- |
-| Reference editor | Open the browser client without pairing | Page memory only |
+| WebMCP app | Open the app without pairing | Page memory only |
 | Headless connected | Pair `vtcode webmcp serve` | Selected workspace; full-auto policy |
 | Active connected | `/webmcp pair <origin>` in `vtcode chat` | Session workspace; terminal policy |
 
@@ -34,14 +34,14 @@ The browser cannot start or approve the bridge. Keep the TUI running while the
 browser is connected.
 
 `<origin>` is the exact origin of the page in the browser: scheme, hostname,
-and port, without the page path. For the published reference client at
+and port, without the page path. For the published WebMCP app at
 `https://vinhnx.github.io/VTCode/`, the origin is
 `https://vinhnx.github.io`. Do not use the `/VTCode/` path or a trailing slash
 in the pair command.
 
-Browser WebMCP is available only while the reference editor is open in a supported browser
+Browser WebMCP is available only while the WebMCP app is open in a supported browser
 tab or webview. Chrome gates the page API on origin isolation and the `tools`
-Permissions Policy; the reference editor reports the observed values in
+Permissions Policy; the WebMCP app reports the observed values in
 `get_editor_state.webmcp_context` and keeps its normal fallback active when the
 API is unavailable. The authenticated VT Code bridge is separate and can still
 be used for workspace operations when explicitly paired.
@@ -91,12 +91,12 @@ content is marked with `untrustedContentHint`, `get_editor_state` reports the
 workflow and `webmcp_context`, page-only actions update the editor, and no
 browser tool can approve, apply, or revert a filesystem change.
 The deterministic corpus and contract checks live in
-`examples/webmcp-challenge/evals/webmcp-evals.ts` and run with `bun run test`.
+`apps/webmcp/evals/webmcp-evals.ts` and run with `bun run test`.
 Model tool selection remains probabilistic and needs the real browser-agent pass.
 
 ### Capture real Chrome or ChatGPT evidence
 
-Open **Evidence** in the reference editor, select **Chrome WebMCP Tool
+Open **Evidence** in the WebMCP app, select **Chrome WebMCP Tool
 Inspector** or **ChatGPT in-app browser**, and choose **Start new run** before
 the external client begins. Use Chrome with the WebMCP testing flag (or a
 valid origin-trial token), or open the deployed page in ChatGPT's in-app
@@ -115,7 +115,7 @@ substitute for this external-client evidence.
 ### Optional Chrome origin trial
 
 Chrome offers WebMCP through a [time-limited origin trial](https://developer.chrome.com/blog/ai-webmcp-origin-trial).
-To test the deployed reference editor without the testing flag, request a token for the exact origin
+To test the deployed WebMCP app without the testing flag, request a token for the exact origin
 `https://vinhnx.github.io` and set the repository Actions variable
 `WEBMCP_ORIGIN_TRIAL_TOKEN`. The Pages workflow passes that value to the Vite
 build as `VITE_WEBMCP_ORIGIN_TRIAL_TOKEN`, which injects the token into the
@@ -126,7 +126,7 @@ No token is committed to the repository. If the variable is unset, use
 WebMCP-unavailable fallback. A token is tied to its registered origin, so a
 production token does not enable the local Vite origin.
 
-## Run the reference editor without a bridge
+## Run the WebMCP app without a bridge
 
 This is the quickest way to try the editor and does not require VT Code, Rust,
 an API key, or a network connection.
@@ -134,13 +134,13 @@ an API key, or a network connection.
 From the repository root:
 
 ```sh
-cd examples/webmcp-challenge
+cd apps/webmcp
 ./start.sh
 ```
 
 The launcher installs browser dependencies if needed and starts the local
 server at `http://localhost:5173`. The header should show **Fallback mode**.
-If your terminal is already in `examples/webmcp-challenge`, skip the `cd`
+If your terminal is already in `apps/webmcp`, skip the `cd`
 command.
 
 The launcher can also start a connected workflow. Use `--headless` for a
@@ -154,8 +154,8 @@ workspace-only bridge or `--active` for an interactive VT Code session:
 In active mode, enter `/webmcp pair http://localhost:5173` when the TUI is
 ready, then paste the printed URL and pairing code into the browser. Use
 `--port 5174` consistently in the launcher, bridge origin, and pairing command
-if port `5173` is already occupied. See the reference client's
-[GUIDE.md](../../examples/webmcp-challenge/GUIDE.md) for the complete
+if port `5173` is already occupied. See the WebMCP app's
+[GUIDE.md](../../apps/webmcp/GUIDE.md) for the complete
 one-command workflow.
 
 ### Complete the fallback walkthrough
@@ -216,7 +216,7 @@ active VT Code TUI and its `[webmcp]` configuration remain authoritative. To
 change origins, roots, policy, or the active session, use the VT Code TUI and
 pair again with the newly printed values.
 
-The reference editor uses an IDE-style layout rather than a page of file previews. The
+The WebMCP app uses an IDE-style layout rather than a page of file previews. The
 explorer keeps directories collapsed, unopened files remain metadata-only, and
 the selected file is loaded into CodeMirror on demand. Open files appear as
 tabs. The bottom panel keeps **TERMINAL**, **CHANGES**, and **VT CODE** output
@@ -234,11 +234,11 @@ page connecting to a plain `ws://` endpoint.
 In one terminal:
 
 ```sh
-cd examples/webmcp-challenge
+cd apps/webmcp
 ./start.sh
 ```
 
-Open `http://localhost:5173` and leave this terminal running. The reference client uses
+Open `http://localhost:5173` and leave this terminal running. The WebMCP app uses
 a strict port so it fails clearly if `5173` is occupied instead of switching to
 an origin that does not match the bridge allowlist.
 
@@ -494,7 +494,7 @@ Draft buffers are separate from backend snapshots:
 
 ## GitHub Pages and deployed copies
 
-The GitHub Pages build is a static copy of the reference editor and starts in
+The GitHub Pages build is a static copy of the WebMCP app and starts in
 fallback mode. It is useful for evaluating browser WebMCP read-only tools, but
 it cannot access a local workspace by itself. The production bridge is the
 Rust component shipped with the VT Code binary; it does not depend on GitHub
@@ -614,7 +614,7 @@ proposal.
 
 ## Developer commands
 
-From `examples/webmcp-challenge`:
+From `apps/webmcp`:
 
 ```sh
 bun install --frozen-lockfile

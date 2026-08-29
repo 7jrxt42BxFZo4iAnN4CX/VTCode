@@ -5,7 +5,7 @@ and submit structured change proposals without giving the browser direct
 filesystem access. The bridge ships in the main `vtcode` binary and the
 `vtcode-webmcp` crate, is opt-in at runtime, and keeps the terminal as the
 authority for origins, roots, pairing, and writes. The repository's
-`examples/webmcp-challenge` project is a maintained reference browser client.
+`apps/webmcp` project is the maintained WebMCP browser app.
 
 ## Boundaries
 
@@ -30,7 +30,7 @@ and the proposal is never applied automatically by the handoff.
 
 ## WebMCP API versus the VT Code bridge
 
-The reference browser client implements two related but separate directions:
+The WebMCP browser app implements two related but separate directions:
 
 1. The page implements the standard browser WebMCP provider surface through
    `document.modelContext.registerTool()`. When supported by the browser, it
@@ -53,9 +53,9 @@ directly. A future VT Code-to-page tool-call relay would therefore need an
 explicit, separately documented bridge extension and must retain terminal
 approval; it must not be presented as native WebMCP.
 
-WebMCP calls also require the reference client page to remain open in a supported browser
+WebMCP calls also require the WebMCP app page to remain open in a supported browser
 browsing context. Current Chrome gates the page API on origin isolation and the
-`tools` Permissions Policy. The reference client exposes the observed prerequisites through
+`tools` Permissions Policy. The WebMCP app exposes the observed prerequisites through
 `get_editor_state.webmcp_context` and shows a recovery message when the context
 is not eligible; its in-memory editor fallback remains available. The
 imperative API is used because this editor has stateful search, selection, draft,
@@ -63,7 +63,7 @@ and review actions rather than a standard HTML-form submission surface.
 
 ## Browser tool contracts and evals
 
-The reference client keeps its browser tool surface intentionally small: eight tools for
+The WebMCP app keeps its browser tool surface intentionally small: eight tools for
 inspection, navigation, and draft review. It does not expose apply, write, or
 revert as WebMCP tools. Each input is checked against its JSON Schema at runtime
 before the application callback runs, and every result is bounded to 1,500
@@ -72,7 +72,7 @@ results include truncation flags; collection results include an omitted count.
 This keeps model context useful without turning a file or workspace listing into
 an unbounded data channel.
 
-`examples/webmcp-challenge/evals/webmcp-evals.ts` is the checked-in eval corpus.
+`apps/webmcp/evals/webmcp-evals.ts` is the checked-in eval corpus.
 It includes direct intents, open-ended output-dependent tool selection, a
 multi-step review journey, and an invalid-argument failure case. Each case
 defines the user goal, initial editor state, boundaries, expected UI effects,
@@ -84,9 +84,9 @@ action, such as rereading a stale file or selecting an allowed panel.
 and the browser-only authority boundary. These are deterministic contract
 checks. Probabilistic selection and end-to-end model behavior must additionally
 be tested in Chrome's Model Context Tool Inspector or another WebMCP-compatible
-agent using the prompts in the reference client guide.
+agent using the prompts in the WebMCP app guide.
 
-The reference client includes `src/webmcp-evidence.ts` and an **Evidence**
+The WebMCP app includes `src/webmcp-evidence.ts` and an **Evidence**
 dialog for capturing that manual pass. The recorder wraps the registered page
 callbacks, records discovery and tool-call outcomes with bounded metadata,
 elapsed time, recovery errors, and selected editor state, and exports a
@@ -97,11 +97,11 @@ capture. Keep this evidence separate from deterministic `bun run test` output:
 the latter validates contracts, while the former demonstrates a real client
 invoked the browser API.
 
-The registration intentionally omits WebMCP's `exposedTo` option. The reference client has
+The registration intentionally omits WebMCP's `exposedTo` option. The WebMCP app has
 no trusted cross-origin embedder, so exposing tools to another origin would add
 authority without a defined trust relationship.
 
-The reference client also supports [Chrome's optional origin trial](https://developer.chrome.com/blog/ai-webmcp-origin-trial)
+The WebMCP app also supports [Chrome's optional origin trial](https://developer.chrome.com/blog/ai-webmcp-origin-trial)
 without making a token part of source control. Set `VITE_WEBMCP_ORIGIN_TRIAL_TOKEN` during the Vite
 build to prepend an `origin-trial` meta tag before the module loads. The Pages
 workflow maps the optional repository Actions variable
@@ -121,7 +121,7 @@ An authenticated `status` response includes a `settings` object containing the
 non-secret listener host/port, pairing lease, frame limit, in-flight limit, and
 remote-proxy flag, plus the exact authenticated browser origin. It also
 includes the adapter's canonical workspace root and runtime capabilities. The
-reference editor renders these values in its Settings dialog and refreshes them
+WebMCP app renders these values in its Settings dialog and refreshes them
 from the authenticated heartbeat, so the TUI configuration is the source of
 truth. Pairing codes, session tokens, and other credentials are never returned
 as settings or persisted by the browser.
@@ -298,7 +298,7 @@ Run the focused checks with:
 RUSTFLAGS='-D warnings' cargo check --locked -p vtcode-webmcp -p vtcode
 cargo nextest run -p vtcode-webmcp -p vtcode-config -p vtcode-core -p vtcode
 cargo clippy --locked -p vtcode-webmcp -p vtcode-config -p vtcode --all-targets -- -D warnings
-cd examples/webmcp-challenge
+cd apps/webmcp
 bun install --frozen-lockfile
 bun run typecheck
 bun run test
