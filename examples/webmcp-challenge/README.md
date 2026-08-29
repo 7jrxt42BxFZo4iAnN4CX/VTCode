@@ -72,6 +72,18 @@ bun run test
 bun run build
 ```
 
+## Capture real-client evidence
+
+Open **Evidence** in the header, select **Chrome WebMCP Tool Inspector** or
+**ChatGPT in-app browser**, and choose **Start new run** before the external
+client uses the page. Run the browser-agent sequence in [GUIDE.md](GUIDE.md),
+then use **Copy JSON** or **Download JSON**. Keep the sanitized export with a
+tool-inspector screenshot or screen recording; it records page-side discovery,
+tool calls, bounded metadata, errors, and editor state, but omits file contents,
+diffs, prompts, pairing codes, tokens, and other sensitive fields. The selected
+client label is a human attestation, so review it together with the client
+capture. **Run self-check** is not a substitute for a real external-client run.
+
 ### Optional Chrome origin trial
 
 The Vite build supports an opt-in [WebMCP origin-trial](https://developer.chrome.com/blog/ai-webmcp-origin-trial)
@@ -255,8 +267,9 @@ bun run test
 
 For a real browser-agent pass, use a supported WebMCP browser with either a valid
 origin-trial token for the page origin or
-`chrome://flags/#enable-webmcp-testing` enabled, relaunch Chrome, and open this
-page. Use the [Model Context Tool Inspector](https://developer.chrome.com/docs/ai/webmcp)
+Chrome 150.0.7861.0 or later with `chrome://flags/#enable-webmcp-testing`
+enabled, relaunch Chrome, and open this
+page. Use the [WebMCP Model Context Tool Inspector](https://chromewebstore.google.com/detail/webmcp-model-context-tool/gbpdfapgefenggkahomfgkhfehlcenpd)
 to inspect `getTools()` and manually execute the `list_project_files`,
 `search_code`, `read_file`, `open_file`, `stage_text_edit`, `review_draft`, and
 `open_panel` calls.

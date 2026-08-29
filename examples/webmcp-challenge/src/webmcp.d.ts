@@ -27,6 +27,7 @@ declare global {
   }
 
   interface ModelContext extends EventTarget {
+    readonly getTools?: () => Promise<readonly WebMcpTool[]>;
     readonly registerTool?: (
       tool: WebMcpTool,
       options?: WebMcpToolRegistrationOptions,

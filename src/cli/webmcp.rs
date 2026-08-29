@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 use std::sync::Arc;
 use vtcode_core::cli::args::{WebmcpCommand, WebmcpPairArgs, WebmcpServeArgs};
-use vtcode_webmcp::{FilesystemWorkspace, WebmcpServer, WebmcpServerConfig};
+use vtcode_webmcp::{FilesystemWorkspace, RemoteMcpServerConfig, WebmcpServer, WebmcpServerConfig};
 
 use crate::startup::{StartupContext, require_full_auto_workspace_trust};
 
@@ -31,6 +31,11 @@ async fn run_pair(startup: &StartupContext, args: &WebmcpPairArgs) -> Result<()>
         allowed_roots: Vec::new(),
         allow_remote: args.allow_remote,
         public_url: args.public_url.clone(),
+        mcp: false,
+        mcp_public_url: None,
+        mcp_authorization_server: None,
+        mcp_proxy_token_env: None,
+        mcp_citation_url_prefix: None,
     };
     run_server(startup, &serve_args, Some(args.origin.as_str())).await
 }
@@ -44,7 +49,19 @@ async fn run_server(startup: &StartupContext, args: &WebmcpServeArgs, pairing_or
     } else {
         args.origins.clone()
     };
-    if origins.is_empty() {
+    let remote_mcp = build_remote_mcp_config(startup, args, configured)?;
+    let remote_endpoints = remote_mcp.as_ref().map(|remote| {
+        let mut streamable_url = remote.public_url.clone();
+        streamable_url.set_path("/mcp");
+        streamable_url.set_query(None);
+        streamable_url.set_fragment(None);
+        let mut metadata_url = remote.public_url.clone();
+        metadata_url.set_path("/.well-known/oauth-protected-resource");
+        metadata_url.set_query(None);
+        metadata_url.set_fragment(None);
+        (remote.public_url.clone(), streamable_url, metadata_url)
+    });
+    if origins.is_empty() && remote_mcp.is_none() {
         bail!("WebMCP requires at least one explicit --origin (or webmcp.allowed_origins entry)");
     }
     if let Some(pairing_origin) = pairing_origin
@@ -84,6 +101,7 @@ async fn run_server(startup: &StartupContext, args: &WebmcpServeArgs, pairing_or
         .with_context(|| format!("failed to initialize WebMCP workspace {}", workspace_root.display()))?
         .with_checks_allowed(checks_allowed);
 
+    let has_browser_origins = !origins.is_empty();
     let config = WebmcpServerConfig {
         host,
         port,
@@ -93,16 +111,26 @@ async fn run_server(startup: &StartupContext, args: &WebmcpServeArgs, pairing_or
         max_in_flight_requests: configured.max_in_flight_requests,
         allow_remote: args.allow_remote,
         public_url: args.public_url.clone(),
+        remote_mcp,
         ..Default::default()
     };
     let server = WebmcpServer::new(Arc::new(adapter), config)?;
-    let pairing = match pairing_origin {
-        Some(origin) => server.begin_pairing_for_origin(origin.to_string())?,
-        None => server.begin_pairing(),
+    let pairing = if pairing_origin.is_some() || has_browser_origins {
+        Some(match pairing_origin {
+            Some(origin) => server.begin_pairing_for_origin(origin.to_string())?,
+            None => server.begin_pairing(),
+        })
+    } else {
+        None
     };
     let listener = server.bind().await?;
     let address = listener.local_addr().context("failed to determine WebMCP listener address")?;
     println!("WebMCP listening locally at ws://{address}/webmcp");
+    if let Some((legacy_url, streamable_url, metadata_url)) = remote_endpoints {
+        println!("Remote MCP legacy endpoint: {legacy_url}");
+        println!("Remote MCP Streamable HTTP endpoint: {streamable_url}");
+        println!("Remote MCP protected-resource metadata: {metadata_url}");
+    }
     println!(
         "Agent turns are unavailable in standalone mode; use `/webmcp pair <origin>` inside an interactive `vtcode chat` session for VT Code turns."
     );
@@ -111,7 +139,9 @@ async fn run_server(startup: &StartupContext, args: &WebmcpServeArgs, pairing_or
             "Remote access requires a TLS-terminating reverse proxy at {public_url} forwarding to this loopback listener."
         );
     }
-    println!("Pairing code: {} (expires in {} seconds)", pairing.code(), pairing.expires_in().as_secs());
+    if let Some(pairing) = pairing.as_ref() {
+        println!("Pairing code: {} (expires in {} seconds)", pairing.code(), pairing.expires_in().as_secs());
+    }
     if !mutations_allowed {
         println!(
             "Mutations remain terminal-approved; headless apply is disabled without explicit full-auto permissions."
@@ -139,6 +169,15 @@ fn print_status(startup: &StartupContext) -> Result<()> {
     println!("Allowed origins: {}", config.allowed_origins.len());
     println!("Allowed roots: {}", config.allowed_roots.len());
     println!("Pairing TTL: {} seconds", config.pairing_ttl_secs);
+    println!("Remote MCP enabled: {}", config.remote_mcp.enabled);
+    if let Some(public_url) = config.remote_mcp.public_url.as_deref() {
+        println!("Remote MCP public URL: {public_url}");
+    }
+    if let Some(authorization_server) = config.remote_mcp.authorization_server.as_deref() {
+        println!("Remote MCP authorization server: {authorization_server}");
+    }
+    println!("Remote MCP proxy token environment: {}", config.remote_mcp.proxy_token_env);
+    println!("Remote MCP allowed origins: {}", config.remote_mcp.allowed_origins.len());
     Ok(())
 }
 
@@ -153,10 +192,57 @@ fn print_tools() -> Result<()> {
         "patch.revert (current-file validation required)",
         "turn.request",
         "cancel",
+        "search (remote MCP, read-only)",
+        "fetch (remote MCP, read-only)",
     ] {
         println!("  {tool}");
     }
     Ok(())
+}
+
+fn build_remote_mcp_config(
+    startup: &StartupContext,
+    args: &WebmcpServeArgs,
+    configured: &vtcode_config::WebmcpConfig,
+) -> Result<Option<RemoteMcpServerConfig>> {
+    let enabled = args.mcp || configured.remote_mcp.enabled;
+    if !enabled {
+        return Ok(None);
+    }
+    let public_url = args
+        .mcp_public_url
+        .as_deref()
+        .or(configured.remote_mcp.public_url.as_deref())
+        .context("remote MCP requires --mcp-public-url or webmcp.remote_mcp.public_url")?;
+    let authorization_server = args
+        .mcp_authorization_server
+        .as_deref()
+        .or(configured.remote_mcp.authorization_server.as_deref())
+        .context("remote MCP requires --mcp-authorization-server or webmcp.remote_mcp.authorization_server")?;
+    let token_env = args
+        .mcp_proxy_token_env
+        .as_deref()
+        .unwrap_or(&configured.remote_mcp.proxy_token_env);
+    let token = std::env::var(token_env)
+        .with_context(|| format!("remote MCP proxy token environment variable {token_env} is not set"))?;
+    let citation_prefix = args
+        .mcp_citation_url_prefix
+        .as_deref()
+        .or(configured.remote_mcp.citation_url_prefix.as_deref())
+        .map(url::Url::parse)
+        .transpose()
+        .context("remote MCP citation URL prefix is invalid")?;
+    let mut remote = RemoteMcpServerConfig::new(public_url, authorization_server, token)?;
+    remote.citation_url_prefix = citation_prefix;
+    remote.allowed_origins = configured.remote_mcp.allowed_origins.clone();
+    remote.max_results = configured.remote_mcp.max_results;
+    remote.max_scan_files = configured.remote_mcp.max_scan_files;
+    remote.max_scan_bytes = configured.remote_mcp.max_scan_bytes;
+    remote.session_ttl = std::time::Duration::from_secs(configured.remote_mcp.session_ttl_secs);
+    remote.max_request_body_bytes = configured.max_frame_bytes;
+    remote.validate()?;
+    let _ = startup;
+    Ok(Some(remote))
 }
 
 fn print_roots(startup: &StartupContext) -> Result<()> {

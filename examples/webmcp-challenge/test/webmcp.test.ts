@@ -210,13 +210,17 @@ test("tool results stay within the WebMCP character budget and report truncation
 test("toolchange notifications reach the registration owner", async () => {
   const context = new FakeModelContext();
   let changed: readonly string[] | null = null;
+  let discovered: readonly string[] | null = null;
   const registration = await registerWebMcpTools(context, toolsForTest(), {
     onToolChange: (names) => { changed = names; },
+    onToolsDiscovered: (names) => { discovered = names; },
   });
   assert.ok(registration);
 
+  assert.deepEqual(discovered, registration.names.slice().sort());
   context.dispatch("toolchange");
   assert.deepEqual(changed, registration.names);
+  assert.deepEqual(discovered, registration.names.slice().sort());
   registration.dispose();
   changed = null;
   context.dispatch("toolchange");

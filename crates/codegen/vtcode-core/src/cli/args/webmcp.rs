@@ -39,6 +39,21 @@ pub struct WebmcpServeArgs {
     /// Public WSS URL advertised for remote pairing.
     #[arg(long, value_name = "URL")]
     pub public_url: Option<String>,
+    /// Enable the read-only OpenAI-compatible remote MCP surface.
+    #[arg(long)]
+    pub mcp: bool,
+    /// Canonical external HTTPS URL for the remote MCP `/sse/` endpoint.
+    #[arg(long = "mcp-public-url", value_name = "URL")]
+    pub mcp_public_url: Option<String>,
+    /// External HTTPS OAuth authorization-server URL advertised to MCP clients.
+    #[arg(long = "mcp-authorization-server", value_name = "URL")]
+    pub mcp_authorization_server: Option<String>,
+    /// Environment variable containing the internal bearer token from the proxy.
+    #[arg(long = "mcp-proxy-token-env", value_name = "NAME")]
+    pub mcp_proxy_token_env: Option<String>,
+    /// Optional HTTP(S) URL prefix used for escaped file citation URLs.
+    #[arg(long = "mcp-citation-url-prefix", value_name = "URL")]
+    pub mcp_citation_url_prefix: Option<String>,
 }
 
 /// Options for starting a paired standalone server.

@@ -891,6 +891,17 @@ python3 scripts/generate_config_field_reference.py
 | `webmcp.max_in_flight_requests` | `integer` | no | `8` | Maximum concurrent bridge operations. |
 | `webmcp.pairing_ttl_secs` | `integer` | no | `300` | One-time pairing lifetime and authenticated-session inactivity lease. |
 | `webmcp.port` | `integer` | no | `0` | Bind port. Zero asks the OS for an available port. |
+| `webmcp.remote_mcp.allowed_origins` | `array` | no | `[]` | Separate exact MCP Origin allowlist; missing Origin is accepted. |
+| `webmcp.remote_mcp.allowed_origins[]` | `string` | no | `-` | - |
+| `webmcp.remote_mcp.authorization_server` | `string \| null` | no | `null` | External HTTPS authorization-server URL advertised in protected-resource metadata. |
+| `webmcp.remote_mcp.citation_url_prefix` | `string \| null` | no | `null` | Optional HTTP(S) prefix for escaped citation URLs; no file-serving route is added. |
+| `webmcp.remote_mcp.enabled` | `boolean` | no | `false` | Enable the read-only `search` and `fetch` MCP endpoints for `webmcp serve`. |
+| `webmcp.remote_mcp.max_results` | `integer` | no | `20` | Maximum results returned by `search`. |
+| `webmcp.remote_mcp.max_scan_bytes` | `integer` | no | `16777216` | Maximum UTF-8 content bytes scanned by `search`. |
+| `webmcp.remote_mcp.max_scan_files` | `integer` | no | `256` | Maximum visible files scanned by `search`. |
+| `webmcp.remote_mcp.proxy_token_env` | `string` | no | `"VTCODE_WEBMCP_MCP_PROXY_TOKEN"` | Environment variable containing the internal bearer token injected by the external proxy. |
+| `webmcp.remote_mcp.public_url` | `string \| null` | no | `null` | Canonical external HTTPS `/sse/` URL. |
+| `webmcp.remote_mcp.session_ttl_secs` | `integer` | no | `300` | Inactivity lifetime for legacy HTTP+SSE sessions. |
 | `workspace.include_context` | `boolean` | no | `true` | Include workspace context in messages. |
 | `workspace.max_context_size` | `integer \| null` | no | `null` | Maximum size of workspace context to include (in bytes). |
 | `workspace.use_root_config` | `boolean` | no | `false` | When true, force the workspace root `vtcode.toml` as the sole active config layer, discarding system, user, project, and dot-dir layers. |

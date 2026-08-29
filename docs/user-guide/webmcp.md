@@ -33,9 +33,15 @@ For a real agent turn, pairing has two sides:
 The browser cannot start or approve the bridge. Keep the TUI running while the
 browser is connected.
 
+`<origin>` is the exact origin of the page in the browser: scheme, hostname,
+and port, without the page path. For the published reference client at
+`https://vinhnx.github.io/VTCode/`, the origin is
+`https://vinhnx.github.io`. Do not use the `/VTCode/` path or a trailing slash
+in the pair command.
+
 Browser WebMCP is available only while the reference editor is open in a supported browser
 tab or webview. Chrome gates the page API on origin isolation and the `tools`
- Permissions Policy; the reference editor reports the observed values in
+Permissions Policy; the reference editor reports the observed values in
 `get_editor_state.webmcp_context` and keeps its normal fallback active when the
 API is unavailable. The authenticated VT Code bridge is separate and can still
 be used for workspace operations when explicitly paired.
@@ -87,6 +93,24 @@ browser tool can approve, apply, or revert a filesystem change.
 The deterministic corpus and contract checks live in
 `examples/webmcp-challenge/evals/webmcp-evals.ts` and run with `bun run test`.
 Model tool selection remains probabilistic and needs the real browser-agent pass.
+
+### Capture real Chrome or ChatGPT evidence
+
+Open **Evidence** in the reference editor, select **Chrome WebMCP Tool
+Inspector** or **ChatGPT in-app browser**, and choose **Start new run** before
+the external client begins. Use Chrome with the WebMCP testing flag (or a
+valid origin-trial token), or open the deployed page in ChatGPT's in-app
+browser when that client exposes WebMCP. The recorder wraps the registered
+callbacks, so each actual discovery and tool invocation is captured with
+bounded metadata, errors, elapsed time, and a sanitized editor-state snapshot.
+
+After the run, use **Copy JSON** or **Download JSON** and keep the export with
+the client tool-inspector screenshot or screen recording. The export omits
+file contents, diffs, prompts, pairing codes, session tokens, and sensitive
+fields. The selected client name is a human attestation; the JSON demonstrates
+that the page callbacks ran and should be reviewed together with the client
+capture. **Run self-check** is a deterministic fallback test and is not a
+substitute for this external-client evidence.
 
 ### Optional Chrome origin trial
 
@@ -276,6 +300,62 @@ The origin must match exactly. For example, `http://localhost:5173` and
 `http://127.0.0.1:5173` are different origins, and a trailing slash is not
 accepted in the configured origin.
 
+## Use the read-only remote MCP surface
+
+`vtcode webmcp serve` can expose two MCP transports in addition to the browser
+WebSocket: modern Streamable HTTP at `/mcp` and legacy HTTP+SSE at `/sse/`,
+with messages posted to `/messages/{session_id}`. This surface is opt-in and
+offers only read-only `search` and `fetch` tools. It never adds a public file
+route, and citation URLs remain empty unless you configure a citation prefix.
+
+The listener still binds to loopback. Put a TLS-terminating proxy or identity
+provider in front of it. The proxy must validate the external OAuth bearer,
+remove it, and inject an internal `Authorization: Bearer ...` value matching
+the token stored in the environment variable configured by
+`proxy_token_env`. VT Code advertises the external authorization server from
+`/.well-known/oauth-protected-resource`, but does not implement OAuth,
+token, or JWKS endpoints.
+
+For an MCP-only server, browser origins are not required and `/webmcp` remains
+inaccessible. Configure it in `vtcode.toml`:
+
+```toml
+[webmcp.remote_mcp]
+enabled = true
+public_url = "https://mcp.example.com/sse/"
+authorization_server = "https://login.example.com"
+proxy_token_env = "VTCODE_WEBMCP_MCP_PROXY_TOKEN"
+allowed_origins = []
+max_results = 20
+max_scan_files = 256
+max_scan_bytes = 16777216
+session_ttl_secs = 300
+```
+
+Then export the internal token and start the loopback listener:
+
+```sh
+export VTCODE_WEBMCP_MCP_PROXY_TOKEN='proxy-injected-internal-token'
+vtcode webmcp serve --mcp --allowed-root /absolute/path/to/workspace
+```
+
+The same settings can be supplied or overridden on the command line:
+
+```sh
+vtcode webmcp serve --mcp \
+  --mcp-public-url https://mcp.example.com/sse/ \
+  --mcp-authorization-server https://login.example.com \
+  --mcp-proxy-token-env VTCODE_WEBMCP_MCP_PROXY_TOKEN \
+  --mcp-citation-url-prefix https://mcp.example.com/citations/ \
+  --allowed-root /absolute/path/to/workspace
+```
+
+The public and authorization-server URLs must be HTTPS. `search` and `fetch`
+are bounded by 20 results, 256 scanned files, and 16 MiB of UTF-8 content by
+default. The canonical public URL is `/sse/` for OpenAI-compatible clients;
+`/mcp` is the modern alias. See the [OpenAI MCP documentation](https://developers.openai.com/api/docs/mcp)
+for the corresponding Responses API `allowed_tools` and approval settings.
+
 ## Edit, review, and apply in headless mode
 
 The editing steps are the same as fallback mode:
@@ -420,11 +500,54 @@ it cannot access a local workspace by itself. The production bridge is the
 Rust component shipped with the VT Code binary; it does not depend on GitHub
 Pages.
 
-To connect a deployed HTTPS page to a bridge, use a TLS-terminating reverse
-proxy and a `wss://` public URL. The bridge remains bound to loopback; direct
-remote binding is rejected. Configure the exact deployed page origin in the
-bridge allowlist. For local real-workspace use, use the Vite
-development URL described above.
+### Pair the deployed page from the same machine
+
+If the deployed page is open in a browser on the same machine as the active VT
+Code process, pair the active TUI with the deployed page's origin:
+
+```text
+/webmcp pair https://vinhnx.github.io
+```
+
+If a bridge is already listening for another origin, use the replacement form
+and confirm the prompt:
+
+```text
+/webmcp pair --replace https://vinhnx.github.io
+```
+
+Paste the newest WebSocket URL and one-time code printed by that same TUI into
+**Settings → Connect or re-pair a VT Code bridge**. A URL such as
+`ws://127.0.0.1:<port>/webmcp` is a loopback address, so it works only when the
+browser can reach the same machine. The deployed page's `/VTCode/` path is not
+part of the origin allowlist value.
+
+For a standalone workspace bridge, include the deployed origin in its explicit
+allowlist:
+
+```sh
+vtcode webmcp serve \
+  --origin https://vinhnx.github.io \
+  --allowed-root /absolute/path/to/workspace
+```
+
+If the page is open in a remote or sandboxed in-app browser, it may not be able
+to reach `127.0.0.1` on the machine running VT Code. Use the local Vite page in
+the same browser, or put the loopback listener behind a TLS-terminating reverse
+proxy and enter its `wss://` URL. For the standalone bridge, enable remote
+proxy mode with `--allow-remote --public-url wss://<bridge-host>/webmcp`; direct
+non-loopback binding is rejected.
+
+### Deployed-page origin mismatch
+
+Starting the bridge with `http://localhost:5173` and then opening the deployed
+page does not work. The deployed page sends `https://vinhnx.github.io` in the
+WebSocket handshake, and the bridge rejects `http://localhost:5173` as a
+different origin. The browser may display this rejection as the generic
+**VT Code WebSocket connection failed** message, while the editor remains in
+fallback mode. Native browser WebMCP registration and the authenticated VT Code
+WebSocket bridge are separate; seeing browser tools registered does not mean
+the bridge is paired.
 
 ## Troubleshooting
 
@@ -435,11 +558,19 @@ WebSocket URL printed by VT Code, including its port and `/webmcp` path. For
 active-session mode, the URL must come from the TUI where you ran
 `/webmcp pair`; a standalone `webmcp serve` URL cannot receive agent turns.
 
+For `https://vinhnx.github.io/VTCode/`, re-pair with
+`/webmcp pair https://vinhnx.github.io` (or use `--replace` if the active
+bridge already exists), then paste the newly printed URL and code. Do not pair
+the deployed page with a bridge allowlisted only for
+`http://localhost:5173`. If the browser is remote or sandboxed, a
+`ws://127.0.0.1:...` URL is also unreachable; use a reachable `wss://` proxy
+endpoint instead.
+
 ### “WebMCP session is not authorized”
 
 The browser lost its in-memory session token, the bridge was restarted, or the
 page was suspended longer than the session lease. For an active session, run
-`/webmcp pair http://localhost:5173` again in the TUI. For a standalone bridge,
+`/webmcp pair <exact-browser-origin>` again in the TUI. For a standalone bridge,
 restart `vtcode webmcp serve`. Then paste the new URL and one-time code. An open
 page normally renews the lease automatically.
 
@@ -452,7 +583,9 @@ part of the URL.
 ### “Origin rejected”
 
 Use the browser's actual origin in `--origin`. Check the hostname, port,
-scheme, and trailing slash. `localhost` and `127.0.0.1` are not interchangeable.
+scheme, and trailing slash. For the published editor, use
+`https://vinhnx.github.io`, not `https://vinhnx.github.io/VTCode/`. `localhost`
+and `127.0.0.1` are not interchangeable.
 
 ### “Pairing code is invalid” or expired
 

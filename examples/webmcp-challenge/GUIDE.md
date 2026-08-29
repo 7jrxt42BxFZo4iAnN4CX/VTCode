@@ -50,6 +50,30 @@ require active mode.
 Use `--port 5174` if port `5173` is already in use. Use the same port in the
 browser URL and `/webmcp pair` command.
 
+### Pair the deployed GitHub Pages client
+
+The deployed reference client at
+<https://vinhnx.github.io/VTCode/> is a static page. Its browser origin is
+`https://vinhnx.github.io` (the `/VTCode/` path is not part of the origin).
+When the page is open in a browser on the same machine as the active VT Code
+TUI, run:
+
+```text
+/webmcp pair https://vinhnx.github.io
+```
+
+If that TUI already has a bridge paired for another origin, run
+`/webmcp pair --replace https://vinhnx.github.io` and confirm the replacement.
+Paste the newest WebSocket URL and one-time code into **Settings**. A bridge
+started with `http://localhost:5173` will reject the deployed page's origin,
+which the browser can report as the generic **WebSocket connection failed**
+message.
+
+The printed `ws://127.0.0.1:<port>/webmcp` URL is reachable only from a browser
+that can reach the same machine. A remote or sandboxed in-app browser needs a
+TLS-terminating reverse proxy and a reachable `wss://` endpoint; the GitHub
+Pages site does not host the bridge.
+
 ### Use the Chrome origin trial
 
 Chrome's [WebMCP origin trial](https://developer.chrome.com/blog/ai-webmcp-origin-trial)
@@ -79,6 +103,32 @@ The editor reports those observed prerequisites in `get_editor_state` as
 `webmcp_context`; the fallback remains usable when a prerequisite is missing.
 The optional VT Code bridge is a separate authenticated adapter and does not
 make WebMCP calls headlessly.
+
+### Record real-client evidence
+
+The header's **Evidence** control records the calls made through the page's
+registered WebMCP callbacks. It does not simulate a client or infer tool use
+from clicks. To capture a run:
+
+1. Open **Evidence**, choose the client you are about to use, and select
+   **Start new run** before opening the inspector or sending a prompt.
+2. In Chrome 150.0.7861.0 or later, enable
+   `chrome://flags/#enable-webmcp-testing`, relaunch Chrome, open the deployed
+   page, and install/use the [WebMCP Model Context Tool Inspector](https://chromewebstore.google.com/detail/webmcp-model-context-tool/gbpdfapgefenggkahomfgkhfehlcenpd).
+   In ChatGPT, open the deployed page in the in-app browser when WebMCP is
+   available and use the **ChatGPT in-app browser** label.
+3. Exercise the sequence below through that client. Keep the page open; the
+   WebMCP API is browsing-context scoped.
+4. Return to **Evidence**, select **Copy JSON** or **Download JSON**, and keep
+   the export with the client screenshot or screen recording. The export is
+   sanitized and intentionally omits file contents, diffs, prompts, pairing
+   codes, session tokens, and other sensitive fields.
+
+The selected client label is an attestation by the person recording the run;
+the JSON itself proves which page callbacks ran, not the identity of the
+external client. Treat the export and the screenshot/video as one evidence
+bundle. Do not count **Run self-check** as a real-client pass: it exercises the
+fallback editor, not an external WebMCP client.
 
 Run this sequence and record the selected tool, arguments, result, and visible
 page effect:
@@ -170,6 +220,10 @@ command.
 Make sure the bridge or active VT Code session is still running. Paste the newest
 WebSocket URL and one-time code from that same process. Its origin must exactly
 match the browser origin; `localhost` and `127.0.0.1` are different origins.
+For the deployed client, pair with `https://vinhnx.github.io`, not the full
+`https://vinhnx.github.io/VTCode/` URL. If an existing active bridge was paired
+for another origin, use `/webmcp pair --replace https://vinhnx.github.io` and
+paste the newly printed values.
 
 ### The TUI prints no URL or pairing code
 
