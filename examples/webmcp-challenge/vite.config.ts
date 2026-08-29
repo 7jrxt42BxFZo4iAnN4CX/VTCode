@@ -36,5 +36,11 @@ export function webmcpOriginTrialPlugin(token = process.env.VITE_WEBMCP_ORIGIN_T
 }
 
 export default defineConfig({
+  // Keep fallback state scoped to this deployed reference-client version. Without
+  // an explicit instance, every origin falls back to the development key and a
+  // stale/empty browser snapshot can hide the deterministic seed workspace.
+  define: {
+    __VTCODE_APP_INSTANCE__: JSON.stringify("webmcp-challenge-v2"),
+  },
   plugins: [webmcpOriginTrialPlugin() as Plugin],
 });
