@@ -230,8 +230,11 @@ fn merged_version(layers: &[vtcode_config::loader::layers::ConfigLayerEntry]) ->
 fn resolve_target_path(manager: &ConfigManager, workspace: &Path, target: &ConfigWriteTarget) -> Result<PathBuf> {
     match target {
         ConfigWriteTarget::Workspace => {
-            let root = manager.workspace_root().unwrap_or(workspace).to_path_buf();
-            Ok(root.join(manager.config_file_name()))
+            // Prefer the highest enabled Workspace layer of the loaded
+            // manager: with a session-explicit config file (`--config` /
+            // `VTCODE_CONFIG_PATH`) that layer is the override file itself,
+            // so writes land where the session actually reads from.
+            Ok(manager.preferred_workspace_config_path(workspace))
         }
         ConfigWriteTarget::User => {
             let provider = defaults::current_config_defaults();

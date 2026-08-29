@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use vtcode_core::cli::args::Cli;
-use vtcode_core::config::loader::{ConfigBuilder, VTCodeConfig};
+use vtcode_core::config::loader::{ConfigBuilder, VTCodeConfig, set_explicit_config_path};
 use vtcode_core::utils::validation::validate_path_exists;
 
 use super::first_run::maybe_run_first_run_setup;
@@ -37,10 +37,18 @@ pub(super) async fn load_startup_config(args: &Cli) -> Result<LoadedStartupConfi
     let config_path_override = cli_config_path_override.or(env_config_path_override);
 
     let mut builder = ConfigBuilder::new().workspace(workspace.clone());
-    if let Some(path_override) = config_path_override {
-        let resolved_path = resolve_config_path(&workspace, &path_override);
-        builder = builder.config_file(resolved_path);
-    }
+    let resolved_explicit_path = match config_path_override {
+        Some(path_override) => {
+            let resolved_path = resolve_config_path(&workspace, &path_override);
+            builder = builder.config_file(resolved_path.clone());
+            Some(resolved_path)
+        }
+        None => None,
+    };
+    // Unconditionally synchronize the session override so a previous
+    // `load_startup_config` in the same process (e.g. a test or a reload)
+    // cannot leak a stale explicit path into this load.
+    set_explicit_config_path(resolved_explicit_path.clone());
 
     if !inline_config_overrides.is_empty() {
         builder = builder.cli_overrides(&inline_config_overrides);
@@ -113,11 +121,32 @@ fn has_top_level_config_key(config: &toml::Value, key: &str) -> bool {
 mod tests {
     use super::*;
     use clap::Parser;
+    use serial_test::serial;
     use tempfile::TempDir;
+    use vtcode_config::loader::explicit_config_path;
     use vtcode_core::cli::args::Cli;
 
+    /// RAII guard for the process-global session override so a panicking test
+    /// cannot leak a stale explicit path into sibling tests.
+    struct SessionOverrideGuard;
+
+    impl SessionOverrideGuard {
+        fn reset() -> Self {
+            set_explicit_config_path(None);
+            Self
+        }
+    }
+
+    impl Drop for SessionOverrideGuard {
+        fn drop(&mut self) {
+            set_explicit_config_path(None);
+        }
+    }
+
     #[tokio::test]
+    #[serial]
     async fn cli_config_path_override_loads_requested_file() {
+        let _guard = SessionOverrideGuard::reset();
         let temp_dir = TempDir::new().expect("temp dir");
         let workspace = temp_dir.path().join("workspace");
         std::fs::create_dir(&workspace).expect("workspace dir");
@@ -144,6 +173,41 @@ enable_tracing = true
         let loaded = load_startup_config(&args).await.expect("startup config should load");
 
         assert!(loaded.config.debug.enable_tracing);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn env_config_path_override_loads_requested_file_and_captures_session_override() {
+        use vtcode_commons::env_lock;
+
+        let _guard = SessionOverrideGuard::reset();
+        let env_guard = env_lock::lock();
+        let previous = std::env::var_os("VTCODE_CONFIG_PATH");
+
+        let temp_dir = TempDir::new().expect("temp dir");
+        let workspace = temp_dir.path().join("workspace");
+        std::fs::create_dir_all(&workspace).expect("workspace dir");
+        std::fs::create_dir_all(workspace.join(".vtcode")).expect("workspace dot dir");
+
+        let config_path = temp_dir.path().join("custom-env-config.toml");
+        std::fs::write(&config_path, "[debug]\nenable_tracing = true\n").expect("custom env config");
+
+        env_guard.set_var("VTCODE_CONFIG_PATH", config_path.to_str().expect("config path"));
+
+        let args = Cli::parse_from(["vtcode", "--workspace", workspace.to_str().expect("workspace path")]);
+
+        let loaded = load_startup_config(&args).await;
+        let session_override = explicit_config_path();
+
+        env_guard.restore_var("VTCODE_CONFIG_PATH", previous);
+
+        let loaded = loaded.expect("startup config should load from VTCODE_CONFIG_PATH");
+        assert!(loaded.config.debug.enable_tracing);
+        assert_eq!(
+            session_override.and_then(|path| vtcode_commons::canonicalize(path).ok()),
+            vtcode_commons::canonicalize(&config_path).ok(),
+            "startup must capture the resolved env path as the session override"
+        );
     }
 
     #[test]

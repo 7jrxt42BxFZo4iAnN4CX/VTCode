@@ -18,6 +18,21 @@ When the CLI starts it builds a **layer stack** and merges all present layers fr
 
 Tables are deep-merged recursively. Scalars and arrays are replaced by the higher-precedence layer.
 
+### Explicit config file (session override)
+
+When an explicit config file is present (`--config path` or `VTCODE_CONFIG_PATH`),
+the resolved path is captured once at startup as the **session config override**.
+Every later configuration reload during that session — slash-command persistence,
+the settings palette, live-reload watchers, and `ConfigService` reads/writes —
+reads from and writes to the same explicit file instead of drifting back to the
+default workspace `vtcode.toml`. Relative paths and `~` are resolved identically
+for both the CLI flag and the environment variable. `--config key=value`
+overrides and `--model`/`--provider` remain runtime layers above all files.
+
+Scope note: global-only operations (for example `vtcode mcp login` / `mcp logout`)
+always operate on the canonical user configuration and intentionally ignore the
+explicit session override.
+
 ### Inline CLI overrides
 
 Inspired by [OpenAI Codex CLI](https://github.com/openai/codex), VT Code now accepts

@@ -12,6 +12,7 @@ use crate::loader::config::VTCodeConfig;
 use crate::loader::layers::{
     ConfigLayerEntry, ConfigLayerMetadata, ConfigLayerSource, ConfigLayerStack, LayerDisabledReason,
 };
+use crate::loader::session_override;
 use vtcode_commons::VtCodePaths;
 use vtcode_commons::canonicalize;
 
@@ -50,7 +51,7 @@ fn cache_remove(workspace: &Path) {
     });
 }
 
-fn canonicalize_workspace_root(path: &Path) -> PathBuf {
+pub(crate) fn canonicalize_workspace_root(path: &Path) -> PathBuf {
     canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
@@ -124,15 +125,49 @@ pub struct ConfigManager {
 impl ConfigManager {
     /// Load configuration from the default locations rooted at the current directory.
     pub fn load() -> Result<Self> {
-        if let Ok(config_path) = std::env::var("VTCODE_CONFIG_PATH") {
-            let trimmed = config_path.trim();
-            if !trimmed.is_empty() {
-                return Self::load_from_file_impl(trimmed, true)
-                    .with_context(|| format!("Failed to load configuration from VTCODE_CONFIG_PATH={trimmed}"));
-            }
+        if let Some(override_path) = session_override::explicit_config_path() {
+            return Self::load_for_session(std::env::current_dir()?, &override_path).with_context(|| {
+                format!("Failed to load configuration from explicit path {}", override_path.display())
+            });
         }
 
         Self::load_from_workspace(std::env::current_dir()?)
+    }
+
+    /// Load configuration for an interactive session with an explicit config file.
+    ///
+    /// The explicit file takes the highest file-layer precedence (the same
+    /// position a workspace root `vtcode.toml` would occupy), while the
+    /// system/user global layers are still loaded underneath it. Unlike
+    /// [`Self::load_from_file`], the manager's `workspace_root` remains the
+    /// session workspace (not the explicit file's parent directory), so
+    /// workspace-relative config writes and project-level paths keep
+    /// resolving against the workspace.
+    pub fn load_for_session(workspace: impl AsRef<Path>, explicit_path: impl AsRef<Path>) -> Result<Self> {
+        let workspace = workspace.as_ref();
+        let explicit_path = explicit_path.as_ref();
+        #[cfg(not(test))]
+        let canonical_workspace = canonicalize_workspace_root(workspace);
+
+        #[cfg(not(test))]
+        if let Some(cached) = cache_get(&canonical_workspace) {
+            return Ok(cached.as_ref().clone());
+        }
+
+        let mut manager = Self::load_from_file_impl(explicit_path, false).with_context(|| {
+            format!(
+                "Failed to load explicit session config file {} (from --config / VTCODE_CONFIG_PATH)",
+                explicit_path.display()
+            )
+        })?;
+        // The session workspace, not the explicit file's parent, anchors
+        // workspace-relative config resolution for the rest of the session.
+        manager.workspace_root = Some(canonicalize_workspace_root(workspace));
+
+        #[cfg(not(test))]
+        cache_insert(canonical_workspace, Arc::new(manager.clone()));
+
+        Ok(manager)
     }
 
     /// Load only the system and user configuration layers.
@@ -224,8 +259,28 @@ impl ConfigManager {
         let _ = workspace;
     }
 
+    /// Invalidate every cached workspace configuration.
+    ///
+    /// Used when a session-scoped override changes or is cleared: the cache is
+    /// keyed by canonical workspace only, so an override-loaded manager for any
+    /// workspace must not leak into later default loads. This is a rare event
+    /// (startup and tests), so a full sweep is cheap and safe.
+    pub fn invalidate_all_workspace_cache() {
+        #[cfg(not(test))]
+        with_cache_mut(|map| map.clear());
+    }
+
     /// Load configuration from a specific workspace
+    ///
+    /// When the session has an explicit config-file override (captured at
+    /// startup via [`session_override::set_explicit_config_path`]), the
+    /// override file takes precedence and is loaded as the highest file
+    /// layer above the default global layers.
     pub fn load_from_workspace(workspace: impl AsRef<Path>) -> Result<Self> {
+        if let Some(override_path) = session_override::explicit_config_path() {
+            return Self::load_for_session(workspace, override_path);
+        }
+
         let workspace = workspace.as_ref();
         #[cfg(not(test))]
         let canonical_workspace = canonicalize_workspace_root(workspace);
@@ -616,6 +671,25 @@ impl ConfigManager {
     /// Get the active workspace root for this manager.
     pub fn workspace_root(&self) -> Option<&Path> {
         self.workspace_root.as_deref()
+    }
+
+    /// Resolve the workspace-level config file this manager reads from, i.e.
+    /// the highest enabled `Workspace` layer.
+    ///
+    /// With a session-explicit config file (`--config` / `VTCODE_CONFIG_PATH`)
+    /// that layer is the override file itself, so config writes land where the
+    /// session actually reads from. Falls back to `<workspace>/<config_file_name>`
+    /// when no workspace layer is present.
+    pub fn preferred_workspace_config_path(&self, workspace: &Path) -> PathBuf {
+        self.layer_stack
+            .layers()
+            .iter()
+            .rev()
+            .find_map(|layer| match &layer.source {
+                ConfigLayerSource::Workspace { file } if layer.is_enabled() => Some(file.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| workspace.join(&self.config_file_name))
     }
 
     /// Get the config filename used by this manager (usually `vtcode.toml`).
