@@ -94,8 +94,9 @@ for policy, approval, and authoritative file changes.
 1. Open <https://vinhnx.github.io/VTCode/>.
 2. Close **Settings** if it opens automatically; fallback mode needs no
    credentials.
-3. In ChatGPT's in-app browser, or in Chrome 149+ with
-   `chrome://flags/#enable-webmcp-testing` enabled, inspect the registered tools.
+3. In ChatGPT's in-app browser, or in Chrome 150.0.7861.0+ with
+   `chrome://flags/#enable-webmcp-testing` enabled and the WebMCP Model Context
+   Tool Inspector installed, inspect the registered tools.
 4. Ask the agent to list files, search for the greeting, open the result, read
    it, stage one exact replacement using its digest, review the diff, and open
    the changes panel.

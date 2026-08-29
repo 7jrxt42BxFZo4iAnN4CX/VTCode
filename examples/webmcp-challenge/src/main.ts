@@ -1376,7 +1376,7 @@ async function registerWebMcp(): Promise<void> {
     return;
   }
   if (!modelContext?.registerTool) {
-    $("webmcpCapability").textContent = "WebMCP browser API unavailable in this browsing context; use Chrome 149+ with the origin trial or testing flag. The editor remains fully usable.";
+    $("webmcpCapability").textContent = "WebMCP browser API unavailable in this browsing context; use Chrome 150+ with the testing flag or Chrome 149+ with the origin trial. The editor remains fully usable.";
     return;
   }
   const searchCode = async (query = "", { signal }: ToolExecutionOptions = {}): Promise<SearchResult> => {

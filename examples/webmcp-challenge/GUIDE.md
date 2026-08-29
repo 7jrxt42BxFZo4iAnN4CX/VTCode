@@ -88,9 +88,10 @@ from clicks. To capture a run:
 
 1. Open **Evidence**, choose the client you are about to use, and select
    **Start new run** before opening the inspector or sending a prompt.
-2. In Chrome, enable `chrome://flags/#enable-webmcp-testing`, relaunch Chrome,
-   open the deployed page, and use the Model Context Tool Inspector. In
-   ChatGPT, open the deployed page in the in-app browser when WebMCP is
+2. In Chrome 150.0.7861.0 or later, enable
+   `chrome://flags/#enable-webmcp-testing`, relaunch Chrome, open the deployed
+   page, and install/use the [WebMCP Model Context Tool Inspector](https://chromewebstore.google.com/detail/webmcp-model-context-tool/gbpdfapgefenggkahomfgkhfehlcenpd).
+   In ChatGPT, open the deployed page in the in-app browser when WebMCP is
    available and use the **ChatGPT in-app browser** label.
 3. Exercise the sequence below through that client. Keep the page open; the
    WebMCP API is browsing-context scoped.

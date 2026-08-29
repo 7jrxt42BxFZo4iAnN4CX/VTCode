@@ -267,8 +267,9 @@ bun run test
 
 For a real browser-agent pass, use a supported WebMCP browser with either a valid
 origin-trial token for the page origin or
-`chrome://flags/#enable-webmcp-testing` enabled, relaunch Chrome, and open this
-page. Use the [Model Context Tool Inspector](https://developer.chrome.com/docs/ai/webmcp)
+Chrome 150.0.7861.0 or later with `chrome://flags/#enable-webmcp-testing`
+enabled, relaunch Chrome, and open this
+page. Use the [WebMCP Model Context Tool Inspector](https://chromewebstore.google.com/detail/webmcp-model-context-tool/gbpdfapgefenggkahomfgkhfehlcenpd)
 to inspect `getTools()` and manually execute the `list_project_files`,
 `search_code`, `read_file`, `open_file`, `stage_text_edit`, `review_draft`, and
 `open_panel` calls.
