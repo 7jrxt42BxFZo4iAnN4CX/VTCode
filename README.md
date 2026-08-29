@@ -12,6 +12,24 @@
 
 </p>
 
+## Contents
+
+- [New: VT Code WebMCP application](#new-vt-code-webmcp-application)
+- [Overview](#overview)
+- [Quick start](#quick-start)
+- [Documentation](#documentation)
+- [Providers and models](#providers-and-models)
+- [Local inference](#local-inference-experimental)
+- [Development](#development)
+- [Contributing](#contributing)
+- [Support](#support)
+- [License](#license)
+
+> New here? Start with [Installation](./docs/installation/README.md), then
+> [Getting Started](./docs/user-guide/getting-started.md).
+
+## Overview
+
 <p align="center">
   <img src="./resources/gif/vtcode.gif" alt="VT Code demo" width="60%" style="border-radius: 10px" />
   <br><em>Secure, open, universal.</em>
@@ -27,27 +45,19 @@ terminal.
 > Local inference and some automation workflows are experimental, and
 > interfaces and configuration may change between releases.
 
-The WebMCP browser bridge is a first-class, opt-in VT Code integration. It
-connects a supported browser editor to the current VT Code session or to a
-bounded standalone workspace bridge while keeping pairing, origins, workspace
-roots, and write approval under terminal control.
+## New: VT Code WebMCP application
 
-## Contents
+The WebMCP browser bridge is a first-class, opt-in VT Code integration. Open the
+deployed [VT Code WebMCP application](https://vinhnx.github.io/VTCode/) to try
+the browser editor. See the [WebMCP user guide](./docs/user-guide/webmcp.md),
+[development guide](./docs/development/webmcp.md), [WebMCP app guide](./apps/webmcp/GUIDE.md),
+[WebMCP app README](./apps/webmcp/README.md), and
+[WebMCP crate documentation](./crates/codegen/vtcode-webmcp/README.md) for setup,
+integration, and implementation details.
 
-- [Overview](#overview)
-- [Quick start](#quick-start)
-- [Documentation](#documentation)
-- [Providers and models](#providers-and-models)
-- [Local inference](#local-inference-experimental)
-- [Development](#development)
-- [Contributing](#contributing)
-- [Support](#support)
-- [License](#license)
-
-> New here? Start with [Installation](./docs/installation/README.md), then
-> [Getting Started](./docs/user-guide/getting-started.md).
-
-## Overview
+<p align="center">
+  <a href="https://vinhnx.github.io/VTCode/"><img src="./resources/screenshots/vtcode-webmcp.png" alt="VT Code WebMCP editor" width="90%" style="max-width: 960px; border-radius: 12px;"></a>
+</p>
 
 ### Runtime and coding
 
