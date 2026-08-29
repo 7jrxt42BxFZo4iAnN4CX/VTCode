@@ -1,6 +1,6 @@
 use super::FileOpsTool;
 use crate::tools::jaro_winkler_similarity;
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use ignore::DirEntry;
 use std::cmp::Ordering;
 use std::future::Future;
@@ -93,18 +93,26 @@ impl FileOpsTool {
         let absolute = self.absolute_candidate(path);
         let normalized = normalize_path(&absolute);
         let normalized_root = normalize_path(&self.workspace_root);
-        let canonical = self.canonicalize_allow_missing(&normalized).await?;
         let canonical_root = normalize_path(self.canonical_workspace_root());
 
-        let within_workspace = normalized.starts_with(&normalized_root)
-            || normalized.starts_with(&canonical_root)
-            || canonical.starts_with(&normalized_root)
-            || canonical.starts_with(self.canonical_workspace_root());
-
-        if !within_workspace {
+        if !normalized.starts_with(&normalized_root) && !normalized.starts_with(&canonical_root) {
             return Err(anyhow!("Error: Path '{original_display}' resolves outside the workspace."));
         }
 
+        // Symlink-aware containment: validate every path component so a
+        // symlink committed inside the workspace cannot resolve outside it.
+        // The lexical tier above gives precise error messages for plain
+        // traversal; this tier closes the escape-by-symlink case.
+        if normalized.starts_with(&normalized_root) {
+            vtcode_commons::paths::ensure_path_within_workspace_resolved(&normalized, &self.workspace_root)
+                .await
+                .with_context(|| format!("Error: Path '{original_display}' is not accessible inside the workspace"))?;
+        }
+
+        let canonical = self.canonicalize_allow_missing(&normalized).await?;
+        if !canonical.starts_with(&canonical_root) {
+            return Err(anyhow!("Error: Path '{original_display}' resolves outside the workspace."));
+        }
         Ok(canonical)
     }
 
@@ -238,5 +246,116 @@ impl FileOpsTool {
     /// avoid an extra coroutine state machine (audit section 16).
     pub fn normalize_user_path<'a>(&'a self, path: &'a str) -> impl Future<Output = Result<PathBuf>> + 'a {
         self.normalize_and_validate_user_path(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::FileOpsTool;
+    use crate::tools::grep_file::GrepSearchManager;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    fn make_tool(workspace: &TempDir) -> FileOpsTool {
+        let grep_manager = Arc::new(GrepSearchManager::new(workspace.path().to_path_buf()));
+        FileOpsTool::new(workspace.path().to_path_buf(), grep_manager)
+    }
+
+    fn canonical_root(workspace: &TempDir) -> PathBuf {
+        dunce::canonicalize(workspace.path()).expect("canonicalize workspace root")
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlink_inside_workspace_pointing_outside_is_rejected() {
+        let temp_dir = TempDir::new().expect("workspace tempdir");
+        let outside = TempDir::new().expect("outside tempdir");
+        fs::create_dir_all(temp_dir.path().join("sub")).expect("create sub");
+        fs::write(outside.path().join("secret.txt"), "top secret").expect("write outside");
+
+        std::os::unix::fs::symlink(outside.path(), temp_dir.path().join("sub/link")).expect("create symlink");
+
+        let file_ops = make_tool(&temp_dir);
+
+        let result = file_ops.normalize_user_path("sub/link/secret.txt").await;
+        assert!(result.is_err(), "symlink escape must be rejected, got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn plain_paths_inside_workspace_still_validate() {
+        let temp_dir = TempDir::new().expect("workspace tempdir");
+        fs::create_dir_all(temp_dir.path().join("sub")).expect("create sub");
+        fs::write(temp_dir.path().join("sub/file.txt"), "ok").expect("write file");
+        let root = canonical_root(&temp_dir);
+
+        let file_ops = make_tool(&temp_dir);
+
+        let resolved = file_ops
+            .normalize_user_path("sub/file.txt")
+            .await
+            .expect("existing in-workspace path must validate");
+        assert!(resolved.starts_with(&root));
+
+        // Missing files inside the workspace remain allowed (create flows).
+        let created = file_ops
+            .normalize_user_path("sub/new-file.txt")
+            .await
+            .expect("missing in-workspace path must validate");
+        assert!(created.starts_with(&root));
+
+        // Plain traversal stays rejected.
+        assert!(file_ops.normalize_user_path("../outside.txt").await.is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn canonical_alias_of_workspace_root_is_accepted() {
+        let temp_dir = TempDir::new().expect("workspace tempdir");
+        let canonical_root = canonical_root(&temp_dir);
+        if canonical_root == temp_dir.path() {
+            // No alias on this platform layout; nothing to test.
+            return;
+        }
+        fs::create_dir_all(temp_dir.path().join("sub")).expect("create sub");
+        fs::write(temp_dir.path().join("sub/file.txt"), "ok").expect("write file");
+
+        let file_ops = make_tool(&temp_dir);
+
+        // An absolute path written through the canonical (resolved) alias of
+        // the workspace root must be accepted: it resolves inside the
+        // workspace even though it does not start with the raw root.
+        let alias_path = canonical_root.join("sub/file.txt");
+        let resolved = file_ops
+            .normalize_user_path(&alias_path.to_string_lossy())
+            .await
+            .expect("canonical alias path must validate");
+        assert!(resolved.starts_with(&canonical_root));
+
+        // A missing file through the alias stays allowed (create flows).
+        let created = file_ops
+            .normalize_user_path(&canonical_root.join("sub/new.txt").to_string_lossy())
+            .await
+            .expect("missing path via alias must validate");
+        assert!(created.starts_with(&canonical_root));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn canonical_alias_escape_is_still_rejected() {
+        let temp_dir = TempDir::new().expect("workspace tempdir");
+        let outside = TempDir::new().expect("outside tempdir");
+        let canonical_root = canonical_root(&temp_dir);
+        if canonical_root == temp_dir.path() {
+            return;
+        }
+
+        let file_ops = make_tool(&temp_dir);
+        let outside_path = outside.path().join("secret.txt");
+        fs::write(&outside_path, "top secret").expect("write outside");
+
+        let result = file_ops.normalize_user_path(&outside_path.to_string_lossy()).await;
+        assert!(result.is_err(), "outside canonical path must be rejected");
     }
 }

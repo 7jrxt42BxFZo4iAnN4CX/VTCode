@@ -154,8 +154,18 @@ fn session_approval_cache_keys<'a>(
     approval_learning_target: &'a shell_approval::ApprovalLearningTarget,
     exact_shell_approval_target: Option<&'a shell_approval::ApprovalLearningTarget>,
 ) -> impl Iterator<Item = &'a str> {
-    // Include the bare tool name only when it differs from the cache key.
-    let bare_if_different = if cache_key != tool_name { Some(tool_name) } else { None };
+    // Include the bare tool name only when it differs from the cache key AND
+    // the cache key is not already command-scoped. For command-run tools the
+    // cache key embeds the exact command (`tool:command`), so also granting
+    // the bare tool name would let a single "Approve Once" for one command
+    // silently approve every later invocation of that tool, regardless of
+    // the command it runs.
+    let command_scoped = cache_key.contains(':');
+    let bare_if_different = if cache_key != tool_name && !command_scoped {
+        Some(tool_name)
+    } else {
+        None
+    };
     std::iter::once(cache_key)
         .chain(bare_if_different)
         .chain(std::iter::once(approval_learning_target.approval_key.as_str()))
