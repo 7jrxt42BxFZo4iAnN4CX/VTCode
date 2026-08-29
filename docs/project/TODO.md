@@ -37,16 +37,16 @@ Choose the public project name manually; do not treat a generated name as final.
 
 ### WebMCP tool contract
 
-| Tool                   | Behavior                         | Safety posture                     |
-| ---------------------- | -------------------------------- | ---------------------------------- |
-| `list_project_files`   | List the embedded project tree   | Read-only                          |
-| `search_code`          | Search bounded file contents     | Read-only                          |
-| `read_file`            | Read a bounded file segment      | Read-only                          |
-| `get_editor_state`     | Inspect editor workflow state    | Read-only                          |
-| `open_file`            | Open a selected file             | Browser UI state                   |
-| `stage_text_edit`      | Stage one exact draft replacement | Browser draft only                 |
-| `review_draft`         | Show the current draft diff      | Read-only preview                  |
-| `open_panel`           | Navigate editor panels           | Browser UI state                   |
+| Tool                 | Behavior                          | Safety posture     |
+| -------------------- | --------------------------------- | ------------------ |
+| `list_project_files` | List the embedded project tree    | Read-only          |
+| `search_code`        | Search bounded file contents      | Read-only          |
+| `read_file`          | Read a bounded file segment       | Read-only          |
+| `get_editor_state`   | Inspect editor workflow state     | Read-only          |
+| `open_file`          | Open a selected file              | Browser UI state   |
+| `stage_text_edit`    | Stage one exact draft replacement | Browser draft only |
+| `review_draft`       | Show the current draft diff       | Read-only preview  |
+| `open_panel`         | Navigate editor panels            | Browser UI state   |
 
 Approval, apply, check, and revert remain UI or bridge operations outside the
 browser WebMCP tool set; the browser agent cannot authorize a filesystem write.
@@ -118,3 +118,29 @@ implement /secret filter
 ===
 
 on /config, revise the UI and when go back from section -> keep previous selected entry. also revamp the /config UI to be more user friendly and intuitive. implement live reload of config changes without needing to restart the program. implement a /config reset command to reset all config to default values. Both in TUI and CLI.
+
+===
+
+add glm-5.3 to huggingface
+
+curl https://router.huggingface.co/v1/chat/completions \
+ -H "Authorization: Bearer $HF_TOKEN" \
+ -H 'Content-Type: application/json' \
+ -d '{
+"messages": [
+{
+"role": "user",
+"content": "What is the capital of France?"
+}
+],
+"model": "zai-org/GLM-5.3:together",
+"stream": false
+}'
+
+---
+
+https://ollama.com/library/glm-5.3-flash
+
+===
+
+https://ollama.com/library/glm-5.3
