@@ -193,10 +193,29 @@ pub(crate) async fn initialize_session(
     let auto_permission_review_active = full_auto;
     apply_workspace_trust_prompt_policy(&mut tool_registry, auto_permission_review_active, workspace_trust_level).await;
 
+    let resumed_primary_agent = resume.and_then(|r| r.snapshot().metadata.primary_agent.clone());
+
     let subagent_controller = if resume.is_none_or(ResumeSession::is_root_thread)
         && let Some(cfg) = vt_cfg
         && cfg.subagents.enabled
     {
+        // Discover primary agents up front so the subagent lifecycle engine can
+        // be gated exactly like the main session: workspace-controlled hook
+        // content (workspace vtcode.toml/.vtcode layers OR a project-sourced
+        // primary agent spec contributing hooks) must not run without user
+        // approval in a subagent context either.
+        let discovered =
+            vtcode_config::discover_subagents(&vtcode_config::SubagentDiscoveryInput::new(config.workspace.clone()))
+                .with_context(|| format!("Failed to discover primary agents in {}", config.workspace.display()))?;
+        let active_primary_agent = active_primary_agent_from_specs_for_mode(
+            &discovered.effective,
+            vt_cfg,
+            full_auto,
+            primary_agent_explicitly_configured,
+            resumed_primary_agent.clone(),
+        )?;
+        let workspace_gated = cfg.workspace_lifecycle_hooks.as_ref().is_some_and(|hooks| !hooks.is_empty())
+            || active_primary_agent.active().contributes_workspace_controlled_hooks();
         match SubagentController::new(SubagentControllerConfig {
             workspace_root: config.workspace.clone(),
             parent_session_id: parent_session_id.to_string(),
@@ -207,6 +226,7 @@ pub(crate) async fn initialize_session(
             vt_cfg: cfg.clone(),
             openai_chatgpt_auth: config.openai_chatgpt_auth.clone(),
             depth: 0,
+            workspace_gated,
             exec_sessions: tool_registry.exec_session_manager(),
             pty_manager: tool_registry.pty_manager().clone(),
             managed_background_runtime: false,
@@ -312,7 +332,6 @@ pub(crate) async fn initialize_session(
     let (base_system_prompt, system_prompt_report) =
         read_system_prompt(&config.workspace, session_bootstrap.prompt_addendum.as_deref(), &available_subagents).await;
     session_bootstrap.system_prompt_report = system_prompt_report;
-    let resumed_primary_agent = resume.and_then(|r| r.snapshot().metadata.primary_agent.clone());
     let active_primary_agent = if let Some(controller) = subagent_controller.as_ref() {
         active_primary_agent_from_specs_for_mode(
             &controller.effective_specs().await,

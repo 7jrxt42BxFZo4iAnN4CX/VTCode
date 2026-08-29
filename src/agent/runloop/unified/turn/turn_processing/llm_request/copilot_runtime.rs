@@ -25,6 +25,7 @@ use vtcode_core::exec_policy::AskForApproval;
 use vtcode_core::llm::provider::{self as uni, LLMStreamEvent, LLMStreamEvent::Completed};
 use vtcode_core::llm::provider::{LLMResponse, ToolDefinition};
 use vtcode_core::tools::registry::{ToolProgressCallback, ToolRegistry};
+use vtcode_core::types::CompactStr;
 use vtcode_core::utils::ansi::AnsiRenderer;
 use vtcode_core::utils::style_helpers::ColorPalette;
 use vtcode_ui::tui::app::{InlineHandle, InlineSession};
@@ -48,8 +49,8 @@ use crate::agent::runloop::unified::tool_pipeline::{
     validation::{SafetyValidationFailure, validate_tool_call_with_limit_prompt},
 };
 use crate::agent::runloop::unified::tool_routing::{
-    HitlDecision, ToolPermissionFlow, ToolPermissionsContext, ensure_tool_permission_with_call_id,
-    prompt_external_tool_permission,
+    HitlDecision, PreToolHookPhaseResult, ToolPermissionFlow, ToolPermissionsContext,
+    ensure_tool_permission_with_call_id, prompt_external_tool_permission,
 };
 use crate::agent::runloop::unified::turn::tool_outcomes::error_handling::tool_denial_diagnostic;
 use crate::agent::runloop::unified::turn::tool_outcomes::helpers::{
@@ -91,6 +92,7 @@ pub(super) struct CopilotRuntimeHost<'a> {
     observed_tool_calls: HashMap<String, ObservedToolCallState>,
     local_terminal_sessions: HashMap<String, LocalTerminalSession>,
     compatibility_notice_shown: bool,
+    pending_hook_rewritten_args: HashMap<CompactStr, Value>,
 }
 
 impl<'a> CopilotRuntimeHost<'a> {
@@ -178,6 +180,7 @@ impl<'a> CopilotRuntimeHost<'a> {
             observed_tool_calls: HashMap::new(),
             local_terminal_sessions: HashMap::new(),
             compatibility_notice_shown: false,
+            pending_hook_rewritten_args: HashMap::new(),
         }
     }
 
@@ -287,6 +290,21 @@ impl<'a> CopilotRuntimeHost<'a> {
             return Ok(tool_not_exposed_response(&canonical_tool_name));
         }
 
+        if let Some(response) = self
+            .prepare_vtcode_tool_execution(renderer, &request.tool_call_id, &canonical_tool_name, &effective_arguments)
+            .await?
+        {
+            return Ok(response);
+        }
+
+        let effective_arguments = self
+            .pending_hook_rewritten_args
+            .remove(request.tool_call_id.as_str())
+            .unwrap_or(effective_arguments);
+
+        // The mutation guard runs after the hook phase so it evaluates the
+        // arguments that will actually execute: a PreToolUse rewrite could
+        // turn a read-only call into a mutating one (or vice versa).
         if self.loop_tracker.as_deref().is_some_and(|tracker| {
             mutation_blocked_until_verification(tracker, &canonical_tool_name, &effective_arguments)
         }) {
@@ -294,13 +312,6 @@ impl<'a> CopilotRuntimeHost<'a> {
                 &canonical_tool_name,
                 "mutating tool call blocked until verification succeeds",
             ));
-        }
-
-        if let Some(response) = self
-            .prepare_vtcode_tool_execution(renderer, &request.tool_call_id, &canonical_tool_name, &effective_arguments)
-            .await?
-        {
-            return Ok(response);
         }
 
         self.record_tool_use(&canonical_tool_name);
@@ -391,7 +402,45 @@ impl<'a> CopilotRuntimeHost<'a> {
         tool_name: &str,
         arguments: &Value,
     ) -> Result<Option<CopilotToolCallResponse>> {
+        // PreToolUse hooks run before the safety gateway so rewritten
+        // arguments are what every downstream check evaluates, mirroring the
+        // non-prevalidated pipeline path.
+        let hook_phase = match crate::agent::runloop::unified::tool_routing::pipeline_pre_tool_hooks(
+            self.lifecycle_hooks,
+            renderer,
+            tool_name,
+            arguments,
+            tool_call_id,
+        )
+        .await
+        {
+            Ok(phase) => phase,
+            Err(err) => {
+                return Ok(Some(denied_tool_response(tool_name, &format!("pre-tool hook phase failed: {err}"))));
+            }
+        };
+        let rewritten_arguments = match &hook_phase {
+            Some(PreToolHookPhaseResult::Deny) => {
+                return Ok(Some(denied_tool_response(tool_name, "Tool permission denied")));
+            }
+            Some(PreToolHookPhaseResult::Proceed { rewritten_args, .. }) => rewritten_args.clone(),
+            None => None,
+        };
+
+        // Re-validate rewritten arguments against the tool schema: preflight
+        // ran on the original payload, so a hook rewrite could otherwise
+        // bypass schema checks.
+        if let Some(rewritten) = rewritten_arguments.as_ref()
+            && let Err(err) = self.tool_registry.preflight_validate_harness_call(tool_name, rewritten)
+        {
+            return Ok(Some(denied_tool_response(
+                tool_name,
+                &format!("PreToolUse hook produced invalid arguments: {err}"),
+            )));
+        }
+
         let invocation_id = invocation_id_from_call_id(tool_call_id);
+        let safety_args = rewritten_arguments.as_ref().unwrap_or(arguments);
         let safety_approval_justification = match validate_tool_call_with_limit_prompt(
             self.safety_validator,
             self.handle,
@@ -399,7 +448,7 @@ impl<'a> CopilotRuntimeHost<'a> {
             self.ctrl_c_state,
             self.ctrl_c_notify,
             tool_name,
-            arguments,
+            safety_args,
             invocation_id,
         )
         .await
@@ -426,12 +475,70 @@ impl<'a> CopilotRuntimeHost<'a> {
         match ensure_tool_permission_with_call_id(
             self.tool_permissions_context_with_safety(renderer, safety_approval_justification.as_deref()),
             tool_name,
-            Some(arguments),
+            Some(rewritten_arguments.as_ref().unwrap_or(arguments)),
             Some(tool_call_id),
+            hook_phase,
         )
         .await?
         {
-            ToolPermissionFlow::Approved { .. } => {}
+            ToolPermissionFlow::Approved { updated_args } => {
+                let final_args = updated_args.or_else(|| rewritten_arguments.clone());
+                if let Some(updated) = final_args {
+                    // A PermissionRequest hook may supply its own rewrite via
+                    // `updated_input`; validate the schema and re-run the
+                    // safety gateway against the final arguments so the
+                    // replacement does not execute under decisions made for
+                    // earlier arguments.
+                    if let Err(err) = self.tool_registry.preflight_validate_harness_call(tool_name, &updated) {
+                        return Ok(Some(denied_tool_response(
+                            tool_name,
+                            &format!("PermissionRequest hook produced invalid arguments: {err}"),
+                        )));
+                    }
+                    if safety_args != &updated {
+                        let invocation_id = invocation_id_from_call_id(tool_call_id);
+                        match validate_tool_call_with_limit_prompt(
+                            self.safety_validator,
+                            self.handle,
+                            self.session,
+                            self.ctrl_c_state,
+                            self.ctrl_c_notify,
+                            tool_name,
+                            &updated,
+                            invocation_id,
+                        )
+                        .await
+                        {
+                            Ok(()) => {}
+                            Err(SafetyValidationFailure::SessionLimitNotIncreased) => {
+                                return Ok(Some(denied_tool_response(
+                                    tool_name,
+                                    "session tool limit reached and not increased by user",
+                                )));
+                            }
+                            Err(SafetyValidationFailure::SessionLimitPromptFailed(error)) => {
+                                return Ok(Some(denied_tool_response(
+                                    tool_name,
+                                    &format!("failed while requesting a session tool-limit increase: {error}"),
+                                )));
+                            }
+                            Err(SafetyValidationFailure::NeedsApproval(_)) => {
+                                // The user already approved the final arguments
+                                // in the PermissionRequest prompt; the gateway's
+                                // NeedsApproval for the rewritten command is
+                                // subsumed by that human approval.
+                            }
+                            Err(SafetyValidationFailure::Validation(error)) => {
+                                return Ok(Some(denied_tool_response(
+                                    tool_name,
+                                    &format!("safety validation failed: {error}"),
+                                )));
+                            }
+                        }
+                    }
+                    self.pending_hook_rewritten_args.insert(CompactStr::from(tool_call_id), updated);
+                }
+            }
             ToolPermissionFlow::Denied => {
                 let diagnostic = tool_denial_diagnostic(tool_name);
                 let text = if let Some(diag) = diagnostic.as_ref() {
@@ -455,6 +562,10 @@ impl<'a> CopilotRuntimeHost<'a> {
         }
 
         if let Some(exhaustion) = self.harness_state.tool_budget_exhaustion() {
+            // Nothing will execute for this call id; drop the pending
+            // rewrite so a later retry with the same id cannot inherit stale
+            // arguments.
+            self.pending_hook_rewritten_args.remove(tool_call_id);
             return Ok(Some(tool_exceeded_budget_response(tool_name, exhaustion.max)));
         }
 

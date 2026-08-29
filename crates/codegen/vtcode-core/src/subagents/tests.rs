@@ -38,6 +38,7 @@ fn test_controller_config(workspace_root: PathBuf, vt_cfg: VTCodeConfig) -> Suba
         vt_cfg,
         openai_chatgpt_auth: None,
         depth: 0,
+        workspace_gated: false,
         exec_sessions,
         pty_manager: pty_sessions.manager().clone(),
         managed_background_runtime: false,

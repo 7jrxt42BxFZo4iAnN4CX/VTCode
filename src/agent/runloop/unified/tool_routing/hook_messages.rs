@@ -16,7 +16,12 @@ pub(super) fn render_hook_messages(renderer: &mut AnsiRenderer, messages: &[Hook
             HookMessageLevel::Error => MessageStyle::Error,
         };
 
-        renderer.line(style, text)?;
+        // Rendering is cosmetic; a single failed render must not abort the
+        // hook phase (which would discard every hook's messages and block the
+        // tool call). Log and continue.
+        if let Err(err) = renderer.line(style, text) {
+            tracing::warn!(error = %err, "Failed to render lifecycle hook message");
+        }
     }
 
     Ok(())

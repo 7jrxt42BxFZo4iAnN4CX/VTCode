@@ -8,6 +8,19 @@ use super::common::{
     looks_like_json, matches_hook_event, parse_json_output, trimmed_non_empty,
 };
 
+/// Human-readable JSON value kind used in diagnostics for rejected
+/// `updatedInput` payloads.
+fn kind_of(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
 pub(crate) fn interpret_pre_tool(
     command: &HookCommandConfig,
     result: &HookCommandResult,
@@ -38,7 +51,11 @@ pub(crate) fn interpret_pre_tool(
             }
             return;
         } else if code != 0 {
+            // A failing process is not a trusted source for input rewrites or
+            // decisions: surface the warning and ignore its output entirely.
+            // Early return also preserves a rewrite made by an earlier hook.
             handle_non_zero_exit(command, result, code, &mut outcome.messages, true);
+            return;
         }
     }
 
@@ -80,6 +97,16 @@ pub(crate) fn interpret_pre_tool(
                 && !reason.trim().is_empty()
             {
                 outcome.messages.push(HookMessage::info(reason.trim().to_owned()));
+            }
+
+            match spec.get("updatedInput") {
+                Some(value) if value.is_object() => outcome.updated_input = Some(value.clone()),
+                Some(value) if !value.is_null() => outcome.messages.push(HookMessage::warning(format!(
+                    "PreToolUse hook `{}` returned non-object updatedInput ({}); ignoring rewrite",
+                    command.command,
+                    kind_of(value)
+                ))),
+                _ => {}
             }
         }
 

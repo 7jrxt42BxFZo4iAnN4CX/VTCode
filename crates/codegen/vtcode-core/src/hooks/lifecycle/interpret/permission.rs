@@ -75,7 +75,10 @@ pub(crate) fn interpret_permission_request(
         return;
     };
 
-    let updated_input = spec.get("updatedInput").cloned();
+    let updated_input = match spec.get("updatedInput") {
+        Some(value) if value.is_object() => Some(value.clone()),
+        _ => None,
+    };
     let permission_updates = parse_permission_updates(spec.get("updatedPermissions"));
     let mut scope = PermissionDecisionScope::Once;
     for update in &permission_updates {

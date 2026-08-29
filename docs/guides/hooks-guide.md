@@ -222,6 +222,22 @@ Hooks can return structured JSON in stdout for advanced control:
 }
 ```
 
+`PreToolUse` hooks may also return `updatedInput` (without a decision) to
+rewrite tool arguments before execution. Rewritten arguments pass through all
+permission checks, and later hooks receive them in their payloads:
+
+```json
+{
+    "hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecisionReason": "RTK auto-rewrite",
+        "updatedInput": {
+            "command": "rtk cargo build"
+        }
+    }
+}
+```
+
 For `SessionStart`, plain stdout is added to hidden model context. Use
 `systemMessage` when you want a visible line in the TUI.
 

@@ -59,6 +59,7 @@ impl Default for UserPromptHookOutcome {
 #[derive(Default)]
 pub struct PreToolHookOutcome {
     pub decision: PreToolHookDecision,
+    pub updated_input: Option<Value>,
     pub messages: Vec<HookMessage>,
 }
 

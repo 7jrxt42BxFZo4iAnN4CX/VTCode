@@ -15,7 +15,9 @@ use crate::agent::runloop::unified::tool_call_safety::invocation_id_from_call_id
 use crate::agent::runloop::unified::tool_pipeline::validation::{
     SafetyValidationFailure, validate_tool_call_with_limit_prompt,
 };
-use crate::agent::runloop::unified::tool_routing::{ToolPermissionFlow, ensure_tool_permission_with_call_id};
+use crate::agent::runloop::unified::tool_routing::{
+    PreToolHookPhaseResult, ToolPermissionFlow, ensure_tool_permission_with_call_id,
+};
 use crate::agent::runloop::unified::turn::context::{
     PreparedAssistantToolCall, TurnHandlerOutcome, TurnLoopResult, TurnProcessingContext,
 };
@@ -521,6 +523,19 @@ async fn handle_tool_call_inner<'a, 'b, 'tool>(
         }
     };
 
+    // A PreToolUse hook may have rewritten the arguments inside validate_tool_call;
+    // re-evaluate the mutation guard against the arguments that will actually
+    // execute, so a rewrite cannot turn a read-only call into an unguarded mutation.
+    if block_mutation_until_verification(
+        t_ctx.ctx,
+        t_ctx.repeated_tool_attempts,
+        tool_call_id,
+        &prepared.canonical_name,
+        &prepared.effective_args,
+    )? {
+        return Ok(None);
+    }
+
     // 3. Execute and Handle Result
     if let Some(outcome) = execute_and_handle_tool_call(
         t_ctx.ctx,
@@ -694,11 +709,87 @@ pub(crate) async fn validate_tool_call<'a>(
 
     prepared.effective_args =
         maybe_apply_spool_read_offset_hint(ctx.tool_registry, &canonical_tool_name, &prepared.effective_args);
+    prepared.parallel_safe_after_preflight =
+        vtcode_core::tools::tool_intent::is_parallel_safe_call(&canonical_tool_name, &prepared.effective_args);
+    let effective_args = &prepared.effective_args;
+
+    // PreToolUse hooks run before the argument-dependent guards, the safety
+    // gateway, and permission evaluation so rewritten arguments are what every
+    // downstream check sees (read-after-write, repeated-read-only, mutation
+    // bookkeeping, parallel grouping). Mirrors the pipeline path.
+    let hook_phase = match crate::agent::runloop::unified::tool_routing::pipeline_pre_tool_hooks(
+        ctx.lifecycle_hooks,
+        ctx.renderer,
+        &canonical_tool_name,
+        effective_args,
+        tool_call_id,
+    )
+    .await
+    {
+        Ok(Some(PreToolHookPhaseResult::Deny)) => {
+            ctx.harness_state.record_denied_tool_call();
+            // Surface the denial to the model so it does not silently retry
+            // the same call; the reason is also rendered for the user.
+            ctx.push_tool_response(
+                tool_call_id,
+                Some(&canonical_tool_name),
+                build_failure_error_content(
+                    format!("Tool '{canonical_tool_name}' denied by PreToolUse hook"),
+                    "policy",
+                ),
+            );
+            return Ok(ValidationResult::Blocked);
+        }
+        Ok(Some(PreToolHookPhaseResult::Proceed { rewritten_args: Some(rewritten), requires_prompt })) => {
+            // Re-validate the rewritten arguments: preflight ran on the
+            // original payload, so a rewrite could otherwise bypass schema
+            // checks. A hook-produced invalid payload is a hook error — block
+            // with a clear message instead of executing malformed input.
+            if let Err(err) = ctx
+                .tool_registry
+                .preflight_validate_harness_call(&canonical_tool_name, &rewritten)
+            {
+                ctx.harness_state.record_denied_tool_call();
+                ctx.push_tool_response(
+                    tool_call_id,
+                    Some(&canonical_tool_name),
+                    build_failure_error_content(
+                        format!("PreToolUse hook produced invalid arguments for '{canonical_tool_name}': {err}"),
+                        "policy",
+                    ),
+                );
+                return Ok(ValidationResult::Blocked);
+            }
+            prepared.effective_args = rewritten;
+            // Re-derive the intent classification for the rewritten arguments:
+            // the parallel-readonly grouping and the mutation bookkeeping below
+            // must see what will actually execute, not the pre-rewrite form.
+            prepared.readonly_classification =
+                !vtcode_core::tools::tool_intent::classify_tool_intent(&canonical_tool_name, &prepared.effective_args)
+                    .mutating;
+            prepared.parallel_safe_after_preflight =
+                vtcode_core::tools::tool_intent::is_parallel_safe_call(&canonical_tool_name, &prepared.effective_args);
+            Some(PreToolHookPhaseResult::Proceed { rewritten_args: None, requires_prompt })
+        }
+        Ok(phase) => phase,
+        Err(err) => {
+            ctx.harness_state.record_denied_tool_call();
+            ctx.push_system_message(format!("Pre-tool hook phase failed: {err}"));
+            ctx.push_tool_response(
+                tool_call_id,
+                Some(&canonical_tool_name),
+                build_failure_error_content(format!("Pre-tool hook phase failed: {err}"), "policy"),
+            );
+            return Ok(ValidationResult::Blocked);
+        }
+    };
+
+    // Only after the hook phase (and possible rewrite) do the argument- and
+    // classification-dependent bookkeeping and guards run, so they observe the
+    // arguments that will actually execute.
     if !prepared.readonly_classification {
         ctx.harness_state.reset_file_read_family_streak();
     }
-    prepared.parallel_safe_after_preflight =
-        vtcode_core::tools::tool_intent::is_parallel_safe_call(&canonical_tool_name, &prepared.effective_args);
     let fallback_recommendation =
         recovery_fallback_for_tool(&canonical_tool_name, &prepared.effective_args).map(|(tool_name, args)| {
             vtcode_core::core::agent::harness_kernel::FallbackRecommendation { tool_name, args, chain: Vec::new() }
@@ -768,6 +859,8 @@ pub(crate) async fn validate_tool_call<'a>(
     // the turn balancer. The legacy core loop detector remains available for
     // non-unified autonomous execution paths only.
 
+    let effective_args = &prepared.effective_args;
+
     let mut safety_approval_justification = None;
     if let Some((outcome, justification)) =
         run_safety_validation_loop(ctx, tool_call_id, &canonical_tool_name, effective_args).await?
@@ -778,19 +871,54 @@ pub(crate) async fn validate_tool_call<'a>(
         }
     }
 
-    // Ensure tool permission
+    // Ensure tool permission. The PreToolUse hook phase already ran above;
+    // forwarding it here prevents a second hook invocation.
     let permission_result = ensure_tool_permission_with_call_id(
         build_tool_permissions_context_with_safety(ctx, safety_approval_justification.as_deref()),
         &canonical_tool_name,
         Some(effective_args),
         Some(tool_call_id),
+        hook_phase,
     )
     .await;
 
     match permission_result {
         Ok(ToolPermissionFlow::Approved { updated_args }) => {
             if let Some(updated_args) = updated_args {
+                // A PermissionRequest hook may supply its own rewrite via
+                // `updated_input`; it replaces the arguments the safety
+                // gateway and argument-dependent guards evaluated. Validate
+                // the schema and re-run the safety gateway against the final
+                // arguments so the replacement does not execute under
+                // decisions made for earlier arguments.
+                if let Err(err) = ctx
+                    .tool_registry
+                    .preflight_validate_harness_call(&canonical_tool_name, &updated_args)
+                {
+                    ctx.harness_state.record_denied_tool_call();
+                    ctx.push_tool_response(
+                        tool_call_id,
+                        Some(&canonical_tool_name),
+                        build_failure_error_content(
+                            format!(
+                                "PermissionRequest hook produced invalid arguments for '{canonical_tool_name}': {err}"
+                            ),
+                            "policy",
+                        ),
+                    );
+                    return Ok(ValidationResult::Blocked);
+                }
+                let rewritten_differ = *effective_args != updated_args;
                 prepared.effective_args = updated_args;
+                if rewritten_differ
+                    && let Some((outcome, _)) =
+                        run_safety_validation_loop(ctx, tool_call_id, &canonical_tool_name, &prepared.effective_args)
+                            .await?
+                    && matches!(outcome, ValidationResult::Blocked)
+                {
+                    ctx.harness_state.record_denied_tool_call();
+                    return Ok(outcome);
+                }
             }
             if canonical_tool_name == tool_names::START_PLANNING {
                 ctx.harness_state.clear_task_tracker_create_signatures();

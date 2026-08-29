@@ -167,6 +167,37 @@ Payload fields include `tool_name`, serialized `tool_input`, and
 `transcript_path`. Use this hook to allow, deny, or ask for confirmation before
 running a tool.
 
+A `PreToolUse` hook may also rewrite the tool call by returning
+`hookSpecificOutput.updatedInput`. The rewritten arguments replace the original
+ones for every downstream step: policy checks, permission evaluation, approval
+prompts, and the tool execution itself. A rewrite is valid with or without a
+`permissionDecision`, so a hook can rewrite input and still leave the approval
+decision to the normal permission flow:
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecisionReason": "RTK auto-rewrite",
+    "updatedInput": { "command": "rtk cargo build" }
+  }
+}
+```
+
+Hooks run in configuration order. When a hook returns `updatedInput`, later
+hooks receive the rewritten tool input in their payload, so policy hooks placed
+after rewrite hooks observe the final command. The first `allow` or `deny`
+decision short-circuits the remaining hooks as before. Because the PreToolUse
+phase runs before the safety gateway and permission checks, approval prompts
+show exactly the command that will run.
+
+> Note: a `PermissionRequest` hook may additionally return its own
+> `updatedInput`, which replaces the PreToolUse rewrite. That value is applied
+> at finalization, after safety validation of the PreToolUse-rewritten
+> arguments — so it is not re-validated by the gateway. PermissionRequest
+> hooks only run when a prompt is already warranted, and hook content is
+> gated by workspace approval; treat this as a trusted-rewrite path.
+
 ### PostToolUse
 
 Runs immediately after a tool completes successfully. The payload includes the
@@ -276,7 +307,10 @@ hooks:
 
 `PermissionRequest` hooks support Claude-style
 `hookSpecificOutput.decision.behavior`, `updatedInput`, `updatedPermissions`,
-`message`, and `interrupt`. `Stop` hooks support either
+`message`, and `interrupt`. `PreToolUse` hooks support
+`hookSpecificOutput.permissionDecision`, `permissionDecisionReason`, and
+`updatedInput` (applied before permission checks; later hooks see rewritten
+input). `Stop` hooks support either
 `{"decision":"block","reason":"..."}` or
 `{"continue":false,"stopReason":"..."}`. User prompt hooks can block prompt
 processing and include a custom reason.

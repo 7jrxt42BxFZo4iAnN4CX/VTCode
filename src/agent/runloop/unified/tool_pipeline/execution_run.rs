@@ -20,7 +20,9 @@ use crate::agent::runloop::unified::inline_events::harness::{HarnessEventEmitter
 use crate::agent::runloop::unified::run_loop_context::RunLoopContext;
 use crate::agent::runloop::unified::state::CtrlCState;
 use crate::agent::runloop::unified::tool_call_safety::invocation_id_from_call_id;
-use crate::agent::runloop::unified::tool_routing::{ToolPermissionFlow, ensure_tool_permission_with_call_id};
+use crate::agent::runloop::unified::tool_routing::{
+    PreToolHookPhaseResult, ToolPermissionFlow, ensure_tool_permission_with_call_id,
+};
 
 use super::execute_hitl_tool;
 use super::execution_events::{emit_tool_completion_for_status, emit_tool_completion_status};
@@ -177,6 +179,62 @@ pub(crate) async fn run_tool_call_with_args(
     };
 
     if !prevalidated {
+        // PreToolUse hooks run before the safety gateway so that rewritten
+        // arguments (e.g. hook-wrapped commands) are what every downstream
+        // check — safety, policy, permissions — evaluates and approves.
+        let hook_phase = crate::agent::runloop::unified::tool_routing::pipeline_pre_tool_hooks(
+            lifecycle_hooks,
+            ctx.renderer,
+            name,
+            effective_args.as_ref(),
+            tool_call_id,
+        )
+        .await;
+        let hook_phase = match hook_phase {
+            Ok(Some(PreToolHookPhaseResult::Deny)) => {
+                ctx.harness_state.record_denied_tool_call();
+                return Ok(finish_with_status(
+                    ToolExecutionStatus::Failure {
+                        error: structured_failure_from_message(name, "Tool permission denied"),
+                    },
+                    false,
+                    effective_args.as_ref(),
+                ));
+            }
+            Ok(Some(PreToolHookPhaseResult::Proceed { rewritten_args: Some(rewritten), requires_prompt })) => {
+                // Re-validate the rewritten arguments: preflight ran on the
+                // original payload, so a rewrite could otherwise bypass schema
+                // checks. A hook-produced invalid payload is a hook error —
+                // block instead of executing malformed input.
+                if let Err(err) = ctx.tool_registry.preflight_validate_harness_call(name, &rewritten) {
+                    return Ok(finish_with_status(
+                        ToolExecutionStatus::Failure {
+                            error: structured_failure(
+                                name,
+                                &anyhow!("PreToolUse hook produced invalid arguments: {err}"),
+                            ),
+                        },
+                        false,
+                        effective_args.as_ref(),
+                    ));
+                }
+                effective_args = std::borrow::Cow::Owned(rewritten);
+                // Forward the phase with the rewrite stripped so the
+                // permission flow neither re-runs hooks (double invocation,
+                // double rewrite) nor loses the Ask decision. The rewritten
+                // args are already reflected in effective_args below.
+                Some(PreToolHookPhaseResult::Proceed { rewritten_args: None, requires_prompt })
+            }
+            Ok(phase) => phase,
+            Err(err) => {
+                return Ok(finish_with_status(
+                    ToolExecutionStatus::Failure { error: structured_failure(name, &err) },
+                    false,
+                    effective_args.as_ref(),
+                ));
+            }
+        };
+
         let safety_approval_justification = match check_tool_safety(
             ctx,
             name,
@@ -205,10 +263,45 @@ pub(crate) async fn run_tool_call_with_args(
             skip_confirmations,
             vt_cfg,
             safety_approval_justification.as_deref(),
+            hook_phase,
         )
         .await
         {
-            Ok(Some(updated_args)) => effective_args = std::borrow::Cow::Owned(updated_args),
+            Ok(Some(updated_args)) => {
+                // A PermissionRequest hook may supply its own rewrite via
+                // `updated_input`; it replaces the arguments the safety
+                // gateway, policy checks, approvals, and argument-dependent
+                // guards evaluated. Validate the schema and re-run the safety
+                // gateway against the final arguments so the replacement does
+                // not execute under decisions made for earlier arguments.
+                if let Err(err) = ctx.tool_registry.preflight_validate_harness_call(name, &updated_args) {
+                    return Ok(finish_with_status(
+                        ToolExecutionStatus::Failure {
+                            error: structured_failure(
+                                name,
+                                &anyhow!("PermissionRequest hook produced invalid arguments: {err}"),
+                            ),
+                        },
+                        false,
+                        effective_args.as_ref(),
+                    ));
+                }
+                let rewritten_differ = effective_args.as_ref() != &updated_args;
+                effective_args = std::borrow::Cow::Owned(updated_args);
+                if rewritten_differ
+                    && let Err(safety_failure) = check_tool_safety(
+                        ctx,
+                        name,
+                        effective_args.as_ref(),
+                        safety_invocation_id,
+                        ctrl_c_state,
+                        ctrl_c_notify,
+                    )
+                    .await
+                {
+                    return Ok(finish_with_status(safety_failure, false, effective_args.as_ref()));
+                }
+            }
             Ok(None) => {}
             Err(permission_failure) => {
                 return Ok(finish_with_status(permission_failure, false, effective_args.as_ref()));
@@ -440,7 +533,12 @@ async fn check_tool_permission(
     skip_confirmations: bool,
     vt_cfg: Option<&VTCodeConfig>,
     safety_approval_justification: Option<&str>,
+    hook_phase: Option<PreToolHookPhaseResult>,
 ) -> Result<Option<Value>, ToolExecutionStatus> {
+    // PreToolUse hooks already ran upstream (see run_tool_call_with_args), so
+    // the permission flow consumes the forwarded phase result instead of
+    // running them again. The engine is still passed through for the later
+    // PermissionRequest hook phase.
     let permissions_ctx = build_tool_permissions_context(
         ctx,
         ctrl_c_state,
@@ -452,7 +550,9 @@ async fn check_tool_permission(
         safety_approval_justification,
     );
 
-    match ensure_tool_permission_with_call_id(permissions_ctx, name, Some(args_val), Some(tool_call_id)).await {
+    match ensure_tool_permission_with_call_id(permissions_ctx, name, Some(args_val), Some(tool_call_id), hook_phase)
+        .await
+    {
         Ok(ToolPermissionFlow::Approved { updated_args }) => Ok(updated_args),
         Ok(ToolPermissionFlow::Denied) => Err(ToolExecutionStatus::Failure {
             error: structured_failure_from_message(name, "Tool permission denied"),

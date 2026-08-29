@@ -414,9 +414,13 @@ async fn approve_tool_permission(
 /// Lightweight approval helper for paths that don't need cache updates.
 /// Centralizes `mark_tool_preapproved` + `Approved` return to prevent
 /// the bug where a path returns `Approved` without preapproving.
-async fn approve_tool_permission_no_cache(tool_registry: &ToolRegistry, tool_name: &str) -> ToolPermissionFlow {
+async fn approve_tool_permission_no_cache(
+    tool_registry: &ToolRegistry,
+    tool_name: &str,
+    updated_args: Option<Value>,
+) -> ToolPermissionFlow {
     tool_registry.mark_tool_preapproved(tool_name).await;
-    ToolPermissionFlow::Approved { updated_args: None }
+    ToolPermissionFlow::Approved { updated_args }
 }
 
 fn map_permission_decision(
@@ -478,6 +482,7 @@ async fn reuse_saved_approval(
     tool_permission_cache: Option<&Arc<RwLock<ToolPermissionCache>>>,
     approval_learning_target: &shell_approval::ApprovalLearningTarget,
     exact_shell_approval_target: Option<&shell_approval::ApprovalLearningTarget>,
+    hook_rewritten_args: Option<Value>,
 ) -> Option<ToolPermissionFlow> {
     if let Some(approval_key) = persisted_segment_approval_hit_key(tool_registry, normalized_tool_name, tool_args).await
     {
@@ -492,7 +497,7 @@ async fn reuse_saved_approval(
                 &[cache_key],
                 tool_permission_cache,
                 Some(PermissionGrant::Permanent),
-                None,
+                hook_rewritten_args.clone(),
             )
             .await,
         );
@@ -512,7 +517,7 @@ async fn reuse_saved_approval(
                 &[cache_key],
                 tool_permission_cache,
                 Some(PermissionGrant::Permanent),
-                None,
+                hook_rewritten_args,
             )
             .await,
         );
@@ -526,7 +531,7 @@ async fn reuse_saved_approval(
     {
         tracing::debug!("Using cached ACP permission for tool invocation: {}", cache_key);
         drop(permission_cache);
-        return Some(approve_tool_permission_no_cache(tool_registry, tool_name).await);
+        return Some(approve_tool_permission_no_cache(tool_registry, tool_name, hook_rewritten_args).await);
     }
 
     None
@@ -925,14 +930,94 @@ pub(crate) fn ensure_tool_permission<'a, S: UiSession + ?Sized>(
     tool_name: &'a str,
     tool_args: Option<&'a Value>,
 ) -> impl Future<Output = Result<ToolPermissionFlow>> + 'a {
-    ensure_tool_permission_with_call_id(ctx, tool_name, tool_args, None)
+    ensure_tool_permission_with_call_id(ctx, tool_name, tool_args, None, None)
 }
 
+#[cfg(test)]
+/// Test-only entry that forwards a precomputed PreToolUse hook phase into the
+/// permission flow, mirroring the pipeline/validate/copilot callers.
+pub(crate) fn ensure_tool_permission_forwarded<'a, S: UiSession + ?Sized>(
+    ctx: ToolPermissionsContext<'a, S>,
+    tool_name: &'a str,
+    tool_args: Option<&'a Value>,
+    tool_call_id: Option<&'a str>,
+    hook_phase: Option<PreToolHookPhaseResult>,
+) -> impl Future<Output = Result<ToolPermissionFlow>> + 'a {
+    ensure_tool_permission_with_call_id(ctx, tool_name, tool_args, tool_call_id, hook_phase)
+}
+
+/// Outcome of the PreToolUse hook phase.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum PreToolHookPhaseResult {
+    /// A hook denied the tool call; downstream checks must refuse it.
+    Deny,
+    /// Hooks allowed or did not decide; carries rewritten args (if any) and
+    /// whether a hook requested the mandatory prompt path.
+    Proceed {
+        rewritten_args: Option<Value>,
+        requires_prompt: bool,
+    },
+}
+
+/// Run the PreToolUse hook phase, surfacing Deny decisions explicitly so
+/// callers can refuse the tool call.
+pub(crate) async fn run_pre_tool_hook_phase(
+    hooks: Option<&LifecycleHookEngine>,
+    renderer: &mut AnsiRenderer,
+    tool_name: &str,
+    tool_args: Option<&Value>,
+    tool_call_id: Option<&str>,
+) -> Result<PreToolHookPhaseResult> {
+    let mut rewritten: Option<Value> = None;
+    let mut requires_prompt = false;
+    if let Some(hooks) = hooks {
+        match hooks.run_pre_tool_use(tool_name, tool_args, tool_call_id).await {
+            Ok(outcome) => {
+                render_hook_messages(renderer, &outcome.messages)?;
+                rewritten = outcome.updated_input;
+                match outcome.decision {
+                    PreToolHookDecision::Allow => {}
+                    PreToolHookDecision::Deny => return Ok(PreToolHookPhaseResult::Deny),
+                    PreToolHookDecision::Ask => requires_prompt = true,
+                    PreToolHookDecision::Continue => {}
+                }
+            }
+            Err(err) => {
+                renderer.line(MessageStyle::Error, &format!("Failed to run pre-tool hooks: {err}"))?;
+            }
+        }
+    }
+    Ok(PreToolHookPhaseResult::Proceed { rewritten_args: rewritten, requires_prompt })
+}
+
+/// Run the PreToolUse hook phase and return the phase result for
+/// [`ensure_tool_permission_with_call_id`]. The tool pipeline calls this
+/// before safety validation so the gateway evaluates rewritten arguments,
+/// then forwards the result into the permission flow.
+pub(crate) async fn pipeline_pre_tool_hooks(
+    hooks: Option<&LifecycleHookEngine>,
+    renderer: &mut AnsiRenderer,
+    tool_name: &str,
+    args_val: &Value,
+    tool_call_id: &str,
+) -> Result<Option<PreToolHookPhaseResult>> {
+    let phase = run_pre_tool_hook_phase(hooks, renderer, tool_name, Some(args_val), Some(tool_call_id)).await?;
+    Ok(Some(phase))
+}
+
+/// Runs the full permission flow for a tool call.
+///
+/// `pipeline_pre_tool_hook_result` carries the PreToolUse hook phase result
+/// when the caller (the tool pipeline) already ran it before safety
+/// validation, so hooks see exactly one invocation per call and the safety
+/// gateway evaluates the rewritten arguments. Pass `None` when the caller has
+/// not run the hook phase.
 pub(crate) async fn ensure_tool_permission_with_call_id<S: UiSession + ?Sized>(
     ctx: ToolPermissionsContext<'_, S>,
     tool_name: &str,
     tool_args: Option<&Value>,
     tool_call_id: Option<&str>,
+    pipeline_pre_tool_hook_result: Option<PreToolHookPhaseResult>,
 ) -> Result<ToolPermissionFlow> {
     let ToolPermissionsContext {
         tool_registry,
@@ -960,7 +1045,25 @@ pub(crate) async fn ensure_tool_permission_with_call_id<S: UiSession + ?Sized>(
         harness_emitter,
     } = ctx;
 
-    // Generate cache key - use command text for shell tools to enable granular session approval
+    // PreToolUse hooks may rewrite tool input (e.g. wrapping shell commands in
+    // an output compressor). When the pipeline already ran the hook phase
+    // upstream (for safety-gateway visibility), it passes the phase result
+    // here; otherwise we run the phase ourselves.
+    let phase = match pipeline_pre_tool_hook_result {
+        Some(precomputed) => precomputed,
+        None => run_pre_tool_hook_phase(hooks, renderer, tool_name, tool_args, tool_call_id).await?,
+    };
+    let (hook_rewritten_args, hook_requires_prompt) = match phase {
+        PreToolHookPhaseResult::Deny => return Ok(ToolPermissionFlow::Denied),
+        PreToolHookPhaseResult::Proceed { rewritten_args, requires_prompt } => (rewritten_args, requires_prompt),
+    };
+
+    let effective_args: Option<Value> = match (&hook_rewritten_args, tool_args) {
+        (Some(updated), _) => Some(updated.clone()),
+        (None, original) => original.cloned(),
+    };
+    let tool_args: Option<&Value> = effective_args.as_ref();
+
     let cache_key = cache_key(tool_name, tool_args);
 
     // Check tool permission cache for persisted denials up front.
@@ -968,27 +1071,6 @@ pub(crate) async fn ensure_tool_permission_with_call_id<S: UiSession + ?Sized>(
         let permission_cache = cache.read().await;
         if permission_cache.is_denied(&cache_key) || permission_cache.is_denied(tool_name) {
             return Ok(ToolPermissionFlow::Denied);
-        }
-    }
-
-    let mut hook_requires_prompt = false;
-
-    if let Some(hooks) = hooks {
-        match hooks.run_pre_tool_use(tool_name, tool_args, tool_call_id).await {
-            Ok(outcome) => {
-                render_hook_messages(renderer, &outcome.messages)?;
-                match outcome.decision {
-                    PreToolHookDecision::Allow => {}
-                    PreToolHookDecision::Deny => return Ok(ToolPermissionFlow::Denied),
-                    PreToolHookDecision::Ask => {
-                        hook_requires_prompt = true;
-                    }
-                    PreToolHookDecision::Continue => {}
-                }
-            }
-            Err(err) => {
-                renderer.line(MessageStyle::Error, &format!("Failed to run pre-tool hooks: {err}"))?;
-            }
         }
     }
 
@@ -1064,7 +1146,7 @@ pub(crate) async fn ensure_tool_permission_with_call_id<S: UiSession + ?Sized>(
         && renderer.supports_inline_ui()
         && policy_decision == ToolPermissionDecision::Allow
     {
-        return Ok(approve_tool_permission_no_cache(tool_registry, tool_name).await);
+        return Ok(approve_tool_permission_no_cache(tool_registry, tool_name, hook_rewritten_args).await);
     }
 
     let effective_permission_decision =
@@ -1153,6 +1235,7 @@ pub(crate) async fn ensure_tool_permission_with_call_id<S: UiSession + ?Sized>(
             tool_permission_cache,
             &approval_learning_target,
             exact_shell_approval_target.as_ref(),
+            hook_rewritten_args.clone(),
         )
         .await
     {
@@ -1163,7 +1246,7 @@ pub(crate) async fn ensure_tool_permission_with_call_id<S: UiSession + ?Sized>(
     // exact command, skip the popup even when reuse_saved_approval returned
     // None (e.g. the persisted approval store doesn't have it yet).
     if cached_command_approval && !safety_requires_prompt {
-        return Ok(approve_tool_permission_no_cache(tool_registry, tool_name).await);
+        return Ok(approve_tool_permission_no_cache(tool_registry, tool_name, hook_rewritten_args).await);
     }
 
     if should_allow_without_prompt(
@@ -1173,7 +1256,7 @@ pub(crate) async fn ensure_tool_permission_with_call_id<S: UiSession + ?Sized>(
         requires_rule_prompt,
         requires_sandbox_prompt,
     ) {
-        return Ok(approve_tool_permission_no_cache(tool_registry, tool_name).await);
+        return Ok(approve_tool_permission_no_cache(tool_registry, tool_name, hook_rewritten_args).await);
     }
 
     if policy_decision == ToolPermissionDecision::Allow
@@ -1182,7 +1265,7 @@ pub(crate) async fn ensure_tool_permission_with_call_id<S: UiSession + ?Sized>(
         && !auto_permission_classifier_review
         && !full_auto_allowlist_active
     {
-        return Ok(approve_tool_permission_no_cache(tool_registry, tool_name).await);
+        return Ok(approve_tool_permission_no_cache(tool_registry, tool_name, hook_rewritten_args).await);
     }
 
     let mut requires_auto_fallback_prompt = false;
@@ -1221,7 +1304,7 @@ pub(crate) async fn ensure_tool_permission_with_call_id<S: UiSession + ?Sized>(
         };
         match outcome {
             AutoPermissionPermissionOutcome::Allow => {
-                return Ok(ToolPermissionFlow::Approved { updated_args: None });
+                return Ok(ToolPermissionFlow::Approved { updated_args: hook_rewritten_args });
             }
             AutoPermissionPermissionOutcome::Block => return Ok(ToolPermissionFlow::Denied),
             AutoPermissionPermissionOutcome::PromptFallback => {
@@ -1238,7 +1321,7 @@ pub(crate) async fn ensure_tool_permission_with_call_id<S: UiSession + ?Sized>(
     // flags destructive/risky tool calls that require explicit human review
     // regardless of the skip_confirmations setting.
     if skip_confirmations && !full_auto_allowlist_active && !safety_requires_prompt {
-        return Ok(approve_tool_permission_no_cache(tool_registry, tool_name).await);
+        return Ok(approve_tool_permission_no_cache(tool_registry, tool_name, hook_rewritten_args).await);
     }
 
     let should_prompt = requires_rule_prompt
@@ -1246,7 +1329,7 @@ pub(crate) async fn ensure_tool_permission_with_call_id<S: UiSession + ?Sized>(
         || requires_auto_fallback_prompt
         || (policy_decision == ToolPermissionDecision::Prompt && !auto_permission_classifier_review);
     if !should_prompt {
-        return Ok(approve_tool_permission_no_cache(tool_registry, tool_name).await);
+        return Ok(approve_tool_permission_no_cache(tool_registry, tool_name, hook_rewritten_args).await);
     }
 
     if approval_policy_rejects_prompt(
@@ -1296,7 +1379,7 @@ pub(crate) async fn ensure_tool_permission_with_call_id<S: UiSession + ?Sized>(
                         exact_shell_approval_target.as_ref(),
                         &persistent_approval_target,
                         map_permission_decision(decision.behavior, decision.scope, decision.interrupt),
-                        decision.updated_input,
+                        decision.updated_input.or_else(|| hook_rewritten_args.clone()),
                     )
                     .await;
                 }
@@ -1380,7 +1463,7 @@ pub(crate) async fn ensure_tool_permission_with_call_id<S: UiSession + ?Sized>(
         exact_shell_approval_target.as_ref(),
         &persistent_approval_target,
         decision,
-        None,
+        hook_rewritten_args,
     )
     .await
 }
