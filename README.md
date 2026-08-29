@@ -64,10 +64,6 @@ Pages. See the [WebMCP user guide](./docs/user-guide/webmcp.md),
 and [WebMCP crate documentation](./crates/codegen/vtcode-webmcp/README.md) for
 setup, integration, and implementation details.
 
-<p align="center">
-  <a href="https://vtcode.vinhnx.chatgpt.site/"><img src="./resources/screenshots/vtcode-webmcp.png" alt="VT Code WebMCP editor" width="90%" style="max-width: 960px; border-radius: 12px;"></a>
-</p>
-
 ### Runtime and coding
 
 - **Agent runtime**: interactive TUI, slash commands, streaming, `ask`/`exec` CLI, session resume, review workflows, and the authenticated WebMCP browser bridge
