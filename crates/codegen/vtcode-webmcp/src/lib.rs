@@ -17,6 +17,8 @@ pub mod filesystem;
 pub mod pairing;
 /// Browser/server WebSocket protocol types.
 pub mod protocol;
+/// Read-only OpenAI-compatible remote MCP transport.
+pub mod remote_mcp;
 /// Runtime adapter traits and bridge result types.
 pub mod runtime;
 /// Axum WebSocket server and request dispatcher.
@@ -27,5 +29,9 @@ pub use event_hub::{EventHubConfig, EventHubSubscription, SequencedThreadEvent, 
 pub use filesystem::{FilesystemLimits, FilesystemWorkspace};
 pub use pairing::{PairingDisplay, PairingManager, PairingSession};
 pub use protocol::{BridgeRequest, BridgeResponse, BridgeSettings, FileChange, PROTOCOL_VERSION};
+pub use remote_mcp::{
+    FetchInput, FetchOutput, RemoteMcpEndpoint, RemoteMcpHandler, RemoteMcpServerConfig, SearchInput, SearchOutput,
+    SearchResult,
+};
 pub use runtime::{RuntimeAdapter, RuntimeStatus};
 pub use server::{WebmcpServer, WebmcpServerConfig};

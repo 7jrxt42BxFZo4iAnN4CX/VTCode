@@ -126,6 +126,96 @@ from the authenticated heartbeat, so the TUI configuration is the source of
 truth. Pairing codes, session tokens, and other credentials are never returned
 as settings or persisted by the browser.
 
+## Remote MCP transport
+
+`vtcode webmcp serve` can also expose an explicit, read-only remote MCP surface.
+It is disabled by default and shares only the `RuntimeAdapter::list_files` and
+`RuntimeAdapter::read_file` boundary with the browser bridge. It does not add a
+public file-serving route or expose browser patch, check, turn, or pairing
+operations.
+
+The modern Streamable HTTP endpoint is `/mcp`. The compatibility surface used by
+older HTTP+SSE clients is `/sse/`, with POST messages at
+`/messages/{session_id}`. The configured public URL is the canonical external
+`/sse/` URL; the server itself remains loopback-only. The transport follows the
+[MCP transport specification](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports)
+and the OpenAI [remote MCP contract](https://developers.openai.com/api/docs/mcp).
+
+Only these tools are advertised:
+
+```text
+search({ query }) → { results: [{ id, title, url }] }
+fetch({ id }) → { id, title, text, url, metadata? }
+```
+
+Both tools are annotated `readOnlyHint=true`, `destructiveHint=false`,
+`idempotentHint=true`, and `openWorldHint=false`. Results are bounded by 20
+files returned, 256 files scanned, and 16 MiB of UTF-8 content scanned by
+default. Search sorts workspace-relative IDs before doing a case-insensitive
+substring match. File IDs are passed back through the adapter's visibility,
+canonicalization, sensitive-path, symlink, and size checks. Citation URLs are
+empty unless `citation_url_prefix` is configured; VT Code never serves the
+file through that URL.
+
+The external TLS proxy or identity provider owns OAuth validation. It must
+validate the public bearer token, remove it, and inject
+`Authorization: Bearer <value of proxy_token_env>` when forwarding to the
+loopback listener. VT Code validates that internal token and returns a
+`401` `WWW-Authenticate` challenge when it is missing or incorrect. The
+protected-resource metadata endpoint is unauthenticated and advertises the
+configured external authorization server; VT Code does not implement an
+authorization, token, or JWKS server. The separate MCP `Origin` allowlist is
+optional: missing `Origin` is accepted for non-browser clients, while any
+supplied value must match exactly.
+
+Example configuration:
+
+```toml
+[webmcp.remote_mcp]
+enabled = true
+public_url = "https://mcp.example.com/sse/"
+authorization_server = "https://login.example.com"
+proxy_token_env = "VTCODE_WEBMCP_MCP_PROXY_TOKEN"
+allowed_origins = []
+citation_url_prefix = "https://mcp.example.com/citations/"
+max_results = 20
+max_scan_files = 256
+max_scan_bytes = 16777216
+session_ttl_secs = 300
+```
+
+The public and authorization-server URLs must be HTTPS. The proxy token value
+is read at startup, retained only in memory, and omitted from debug output,
+logs, URLs, and persisted state. For a server with no browser origins, start
+the MCP-only surface with:
+
+```sh
+export VTCODE_WEBMCP_MCP_PROXY_TOKEN='proxy-injected-internal-token'
+vtcode webmcp serve --mcp \
+  --mcp-public-url https://mcp.example.com/sse/ \
+  --mcp-authorization-server https://login.example.com \
+  --mcp-proxy-token-env VTCODE_WEBMCP_MCP_PROXY_TOKEN \
+  --allowed-root /absolute/path/to/workspace
+```
+
+The browser `/webmcp` route remains inaccessible when no browser origins are
+configured. A live OpenAI Responses API check is intentionally optional: it
+requires an `OPENAI_API_KEY` and a public HTTPS proxy, and must use the
+official payload with the `/sse/` URL, `allowed_tools: ["search", "fetch"]`,
+and `require_approval: "never"`.
+
+When those prerequisites are available, run the ignored smoke test with:
+
+```sh
+OPENAI_API_KEY='...' \
+VTCODE_WEBMCP_LIVE_SSE_URL='https://mcp.example.com/sse/' \
+cargo nextest run -p vtcode-webmcp --locked --run-ignored all \
+  -E 'test(live_openai_responses_api_smoke)'
+```
+
+The test does not run in the normal suite and exits without a request when
+either environment variable is absent.
+
 ## Running the headless bridge
 
 Start it only when a browser connection is intended, with an exact origin allowlist:
@@ -189,13 +279,25 @@ allowed_roots = []
 pairing_ttl_secs = 300
 max_frame_bytes = 1048576
 max_in_flight_requests = 8
+
+[webmcp.remote_mcp]
+enabled = false
+public_url = "https://mcp.example.com/sse/"
+authorization_server = "https://login.example.com"
+proxy_token_env = "VTCODE_WEBMCP_MCP_PROXY_TOKEN"
+allowed_origins = []
+max_results = 20
+max_scan_files = 256
+max_scan_bytes = 16777216
+session_ttl_secs = 300
 ```
 
 Run the focused checks with:
 
 ```sh
 RUSTFLAGS='-D warnings' cargo check --locked -p vtcode-webmcp -p vtcode
-cargo nextest run -p vtcode-webmcp -p vtcode-core -p vtcode
+cargo nextest run -p vtcode-webmcp -p vtcode-config -p vtcode-core -p vtcode
+cargo clippy --locked -p vtcode-webmcp -p vtcode-config -p vtcode --all-targets -- -D warnings
 cd examples/webmcp-challenge
 bun install --frozen-lockfile
 bun run typecheck

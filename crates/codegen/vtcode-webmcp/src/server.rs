@@ -5,6 +5,7 @@ use crate::protocol::{
     BridgeEventMessage, BridgeRequest, BridgeResponse, BridgeSettings, PROTOCOL_VERSION, PairPayload, StatusPayload,
     is_valid_request_id, response_request_id,
 };
+use crate::remote_mcp::{RemoteMcpEndpoint, RemoteMcpServerConfig};
 use crate::runtime::RuntimeAdapter;
 use axum::Router;
 use axum::extract::{State, WebSocketUpgrade, ws};
@@ -46,6 +47,8 @@ pub struct WebmcpServerConfig {
     pub allow_remote: bool,
     /// Public WSS URL required for remote mode.
     pub public_url: Option<String>,
+    /// Optional read-only OpenAI-compatible MCP transport.
+    pub remote_mcp: Option<RemoteMcpServerConfig>,
     /// Event replay and subscriber queue limits.
     pub event_hub: EventHubConfig,
     /// Per-operation timeout.
@@ -63,6 +66,7 @@ impl Default for WebmcpServerConfig {
             max_in_flight_requests: 8,
             allow_remote: false,
             public_url: None,
+            remote_mcp: None,
             event_hub: EventHubConfig::default(),
             request_timeout: Duration::from_secs(30),
         }
@@ -79,6 +83,7 @@ struct ServerState {
     connections: Arc<Semaphore>,
     max_frame_bytes: usize,
     request_timeout: Duration,
+    remote_mcp: Option<Arc<RemoteMcpEndpoint>>,
 }
 
 struct DispatchState {
@@ -167,6 +172,11 @@ impl WebmcpServer {
     pub fn new(adapter: Arc<dyn RuntimeAdapter>, config: WebmcpServerConfig) -> Result<Self> {
         validate_config(&config)?;
         let pairing = PairingManager::new(&config.allowed_origins, Duration::from_secs(config.pairing_ttl_secs))?;
+        let remote_mcp = config
+            .remote_mcp
+            .clone()
+            .map(|remote_config| RemoteMcpEndpoint::new(Arc::clone(&adapter), remote_config).map(Arc::new))
+            .transpose()?;
         let event_limit = config
             .max_frame_bytes
             .saturating_sub(EVENT_ENVELOPE_OVERHEAD)
@@ -200,6 +210,7 @@ impl WebmcpServer {
                 connections: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
                 max_frame_bytes: config.max_frame_bytes,
                 request_timeout: config.request_timeout,
+                remote_mcp,
             }),
             config,
         })
@@ -232,9 +243,15 @@ impl WebmcpServer {
 
     /// Build the WebSocket router. No listener is opened by this method.
     pub fn router(&self) -> Router {
-        Router::new()
-            .route("/webmcp", axum::routing::get(websocket_handler))
-            .with_state(self.state.clone())
+        let mut router = Router::new().route("/webmcp", axum::routing::get(websocket_handler));
+        if let Some(remote_mcp) = self.state.remote_mcp.as_ref() {
+            let remote_routes = remote_mcp
+                .routes()
+                .with_state(Arc::clone(remote_mcp))
+                .with_state(self.state.clone());
+            router = router.merge(remote_routes);
+        }
+        router.with_state(self.state.clone())
     }
 
     /// Bind the configured address. Call [`Self::serve_listener`] afterwards.
@@ -844,7 +861,9 @@ fn validate_config(config: &WebmcpServerConfig) -> Result<()> {
     {
         return Err(WebmcpError::LimitExceeded);
     }
-    if config.allowed_origins.is_empty() || config.allowed_origins.iter().any(|origin| !is_valid_origin(origin)) {
+    if (config.allowed_origins.is_empty() && config.remote_mcp.is_none())
+        || config.allowed_origins.iter().any(|origin| !is_valid_origin(origin))
+    {
         return Err(WebmcpError::InvalidRequest("WebMCP requires an explicit origin allowlist".to_string()));
     }
     let address = config
@@ -874,6 +893,9 @@ fn validate_config(config: &WebmcpServerConfig) -> Result<()> {
     }
     if config.request_timeout.is_zero() {
         return Err(WebmcpError::InvalidRequest("WebMCP request timeout must be positive".to_string()));
+    }
+    if let Some(remote_mcp) = config.remote_mcp.as_ref() {
+        remote_mcp.validate()?;
     }
     Ok(())
 }

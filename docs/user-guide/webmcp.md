@@ -294,6 +294,62 @@ The origin must match exactly. For example, `http://localhost:5173` and
 `http://127.0.0.1:5173` are different origins, and a trailing slash is not
 accepted in the configured origin.
 
+## Use the read-only remote MCP surface
+
+`vtcode webmcp serve` can expose two MCP transports in addition to the browser
+WebSocket: modern Streamable HTTP at `/mcp` and legacy HTTP+SSE at `/sse/`,
+with messages posted to `/messages/{session_id}`. This surface is opt-in and
+offers only read-only `search` and `fetch` tools. It never adds a public file
+route, and citation URLs remain empty unless you configure a citation prefix.
+
+The listener still binds to loopback. Put a TLS-terminating proxy or identity
+provider in front of it. The proxy must validate the external OAuth bearer,
+remove it, and inject an internal `Authorization: Bearer ...` value matching
+the token stored in the environment variable configured by
+`proxy_token_env`. VT Code advertises the external authorization server from
+`/.well-known/oauth-protected-resource`, but does not implement OAuth,
+token, or JWKS endpoints.
+
+For an MCP-only server, browser origins are not required and `/webmcp` remains
+inaccessible. Configure it in `vtcode.toml`:
+
+```toml
+[webmcp.remote_mcp]
+enabled = true
+public_url = "https://mcp.example.com/sse/"
+authorization_server = "https://login.example.com"
+proxy_token_env = "VTCODE_WEBMCP_MCP_PROXY_TOKEN"
+allowed_origins = []
+max_results = 20
+max_scan_files = 256
+max_scan_bytes = 16777216
+session_ttl_secs = 300
+```
+
+Then export the internal token and start the loopback listener:
+
+```sh
+export VTCODE_WEBMCP_MCP_PROXY_TOKEN='proxy-injected-internal-token'
+vtcode webmcp serve --mcp --allowed-root /absolute/path/to/workspace
+```
+
+The same settings can be supplied or overridden on the command line:
+
+```sh
+vtcode webmcp serve --mcp \
+  --mcp-public-url https://mcp.example.com/sse/ \
+  --mcp-authorization-server https://login.example.com \
+  --mcp-proxy-token-env VTCODE_WEBMCP_MCP_PROXY_TOKEN \
+  --mcp-citation-url-prefix https://mcp.example.com/citations/ \
+  --allowed-root /absolute/path/to/workspace
+```
+
+The public and authorization-server URLs must be HTTPS. `search` and `fetch`
+are bounded by 20 results, 256 scanned files, and 16 MiB of UTF-8 content by
+default. The canonical public URL is `/sse/` for OpenAI-compatible clients;
+`/mcp` is the modern alias. See the [OpenAI MCP documentation](https://developers.openai.com/api/docs/mcp)
+for the corresponding Responses API `allowed_tools` and approval settings.
+
 ## Edit, review, and apply in headless mode
 
 The editing steps are the same as fallback mode:

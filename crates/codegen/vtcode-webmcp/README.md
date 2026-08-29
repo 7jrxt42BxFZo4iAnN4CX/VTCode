@@ -16,6 +16,50 @@ must authorize the mutation and the base digest must still match before any
 file is changed. The listener does not terminate TLS; remote access must go
 through a TLS-terminating reverse proxy.
 
+## OpenAI-compatible remote MCP
+
+`vtcode webmcp serve` has an independent, opt-in read-only MCP surface. It
+mounts modern Streamable HTTP at `/mcp` and legacy HTTP+SSE at `/sse/`, with
+session messages at `/messages/{session_id}`. The only advertised tools are:
+
+- `search({ query })` → `{ results: [{ id, title, url }] }`
+- `fetch({ id })` → `{ id, title, text, url, metadata? }`
+
+The handlers use the same `RuntimeAdapter::list_files` and
+`RuntimeAdapter::read_file` boundary as the bridge. Search is deterministic and
+case-insensitive, with defaults of 20 results, 256 scanned files, and 16 MiB
+of scanned UTF-8 content. Both tools return structured content and matching JSON
+text content and are marked read-only, non-destructive, idempotent, and closed
+world. Citation URLs are empty unless a prefix is configured; the crate never
+serves workspace files over HTTP.
+
+The listener remains loopback-only. An external TLS proxy or identity provider
+must validate the public OAuth bearer, remove it, and inject an internal bearer
+token from the environment variable configured by `proxy_token_env`. VT Code
+validates that internal token and exposes protected-resource metadata at
+`/.well-known/oauth-protected-resource`; it does not implement an OAuth,
+token, or JWKS server. The nested MCP Origin allowlist is separate from the
+browser pairing allowlist, and missing MCP `Origin` is accepted.
+
+Example:
+
+```sh
+export VTCODE_WEBMCP_MCP_PROXY_TOKEN='proxy-injected-internal-token'
+vtcode webmcp serve --mcp \
+  --mcp-public-url https://mcp.example.com/sse/ \
+  --mcp-authorization-server https://login.example.com \
+  --mcp-proxy-token-env VTCODE_WEBMCP_MCP_PROXY_TOKEN \
+  --allowed-root /absolute/path/to/workspace
+```
+
+See the [WebMCP development guide](../../../docs/development/webmcp.md) for
+configuration, security boundaries, and transport tests.
+
+The optional live Responses API smoke test is ignored by default. Set
+`OPENAI_API_KEY` and `VTCODE_WEBMCP_LIVE_SSE_URL` to a reachable public HTTPS
+`/sse/` URL, then run `cargo nextest run -p vtcode-webmcp --locked
+--run-ignored all -E 'test(live_openai_responses_api_smoke)'`.
+
 The browser diff is a review preview only. For an active turn, the browser
 sends the staged proposal ID; the adapter revalidates its stored snapshots and
 hands VT Code a bounded prompt with the authoritative unified diff. The

@@ -159,7 +159,7 @@ pub use types::{
     ToolDocumentationMode, UiSurfacePreference, VerbosityLevel,
 };
 pub use vtcode_commons::ui_protocol::ThinkingBlockState;
-pub use webmcp::WebmcpConfig;
+pub use webmcp::{RemoteMcpConfig, WebmcpConfig};
 pub use workspace_env::{
     read_workspace_env_value, remove_workspace_env_value, workspace_env_path, workspace_env_path_display,
     write_workspace_env_value,

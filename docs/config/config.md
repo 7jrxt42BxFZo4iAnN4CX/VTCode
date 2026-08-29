@@ -677,9 +677,29 @@ allowed_roots = []
 pairing_ttl_secs = 300
 max_frame_bytes = 1048576
 max_in_flight_requests = 8
+
+[webmcp.remote_mcp]
+enabled = false
+public_url = "https://mcp.example.com/sse/"
+authorization_server = "https://login.example.com"
+proxy_token_env = "VTCODE_WEBMCP_MCP_PROXY_TOKEN"
+allowed_origins = []
+max_results = 20
+max_scan_files = 256
+max_scan_bytes = 16777216
+session_ttl_secs = 300
 ```
 
-`allowed_origins` must contain exact browser origins; wildcards are rejected. Loopback is the default bind host and direct non-loopback binding is rejected. Remote access additionally requires explicit CLI opt-in, a `wss://` public URL, and a TLS-terminating reverse proxy forwarding to the loopback listener. Pairing codes expire after five minutes by default and are consumed once. Authenticated sessions use the same value as an inactivity lease and are refreshed by authenticated browser requests. Tokens remain in memory only. See the [WebMCP development guide](../development/webmcp.md) for the protocol and threat model.
+`allowed_origins` must contain exact browser origins; wildcards are rejected. Loopback is the default bind host and direct non-loopback binding is rejected. Remote access additionally requires explicit CLI opt-in, a `wss://` public URL, and a TLS-terminating reverse proxy forwarding to the loopback listener. Pairing codes expire after five minutes by default and are consumed once. Authenticated sessions use the same value as an inactivity lease and are refreshed by authenticated browser requests. Tokens remain in memory only.
+
+`webmcp.remote_mcp` is a separate, disabled-by-default read-only MCP surface.
+Its HTTPS `public_url` is the canonical `/sse/` endpoint, while `/mcp` serves
+modern Streamable HTTP. The configured proxy token is read from
+`proxy_token_env`; the external proxy validates OAuth and injects that internal
+bearer token. `allowed_origins` in the nested table is an independent MCP
+Origin allowlist, and missing MCP `Origin` is accepted. See the [WebMCP
+development guide](../development/webmcp.md) for the protocol and threat
+model.
 
 ## Security and approvals
 
