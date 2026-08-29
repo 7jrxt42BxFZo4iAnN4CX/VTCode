@@ -40,6 +40,8 @@ mod skills;
 pub mod ui;
 #[path = "update.rs"]
 mod update;
+#[path = "webmcp.rs"]
+mod webmcp;
 #[path = "workspace.rs"]
 mod workspace;
 
@@ -82,4 +84,5 @@ pub(super) use ui::{
     handle_toggle_ide_context,
 };
 pub(super) use update::handle_update;
+pub(super) use webmcp::{handle_show_webmcp_help, handle_show_webmcp_status, handle_start_webmcp, handle_stop_webmcp};
 pub(super) use workspace::handle_initialize_workspace;

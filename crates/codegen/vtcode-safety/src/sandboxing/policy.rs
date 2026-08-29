@@ -207,8 +207,21 @@ impl SensitivePath {
             path_norm == expanded_norm || path_norm.starts_with(&expanded_prefix)
         }
         #[cfg(not(windows))]
-        path.starts_with(&expanded)
+        path_starts_with_case_insensitive(path, &expanded)
     }
+}
+
+#[cfg(not(windows))]
+fn path_starts_with_case_insensitive(path: &Path, prefix: &Path) -> bool {
+    let mut path_components = path.components();
+    prefix.components().all(|prefix_component| {
+        path_components.next().is_some_and(|path_component| {
+            path_component
+                .as_os_str()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(prefix_component.as_os_str().to_string_lossy().as_ref())
+        })
+    })
 }
 
 #[cfg(windows)]
@@ -1192,6 +1205,17 @@ mod tests {
         let ssh_key = expanded.join("id_rsa");
         assert!(sp.matches(&ssh_key));
         assert!(sp.matches(&expanded));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_sensitive_path_matching_is_case_insensitive_with_component_boundaries() {
+        let sp = SensitivePath::new("/tmp/Workspace/.env");
+
+        assert!(sp.matches(Path::new("/tmp/workspace/.ENV")));
+        assert!(sp.matches(Path::new("/tmp/workspace/.ENV/child")));
+        assert!(!sp.matches(Path::new("/tmp/workspace/.environment")));
+        assert!(!sp.matches(Path::new("/tmp/workspaces/.ENV")));
     }
 
     #[test]

@@ -160,8 +160,3 @@ pub(super) fn split_tool_spans(spans: Vec<Span<'static>>) -> Vec<Vec<Span<'stati
 
     lines
 }
-
-pub(super) fn is_info_box_line(message: &MessageLine) -> bool {
-    matches!(message.kind, InlineMessageKind::Error | InlineMessageKind::Warning)
-        || (message.kind == InlineMessageKind::Info && !is_tool_summary_line(message))
-}

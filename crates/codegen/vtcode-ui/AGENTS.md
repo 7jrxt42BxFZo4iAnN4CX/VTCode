@@ -14,7 +14,7 @@
 
 - `design` and `theme` are re-exported at crate root (`pub use design::*; pub use theme::*`) for backward compatibility with the old standalone crates.
 - `publish = false` — internal crate, not published to crates.io.
-- `tui/core_tui/` owns the full terminal session lifecycle; `tui/core_tui/app/session/task_panel.rs` owns compact TODO-panel wrapping/height/header helpers; `tui/ui/` has reusable widgets (markdown, interactive list). Headered markdown tables use intrinsic width when available and labeled wrapped blocks below it, so callers must pass content width after transcript framing.
+- `tui/core_tui/` owns the full terminal session lifecycle; `tui/core_tui/app/session/task_panel.rs` owns compact TODO-panel wrapping/height/header helpers; `tui/ui/` has reusable widgets (Markdown, interactive list). Headered Markdown tables use intrinsic width when available and labeled wrapped blocks below it, so callers must pass content width after transcript framing. Bridge prompts use the bounded deferred-event queue while transient overlays own input; keep them prompt-only so slash-command parsing remains terminal-only.
 - `tui/config/constants/` holds TUI-specific defaults — keep them here, not in `vtcode-config`; snapshot tests live in `tui/core_tui/widgets/snapshots/`.
 
 ## Gotchas
@@ -28,3 +28,4 @@
 - PTY/tool reflow must preserve explicit status color on the `•` prefix; apply action/tool styling only to the verb so success, failure, and warning remain visually distinct.
 - Tool and PTY blocks reserve at least one blank line above and below; shell syntax highlighting is accepted only when it produces distinct token colors, otherwise semantic token styles are the fallback.
 - Task-panel tree rows use the shared hanging-prefix wrapper in `session/text_utils.rs`; keep panel row heights derived from wrapped content so transcript and docked panel stay aligned. `toggle_tool_display_mode` is a rebindable session action (default `Alt+T`); dispatch it before the legacy `Alt+T` text-edit shortcut and invalidate transcript caches after toggling.
+- Grouped Info/Warning/Error transcript blocks must invalidate from their first line when a member changes or is appended, because later lines affect the cached block head; Info tool-summary lines are a boundary, not part of the box.

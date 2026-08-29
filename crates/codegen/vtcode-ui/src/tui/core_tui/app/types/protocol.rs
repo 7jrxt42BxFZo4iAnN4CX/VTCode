@@ -1,5 +1,6 @@
+use std::collections::VecDeque;
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
 
@@ -18,6 +19,8 @@ use crate::tui::core_tui::types::{
     ActivityState, InlineHeaderContext, InlineLinkRange, InlineListItem, InlineListSearchConfig, InlineListSelection,
     InlineMessageKind, InlineSegment, InlineTextStyle, InlineTheme, LocalAgentEntry, SecurePromptConfig,
 };
+
+const MAX_DEFERRED_EVENTS: usize = 32;
 
 /// A user prompt from a previous session archive, used to populate the history picker.
 #[derive(Debug, Clone)]
@@ -140,6 +143,8 @@ pub enum InlineCommand {
 #[derive(Debug, Clone)]
 pub enum InlineEvent {
     Submit(SubmittedInput),
+    /// Submit text from the WebMCP bridge without interpreting slash commands.
+    WebmcpSubmit(SubmittedInput),
     QueueSubmit(SubmittedInput),
     Steer(SubmittedInput),
     ProcessLatestQueued,
@@ -223,6 +228,7 @@ struct InlineLayoutState {
 pub struct InlineHandle {
     pub(crate) sender: UnboundedSender<InlineCommand>,
     message_layout: Arc<InlineLayoutState>,
+    deferred_events: Arc<Mutex<VecDeque<InlineEvent>>>,
 }
 
 impl InlineHandle {
@@ -234,7 +240,29 @@ impl InlineHandle {
         Self {
             sender,
             message_layout: Arc::new(InlineLayoutState::default()),
+            deferred_events: Arc::new(Mutex::new(VecDeque::new())),
         }
+    }
+
+    /// Defer an input event until the current transient overlay closes.
+    pub fn defer_event(&self, event: InlineEvent) -> anyhow::Result<()> {
+        let mut deferred_events = self
+            .deferred_events
+            .lock()
+            .map_err(|error| anyhow::anyhow!("deferred input queue poisoned: {error}"))?;
+        if deferred_events.len() >= MAX_DEFERRED_EVENTS {
+            return Err(anyhow::anyhow!("deferred input queue is full"));
+        }
+        deferred_events.push_back(event);
+        Ok(())
+    }
+
+    fn take_deferred_event(&self) -> Option<InlineEvent> {
+        self.deferred_events.lock().ok()?.pop_front()
+    }
+
+    pub fn has_deferred_event(&self) -> bool {
+        self.deferred_events.lock().is_ok_and(|events| !events.is_empty())
     }
 
     fn send_command(&self, command: InlineCommand) {
@@ -536,6 +564,9 @@ pub struct InlineSession {
 
 impl InlineSession {
     pub async fn next_event(&mut self) -> Option<InlineEvent> {
+        if let Some(event) = self.handle.take_deferred_event() {
+            return Some(event);
+        }
         self.events.recv().await
     }
 

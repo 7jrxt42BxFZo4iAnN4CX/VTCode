@@ -180,7 +180,7 @@ where
                 )
                 .await;
             }
-            OverlayWaitOutcome::Cancelled => {
+            OverlayWaitOutcome::Cancelled | OverlayWaitOutcome::Deferred => {
                 return Ok(aborted_conflict_status(&conflict));
             }
             OverlayWaitOutcome::Interrupted | OverlayWaitOutcome::Exit => {
@@ -311,7 +311,7 @@ where
             )
             .await
         }
-        OverlayWaitOutcome::Cancelled => Ok(OverlayWaitOutcome::Cancelled),
+        OverlayWaitOutcome::Cancelled | OverlayWaitOutcome::Deferred => Ok(OverlayWaitOutcome::Cancelled),
         OverlayWaitOutcome::Interrupted => Ok(OverlayWaitOutcome::Interrupted),
         OverlayWaitOutcome::Exit => Ok(OverlayWaitOutcome::Exit),
         OverlayWaitOutcome::Submitted(_) => {

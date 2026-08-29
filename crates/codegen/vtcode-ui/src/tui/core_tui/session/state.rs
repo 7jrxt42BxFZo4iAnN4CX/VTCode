@@ -19,6 +19,7 @@ use super::super::types::{
     OverlayRequest, WizardOverlayRequest,
 };
 use super::mouse_selection::MouseSelectionState;
+use super::reflow::is_info_box_line;
 use super::status_requires_shimmer;
 use super::{
     ActiveOverlay, InlinePromptSuggestionState, Session, SuggestedPromptState,
@@ -135,6 +136,7 @@ impl Session {
     /// invalidating header or sidebar caches. Use this for transcript-only
     /// changes (e.g. streaming chunks) where chrome hasn't changed.
     pub(crate) fn mark_transcript_line_dirty(&mut self, index: usize) {
+        let index = self.reflow_dirty_index(index);
         self.first_dirty_line = match self.first_dirty_line {
             Some(current) => Some(current.min(index)),
             None => Some(index),
@@ -446,11 +448,40 @@ impl Session {
 
     /// Mark a specific line as dirty to optimize reflow scans
     pub(crate) fn mark_line_dirty(&mut self, index: usize) {
+        let index = self.reflow_dirty_index(index);
         self.first_dirty_line = match self.first_dirty_line {
             Some(current) => Some(current.min(index)),
             None => Some(index),
         };
         self.mark_dirty();
+    }
+
+    fn reflow_dirty_index(&mut self, index: usize) -> usize {
+        // Info, warning, and error messages are rendered as one contiguous
+        // block. When a later line is appended, reflow must start at the
+        // block head so the cached head can see the new lines.
+        let index = self.grouped_message_start(index);
+        if let Some(cache) = self.transcript_cache.as_mut() {
+            cache.invalidate_message(index);
+        }
+        index
+    }
+
+    fn grouped_message_start(&self, index: usize) -> usize {
+        let Some(line) = self.lines.get(index) else {
+            return index;
+        };
+
+        if !is_info_box_line(line) {
+            return index;
+        }
+
+        let kind = line.kind;
+        let mut start = index;
+        while start > 0 && self.lines[start - 1].kind == kind && is_info_box_line(&self.lines[start - 1]) {
+            start -= 1;
+        }
+        start
     }
 
     /// Ensure the prompt style has a color set

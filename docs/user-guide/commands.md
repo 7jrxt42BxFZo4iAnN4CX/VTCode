@@ -136,6 +136,64 @@ Configure the behaviour under **Settings › Extensions › VT Code**:
 - `/plan` starts or continues the planning workflow. It is a workflow command, not a state selector. Execution agents may also suggest it for demanding or multi-phase tasks; interactive policies confirm the suggestion, while full-auto and skip-confirmations policies accept it automatically. When the plan agent needs a material clarification, the inline interview wizard presents selectable answers and resumes planning with the chosen answer. Use `/plan off` to cancel an active planning workflow without implementing its draft.
 - `/checkup` runs configuration diagnostics and suggests reversible optimizations. Use `/checkup [--quick|--full]` (defaults to a full pass); optimizations are confirmed via the selection modal before any config is mutated.
 
+## WebMCP browser bridge
+
+`/webmcp` displays the active-session bridge status, prints a command guide,
+and can start the bridge inside an interactive TUI session. Use
+`/webmcp help` to print the guide without the status details:
+
+```text
+/webmcp
+/webmcp help
+/webmcp pair http://localhost:5173
+/webmcp pair --replace http://localhost:5173
+/webmcp tools
+/webmcp roots
+/webmcp unpair
+```
+
+Use `/webmcp pair <origin>` when the browser must submit real agent turns to
+this same VT Code session. The printed WebSocket URL and one-time pairing code
+belong to that running TUI process.
+
+Pair from the two sides in this order:
+
+1. In the VT Code TUI, run `/webmcp pair http://localhost:5173`.
+2. In the WebMCP editor, open **Connect to a local VT Code bridge**.
+3. Paste the TUI's WebSocket URL and one-time pairing code into the browser,
+   then select **Pair with VT Code**.
+
+Keep the TUI running. A URL and code from `vtcode webmcp serve` are for the
+headless workspace bridge and cannot receive active-session agent turns.
+
+If `/webmcp pair <origin>` reports that WebMCP is already listening, it also
+prints the active WebSocket URL, pairing code, and expiry. The existing bridge
+stays connected. To replace it, run `/webmcp pair --replace <origin>` and
+confirm **Disconnect and re-pair** in the terminal. `/webmcp unpair` uses the
+same confirmation and closes the current browser connections.
+
+The standalone command starts the opt-in authenticated WebSocket bridge for
+headless workspace operations:
+
+```bash
+vtcode webmcp serve --origin http://localhost:5173
+vtcode webmcp pair --origin http://localhost:5173
+vtcode webmcp status
+vtcode webmcp tools
+vtcode webmcp roots
+vtcode webmcp unpair
+```
+
+The standalone `vtcode webmcp unpair` command cannot revoke an already running
+server's in-memory pairing state. It only reports that revocation is owned by
+the server process. Stop that process separately with `Ctrl-C` to revoke its
+active sessions.
+
+The server binds to loopback and chooses an available port by default. Enter its one-time pairing code in the browser editor. Exact origins are required; remote access must use `--allow-remote --public-url wss://...` behind a TLS-terminating reverse proxy, and direct non-loopback binding is rejected. Browser confirmation cannot authorize a real write: terminal permission or the existing explicit full-auto allowlist remains authoritative. See [WebMCP bridge development](../development/webmcp.md).
+
+For the browser walkthrough, including the reference client, local pairing,
+connected drafts, and troubleshooting, see the [WebMCP browser bridge user guide](./webmcp.md).
+
 ## Scheduled tasks
 
 Use `vtcode schedule` when the task should survive restarts.

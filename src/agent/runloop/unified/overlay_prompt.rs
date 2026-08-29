@@ -12,6 +12,9 @@ pub(crate) enum OverlayWaitOutcome<T> {
     Submitted(T),
     Cancelled,
     Interrupted,
+    /// A bridge prompt arrived while a modal owned the input surface. The
+    /// prompt was requeued and must be handled after the modal closes.
+    Deferred,
     Exit,
 }
 
@@ -123,6 +126,12 @@ where
                 close_overlay(handle).await;
                 return Ok(OverlayWaitOutcome::Exit);
             }
+            InlineEvent::WebmcpSubmit(input) => {
+                let deferral = session.defer_event(InlineEvent::WebmcpSubmit(input));
+                close_overlay(handle).await;
+                deferral?;
+                return Ok(OverlayWaitOutcome::Deferred);
+            }
             InlineEvent::Submit(_) | InlineEvent::QueueSubmit(_) => continue,
             InlineEvent::Transient(_) => {}
             _ => {
@@ -140,4 +149,54 @@ async fn close_overlay(handle: &InlineHandle) {
     handle.close_transient();
     handle.force_redraw();
     task::yield_now().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use tokio::sync::{Notify, mpsc};
+    use vtcode_core::core::interfaces::ui::UiSession;
+    use vtcode_ui::tui::app::{InlineCommand, InlineListItem};
+
+    struct FailingDeferralSession {
+        handle: InlineHandle,
+        event: Option<InlineEvent>,
+    }
+
+    #[async_trait]
+    impl UiSession for FailingDeferralSession {
+        fn inline_handle(&self) -> &InlineHandle {
+            &self.handle
+        }
+
+        fn defer_event(&self, _event: InlineEvent) -> Result<()> {
+            Err(anyhow::anyhow!("deferred input queue is full"))
+        }
+
+        async fn next_event(&mut self) -> Option<InlineEvent> {
+            self.event.take()
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_webmcp_deferral_still_closes_the_overlay() {
+        let (command_sender, mut command_receiver) = mpsc::unbounded_channel();
+        let handle = InlineHandle::new_for_tests(command_sender);
+        handle.show_list_modal("test".into(), Vec::new(), Vec::<InlineListItem>::new(), None, None);
+        let mut session = FailingDeferralSession {
+            handle: handle.clone(),
+            event: Some(InlineEvent::WebmcpSubmit("/exit".into())),
+        };
+        let ctrl_c_state = Arc::new(CtrlCState::new());
+        let ctrl_c_notify = Arc::new(Notify::new());
+
+        let result =
+            wait_for_overlay_submission(&handle, &mut session, &ctrl_c_state, &ctrl_c_notify, |_| None::<()>).await;
+
+        assert!(result.is_err());
+        assert!(matches!(command_receiver.recv().await, Some(InlineCommand::ShowTransient { .. })));
+        assert!(matches!(command_receiver.recv().await, Some(InlineCommand::CloseTransient)));
+        assert!(matches!(command_receiver.recv().await, Some(InlineCommand::ForceRedraw)));
+    }
 }

@@ -39,6 +39,10 @@ pub(super) async fn route_outcome(
         | SlashCommandOutcome::ToggleTasksPanel
         | SlashCommandOutcome::ShowJobsPanel
         | SlashCommandOutcome::ShowStatus
+        | SlashCommandOutcome::ShowWebmcpStatus
+        | SlashCommandOutcome::ShowWebmcpHelp
+        | SlashCommandOutcome::StartWebmcp { .. }
+        | SlashCommandOutcome::StopWebmcp
         | SlashCommandOutcome::ShowLogViewer { .. }
         | SlashCommandOutcome::Notify { .. }
         | SlashCommandOutcome::StopAgent
@@ -123,6 +127,12 @@ async fn route_runtime_outcome(
         SlashCommandOutcome::ToggleTasksPanel => handlers::handle_toggle_tasks_panel(ctx).await,
         SlashCommandOutcome::ShowJobsPanel => handlers::handle_show_jobs_panel(ctx).await,
         SlashCommandOutcome::ShowStatus => handlers::handle_show_status(ctx).await,
+        SlashCommandOutcome::ShowWebmcpStatus => handlers::handle_show_webmcp_status(ctx).await,
+        SlashCommandOutcome::ShowWebmcpHelp => handlers::handle_show_webmcp_help(ctx).await,
+        SlashCommandOutcome::StartWebmcp { origin, replace } => {
+            handlers::handle_start_webmcp(ctx, origin, replace).await
+        }
+        SlashCommandOutcome::StopWebmcp => handlers::handle_stop_webmcp(ctx).await,
         SlashCommandOutcome::ShowLogViewer { format, scope, save } => {
             handlers::handle_show_log_viewer(ctx, format, scope, save).await
         }

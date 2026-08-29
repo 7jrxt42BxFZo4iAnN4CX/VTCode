@@ -569,7 +569,10 @@ async fn wait_for_inline_list_selection(
 
     Ok(match outcome {
         OverlayWaitOutcome::Submitted(selection) => Some(selection),
-        OverlayWaitOutcome::Cancelled | OverlayWaitOutcome::Interrupted | OverlayWaitOutcome::Exit => None,
+        OverlayWaitOutcome::Cancelled
+        | OverlayWaitOutcome::Interrupted
+        | OverlayWaitOutcome::Deferred
+        | OverlayWaitOutcome::Exit => None,
     })
 }
 

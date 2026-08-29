@@ -11,6 +11,7 @@ Inspired by [caniuse.rs](https://caniuse.rs), this document tracks feature avail
 | Keyring Auth | Yes | Yes | Yes | No | OS-specific backends |
 | MCP Protocol | Yes | Yes | Yes | No | Model Context Protocol |
 | ACP Client | Yes | Yes | Yes | Partial | Agent Client Protocol |
+| WebMCP browser bridge | Yes | Yes | No | No | First-class authenticated bridge; filesystem access requires Unix directory-handle support and the browser client is a separate supported WebMCP page |
 | File Watching | Yes | Yes | Yes | No | notify crate |
 | Desktop Notifications | Yes | Yes | Yes | No | Optional feature |
 | Bash Runner | Yes | Yes | Improved | No | Windows uses PowerShell with cross-platform process groups |
@@ -37,6 +38,7 @@ All VT Code crates require Rust 1.88 or later due to dependencies (ratatui 0.30,
 | vtcode-indexer | 0.133.21 | 1.88 | 2024 | Yes | File indexing + markdown storage |
 | vtcode-bash-runner | 0.133.21 | 1.88 | 2024 | Yes | Shell execution |
 | vtcode-exec-events | 0.133.21 | 1.88 | 2024 | Yes | Event schemas |
+| vtcode-webmcp | 0.147.4 | 1.93 | 2024 | Yes | Authenticated browser bridge and bounded workspace adapter |
 | vtcode-memory | 0.133.21 | 1.88 | 2024 | No | Internal (publish=false) |
 | vtcode-eval | 0.135.4 | 1.88 | 2024 | No | Internal (publish=false) |
 | vtcode-acp | 0.133.21 | 1.88 | 2024 | Yes | Agent Communication Protocol |

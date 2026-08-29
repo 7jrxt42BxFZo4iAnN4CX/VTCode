@@ -1472,6 +1472,7 @@ impl InlineSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Context as _;
     use std::sync::{LazyLock, Mutex};
 
     static FILE_OPENER_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -1623,7 +1624,7 @@ mod tests {
     }
 
     #[test]
-    fn markdown_table_width_accounts_for_agent_frame_and_indent() {
+    fn markdown_table_width_accounts_for_agent_frame_and_indent() -> Result<()> {
         use crate::ui::InlineCommand;
 
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -1631,7 +1632,9 @@ mod tests {
         renderer.set_table_max_width(Some(18));
 
         let markdown = "| Name | Description |\n|------|-------------|\n| item | a long value |\n";
-        renderer.render_markdown_output(MessageStyle::Response, markdown).unwrap();
+        renderer
+            .render_markdown_output(MessageStyle::Response, markdown)
+            .context("render narrow Markdown table")?;
 
         let mut rendered = Vec::new();
         while let Ok(command) = receiver.try_recv() {
@@ -1645,10 +1648,11 @@ mod tests {
         assert!(output.contains("Description:"), "all labels should be retained: {output}");
         assert!(!output.contains("│"), "table separators should not survive the narrow layout: {output}");
         assert!(rendered.iter().all(|line| UnicodeWidthStr::width(line.as_str()) <= 18));
+        Ok(())
     }
 
     #[test]
-    fn markdown_table_width_accounts_for_agent_label() {
+    fn markdown_table_width_accounts_for_agent_label() -> Result<()> {
         use crate::ui::InlineCommand;
 
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -1658,7 +1662,9 @@ mod tests {
         renderer.set_table_max_width(Some(23));
 
         let markdown = "| Name | Description |\n|------|-------------|\n| item | value |\n";
-        renderer.render_markdown_output(MessageStyle::Response, markdown).unwrap();
+        renderer
+            .render_markdown_output(MessageStyle::Response, markdown)
+            .context("render agent-labeled Markdown table")?;
 
         let mut rendered = Vec::new();
         while let Ok(command) = receiver.try_recv() {
@@ -1670,10 +1676,11 @@ mod tests {
         let output = rendered.join("\n");
         assert!(output.contains("Name:"), "agent label should reserve its prefix width: {output}");
         assert!(!output.contains("│"), "table columns should not be rewrapped after the label: {output}");
+        Ok(())
     }
 
     #[test]
-    fn streaming_markdown_table_uses_same_labeled_block_layout() {
+    fn streaming_markdown_table_uses_same_labeled_block_layout() -> Result<()> {
         use crate::ui::InlineCommand;
 
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -1681,7 +1688,9 @@ mod tests {
         renderer.set_table_max_width(Some(18));
 
         let markdown = "| Name | Description |\n|------|-------------|\n| item | a long value |\n";
-        let line_count = renderer.stream_markdown_response(markdown, 2).unwrap();
+        let line_count = renderer
+            .stream_markdown_response(markdown, 2)
+            .context("stream labeled Markdown table")?;
 
         let mut replacement = None;
         while let Ok(command) = receiver.try_recv() {
@@ -1702,6 +1711,7 @@ mod tests {
             "streamed output should contain labels: {output:?}"
         );
         assert!(!output.iter().any(|line| line.contains('│')), "streamed output should use blocks: {output:?}");
+        Ok(())
     }
 
     #[test]

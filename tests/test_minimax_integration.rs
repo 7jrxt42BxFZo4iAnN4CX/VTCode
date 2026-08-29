@@ -9,17 +9,20 @@ mod minimax_integration_tests {
     use vtcode_core::llm::providers::AnthropicProvider;
 
     #[test]
-    fn test_minimax_m2_constants_exist() {
-        // Test that the MiniMax constants are defined
-        assert_eq!(models::minimax::MINIMAX_M3, "MiniMax-M2.5");
-        assert_eq!(models::MINIMAX_M3, "MiniMax-M2.5");
+    fn test_minimax_m3_constants_exist() {
+        // Test that the current MiniMax constants are defined
+        assert_eq!(models::minimax::MINIMAX_M3, "MiniMax-M3");
+        assert_eq!(models::MINIMAX_M3, "MiniMax-M3");
     }
 
     #[test]
     fn test_minimax_models_in_supported_models() {
-        // Test that MiniMax models are in the MiniMax supported models list
+        // Test that the current MiniMax model is in the supported models list
         let supported = models::minimax::SUPPORTED_MODELS;
-        assert!(supported.contains(&"MiniMax-M2.5"), "MiniMax-M2.5 should be in the MiniMax supported models list");
+        assert!(
+            supported.contains(&models::minimax::MINIMAX_M3),
+            "MiniMax-M3 should be in the MiniMax supported models list"
+        );
     }
 
     #[test]
@@ -38,13 +41,10 @@ mod minimax_integration_tests {
     #[test]
     fn test_minimax_model_helpers_mapping() {
         let supported = model_helpers::supported_for("minimax").expect("minimax provider should have supported models");
-        assert!(
-            supported.contains(&models::minimax::MINIMAX_M3),
-            "MiniMax-M2.5 should be listed for minimax provider"
-        );
+        assert!(supported.contains(&models::minimax::MINIMAX_M3), "MiniMax-M3 should be listed for minimax provider");
 
         let default = model_helpers::default_for("minimax").expect("minimax provider should have a default model");
-        assert_eq!(default, models::minimax::DEFAULT_MODEL, "MiniMax provider default model should be MiniMax-M2.5");
+        assert_eq!(default, models::minimax::DEFAULT_MODEL, "MiniMax provider default model should be MiniMax-M3");
     }
 
     #[test]
@@ -62,7 +62,7 @@ mod minimax_integration_tests {
         let supported = provider.supported_models();
         assert!(
             supported.contains(&models::minimax::MINIMAX_M3.to_string()),
-            "Anthropic provider should surface MiniMax-M2.5 support"
+            "Anthropic provider should surface MiniMax-M3 support"
         );
     }
 }

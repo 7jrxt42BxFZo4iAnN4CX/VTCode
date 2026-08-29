@@ -4,7 +4,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::Instant;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, mpsc};
 
 use vtcode_core::config::loader::VTCodeConfig;
 use vtcode_core::config::types::AgentConfig;
@@ -27,6 +27,7 @@ use crate::agent::runloop::unified::planning_workflow_state::PlanningWorkflowSes
 use crate::agent::runloop::unified::session_setup::IdeContextBridge;
 use crate::agent::runloop::unified::state::{CtrlCState, SessionStats};
 use crate::agent::runloop::unified::tool_catalog::ToolCatalogState;
+use crate::agent::runloop::unified::webmcp::ActiveWebmcpBridge;
 use crate::agent::runloop::welcome::SessionBootstrap;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -84,7 +85,10 @@ pub(crate) struct InteractionLoopContext<'a> {
     pub turn_metadata_cache: &'a mut Option<Option<serde_json::Value>>,
     pub harness_config: vtcode_config::core::agent::AgentHarnessConfig,
     pub runtime_steering: &'a mut RuntimeSteering,
-    pub startup_update_notice_rx: &'a mut Option<tokio::sync::mpsc::UnboundedReceiver<StartupUpdateNotice>>,
+    pub webmcp_prompt_receiver: &'a mut Option<mpsc::Receiver<String>>,
+    pub webmcp_prompt_sender: &'a mpsc::Sender<String>,
+    pub webmcp_bridge: &'a mut Option<ActiveWebmcpBridge>,
+    pub startup_update_notice_rx: &'a mut Option<mpsc::UnboundedReceiver<StartupUpdateNotice>>,
     pub editor_open_sender: &'a crate::agent::runloop::unified::session_setup::EditorOpenRequestSender,
 }
 

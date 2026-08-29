@@ -533,6 +533,64 @@ async fn plan_command_still_routes_to_planning_workflow() {
 }
 
 #[tokio::test]
+async fn webmcp_pair_command_starts_an_active_bridge() {
+    let workspace = std::env::current_dir().expect("workspace");
+    let mut renderer = renderer_for_tests();
+
+    let outcome = handle_slash_command("webmcp pair http://localhost:5173", &mut renderer, &workspace)
+        .await
+        .expect("webmcp pair should parse");
+
+    assert!(matches!(
+        outcome,
+        SlashCommandOutcome::StartWebmcp { ref origin, replace: false } if origin == "http://localhost:5173"
+    ));
+
+    let replacement =
+        handle_slash_command("webmcp pair --replace --origin http://localhost:5173", &mut renderer, &workspace)
+            .await
+            .expect("webmcp replacement should parse");
+    assert!(matches!(
+        replacement,
+        SlashCommandOutcome::StartWebmcp { ref origin, replace: true } if origin == "http://localhost:5173"
+    ));
+
+    for rejected in [
+        "webmcp pair",
+        "webmcp pair   ",
+        "webmcp pair http://a http://b",
+        "webmcp pair --origin --replace",
+        "webmcp pair --replace --replace http://localhost:5173",
+    ] {
+        let outcome = handle_slash_command(rejected, &mut renderer, &workspace)
+            .await
+            .expect("malformed webmcp pair should still parse");
+        assert!(matches!(outcome, SlashCommandOutcome::Handled));
+    }
+}
+
+#[tokio::test]
+async fn webmcp_status_and_unpair_commands_route_to_runtime_handlers() {
+    let workspace = std::env::current_dir().expect("workspace");
+    let mut renderer = renderer_for_tests();
+
+    let status = handle_slash_command("webmcp", &mut renderer, &workspace)
+        .await
+        .expect("webmcp status should parse");
+    assert!(matches!(status, SlashCommandOutcome::ShowWebmcpStatus));
+
+    let help = handle_slash_command("webmcp help", &mut renderer, &workspace)
+        .await
+        .expect("webmcp help should parse");
+    assert!(matches!(help, SlashCommandOutcome::ShowWebmcpHelp));
+
+    let unpair = handle_slash_command("webmcp unpair", &mut renderer, &workspace)
+        .await
+        .expect("webmcp unpair should parse");
+    assert!(matches!(unpair, SlashCommandOutcome::StopWebmcp));
+}
+
+#[tokio::test]
 async fn compact_commands_parse_to_automatic_and_direct_outcomes() {
     let workspace = std::env::current_dir().expect("workspace");
     let mut renderer = renderer_for_tests();

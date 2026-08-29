@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="VT Code WebMCP browser code editor with a safe in-memory fallback">
+  <link rel="icon" href="./favicon.ico" type="image/x-icon">
+  <title>VT Code · WebMCP editor</title>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href=".">
+        <span class="brand-mark">VT</span>
+        <span>VT CODE <small>WEBMCP EDITOR</small></span>
+      </a>
+      <div class="workspace-identity">
+        <span class="label">WORKSPACE</span>
+        <strong id="modeTitle">hello-world</strong>
+        <small id="modeDetail">Fallback · no filesystem; state survives refreshes until Vite restarts.</small>
+      </div>
+      <div class="top-actions">
+        <span id="supportStatus" class="support-pill" role="status">Fallback mode</span>
+        <button id="quickActions" class="button subtle shortcut-button" type="button" title="Open quick actions (Cmd/Ctrl+Shift+P)" aria-keyshortcuts="Meta+Shift+P Control+Shift+P">Actions <kbd>⌘⇧P</kbd></button>
+        <button id="helpButton" class="button subtle help-button" type="button" title="Show keyboard shortcuts and help (?)" aria-label="Show keyboard shortcuts and help">?</button>
+        <button id="settingsButton" class="button subtle shortcut-button" type="button" title="Open connection and workspace settings (Cmd/Ctrl+,)" aria-keyshortcuts="Meta+, Control+,">Settings <kbd>⌘,</kbd></button>
+        <button id="selfCheck" class="button subtle" type="button">Run self-check</button>
+      </div>
+    </header>
+
+    <dialog id="settingsDialog" class="settings-dialog" aria-labelledby="settingsTitle">
+      <div class="settings-dialog-content">
+        <div class="dialog-header">
+          <div><span class="dialog-kicker">SETTINGS</span><h2 id="settingsTitle">Connection and workspace</h2></div>
+          <button id="closeSettings" class="toolbar-button" type="button">Close</button>
+        </div>
+        <p class="settings-intro">New here? Close Settings to try fallback, or pair VT Code below. Press <kbd>?</kbd> after closing this dialog for the quick guide. The paired VT Code TUI remains the source of truth for workspace, policy, pairing, and writes.</p>
+
+        <section class="settings-sync" aria-labelledby="settingsSyncTitle">
+          <div class="settings-sync-header"><div><span class="terminal-label">VT CODE CONFIGURATION</span><h3 id="settingsSyncTitle">Bridge status</h3></div><span id="settingsSyncState" class="settings-sync-state">Fallback defaults</span></div>
+          <dl class="settings-grid">
+            <div><dt>Connection</dt><dd id="settingsConnection">In-memory fallback</dd></div>
+            <div><dt>Workspace</dt><dd id="settingsWorkspace">Browser memory</dd></div>
+            <div><dt>Browser origin</dt><dd id="settingsOrigin">http://localhost:5173</dd></div>
+            <div><dt>Runtime</dt><dd id="settingsRuntime">Fallback</dd></div>
+            <div><dt>Pairing lease</dt><dd id="settingsPairingTtl">300 seconds</dd></div>
+            <div><dt>Bridge limits</dt><dd id="settingsLimits">1 MiB · 8 in flight</dd></div>
+            <div><dt>Listener</dt><dd id="settingsListener">Browser only</dd></div>
+          </dl>
+          <p id="settingsSyncNote">No bridge is paired. Browser edits stay in memory and never touch the filesystem.</p>
+        </section>
+
+        <details id="connectionPanel" class="connection-panel" open>
+          <summary><span>Connect or re-pair a VT Code bridge</span><span id="connectionSummary" class="connection-summary">Two-step pairing</span></summary>
+          <div class="pairing-instructions" aria-label="Two-step pairing instructions">
+            <div class="pairing-step">
+              <span class="pairing-number">1</span>
+              <div class="pairing-step-content">
+                <strong>Start in the VT Code TUI</strong>
+                <p>For <strong>VT CODE TURN</strong>, run this in the same interactive session:</p>
+                <div class="pairing-command"><code id="pairingCommand">/webmcp pair http://localhost:5173</code><button id="copyPairingCommand" class="toolbar-button" type="button">Copy command</button></div>
+                <small>VT Code prints a WebSocket URL and a one-time pairing code.</small>
+              </div>
+            </div>
+            <div class="pairing-step">
+              <span class="pairing-number">2</span>
+              <div class="pairing-step-content">
+                <strong>Paste into this web app</strong>
+                <p>Copy both values from that same running VT Code session, then pair below.</p>
+                <small>Keep the TUI running while the browser is connected.</small>
+              </div>
+            </div>
+          </div>
+          <div class="connection-alternative"><strong>Workspace only?</strong> Start <code>vtcode webmcp serve</code> instead. It does not provide VT CODE TURN.</div>
+          <div class="connection-form">
+            <label>WebSocket URL<input id="bridgeUrl" type="url" placeholder="ws://127.0.0.1:<port>/webmcp" autocomplete="off" spellcheck="false"></label>
+            <label>One-time pairing code<input id="pairingCode" type="password" inputmode="text" maxlength="64" autocomplete="off" spellcheck="false"></label>
+            <button id="connectBridge" class="button primary" type="button">Pair with VT Code</button>
+          </div>
+          <p class="connection-note"><strong>Nothing is written by the browser.</strong> The code and session token stay in browser memory. VT Code remains the approval authority.</p>
+        </details>
+
+        <details id="workspaceSetupPanel" class="workspace-setup-panel">
+          <summary><span>Choose a workspace and setup mode</span><span class="connection-summary">Terminal-assisted</span></summary>
+          <div class="setup-intro">
+            <strong>Choose the workspace from this page</strong>
+            <p>The browser cannot launch VT Code or grant filesystem access. Enter a path, copy one setup command, run it in a terminal, then pair here.</p>
+          </div>
+          <div class="setup-form">
+            <label>Workspace path<input id="workspacePath" type="text" maxlength="4096" placeholder="/absolute/path/to/workspace" autocomplete="off" spellcheck="false"></label>
+            <div class="setup-origin"><span class="label">Browser origin</span><code id="browserOrigin">http://localhost:5173</code></div>
+          </div>
+          <div class="setup-options">
+            <article class="setup-option">
+              <span class="terminal-label">ACTIVE SESSION · VT CODE TURN</span>
+              <h2>Open with the VT Code agent</h2>
+              <p>Starts VT Code in the selected workspace. Then run the shown <code>/webmcp pair</code> command in its TUI.</p>
+              <pre id="activeSetupCommand"></pre>
+              <button id="copyActiveSetup" class="toolbar-button" type="button">Copy active setup</button>
+            </article>
+            <article class="setup-option">
+              <span class="terminal-label">WORKSPACE ONLY</span>
+              <h2>Open for editing</h2>
+              <p>Starts the headless bridge for workspace inspection and proposals. It does not provide VT CODE TURN.</p>
+              <pre id="headlessSetupCommand"></pre>
+              <button id="copyHeadlessSetup" class="toolbar-button" type="button">Copy workspace setup</button>
+            </article>
+          </div>
+          <div class="setup-actions"><button id="showConnection" class="button primary" type="button">Open pairing settings</button><small>After the terminal prints the URL and one-time code, paste both values above.</small></div>
+        </details>
+      </div>
+    </dialog>
+
+    <main class="ide-shell" aria-label="VT Code coding workspace">
+      <aside class="explorer" aria-label="Workspace explorer">
+        <div class="explorer-header">
+          <div><span class="label">EXPLORER</span><h2>Files</h2></div>
+          <span id="fileCount" class="count">0 files</span>
+        </div>
+        <div class="explorer-filter">
+          <span aria-hidden="true">⌕</span>
+          <input id="searchInput" type="search" maxlength="160" placeholder="Filter files" aria-label="Filter files by name or path">
+          <kbd>⌘K</kbd>
+        </div>
+        <div id="searchResults" class="filter-status" aria-live="polite">Filter files by name or path</div>
+        <div id="fileTree" class="file-tree" role="tree"></div>
+        <div class="boundary-note">
+          <span class="boundary-mark">LOCAL</span>
+          <div><strong>Write boundary</strong><small id="boundaryDetail">In-memory · no filesystem</small></div>
+        </div>
+      </aside>
+
+      <section class="editor-workspace" aria-label="Code editor">
+        <header class="editor-titlebar">
+          <div class="editor-file-heading">
+            <span class="label">EDITOR</span>
+            <h1 id="fileTitle">No file</h1>
+          </div>
+          <div class="editor-meta"><span id="fileType" class="file-type">TEXT</span><span id="editorState">Workspace snapshot</span></div>
+        </header>
+        <nav id="fileTabs" class="file-tabs" role="tablist" aria-label="Open files"></nav>
+        <div class="editor-toolbar">
+          <button id="reloadFile" class="toolbar-button" type="button">Reload</button>
+          <button id="discardDraft" class="toolbar-button" type="button">Discard draft</button>
+          <span class="toolbar-hint">Ctrl/Cmd+S reviews · ⌘⇧P actions · ? help</span>
+          <button id="reviewChanges" class="button primary" type="button">Review changes</button>
+        </div>
+        <div id="editor" class="code-editor" aria-label="Selected file editor"></div>
+        <div class="editor-footer"><span id="cursorPosition">Ln 1, Col 1</span><span class="editor-footer-hint">Drafts stay in this browser until reviewed</span></div>
+
+        <section class="terminal-panel" aria-label="Terminal and VT Code output">
+          <header class="terminal-header">
+            <nav class="terminal-tabs" role="tablist" aria-label="Bottom panel">
+              <button class="terminal-tab active" type="button" role="tab" aria-selected="true" data-terminal="activity">TERMINAL</button>
+              <button class="terminal-tab" type="button" role="tab" aria-selected="false" data-terminal="changes">CHANGES <span id="proposalState" class="state-badge">No proposal</span></button>
+              <button class="terminal-tab" type="button" role="tab" aria-selected="false" data-terminal="turn">VT CODE</button>
+            </nav>
+            <div class="terminal-status"><strong id="statusText" role="status">Ready for inspection</strong><span id="statusDetail">Fallback mode is memory-only.</span></div>
+            <div class="terminal-actions"><button id="runChecks" class="toolbar-button" type="button">Run checks</button><small id="webmcpCapability">Checking browser WebMCP support…</small></div>
+          </header>
+
+          <div id="terminalActivity" class="terminal-pane active" role="tabpanel">
+            <div class="terminal-grid">
+              <div class="terminal-section"><span class="terminal-label">ACTIVITY</span><ol id="activityLog" class="activity-log"></ol></div>
+              <div class="terminal-section check-output-wrap"><span class="terminal-label">CHECK OUTPUT</span><pre id="checkOutput">No checks run yet.</pre></div>
+            </div>
+          </div>
+
+          <div id="terminalChanges" class="terminal-pane" role="tabpanel" hidden>
+            <div class="change-grid">
+              <div id="diffView" class="diff-view"><div class="empty-state"><strong>No changes staged</strong><small>Edit a buffer, then review the draft.</small></div></div>
+              <div class="approval-card">
+                <span class="terminal-label">CHANGE CONTROL</span>
+                <h2>Review before writing</h2>
+                <p id="approvalCopy">Draft buffers stay local until you review and send a structured proposal.</p>
+                <div class="approval-actions"><button id="approvePatch" class="button approve" type="button" disabled>Approve patch</button><button id="applyPatch" class="button approve" type="button" disabled>Apply approved patch</button><button id="revertPatch" class="button danger" type="button" disabled>Revert last change</button></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="terminalTurn" class="terminal-pane" role="tabpanel" hidden>
+            <div class="turn-grid">
+              <div class="turn-heading"><span class="terminal-label">VT CODE TURN</span><h2>Prompt composer</h2><small id="promptDetail">Browser-only fallback: pair a bridge for workspace access; agent turns need an active runtime.</small></div>
+              <textarea id="promptInput" maxlength="4000" rows="2" placeholder="Ask VT Code to inspect the reviewed change"></textarea>
+              <button id="requestTurn" class="button subtle" type="button" aria-keyshortcuts="Meta+Enter Control+Enter"><span id="requestTurnLabel">Pair editor first</span><kbd>⌘↵</kbd></button>
+              <div class="turn-output-wrap"><span class="terminal-label">RESPONSE</span><pre id="turnOutput">No VT Code turn requested.</pre></div>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <dialog id="confirmDialog"><form method="dialog"><span class="dialog-kicker">CONFIRMATION REQUIRED</span><h2 id="dialogTitle">Apply this patch?</h2><p id="dialogCopy"></p><div class="dialog-actions"><button value="cancel" class="button subtle" type="submit">Cancel</button><button id="dialogConfirm" value="confirm" class="button primary" type="button">Confirm</button></div></form></dialog>
+  <dialog id="quickActionDialog" class="quick-actions-dialog" aria-labelledby="quickActionTitle">
+    <form method="dialog">
+      <div class="dialog-header">
+        <div><span class="dialog-kicker">COMMAND PALETTE</span><h2 id="quickActionTitle">Quick actions</h2></div>
+        <button value="cancel" class="toolbar-button" type="submit">Close</button>
+      </div>
+      <label class="quick-action-search">Filter actions<input id="quickActionSearch" type="search" placeholder="Type to filter actions" autocomplete="off" spellcheck="false" autofocus></label>
+      <div id="quickActionList" class="quick-action-list" role="list" aria-label="Available editor actions"></div>
+      <p class="dialog-hint">Press <kbd>Arrow Down</kbd> to focus an action, <kbd>Enter</kbd> to run it, or <kbd>Esc</kbd> to close.</p>
+    </form>
+  </dialog>
+  <dialog id="helpDialog" class="help-dialog" aria-labelledby="helpTitle">
+    <form method="dialog">
+      <div class="dialog-header">
+        <div><span class="dialog-kicker">HELP</span><h2 id="helpTitle">Quick guide and shortcuts</h2></div>
+        <button value="cancel" class="toolbar-button" type="submit">Close</button>
+      </div>
+      <div class="help-grid">
+        <section>
+          <span class="terminal-label">KEYBOARD</span>
+          <ul class="help-list">
+            <li><kbd>⌘/Ctrl+Shift+P</kbd><span>Open quick actions</span></li>
+            <li><kbd>⌘/Ctrl+,</kbd><span>Open Settings</span></li>
+            <li><kbd>?</kbd><span>Open this help popup when you are not typing</span></li>
+            <li><kbd>⌘/Ctrl+K</kbd><span>Focus the file filter</span></li>
+            <li><kbd>⌘/Ctrl+S</kbd><span>Review the current draft</span></li>
+            <li><kbd>⌘/Ctrl+Enter</kbd><span>Request VT Code turn from the prompt</span></li>
+            <li><kbd>Esc</kbd><span>Close the active popup</span></li>
+          </ul>
+        </section>
+        <section>
+          <span class="terminal-label">GETTING STARTED</span>
+          <ul class="help-list help-copy">
+            <li><span><strong>Fallback:</strong> close Settings, open a file, edit it, and select <strong>Review changes</strong>.</span></li>
+            <li><span><strong>Connected:</strong> pair VT Code, stage the diff, then request a VT Code turn.</span></li>
+            <li><span><strong>Safety:</strong> VT Code approves real writes; the browser never writes directly to disk.</span></li>
+          </ul>
+        </section>
+      </div>
+      <p class="dialog-hint">Tip: press <kbd>?</kbd> whenever you need the shortcuts again.</p>
+    </form>
+  </dialog>
+  <script type="module" src="./src/main.ts"></script>
+</body>
+</html>

@@ -660,6 +660,8 @@ mod tests {
         let checkpoint_manager = None;
         let lifecycle_hooks = None;
         let harness_emitter = None;
+        let (webmcp_prompt_sender, _webmcp_prompt_receiver) = crate::agent::runloop::unified::webmcp::prompt_channel();
+        let webmcp_bridge = Box::leak(Box::new(None));
         let active_primary_agent = Box::leak(Box::new(vtcode_core::primary_agent::ActivePrimaryAgentState::default()));
         let plan_session = Box::leak(Box::new(
             crate::agent::runloop::unified::planning_workflow_state::PlanningWorkflowSessionState::default(),
@@ -700,6 +702,8 @@ mod tests {
             ctrl_c_state: turn.ctrl_c_state,
             ctrl_c_notify: turn.ctrl_c_notify,
             full_auto: turn.full_auto,
+            webmcp_prompt_sender: &webmcp_prompt_sender,
+            webmcp_bridge,
             loaded_skills,
             checkpoint_manager,
             lifecycle_hooks,
