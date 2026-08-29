@@ -2,11 +2,13 @@ import { defineConfig, type Plugin } from "vite";
 
 interface OriginTrialResult {
   readonly html: string;
-  readonly tags: readonly [{
-    readonly tag: "meta";
-    readonly attrs: { readonly "http-equiv": "origin-trial"; readonly content: string };
-    readonly injectTo: "head-prepend";
-  }];
+  readonly tags: readonly OriginTrialTag[];
+}
+
+interface OriginTrialTag {
+  readonly tag: "meta";
+  readonly attrs: { readonly "http-equiv": "origin-trial"; readonly content: string };
+  readonly injectTo: "head-prepend";
 }
 
 interface OriginTrialPlugin {
@@ -14,30 +16,40 @@ interface OriginTrialPlugin {
   readonly transformIndexHtml: (html: string) => string | OriginTrialResult;
 }
 
-export function webmcpOriginTrialPlugin(token = process.env.VITE_WEBMCP_ORIGIN_TRIAL_TOKEN): OriginTrialPlugin {
-  const normalizedToken = typeof token === "string" ? token.trim() : "";
+function splitTokens(value: string | undefined): string[] {
+  return typeof value === "string"
+    ? value.split(/[\s,]+/).map((token) => token.trim()).filter(Boolean)
+    : [];
+}
+
+export function webmcpOriginTrialPlugin(
+  token = process.env.VITE_WEBMCP_ORIGIN_TRIAL_TOKEN,
+  additionalTokens = process.env.VITE_WEBMCP_ORIGIN_TRIAL_TOKENS,
+): OriginTrialPlugin {
+  const normalizedTokens = [...new Set([...splitTokens(token), ...splitTokens(additionalTokens)])];
   return {
     name: "webmcp-origin-trial",
     transformIndexHtml(html: string) {
-      if (!normalizedToken) return html;
+      if (normalizedTokens.length === 0) return html;
       return {
         html,
-        tags: [{
-          tag: "meta",
+        tags: normalizedTokens.map((content) => ({
+          tag: "meta" as const,
           attrs: {
-            "http-equiv": "origin-trial",
-            content: normalizedToken,
+            "http-equiv": "origin-trial" as const,
+            content,
           },
-          injectTo: "head-prepend",
-        }],
+          injectTo: "head-prepend" as const,
+        })),
       };
     },
   };
 }
 
 export default defineConfig({
-  // GitHub Pages serves this WebMCP app beneath the repository path
-  // (/VTCode/), so generated assets must remain relative to the project page.
+  // Both public deployments can serve the same artifact: GitHub Pages beneath
+  // /VTCode/ and the ChatGPT Site at its host root. Relative assets work for
+  // both paths and for the local Vite server.
   base: "./",
   // Keep fallback state scoped to this deployed WebMCP app version. Without
   // an explicit instance, every origin falls back to the development key and a

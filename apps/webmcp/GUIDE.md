@@ -50,24 +50,44 @@ require active mode.
 Use `--port 5174` if port `5173` is already in use. Use the same port in the
 browser URL and `/webmcp pair` command.
 
-### Pair the deployed GitHub Pages client
+## Published deployments
 
-The deployed WebMCP app at
-<https://vinhnx.github.io/VTCode/> is a static page. Its browser origin is
-`https://vinhnx.github.io` (the `/VTCode/` path is not part of the origin).
-When the page is open in a browser on the same machine as the active VT Code
-TUI, run:
+The maintained app is published at both of these URLs:
+
+| Deployment | URL | Exact origin | Role |
+| --- | --- | --- | --- |
+| ChatGPT Site | <https://vtcode.vinhnx.chatgpt.site/> | `https://vtcode.vinhnx.chatgpt.site` | Hosted WebMCP demonstration |
+| GitHub Pages | <https://vinhnx.github.io/VTCode/> | `https://vinhnx.github.io` | Static fallback and reference client |
+
+Both deployments start in safe in-memory fallback mode. The page derives its
+pairing origin from `window.location.origin`, so the URL path is never copied
+into the origin allowlist. See the [deployment reference](../../docs/reference/webmcp.md)
+for the complete origin matrix.
+
+### Pair a published client
+
+When either page is open in a browser on the same machine as the active VT Code
+TUI, run the command matching the page:
 
 ```text
+/webmcp pair https://vtcode.vinhnx.chatgpt.site
 /webmcp pair https://vinhnx.github.io
 ```
 
-If that TUI already has a bridge paired for another origin, run
-`/webmcp pair --replace https://vinhnx.github.io` and confirm the replacement.
+If the TUI should serve both sites, configure both exact origins in
+`[webmcp].allowed_origins` first. When a bridge is already listening, pairing
+the other configured origin issues a new one-time code without revoking the
+existing browser session. Use `--replace` only when you want to revoke current
+sessions and issue a fresh code:
+
+```text
+/webmcp pair --replace https://vtcode.vinhnx.chatgpt.site
+```
+
 Paste the newest WebSocket URL and one-time code into **Settings**. A bridge
-started with `http://localhost:5173` will reject the deployed page's origin,
+started with `http://localhost:5173` will reject either deployed page's origin,
 which the browser can report as the generic **WebSocket connection failed**
-message.
+message. The GitHub Pages `/VTCode/` path is not part of its origin.
 
 The printed `ws://127.0.0.1:<port>/webmcp` URL is reachable only from a browser
 that can reach the same machine. A remote or sandboxed in-app browser needs a
@@ -77,15 +97,20 @@ Pages site does not host the bridge.
 ### Use the Chrome origin trial
 
 Chrome's [WebMCP origin trial](https://developer.chrome.com/blog/ai-webmcp-origin-trial)
-is an optional way to test the deployed page without relying on the testing
-flag. Request a token for the exact origin
-`https://vinhnx.github.io`, then configure the repository Actions variable
-`WEBMCP_ORIGIN_TRIAL_TOKEN`. The Pages workflow injects it at build time through
-`VITE_WEBMCP_ORIGIN_TRIAL_TOKEN`; no token is committed to source control.
+is an optional way to test either deployed page without relying on the testing
+flag. Tokens are origin-specific: request one for
+`https://vtcode.vinhnx.chatgpt.site` and another for `https://vinhnx.github.io`
+when one artifact serves both sites. Configure the repository Actions variable
+`WEBMCP_ORIGIN_TRIAL_TOKENS`; the Pages workflow injects the comma- or
+whitespace-separated values through `VITE_WEBMCP_ORIGIN_TRIAL_TOKENS`. The
+legacy singular variable remains supported for a single-origin build. No token
+is committed to source control. The Pages workflow deploys only GitHub Pages;
+pass equivalent build variables to the separate ChatGPT Site publisher when
+that deployment needs origin-trial access.
 
 For local development, use a token registered for the local origin or enable
-`chrome://flags/#enable-webmcp-testing` instead. A token for the GitHub Pages
-origin will not authorize `http://localhost:5173`.
+`chrome://flags/#enable-webmcp-testing` instead. A production token will not
+authorize `http://localhost:5173`.
 
 ## Test browser WebMCP tools
 
@@ -220,10 +245,12 @@ command.
 Make sure the bridge or active VT Code session is still running. Paste the newest
 WebSocket URL and one-time code from that same process. Its origin must exactly
 match the browser origin; `localhost` and `127.0.0.1` are different origins.
-For the deployed client, pair with `https://vinhnx.github.io`, not the full
+For the ChatGPT Site, pair with `https://vtcode.vinhnx.chatgpt.site`. For GitHub
+Pages, pair with `https://vinhnx.github.io`, not the full
 `https://vinhnx.github.io/VTCode/` URL. If an existing active bridge was paired
-for another origin, use `/webmcp pair --replace https://vinhnx.github.io` and
-paste the newly printed values.
+for another configured origin, run `/webmcp pair <exact-browser-origin>` to
+issue a code without revoking the other session; use `--replace` only when
+intentionally revoking it, then paste the newly printed values.
 
 ### The TUI prints no URL or pairing code
 

@@ -30,6 +30,7 @@ pub(crate) struct ActiveWebmcpBridge {
     server: WebmcpServer,
     task: JoinHandle<()>,
     endpoint: String,
+    pairing_origin: String,
     pairing: PairingDisplay,
 }
 
@@ -76,6 +77,7 @@ impl ActiveWebmcpBridge {
             server,
             task,
             endpoint: format!("ws://{address}/webmcp"),
+            pairing_origin: origin.to_string(),
             pairing,
         })
     }
@@ -83,6 +85,11 @@ impl ActiveWebmcpBridge {
     /// The WebSocket endpoint to enter in the browser editor.
     pub(crate) fn endpoint(&self) -> &str {
         &self.endpoint
+    }
+
+    /// The exact browser origin bound to the displayed pairing code.
+    pub(crate) fn pairing_origin(&self) -> &str {
+        &self.pairing_origin
     }
 
     /// The one-time pairing code to enter in the browser editor.
@@ -95,10 +102,19 @@ impl ActiveWebmcpBridge {
         self.pairing.expires_in().as_secs()
     }
 
+    /// Issue another origin-bound pairing code without revoking existing
+    /// authenticated browser sessions.
+    pub(crate) fn begin_pairing_for_origin(&mut self, origin: &str) -> Result<()> {
+        self.pairing = self.server.begin_pairing_for_origin(origin.to_string())?;
+        self.pairing_origin = origin.to_string();
+        Ok(())
+    }
+
     /// Revoke the current browser sessions and issue a fresh origin-bound code
     /// without restarting the active listener.
     pub(crate) fn replace_pairing(&mut self, origin: &str) -> Result<()> {
         self.pairing = self.server.replace_pairing_for_origin(origin.to_string())?;
+        self.pairing_origin = origin.to_string();
         Ok(())
     }
 

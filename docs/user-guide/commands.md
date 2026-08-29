@@ -156,6 +156,13 @@ Use `/webmcp pair <origin>` when the browser must submit real agent turns to
 this same VT Code session. The printed WebSocket URL and one-time pairing code
 belong to that running TUI process.
 
+For the published WebMCP app, use
+`https://vtcode.vinhnx.chatgpt.site` for the ChatGPT Site or
+`https://vinhnx.github.io` for the GitHub Pages page at
+`https://vinhnx.github.io/VTCode/`. The path is not part of the origin. Add
+both exact origins to `[webmcp].allowed_origins` when one listener should serve
+both pages.
+
 Pair from the two sides in this order:
 
 1. In the VT Code TUI, run `/webmcp pair http://localhost:5173`.
@@ -166,11 +173,13 @@ Pair from the two sides in this order:
 Keep the TUI running. A URL and code from `vtcode webmcp serve` are for the
 headless workspace bridge and cannot receive active-session agent turns.
 
-If `/webmcp pair <origin>` reports that WebMCP is already listening, it also
-prints the active WebSocket URL, pairing code, and expiry. The existing bridge
-stays connected. To replace it, run `/webmcp pair --replace <origin>` and
-confirm **Disconnect and re-pair** in the terminal. `/webmcp unpair` uses the
-same confirmation and closes the current browser connections.
+If `/webmcp pair <origin>` reports that WebMCP is already listening, it prints
+the active WebSocket URL, exact browser origin, pairing code, and expiry. A
+second configured origin receives a new code while existing sessions stay
+connected. To revoke current sessions and replace the pairing, run
+`/webmcp pair --replace <origin>` and confirm **Disconnect and re-pair** in the
+terminal. `/webmcp unpair` uses the same confirmation and closes the current
+browser connections.
 
 The standalone command starts the opt-in authenticated WebSocket bridge for
 headless workspace operations:

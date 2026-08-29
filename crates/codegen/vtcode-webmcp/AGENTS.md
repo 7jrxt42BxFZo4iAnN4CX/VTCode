@@ -24,4 +24,5 @@
 - Multi-file mutations use serialized compare-and-rollback; preserve fail-closed behavior when rollback itself fails. Keep proposal count/byte budgets and subscriber count/byte budgets bounded.
 - Active turn requests may carry a proposal identity; revalidate its stored snapshots and hand off the adapter-generated authoritative diff. Never trust or forward the browser-rendered diff as the source of truth.
 - Pairing TTL is the one-time-code lifetime and authenticated-session inactivity lease; authenticated browser traffic may refresh it, and an in-flight authenticated operation may pin its lease until completion. Expiry checks outside an operation remain read-only.
+- Multiple configured exact origins may share one listener; origin-specific pairing issues a new pending code without revoking existing sessions, while replacement revokes all sessions.
 - Authenticated `status` may expose only non-secret bridge settings; the terminal/TUI remains authoritative for origins, roots, and policy. Keep browser settings refreshable from status/heartbeats without persisting tokens or pairing codes.

@@ -1,5 +1,11 @@
 # ANSI Escape Sequences Documentation Index
 
+## WebMCP
+
+See the [WebMCP deployment reference](./webmcp.md) for the two published
+browser deployments, exact origins, pairing commands, origin-trial setup, and
+verification checklist.
+
 ## Overview
 
 This directory contains comprehensive documentation on ANSI escape sequences and their usage in VT Code.

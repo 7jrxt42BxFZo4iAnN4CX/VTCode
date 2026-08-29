@@ -304,6 +304,40 @@ mod tests {
     }
 
     #[test]
+    fn configured_origins_can_keep_independent_sessions_active() {
+        let manager = PairingManager::new(
+            ["https://vtcode.vinhnx.chatgpt.site", "https://vinhnx.github.io"],
+            Duration::from_secs(60),
+        )
+        .expect("manager");
+
+        let chatgpt_pairing = manager
+            .begin_pairing_for_origin("https://vtcode.vinhnx.chatgpt.site")
+            .expect("ChatGPT Site pairing");
+        let chatgpt_session = manager
+            .pair(chatgpt_pairing.code(), "https://vtcode.vinhnx.chatgpt.site")
+            .expect("ChatGPT Site session");
+
+        let github_pairing = manager
+            .begin_pairing_for_origin("https://vinhnx.github.io")
+            .expect("GitHub Pages pairing");
+        let github_session = manager
+            .pair(github_pairing.code(), "https://vinhnx.github.io")
+            .expect("GitHub Pages session");
+
+        assert!(
+            manager
+                .validate(chatgpt_session.token(), "https://vtcode.vinhnx.chatgpt.site")
+                .is_ok()
+        );
+        assert!(manager.validate(github_session.token(), "https://vinhnx.github.io").is_ok());
+        assert!(matches!(
+            manager.validate(chatgpt_session.token(), "https://vinhnx.github.io"),
+            Err(WebmcpError::Unauthorized)
+        ));
+    }
+
+    #[test]
     fn expired_pairing_cannot_be_reused() {
         let manager = PairingManager::new(["https://example.test"], Duration::from_millis(1)).expect("manager");
         let display = manager.begin_pairing();

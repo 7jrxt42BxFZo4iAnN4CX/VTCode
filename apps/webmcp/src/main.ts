@@ -1,5 +1,6 @@
 import { InMemoryBackend, VtCodeBackend, buildTurnPrompt, connectVtCode, createBackend, createUnifiedDiff, digest, MAX_FILE_BYTES } from "./backend.ts";
 import { CodeEditor } from "./editor.ts";
+import { browserOrigin, webmcpDeploymentForOrigin } from "./deployments.ts";
 import { loadBrowserSettings, loadBrowserState, saveBrowserSettings, saveBrowserState, type StorageLike } from "./persistence.ts";
 import { createWebMcpEvidenceRecorder, type WebMcpEvidenceRecorder } from "./webmcp-evidence.ts";
 import { createWebMcpTools, registerWebMcpTools, replaceExactText, type ModelContext, type StageTextEditInput, type ToolExecutionOptions, type WebMcpRegistration, type WebMcpTool } from "./webmcp.ts";
@@ -199,10 +200,6 @@ function status(title: string, detail: string): void {
   $("statusDetail").textContent = detail;
 }
 
-function browserOrigin(): string {
-  return globalThis.location?.origin || "http://localhost:5173";
-}
-
 function evidenceNowMs(): number {
   return typeof performance?.now === "function" ? performance.now() : Date.now();
 }
@@ -364,6 +361,8 @@ function renderSettings(): void {
   const listener = settings
     ? `${settings.host}:${settings.port === 0 ? "auto" : settings.port} · ${settings.remote_enabled ? "remote proxy" : "loopback"}`
     : backend.kind === "fallback" ? "Browser only" : "Not reported by bridge";
+  const deployment = webmcpDeploymentForOrigin(browserOrigin());
+  const pageLabel = deployment?.label ?? "Current browser origin";
 
   $("settingsConnection").textContent = connection;
   $("settingsWorkspace").textContent = workspace;
@@ -379,10 +378,10 @@ function renderSettings(): void {
   syncState.textContent = backend.kind === "fallback" ? "Fallback defaults" : paired ? "Synced from VT Code" : "Pairing required";
   syncState.className = `settings-sync-state${paired ? " connected" : backend.kind === "websocket" ? " warning" : ""}`;
   $("settingsSyncNote").textContent = backend.kind === "fallback"
-    ? "No bridge is paired. Browser edits stay in memory and never touch the filesystem."
+    ? `${pageLabel}. No bridge is paired. Browser edits stay in memory and never touch the filesystem.`
     : paired
-      ? "These values are read from the paired VT Code bridge. The terminal owns workspace roots, policy, pairing, and writes."
-      : "The previous bridge is not connected. Enter a fresh one-time code; bridge settings will appear after pairing.";
+      ? `${pageLabel}. These values are read from the paired VT Code bridge. The terminal owns workspace roots, policy, pairing, and writes.`
+      : `${pageLabel}. The previous bridge is not connected. Enter a fresh one-time code; bridge settings will appear after pairing.`;
 }
 
 function shellQuote(value: string): string {

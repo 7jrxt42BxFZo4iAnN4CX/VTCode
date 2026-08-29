@@ -55,6 +55,7 @@ jobs:
         working-directory: apps/webmcp
         env:
           VITE_WEBMCP_ORIGIN_TRIAL_TOKEN: ${{ vars.WEBMCP_ORIGIN_TRIAL_TOKEN }}
+          VITE_WEBMCP_ORIGIN_TRIAL_TOKENS: ${{ vars.WEBMCP_ORIGIN_TRIAL_TOKENS }}
         run: bun run build
 
       - name: Configure Pages

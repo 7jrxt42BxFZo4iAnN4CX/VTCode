@@ -188,8 +188,8 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/development/webmcp.md`
   - **Content**: WebMCP bridge development guide
-  - **Topics**: Boundaries, WebMCP API versus the VT Code bridge, Browser tool contracts and evals, Transport and pairing, Remote MCP transport
-  - **User Questions**: "What can you tell me about WebMCP bridge development guide?", "How does Boundaries work?", "How does WebMCP API versus the VT Code bridge work?"
+  - **Topics**: Published deployments and exact origins, Boundaries, WebMCP API versus the VT Code bridge, Browser tool contracts and evals, Transport and pairing
+  - **User Questions**: "What can you tell me about WebMCP bridge development guide?", "How does Published deployments and exact origins work?", "How does Boundaries work?"
 
 - **File**: `docs/development/model-profiles.md`
   - **Content**: model-profiles.md
@@ -695,8 +695,8 @@ This document serves as an index of all VT Code documentation. When users ask qu
 
 - **File**: `docs/reference/README.md`
   - **Content**: ANSI Escape Sequences Documentation Index
-  - **Topics**: Overview, Documents, Quick Navigation, Code Examples, Testing
-  - **User Questions**: "What can you tell me about ANSI Escape Sequences Documentation Index?", "How does Overview work?", "How does Documents work?"
+  - **Topics**: WebMCP, Overview, Documents, Quick Navigation, Code Examples
+  - **User Questions**: "What can you tell me about ANSI Escape Sequences Documentation Index?", "How does WebMCP work?", "How does Overview work?"
 
 - **File**: `docs/reference/ansi-escape-sequences.md`
   - **Content**: ANSI Escape Sequences Reference
@@ -992,6 +992,11 @@ This document serves as an index of all VT Code documentation. When users ask qu
   - **Content**: Vtcode Styling System Documentation
   - **Topics**: Files, Quick Summary, Architecture Overview, Dependencies, Related Code Locations
   - **User Questions**: "What can you tell me about Vtcode Styling System Documentation?", "How does Files work?", "How does Quick Summary work?"
+
+- **File**: `docs/reference/webmcp.md`
+  - **Content**: WebMCP deployment reference
+  - **Topics**: Select a deployment, Pair either published page, Origin trial and browser support, Verification checklist
+  - **User Questions**: "What can you tell me about WebMCP deployment reference?", "How does Select a deployment work?", "How does Pair either published page work?"
 
 - **File**: `docs/protocols/ZED_EXTENSION_FILE_SEARCH.md`
   - **Content**: Zed Extension File Search Integration

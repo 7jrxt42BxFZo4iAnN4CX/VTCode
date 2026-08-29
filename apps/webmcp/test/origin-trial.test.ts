@@ -31,3 +31,9 @@ test("origin-trial tokens are trimmed before injection", () => {
   assert.ok(tag);
   assert.equal(tag.attrs?.content, "trial-token");
 });
+
+test("origin-trial injection supports tokens for both published origins", () => {
+  const result = webmcpOriginTrialPlugin(" github-token ", "chatgpt-token\n github-token ").transformIndexHtml("<head></head>");
+  if (typeof result === "string") throw new Error("expected an origin-trial transform result");
+  assert.deepEqual(result.tags.map((tag) => tag.attrs.content), ["github-token", "chatgpt-token"]);
+});

@@ -21,6 +21,7 @@ const WEBMCP_COMMAND_GUIDE: &[&str] = &[
     "  /webmcp unpair                            Confirm and disconnect the bridge.",
     "Active agent turns require pairing from this same VT Code TUI session.",
     "The browser origin must exactly match the origin entered in the pair command.",
+    "Pairing another configured origin keeps existing authenticated sessions active.",
 ];
 
 pub(crate) async fn handle_start_webmcp(
@@ -28,18 +29,42 @@ pub(crate) async fn handle_start_webmcp(
     origin: String,
     replace: bool,
 ) -> Result<SlashCommandControl> {
-    if let Some((endpoint, pairing_code, expires_in_secs)) = ctx.webmcp_bridge.as_ref().map(bridge_details) {
+    if let Some((endpoint, pairing_origin, pairing_code, expires_in_secs)) =
+        ctx.webmcp_bridge.as_ref().map(bridge_details)
+    {
         ctx.renderer
             .line(MessageStyle::Info, "WebMCP is already listening in this VT Code session.")?;
+
+        if !replace && pairing_origin != origin {
+            let Some(bridge) = ctx.webmcp_bridge.as_mut() else {
+                return Ok(SlashCommandControl::Continue);
+            };
+            bridge.begin_pairing_for_origin(&origin)?;
+            let (new_endpoint, new_pairing_origin, new_pairing_code, new_expires_in_secs) = bridge_details(bridge);
+            ctx.renderer.line(
+                MessageStyle::Info,
+                &format!("WebMCP pairing issued for {new_pairing_origin}; existing browser sessions remain active."),
+            )?;
+            render_bridge_details(
+                &mut ctx,
+                &new_endpoint,
+                &new_pairing_origin,
+                &new_pairing_code,
+                new_expires_in_secs,
+            )?;
+            ctx.renderer.line(MessageStyle::Info, BROWSER_PAIRING_INSTRUCTION)?;
+            return Ok(SlashCommandControl::Continue);
+        }
+
         ctx.renderer
             .line(MessageStyle::Info, "WebMCP is listening in the active VT Code session.")?;
-        render_bridge_details(&mut ctx, &endpoint, &pairing_code, expires_in_secs)?;
+        render_bridge_details(&mut ctx, &endpoint, &pairing_origin, &pairing_code, expires_in_secs)?;
 
         if !replace {
             ctx.renderer.line(
                 MessageStyle::Info,
                 &format!(
-                    "The current bridge remains active. To disconnect it and pair a new browser session, run `/webmcp pair --replace {origin}`."
+                    "The current pairing for {origin} remains active. To revoke its sessions and issue a new code, run `/webmcp pair --replace {origin}`."
                 ),
             )?;
             return Ok(SlashCommandControl::Continue);
@@ -77,10 +102,10 @@ pub(crate) async fn handle_start_webmcp(
             return Ok(SlashCommandControl::Continue);
         };
         bridge.replace_pairing(&origin)?;
-        let (new_endpoint, new_pairing_code, new_expires_in_secs) = bridge_details(bridge);
+        let (new_endpoint, new_pairing_origin, new_pairing_code, new_expires_in_secs) = bridge_details(bridge);
         ctx.renderer
             .line(MessageStyle::Info, "WebMCP pairing replaced; previous browser sessions were revoked.")?;
-        render_bridge_details(&mut ctx, &new_endpoint, &new_pairing_code, new_expires_in_secs)?;
+        render_bridge_details(&mut ctx, &new_endpoint, &new_pairing_origin, &new_pairing_code, new_expires_in_secs)?;
         ctx.renderer.line(MessageStyle::Info, BROWSER_PAIRING_INSTRUCTION)?;
         return Ok(SlashCommandControl::Continue);
     }
@@ -102,7 +127,7 @@ pub(crate) async fn handle_start_webmcp(
     drop(previous_bridge);
 
     ctx.renderer.line(MessageStyle::Info, "Active WebMCP bridge started.")?;
-    render_bridge_details(&mut ctx, &endpoint, &pairing_code, expires_in_secs)?;
+    render_bridge_details(&mut ctx, &endpoint, &origin, &pairing_code, expires_in_secs)?;
     ctx.renderer.line(MessageStyle::Info, BROWSER_PAIRING_INSTRUCTION)?;
     ctx.renderer.line(
         MessageStyle::Info,
@@ -112,14 +137,16 @@ pub(crate) async fn handle_start_webmcp(
 }
 
 pub(crate) async fn handle_show_webmcp_status(mut ctx: SlashCommandContext<'_>) -> Result<SlashCommandControl> {
-    if let Some((endpoint, pairing_code, expires_in_secs)) = ctx.webmcp_bridge.as_ref().map(bridge_details) {
+    if let Some((endpoint, pairing_origin, pairing_code, expires_in_secs)) =
+        ctx.webmcp_bridge.as_ref().map(bridge_details)
+    {
         ctx.renderer
             .line(MessageStyle::Info, "WebMCP is listening in the active VT Code session.")?;
-        render_bridge_details(&mut ctx, &endpoint, &pairing_code, expires_in_secs)?;
+        render_bridge_details(&mut ctx, &endpoint, &pairing_origin, &pairing_code, expires_in_secs)?;
         ctx.renderer.line(MessageStyle::Info, BROWSER_PAIRING_INSTRUCTION)?;
         ctx.renderer.line(
             MessageStyle::Info,
-            "To disconnect and issue a new pairing, run `/webmcp pair --replace <exact-browser-origin>`.",
+            "To issue a pairing for another configured origin, run `/webmcp pair <exact-browser-origin>`; use `--replace` to revoke current sessions.",
         )?;
     } else {
         ctx.renderer.line(
@@ -137,7 +164,9 @@ pub(crate) async fn handle_show_webmcp_help(mut ctx: SlashCommandContext<'_>) ->
 }
 
 pub(crate) async fn handle_stop_webmcp(mut ctx: SlashCommandContext<'_>) -> Result<SlashCommandControl> {
-    let Some((endpoint, pairing_code, expires_in_secs)) = ctx.webmcp_bridge.as_ref().map(bridge_details) else {
+    let Some((endpoint, pairing_origin, pairing_code, expires_in_secs)) =
+        ctx.webmcp_bridge.as_ref().map(bridge_details)
+    else {
         ctx.renderer
             .line(MessageStyle::Info, "WebMCP was not listening in this session.")?;
         return Ok(SlashCommandControl::Continue);
@@ -145,7 +174,7 @@ pub(crate) async fn handle_stop_webmcp(mut ctx: SlashCommandContext<'_>) -> Resu
 
     ctx.renderer
         .line(MessageStyle::Info, "WebMCP is listening in the active VT Code session.")?;
-    render_bridge_details(&mut ctx, &endpoint, &pairing_code, expires_in_secs)?;
+    render_bridge_details(&mut ctx, &endpoint, &pairing_origin, &pairing_code, expires_in_secs)?;
 
     if !ctx.renderer.supports_inline_ui() {
         ctx.renderer.line(
@@ -182,17 +211,24 @@ pub(crate) async fn handle_stop_webmcp(mut ctx: SlashCommandContext<'_>) -> Resu
     Ok(SlashCommandControl::Continue)
 }
 
-fn bridge_details(bridge: &ActiveWebmcpBridge) -> (String, String, u64) {
-    (bridge.endpoint().to_string(), bridge.pairing_code().to_string(), bridge.pairing_expires_in_secs())
+fn bridge_details(bridge: &ActiveWebmcpBridge) -> (String, String, String, u64) {
+    (
+        bridge.endpoint().to_string(),
+        bridge.pairing_origin().to_string(),
+        bridge.pairing_code().to_string(),
+        bridge.pairing_expires_in_secs(),
+    )
 }
 
 fn render_bridge_details(
     ctx: &mut SlashCommandContext<'_>,
     endpoint: &str,
+    origin: &str,
     pairing_code: &str,
     expires_in_secs: u64,
 ) -> Result<()> {
     ctx.renderer.line(MessageStyle::Info, &format!("WebSocket: {endpoint}"))?;
+    ctx.renderer.line(MessageStyle::Info, &format!("Browser origin: {origin}"))?;
     ctx.renderer.line(
         MessageStyle::Info,
         &format!("Pairing code: {pairing_code} (expires in {expires_in_secs} seconds; one-time)"),

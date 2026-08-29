@@ -16,6 +16,22 @@ must authorize the mutation and the base digest must still match before any
 file is changed. The listener does not terminate TLS; remote access must go
 through a TLS-terminating reverse proxy.
 
+## Published browser origins
+
+The maintained browser app is published at two exact origins:
+
+| Deployment | URL | Origin |
+| --- | --- | --- |
+| ChatGPT Site | <https://vtcode.vinhnx.chatgpt.site/> | `https://vtcode.vinhnx.chatgpt.site` |
+| GitHub Pages | <https://vinhnx.github.io/VTCode/> | `https://vinhnx.github.io` |
+
+The bridge does not hardcode these deployments. A caller must explicitly add
+the origins it intends to accept; the GitHub Pages `/VTCode/` path is not part
+of the origin. Multiple exact origins may share one listener. Calling
+`begin_pairing_for_origin` for another allowed origin replaces only the pending
+one-time code, while existing authenticated sessions remain valid;
+`replace_pairing_for_origin` intentionally revokes all sessions.
+
 ## OpenAI-compatible remote MCP
 
 `vtcode webmcp serve` has an independent, opt-in read-only MCP surface. It
@@ -80,7 +96,10 @@ use vtcode_webmcp::{FilesystemWorkspace, WebmcpServer, WebmcpServerConfig};
 # async fn run() -> vtcode_webmcp::Result<()> {
 let workspace = FilesystemWorkspace::new(".", [], false).await?;
 let mut config = WebmcpServerConfig::default();
-config.allowed_origins = vec!["http://localhost:5173".to_string()];
+config.allowed_origins = vec![
+    "https://vtcode.vinhnx.chatgpt.site".to_string(),
+    "https://vinhnx.github.io".to_string(),
+];
 let server = WebmcpServer::new(Arc::new(workspace), config)?;
 let pairing = server.begin_pairing();
 println!("Pair in the terminal: {}", pairing.code());
@@ -102,9 +121,10 @@ display and refresh this snapshot, but the active TUI remains authoritative for
 origins, roots, permissions, and writes. Pairing codes and session tokens are
 not part of the settings payload.
 
-In an active TUI session, `/webmcp pair <origin>` reports the existing
-listener, endpoint, one-time code, and expiry when a bridge is already
-running. `/webmcp pair --replace <origin>` asks for terminal confirmation,
-revokes current browser sessions, and issues a fresh pairing code on the same
-listener. `/webmcp unpair` uses terminal confirmation before stopping the
-listener.
+In an active TUI session, `/webmcp pair <origin>` starts the listener or issues
+a code for another configured origin when the listener is already running.
+Existing sessions remain active when another origin is paired. The command
+prints the endpoint, exact browser origin, one-time code, and expiry.
+`/webmcp pair --replace <origin>` asks for terminal confirmation, revokes
+current browser sessions, and issues a fresh pairing code on the same listener.
+`/webmcp unpair` uses terminal confirmation before stopping the listener.

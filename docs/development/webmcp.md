@@ -7,6 +7,21 @@ filesystem access. The bridge ships in the main `vtcode` binary and the
 authority for origins, roots, pairing, and writes. The repository's
 `apps/webmcp` project is the maintained WebMCP browser app.
 
+## Published deployments and exact origins
+
+The maintained app is published at two URLs:
+
+| Deployment | URL | Exact origin | Purpose |
+| --- | --- | --- | --- |
+| ChatGPT Site | <https://vtcode.vinhnx.chatgpt.site/> | `https://vtcode.vinhnx.chatgpt.site` | Hosted WebMCP demonstration |
+| GitHub Pages | <https://vinhnx.github.io/VTCode/> | `https://vinhnx.github.io` | Static fallback and reference client |
+
+The browser app derives the pairing origin from `window.location.origin`. The
+GitHub Pages `/VTCode/` path is not part of the origin. The bridge must still
+receive explicit, exact origins; it never uses a wildcard or treats these two
+hosts as interchangeable. Configure both origins when one active or headless
+listener should accept both published pages.
+
 ## Boundaries
 
 The browser uses CodeMirror draft buffers. `Cmd/Ctrl+S` opens review and never writes directly. A proposal contains workspace-relative paths, the `sha256:` digest observed when each file was read, and complete UTF-8 content:
@@ -102,12 +117,16 @@ no trusted cross-origin embedder, so exposing tools to another origin would add
 authority without a defined trust relationship.
 
 The WebMCP app also supports [Chrome's optional origin trial](https://developer.chrome.com/blog/ai-webmcp-origin-trial)
-without making a token part of source control. Set `VITE_WEBMCP_ORIGIN_TRIAL_TOKEN` during the Vite
-build to prepend an `origin-trial` meta tag before the module loads. The Pages
-workflow maps the optional repository Actions variable
-`WEBMCP_ORIGIN_TRIAL_TOKEN` to that build variable. The token must be registered
-for the exact page origin; when it is absent, feature detection, the Chrome
-testing flag, and the in-memory fallback remain the supported paths.
+without making a token part of source control. Set the singular
+`VITE_WEBMCP_ORIGIN_TRIAL_TOKEN` for a one-origin build, or set the comma- or
+whitespace-separated `VITE_WEBMCP_ORIGIN_TRIAL_TOKENS` value for one token per
+published origin. The Pages workflow maps the corresponding repository Actions
+variables `WEBMCP_ORIGIN_TRIAL_TOKEN` and `WEBMCP_ORIGIN_TRIAL_TOKENS` to those
+build variables. Each token must be registered for the exact page origin; when
+tokens are absent, feature detection, the Chrome testing flag, and the
+in-memory fallback remain the supported paths. The Pages workflow deploys only
+GitHub Pages; a separately published ChatGPT Site artifact must receive the
+same build variables from its own publisher if origin-trial access is needed.
 
 ## Transport and pairing
 
@@ -224,6 +243,15 @@ Start it only when a browser connection is intended, with an exact origin allowl
 vtcode webmcp serve --origin http://localhost:5173
 ```
 
+For both published deployments, repeat `--origin` and keep the URL path out of
+the allowlist:
+
+```sh
+vtcode webmcp serve \
+  --origin https://vtcode.vinhnx.chatgpt.site \
+  --origin https://vinhnx.github.io
+```
+
 The default bind is loopback with an OS-selected port. `--allowed-root` explicitly bounds the workspace roots available to a headless bridge. Patch application requires `apply_patch` in the existing explicit full-auto allowlist; checks separately require `exec_command` (or the wildcard entry). If either capability would be enabled, the selected workspace must also pass the existing full-auto workspace-trust gate. Checks resolve an allowlisted executable from trusted installation locations, clear the inherited environment, and run through the canonical `vtcode-safety` workspace sandbox with a bounded timeout and output cap. The bridge does not terminate TLS or bind a remote interface: `--allow-remote --public-url wss://...` is accepted only for a TLS-terminating reverse proxy that forwards to the loopback listener. Direct non-loopback binding is rejected.
 
 The slash command `/webmcp` reports the command family and security boundary
@@ -234,11 +262,12 @@ one-time pairing code, and browser next-step instruction, then routes
 the URL and code into **Settings → Connect or re-pair a VT Code bridge**. The
 browser still cannot authorize writes; normal VT Code terminal permissions and
 tool policy remain authoritative. If the bridge is already running, the pair
-command prints its current endpoint, one-time code, and expiry. Use
-`/webmcp pair --replace <origin>` to open a terminal confirmation before
-disconnecting the current browser and issuing a fresh pairing code. `/webmcp unpair`
-also requires terminal confirmation before it stops the bridge and revokes its
-in-memory sessions.
+command prints its current endpoint, one-time code, and expiry for the active
+pairing origin. Pairing another configured origin issues a new one-time code
+without revoking existing sessions. Use `/webmcp pair --replace <origin>` to
+open a terminal confirmation before disconnecting current browsers and issuing
+a fresh pairing code. `/webmcp unpair` also requires terminal confirmation
+before it stops the bridge and revokes its in-memory sessions.
 
 `/webmcp` and `/webmcp help` also print the supported command arguments and
 the active-session pairing boundary directly in the TUI.
@@ -275,6 +304,8 @@ enabled = false
 host = "127.0.0.1"
 port = 0
 allowed_origins = ["http://localhost:5173"]
+# To serve both published pages from one listener, use:
+# allowed_origins = ["https://vtcode.vinhnx.chatgpt.site", "https://vinhnx.github.io"]
 allowed_roots = []
 pairing_ttl_secs = 300
 max_frame_bytes = 1048576

@@ -14,6 +14,22 @@ For the click-by-click setup and fallback/connected workflow, see the
 [WebMCP app guide](GUIDE.md) or the [WebMCP browser bridge user
 guide](../../docs/user-guide/webmcp.md).
 
+## Published deployments
+
+The same app is published at two public origins:
+
+| Deployment | URL | Origin used for pairing |
+| --- | --- | --- |
+| ChatGPT Site | <https://vtcode.vinhnx.chatgpt.site/> | `https://vtcode.vinhnx.chatgpt.site` |
+| GitHub Pages | <https://vinhnx.github.io/VTCode/> | `https://vinhnx.github.io` |
+
+The page derives its pairing command from `window.location.origin`, so the
+same build works at both sites without weakening the bridge's exact-origin
+allowlist. Use the ChatGPT Site for the hosted demonstration and GitHub Pages
+for the standalone static fallback/reference client. See the
+[deployment reference](../../docs/reference/webmcp.md) for the complete
+origin matrix and verification checklist.
+
 The browser never writes to the local filesystem. With no bridge, the page
 starts in a deterministic `InMemoryBackend`; edits, proposals, checks, and
 reverts are confined to page memory. When paired with `vtcode webmcp serve`,
@@ -86,21 +102,25 @@ capture. **Run self-check** is not a substitute for a real external-client run.
 
 ### Optional Chrome origin trial
 
-The Vite build supports an opt-in [WebMCP origin-trial](https://developer.chrome.com/blog/ai-webmcp-origin-trial)
-token without storing a token in the repository. Register the exact production origin
-`https://vinhnx.github.io` in Chrome's origin-trial service, then set the token
-as `VITE_WEBMCP_ORIGIN_TRIAL_TOKEN` when building:
+The Vite build supports opt-in [WebMCP origin-trial](https://developer.chrome.com/blog/ai-webmcp-origin-trial)
+tokens without storing them in the repository. Tokens are bound to exact
+origins. For a single-origin build, register either
+`https://vtcode.vinhnx.chatgpt.site` or `https://vinhnx.github.io`, then set:
 
 ```sh
-VITE_WEBMCP_ORIGIN_TRIAL_TOKEN='<token for https://vinhnx.github.io>' bun run build
+VITE_WEBMCP_ORIGIN_TRIAL_TOKEN='<token for the deployment origin>' bun run build
 ```
 
-The GitHub Pages workflow reads the optional repository Actions variable
-`WEBMCP_ORIGIN_TRIAL_TOKEN` and passes it to the build. If the variable is not
-set, no origin-trial tag is emitted and the WebMCP app remains available through the
-Chrome WebMCP testing flag or its normal fallback mode. Tokens are
-origin-specific and time-limited; a production token should not be reused for
-`localhost`.
+When one artifact is served by both deployments, provide both origin-trial
+tokens as a comma- or newline-separated `VITE_WEBMCP_ORIGIN_TRIAL_TOKENS`
+value. The browser ignores a token issued for a different origin. The GitHub
+Pages workflow accepts the corresponding `WEBMCP_ORIGIN_TRIAL_TOKENS`
+repository variable in addition to the legacy singular variable. If no token
+is set, use the Chrome WebMCP testing flag or the normal in-memory fallback. A
+separately published ChatGPT Site artifact must receive equivalent build
+variables from its own publisher; the Pages workflow deploys only GitHub Pages.
+Never reuse a production token for `localhost`; tokens are time-limited and
+origin-specific.
 
 ## Pair with VT Code
 
@@ -119,6 +139,7 @@ The TUI prints the values in this order:
 
 ```text
 WebSocket: ws://127.0.0.1:<port>/webmcp
+Browser origin: <exact-browser-origin>
 Pairing code: <one-time-code>
 ```
 
@@ -130,6 +151,11 @@ URL, pairing code, and expiry. To disconnect that browser and issue a fresh
 pairing, run `/webmcp pair --replace http://localhost:5173`, then confirm
 **Disconnect and re-pair**. `/webmcp unpair` also asks for confirmation before
 disconnecting without starting a replacement bridge.
+
+When `[webmcp].allowed_origins` contains both published origins, running
+`/webmcp pair <the-other-origin>` while the bridge is already listening issues
+a new one-time code without revoking existing sessions. Use `--replace` only
+when the current browser sessions should be revoked.
 
 The app's **Settings** dialog contains the workspace path, browser origin,
 generated active-session and workspace-only setup commands, WebSocket URL, and
@@ -293,12 +319,20 @@ responses and canonical runtime events back. WebMCP does not define that
 remote VT Code protocol, so this WebMCP app does not claim that the WebSocket itself
 is the WebMCP API.
 
-## GitHub Pages
+## Published deployment
 
 The repository workflow at `../../.github/workflows/webmcp.yml` runs
 `bun install --frozen-lockfile`, typechecks and tests the Vite app, then builds
 and publishes `dist/` when the `main` branch is
 pushed or the workflow is started manually. Configure Pages to use **GitHub
 Actions**.
+
+The resulting browser app is available at
+<https://vinhnx.github.io/VTCode/> with the exact origin
+`https://vinhnx.github.io`. The hosted ChatGPT Site deployment is available at
+<https://vtcode.vinhnx.chatgpt.site/> with the exact origin
+`https://vtcode.vinhnx.chatgpt.site`. Both deployments start in fallback mode;
+use the [WebMCP deployment reference](../../docs/reference/webmcp.md) for
+pairing, origin-trial, and verification details.
 
 The WebMCP app is covered by the repository's [MIT OR Apache-2.0 license](../../LICENSE).

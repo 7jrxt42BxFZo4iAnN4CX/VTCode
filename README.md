@@ -47,16 +47,25 @@ terminal.
 
 ## New: VT Code WebMCP application
 
-The WebMCP browser bridge is a first-class, opt-in VT Code integration. Open the
-deployed [VT Code WebMCP application](https://vinhnx.github.io/VTCode/) to try
-the browser editor. See the [WebMCP user guide](./docs/user-guide/webmcp.md),
-[development guide](./docs/development/webmcp.md), [WebMCP app guide](./apps/webmcp/GUIDE.md),
-[WebMCP app README](./apps/webmcp/README.md), and
-[WebMCP crate documentation](./crates/codegen/vtcode-webmcp/README.md) for setup,
-integration, and implementation details.
+The WebMCP browser bridge is a first-class, opt-in VT Code integration. The
+maintained browser app is published at two origins:
+
+| Deployment | URL | Browser origin | Use it for |
+| --- | --- | --- | --- |
+| ChatGPT Site | <https://vtcode.vinhnx.chatgpt.site/> | `https://vtcode.vinhnx.chatgpt.site` | Hosted WebMCP demonstration |
+| GitHub Pages | <https://vinhnx.github.io/VTCode/> | `https://vinhnx.github.io` | Static fallback and WebMCP reference client |
+
+The app derives the exact pairing origin from the page currently open, so pair
+the active VT Code session with `/webmcp pair https://vtcode.vinhnx.chatgpt.site`
+for the ChatGPT Site or `/webmcp pair https://vinhnx.github.io` for GitHub
+Pages. See the [WebMCP user guide](./docs/user-guide/webmcp.md),
+[development guide](./docs/development/webmcp.md), [deployment reference](./docs/reference/webmcp.md),
+[WebMCP app guide](./apps/webmcp/GUIDE.md), [WebMCP app README](./apps/webmcp/README.md),
+and [WebMCP crate documentation](./crates/codegen/vtcode-webmcp/README.md) for
+setup, integration, and implementation details.
 
 <p align="center">
-  <a href="https://vinhnx.github.io/VTCode/"><img src="./resources/screenshots/vtcode-webmcp.png" alt="VT Code WebMCP editor" width="90%" style="max-width: 960px; border-radius: 12px;"></a>
+  <a href="https://vtcode.vinhnx.chatgpt.site/"><img src="./resources/screenshots/vtcode-webmcp.png" alt="VT Code WebMCP editor" width="90%" style="max-width: 960px; border-radius: 12px;"></a>
 </p>
 
 ### Runtime and coding
@@ -174,6 +183,7 @@ guide, integration guide, or reference.
 - [**Interactive TUI**](./docs/user-guide/interactive-mode.md): primary agents, slash commands (`/model`, `/review`, `/mcp`, `/skills`, `/theme`, `/compact`)
 - [**CLI commands**](./docs/user-guide/commands.md): command reference for interactive, headless, review, and automation workflows
 - [**WebMCP browser bridge**](./docs/user-guide/webmcp.md): connect a supported browser editor to an active VT Code session or a bounded standalone workspace bridge
+- [**WebMCP deployment reference**](./docs/reference/webmcp.md): public origins, pairing commands, origin-trial configuration, and deployment checks
 - [**Full automation**](./docs/guides/full-automation.md): `--full-auto` CLI, plan-build-evaluate harness, subagents, and scheduled tasks
 - [**Providers**](./docs/providers/PROVIDER_GUIDES.md): setup guides for all built-in providers
 - [**Configuration**](./docs/config/CONFIG_FIELD_REFERENCE.md): `vtcode.toml`, tool config, and lifecycle hooks
