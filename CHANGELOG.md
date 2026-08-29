@@ -2,6 +2,63 @@
 
 All notable changes to vtcode will be documented in this file.
 ## v0.73.2 - 2026-01-29
+## 0.150.0 - 2026-08-29
+
+### Highlights
+#### Bug Fixes
+
+- Restore model discovery cache recovery (b74b9686) (@vinhnx)
+- Harden browser bridge boundaries (c82feeeb) (@vinhnx)
+- Close review security gaps (b4bb7f91) (@vinhnx)
+- Close follow-up review gaps (0f6d7f8b) (@vinhnx)
+- Apply CodeRabbit auto-fixes (1fb9b36e) (@coderabbitai[bot])
+- Address PR review findings (06641c3c) (@vinhnx)
+- Version deployed browser state (14bbd8bf) (@vinhnx)
+- Serve pages assets under project path (0adcd2e5) (@vinhnx)
+- Make evidence JSON downloads durable (5af81e7e) (@vinhnx)
+#### Documentation
+
+- Add Devpost submission draft (a019fdb5) (@vinhnx)
+- Align submission draft with Devpost project (7f745d18) (@vinhnx)
+- Promote browser bridge to first-class feature (b9e9d750) (@vinhnx)
+- Finalize challenge submission materials (c23041ee) (@vinhnx)
+- Refresh preflight notes (3000a1f0) (@vinhnx)
+- Align inspector browser prerequisite (29a94f34) (@vinhnx)
+- Link WebMCP application screenshot (8b4992ce) (@vinhnx)
+#### Features
+
+- Add challenge companion demo (a949c7fd) (@vinhnx)
+- Feat(webmcp): add dynamic approval (7fa783eb) (@vinhnx)
+- Show applied patch in code viewer (9a80b402) (@vinhnx)
+- Add browser editor bridge (f7082c98) (@vinhnx)
+- Add browser-agent eval workflow (2cf905cd) (@vinhnx)
+- Align tools with Chrome guidance (3d5e94be) (@vinhnx)
+- Support Chrome origin trial (cd282f71) (@vinhnx)
+- Expose browser context prerequisites (bafc69da) (@vinhnx)
+- Migrate demo to strict TypeScript and Bun (c18a5511) (@vinhnx)
+- Capture live client evidence (30792cf0) (@vinhnx)
+- Add OpenAI-compatible remote MCP (7620deab) (@vinhnx)
+- Support multiple hosted origins (0aa21e24) (@vinhnx)
+### Other Changes
+#### CI
+
+- Pin Bun setup action (c2286409) (@vinhnx)
+- Deploy challenge branch to Pages (aa4731e1) (@vinhnx)
+#### Other
+
+- Update project (47464b16) (@vinhnx)
+- Resolve merge conflicts in 1 file(s) (823dbe2e) (@coderabbitai[bot])
+- Update project (e9d69c9f) (@vinhnx)
+- Update TODO (5bd35dc6) (@vinhnx)
+- Update WebMCP guide (316ac8b5) (@vinhnx)
+- Update project guide (945169a1) (@vinhnx)
+- Update project (636a4b01) 
+#### Refactors
+
+- Promote app out of examples (ac1eb3d3) (@vinhnx)
+#### Tests
+
+- Refresh stale provider expectations (5782f1e0) (@vinhnx)
 ## 0.149.0 - 2026-08-27
 
 ### Highlights
