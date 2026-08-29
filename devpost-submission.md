@@ -1,12 +1,13 @@
 # VT — The WebMCP Challenge submission draft
 
 ### ⏳ Not submitted yet
+
 Nothing has been sent to Devpost.
 
-This draft is prepared from the live Devpost requirements fetched on 2026-08-28.
-The project is still a Devpost draft. A public narrated video, a real browser
-WebMCP pass, screenshots, and personal/team form answers still need confirmation
-before final submission.
+This draft is prepared from the live Devpost requirements fetched on 2026-08-29.
+The project is still a Devpost draft. The public narrated video, logged-out
+playback, and caption synchronization are now participant-confirmed; personal/
+team form answers still need confirmation before final submission.
 
 ## One-line Summary
 
@@ -99,7 +100,8 @@ for policy, approval, and authoritative file changes.
    Tool Inspector installed, inspect the registered tools.
 4. Ask the agent to list files, search for the greeting, open the result, read
    it, stage one exact replacement using its digest, review the diff, and open
-   the changes panel.
+   the changes panel. A real ChatGPT in-app browser run has completed this
+   sequence locally with eight successful tool calls.
 5. Confirm long results report truncation and that no exposed browser tool can
    approve, apply, or revert a filesystem change.
 6. Before the run, open **Evidence**, select the actual client, and choose
@@ -148,20 +150,31 @@ The repository is public and includes the Apache-2.0 license in `LICENSE`.
 
 ## Demo Video
 
-TODO — upload a public YouTube video shorter than three minutes, with audio.
-The video must show the project working and explain what was built and how
-WebMCP is used. The first 15 seconds should show the working editor/tool surface.
+A final render with the recorded audio is ready locally at
+`/Users/vinhnguyenxuan/Documents/Codex/2026-08-29/webmcp-evidence/outputs/vt-webmcp-production-subtitles-recorded-audio-restart.mp4`.
+It is 80 seconds, shows the sanitized Ghostty bridge, the public connected
+client, Chrome evidence, recorded ChatGPT client evidence, and the review /
+approval / verification flow. The recorded M4A is the audio track; play it once
+to confirm narration clarity and synchronization before publishing.
+
+The participant provided this public YouTube URL for the video:
+<https://www.youtube.com/watch?v=feU7ARLPxa0>. The participant confirmed
+logged-out playback and caption synchronization.
+
+The copy-paste YouTube title, description, chapters, captions path, and aligned
+80-second narration script are in
+[`webmcp-youtube-upload-package.md`](webmcp-youtube-upload-package.md). Keep
+the subtitles; the combined render now contains the recorded explanatory audio.
 
 ## Screenshot Shot List
 
 Capture 3–5 screenshots before submitting:
 
-1. The live editor in fallback mode with the workspace tree and open file.
-2. The browser's WebMCP tool inspector showing the eight registered tools.
-3. An agent-driven search/open flow with the structured result visible.
-4. The staged exact edit and unified diff in the **CHANGES** panel.
-5. The browser tool inspector plus the exported sanitized evidence JSON, or
-   `get_editor_state` recovery/truncation output.
+1. The public connected editor with the workspace tree and open `README.md`.
+2. The public connected Settings panel showing origin, lease, limits, and policy.
+3. The Chrome inspector evidence panel showing the public origin and eight tools.
+4. The recorded ChatGPT in-app-browser run with one discovery event and eight calls.
+5. The staged exact edit and unified diff in the **CHANGES** panel.
 
 ## Submission Readiness Notes
 
@@ -183,15 +196,20 @@ the participant confirms that this accurately describes the project and keeps
 the prior/new work distinction clear.
 
 Current evidence is strong for deterministic contracts, security boundaries,
-fallback behavior, and Rust/TypeScript tests. The reference client now includes
-a recorder for real WebMCP callback evidence, but no Chrome or ChatGPT client run
-has been recorded in this checkout yet. It is not evidence of a completed
-video or personal eligibility answers.
+fallback behavior, and Rust/TypeScript tests. The fresh public Chrome inspector
+JSON (`vt-webmcp-real-chrome-inspector-evidence-restart.json`) and screenshot
+(`vt-webmcp-public-chrome-evidence-restart.png`) record one public-origin
+discovery event and zero inspector callbacks. The separate ChatGPT in-app
+browser JSON (`vt-webmcp-real-client-evidence.json`) and screenshot
+(`vt-webmcp-real-client-evidence.png`) record one discovery event and eight
+successful tool calls from an earlier local client run; these are intentionally
+described as separate client sessions.
+The public deployment now serves the tested build from the repository Pages path;
+this is not evidence of a completed public video or personal eligibility answers.
 
-A local preflight scan found no high-confidence secret patterns and no
-credential-looking `.env`, `.pem`, `id_rsa`, or `id_dsa` files in the current
-checkout. Repeat the scan before sharing the repository if local credentials
-are added later.
+A local preflight scan found no high-confidence secret patterns in tracked
+source. An ignored, untracked root `.env` exists and must remain private; review
+it before final submission. No `.pem`, `id_rsa`, or `id_dsa` files were found.
 
 ## Known Limitations
 
@@ -208,21 +226,21 @@ are added later.
 These values come from the live Devpost form. Do not submit until the participant
 confirms every required value.
 
-| Field | Draft value |
-| --- | --- |
-| Submitter Type | TODO — confirm Individual, Team of Individuals, or Organization |
-| Country of residence | TODO — choose the participant/team country; do not infer it |
-| Organization name | N/A unless submitting for an organization |
-| App Status | TODO — confirm New or Existing; Existing is likely based on the repository history |
+| Field                        | Draft value                                                                                                                                                                                                                       |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Submitter Type               | Individual                                                                                                                                                                                                                        |
+| Country of residence         | Vietnam                                                                                                                                                                                                                           |
+| Organization name            | N/A unless submitting for an organization                                                                                                                                                                                         |
+| App Status                   | Existing                                                                                                                                                                                                                          |
 | Existing-project explanation | If Existing: during the submission period, added the WebMCP browser tool surface, bounded contracts, safe draft-edit handoff, eval corpus, bridge integration, documentation, and public deployment. Confirm accuracy before use. |
-| Live URL | <https://vinhnx.github.io/VTCode/> |
-| Testing instructions | Use the instructions above; start an Evidence run before the external client, export the sanitized JSON, and include the client screenshot/video. No credentials are required for fallback mode. |
-| Public code repo | <https://github.com/vinhnx/VTCode> |
-| WebMCP clients tested | TODO — record Chrome with the WebMCP flag, ChatGPT's in-app browser, or both after the manual pass |
-| AI tools leveraged | OpenAI Codex; the WebMCP-capable browser agent used for the manual pass |
-| Learning level | TODO — choose None, Moderate, or Significant |
-| Career AI value | TODO — choose Yes or No |
-| Demo video URL | TODO — public YouTube URL under three minutes with audio |
+| Live URL                     | <https://vinhnx.github.io/VTCode/>                                                                                                                                                                                                |
+| Testing instructions         | Use the instructions above; start an Evidence run before the external client, export the sanitized JSON, and include the client screenshot/video. No credentials are required for fallback mode.                                  |
+| Public code repo             | <https://github.com/vinhnx/VTCode>                                                                                                                                                                                                |
+| WebMCP clients tested        | Chrome WebMCP Tool Inspector — public origin, 1 discovery event and 0 callbacks in the fresh run; ChatGPT in-app browser — 1 discovery event and 8/8 successful real tool calls in the earlier local run                          |
+| AI tools leveraged           | OpenAI Codex; the WebMCP-capable browser agent used for the manual pass                                                                                                                                                           |
+| Learning level               | Significant                                                                                                                                                                                                                       |
+| Career AI value              | Yes                                                                                                                                                                                                                               |
+| Demo video URL               | <https://www.youtube.com/watch?v=feU7ARLPxa0> — provided; participant confirmed logged-out playback; verify captions before final preflight if included              |
 
 ## Final Checklist
 
@@ -231,9 +249,13 @@ confirms every required value.
 - [x] Text description explains WebMCP fit, the collaboration loop, and the
       implementation.
 - [x] Focused WebMCP TypeScript/Bun and Rust checks pass locally.
-- [ ] Run and record a real Chrome or ChatGPT in-app browser-agent pass; export the sanitized Evidence JSON.
-- [ ] Capture and review screenshots.
-- [ ] Upload the public narrated YouTube video under three minutes.
-- [ ] Confirm personal/team form fields, residence, app status, learning level,
-      and career value.
+- [x] Run and record a real ChatGPT in-app browser-agent pass; save the sanitized Evidence JSON.
+- [x] Pair the public GitHub Pages client to a fresh Ghostty WebMCP bridge.
+- [x] Capture public connected, Settings, and Chrome inspector evidence screenshots.
+- [x] Download the fresh public-origin sanitized Chrome inspector JSON.
+- [x] Verify the provided YouTube URL is public, playable while logged out, under three minutes, and has clear explanatory audio (participant-confirmed).
+- [x] Confirm caption synchronization (participant-confirmed).
+- [x] Confirm and save personal/team form fields, residence, app status, learning level,
+      and career value in Devpost Additional info (Individual; Vietnam; Existing;
+      Significant; Yes; saved with participant authorization).
 - [ ] Run the final Devpost preflight and explicitly authorize submission.

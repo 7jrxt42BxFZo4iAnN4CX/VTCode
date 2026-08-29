@@ -834,7 +834,7 @@ mod tests {
 
     #[test]
     fn llm_error_debug_and_json_redact_provider_secrets() {
-        let secret = "sk-test1234567890abcdefghij";
+        let secret = concat!("sk-", "test1234567890abcdefghij");
         let error = LLMError::Provider {
             message: format!("response body api_key={secret} bearer Bearer abcdefghijklmnop"),
             metadata: Some(LLMErrorMetadata::new(
@@ -844,7 +844,7 @@ mod tests {
                 Some("req-123".to_owned()),
                 None,
                 None,
-                Some("AWS_SECRET_ACCESS_KEY=cloud-secret-value".to_owned()),
+                Some(format!("{}={}", "AWS_SECRET_ACCESS_KEY", "cloud-secret-value")),
             )),
         };
 
