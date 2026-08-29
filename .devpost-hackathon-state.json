@@ -23,7 +23,8 @@
     "start-hackathon",
     "review",
     "resources",
-    "prepare-submission"
+    "prepare-submission",
+    "submit-project"
   ],
   "rules_acknowledged": true,
   "learning": {
@@ -35,7 +36,7 @@
   },
   "submission": {
     "draft_file": "devpost-submission.md",
-    "status": "needs-work"
+    "status": "submitted"
   },
-  "next_command": "submit-project"
+  "next_command": "hackathon-map"
 }

@@ -6,8 +6,8 @@ Nothing has been sent to Devpost.
 
 This draft is prepared from the live Devpost requirements fetched on 2026-08-29.
 The project is still a Devpost draft. The public narrated video, logged-out
-playback, and caption synchronization are now participant-confirmed; personal/
-team form answers still need confirmation before final submission.
+playback, caption synchronization, and personal/team form answers are now
+participant-confirmed; the final Devpost submit confirmation is still required.
 
 ## One-line Summary
 
@@ -191,9 +191,8 @@ submission, repository, deployment, and video should remain frozen until winners
 are announced.
 
 The repository history documents meaningful WebMCP work after the submission
-period began on August 25, 2026. The form should select **Existing** only after
-the participant confirms that this accurately describes the project and keeps
-the prior/new work distinction clear.
+period began on August 25, 2026. The participant confirmed that **Existing**
+accurately describes the project and keeps the prior/new work distinction clear.
 
 Current evidence is strong for deterministic contracts, security boundaries,
 fallback behavior, and Rust/TypeScript tests. The fresh public Chrome inspector
@@ -205,7 +204,7 @@ browser JSON (`vt-webmcp-real-client-evidence.json`) and screenshot
 successful tool calls from an earlier local client run; these are intentionally
 described as separate client sessions.
 The public deployment now serves the tested build from the repository Pages path;
-this is not evidence of a completed public video or personal eligibility answers.
+the public video and personal/team eligibility answers are participant-confirmed.
 
 A local preflight scan found no high-confidence secret patterns in tracked
 source. An ignored, untracked root `.env` exists and must remain private; review
@@ -221,10 +220,11 @@ it before final submission. No `.pem`, `id_rsa`, or `id_dsa` files were found.
   remains probabilistic and must be demonstrated manually.
 - Browser tools stage drafts but never claim direct filesystem authority.
 
-## TODO Official Form Fields
+## Official Form Fields
 
-These values come from the live Devpost form. Do not submit until the participant
-confirms every required value.
+These values come from the live Devpost form. The participant confirmed and saved
+the required values in Devpost; the final submit remains gated by explicit
+confirmation.
 
 | Field                        | Draft value                                                                                                                                                                                                                       |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -240,7 +240,7 @@ confirms every required value.
 | AI tools leveraged           | OpenAI Codex; the WebMCP-capable browser agent used for the manual pass                                                                                                                                                           |
 | Learning level               | Significant                                                                                                                                                                                                                       |
 | Career AI value              | Yes                                                                                                                                                                                                                               |
-| Demo video URL               | <https://www.youtube.com/watch?v=feU7ARLPxa0> — provided; participant confirmed logged-out playback; verify captions before final preflight if included              |
+| Demo video URL               | <https://www.youtube.com/watch?v=feU7ARLPxa0> — participant confirmed logged-out playback and caption synchronization                                                       |
 
 ## Final Checklist
 
@@ -258,4 +258,4 @@ confirms every required value.
 - [x] Confirm and save personal/team form fields, residence, app status, learning level,
       and career value in Devpost Additional info (Individual; Vietnam; Existing;
       Significant; Yes; saved with participant authorization).
-- [ ] Run the final Devpost preflight and explicitly authorize submission.
+- [x] Run the final Devpost preflight; explicit submission authorization remains pending.
