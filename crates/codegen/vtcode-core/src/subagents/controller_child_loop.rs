@@ -294,6 +294,7 @@ impl SubagentController {
                         vt_cfg: child_cfg.clone(),
                         openai_chatgpt_auth: self.config.openai_chatgpt_auth.clone(),
                         depth: self.config.depth.saturating_add(1),
+                        workspace_gated: self.config.workspace_gated,
                         exec_sessions: self.config.exec_sessions.clone(),
                         pty_manager: self.config.pty_manager.clone(),
                         managed_background_runtime: true,
