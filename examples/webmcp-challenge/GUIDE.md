@@ -50,6 +50,30 @@ require active mode.
 Use `--port 5174` if port `5173` is already in use. Use the same port in the
 browser URL and `/webmcp pair` command.
 
+### Pair the deployed GitHub Pages client
+
+The deployed reference client at
+<https://vinhnx.github.io/VTCode/> is a static page. Its browser origin is
+`https://vinhnx.github.io` (the `/VTCode/` path is not part of the origin).
+When the page is open in a browser on the same machine as the active VT Code
+TUI, run:
+
+```text
+/webmcp pair https://vinhnx.github.io
+```
+
+If that TUI already has a bridge paired for another origin, run
+`/webmcp pair --replace https://vinhnx.github.io` and confirm the replacement.
+Paste the newest WebSocket URL and one-time code into **Settings**. A bridge
+started with `http://localhost:5173` will reject the deployed page's origin,
+which the browser can report as the generic **WebSocket connection failed**
+message.
+
+The printed `ws://127.0.0.1:<port>/webmcp` URL is reachable only from a browser
+that can reach the same machine. A remote or sandboxed in-app browser needs a
+TLS-terminating reverse proxy and a reachable `wss://` endpoint; the GitHub
+Pages site does not host the bridge.
+
 ### Use the Chrome origin trial
 
 Chrome's [WebMCP origin trial](https://developer.chrome.com/blog/ai-webmcp-origin-trial)
@@ -196,6 +220,10 @@ command.
 Make sure the bridge or active VT Code session is still running. Paste the newest
 WebSocket URL and one-time code from that same process. Its origin must exactly
 match the browser origin; `localhost` and `127.0.0.1` are different origins.
+For the deployed client, pair with `https://vinhnx.github.io`, not the full
+`https://vinhnx.github.io/VTCode/` URL. If an existing active bridge was paired
+for another origin, use `/webmcp pair --replace https://vinhnx.github.io` and
+paste the newly printed values.
 
 ### The TUI prints no URL or pairing code
 
